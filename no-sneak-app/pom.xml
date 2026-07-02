@@ -13,12 +13,48 @@
 
 
 
+
+
     <dependencies>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-params</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>io.xlogistx</groupId>
             <artifactId>no-sneak-core</artifactId>
             <version>1.0.0</version>
         </dependency>
+
+        <dependency>
+            <groupId>io.xlogistx</groupId>
+            <artifactId>xlogistx-common</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.xlogistx</groupId>
+            <artifactId>xlogistx-core</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.xlogistx</groupId>
+            <artifactId>xlogistx-shiro</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.xlogistx</groupId>
+            <artifactId>xlogistx-http</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.xlogistx</groupId>
+            <artifactId>xlogistx-opsec</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.xlogistx</groupId>
+            <artifactId>xlogistx-gui-audio</artifactId>
+        </dependency>
     </dependencies>
+
 
 </project>
