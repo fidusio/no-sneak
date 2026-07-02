@@ -1,0 +1,2516 @@
+{
+  "metadata": {
+    "title": "Server Services Encryption Reference",
+    "description": "Comprehensive reference of server services with OSI layer classification, ports, protocols, encryption algorithms, and supported cryptographic keys",
+    "version": "4.0",
+    "generated_date": "2025-01-13",
+    "author": "NoSneak/XlogistX.IO Reference",
+    "purpose": "Post-Quantum Cryptography Migration Planning",
+    "port_format": "Layer 4 services use ports (TCP/UDP/SCTP). Layer 3 protocols use IP protocol numbers.",
+    "encryption_format": {
+      "description": "Encryption field uses 'default/available' format for easy parsing",
+      "format": "default_encryption/available_encryption",
+      "values": {
+        "None": "No encryption available or configured",
+        "TLS": "Implicit TLS - connection starts encrypted",
+        "STARTTLS": "Upgrade mechanism from plaintext to TLS",
+        "SSH": "SSH protocol encryption",
+        "DTLS": "Datagram TLS for UDP",
+        "QUIC": "QUIC transport with built-in TLS 1.3",
+        "IPSec": "IPSec encryption (ESP)",
+        "Kerberos": "Kerberos encryption",
+        "SRTP": "Secure RTP encryption",
+        "RMCP+": "RMCP+ encryption for IPMI",
+        "USM": "User-based Security Model (SNMPv3)",
+        "Noise": "Noise Protocol Framework (WireGuard)",
+        "OMEMO": "OMEMO end-to-end encryption",
+        "Megolm": "Megolm end-to-end encryption (Matrix)",
+        "OSCORE": "Object Security for Constrained RESTful Environments",
+        "SAv5": "DNP3 Secure Authentication v5",
+        "MACsec": "IEEE 802.1AE Layer 2 encryption"
+      },
+      "examples": {
+        "None": "No encryption at all",
+        "TLS": "TLS required/implicit",
+        "None/TLS": "Unencrypted by default, TLS available",
+        "None/STARTTLS": "Unencrypted by default, STARTTLS upgrade available",
+        "STARTTLS": "STARTTLS required",
+        "TLS/QUIC": "TLS available, QUIC also available",
+        "None/IPSec": "No native encryption, IPSec recommended"
+      }
+    },
+    "layer_classification": {
+      "layer_3": "Network layer - IP protocol numbers, no ports (ICMP, ESP, AH, GRE, OSPF, etc.)",
+      "layer_4": "Transport layer - Uses ports (TCP, UDP, SCTP)"
+    }
+  },
+  "layer_3_protocols": {
+    "description": "Network layer protocols identified by IP protocol number, not ports",
+    "protocols": [
+      {
+        "service": "ICMP",
+        "description": "Internet Control Message Protocol - Network diagnostics and error reporting",
+        "layer": 3,
+        "ip_protocol_number": 1,
+        "implementations": ["Linux kernel", "Windows IP stack", "BSD"],
+        "encryption": "None",
+        "encryption_options": {
+          "native": "None",
+          "available": ["IPSec"],
+          "notes": "Can be encapsulated in IPSec tunnel mode"
+        },
+        "message_types": {
+          "echo_reply": {"type": 0, "code": 0, "description": "Ping response"},
+          "destination_unreachable": {
+            "type": 3,
+            "codes": {
+              "0": "Network unreachable",
+              "1": "Host unreachable",
+              "2": "Protocol unreachable",
+              "3": "Port unreachable",
+              "4": "Fragmentation needed but DF set",
+              "5": "Source route failed",
+              "6": "Destination network unknown",
+              "7": "Destination host unknown",
+              "9": "Network administratively prohibited",
+              "10": "Host administratively prohibited",
+              "11": "Network unreachable for TOS",
+              "12": "Host unreachable for TOS",
+              "13": "Communication administratively prohibited"
+            }
+          },
+          "source_quench": {"type": 4, "code": 0, "description": "Congestion control (deprecated)"},
+          "redirect": {
+            "type": 5,
+            "codes": {
+              "0": "Redirect for network",
+              "1": "Redirect for host",
+              "2": "Redirect for TOS and network",
+              "3": "Redirect for TOS and host"
+            }
+          },
+          "echo_request": {"type": 8, "code": 0, "description": "Ping request"},
+          "router_advertisement": {"type": 9, "code": 0, "description": "Router discovery"},
+          "router_solicitation": {"type": 10, "code": 0, "description": "Router discovery request"},
+          "time_exceeded": {
+            "type": 11,
+            "codes": {
+              "0": "TTL exceeded in transit (traceroute)",
+              "1": "Fragment reassembly time exceeded"
+            }
+          },
+          "parameter_problem": {
+            "type": 12,
+            "codes": {
+              "0": "Pointer indicates error",
+              "1": "Missing required option",
+              "2": "Bad length"
+            }
+          },
+          "timestamp_request": {"type": 13, "code": 0, "description": "Timestamp request"},
+          "timestamp_reply": {"type": 14, "code": 0, "description": "Timestamp reply"},
+          "address_mask_request": {"type": 17, "code": 0, "description": "Address mask request (deprecated)"},
+          "address_mask_reply": {"type": 18, "code": 0, "description": "Address mask reply (deprecated)"}
+        },
+        "quantum_vulnerable": false,
+        "notes": "No cryptography used"
+      },
+      {
+        "service": "ICMPv6",
+        "description": "Internet Control Message Protocol for IPv6",
+        "layer": 3,
+        "ip_protocol_number": 58,
+        "implementations": ["Linux kernel", "Windows IP stack", "BSD"],
+        "encryption": "None",
+        "encryption_options": {
+          "native": "None",
+          "available": ["IPSec"],
+          "notes": "SEND (Secure Neighbor Discovery) adds signatures"
+        },
+        "message_types": {
+          "destination_unreachable": {
+            "type": 1,
+            "codes": {
+              "0": "No route to destination",
+              "1": "Communication administratively prohibited",
+              "2": "Beyond scope of source address",
+              "3": "Address unreachable",
+              "4": "Port unreachable",
+              "5": "Source address failed ingress/egress policy",
+              "6": "Reject route to destination"
+            }
+          },
+          "packet_too_big": {"type": 2, "code": 0, "description": "MTU discovery"},
+          "time_exceeded": {
+            "type": 3,
+            "codes": {
+              "0": "Hop limit exceeded",
+              "1": "Fragment reassembly time exceeded"
+            }
+          },
+          "parameter_problem": {
+            "type": 4,
+            "codes": {
+              "0": "Erroneous header field",
+              "1": "Unrecognized Next Header type",
+              "2": "Unrecognized IPv6 option"
+            }
+          },
+          "echo_request": {"type": 128, "code": 0, "description": "Ping request"},
+          "echo_reply": {"type": 129, "code": 0, "description": "Ping response"},
+          "router_solicitation": {"type": 133, "code": 0, "description": "NDP router solicitation"},
+          "router_advertisement": {"type": 134, "code": 0, "description": "NDP router advertisement"},
+          "neighbor_solicitation": {"type": 135, "code": 0, "description": "NDP neighbor solicitation (like ARP)"},
+          "neighbor_advertisement": {"type": 136, "code": 0, "description": "NDP neighbor advertisement"},
+          "redirect": {"type": 137, "code": 0, "description": "NDP redirect"}
+        },
+        "quantum_vulnerable": false,
+        "notes": "No cryptography used"
+      },
+      {
+        "service": "IGMP",
+        "description": "Internet Group Management Protocol - Multicast group membership",
+        "layer": 3,
+        "ip_protocol_number": 2,
+        "implementations": ["Linux kernel", "Windows IP stack", "Cisco IOS"],
+        "encryption": "None",
+        "encryption_options": {
+          "native": "None",
+          "available": [],
+          "notes": "No encryption; relies on network isolation"
+        },
+        "message_types": {
+          "membership_query": {"type": "0x11", "description": "Router queries for group membership"},
+          "membership_report_v1": {"type": "0x12", "description": "IGMPv1 membership report"},
+          "membership_report_v2": {"type": "0x16", "description": "IGMPv2 membership report"},
+          "membership_report_v3": {"type": "0x22", "description": "IGMPv3 membership report"},
+          "leave_group": {"type": "0x17", "description": "Leave group message"}
+        },
+        "quantum_vulnerable": false,
+        "notes": "No cryptography used"
+      },
+      {
+        "service": "IPSec_ESP",
+        "description": "Encapsulating Security Payload - IPSec encryption",
+        "layer": 3,
+        "ip_protocol_number": 50,
+        "implementations": ["StrongSwan", "Libreswan", "Windows IPSec", "Cisco IOS", "Linux XFRM"],
+        "encryption": "IPSec",
+        "encryption_options": {
+          "native": "IPSec",
+          "available": ["IPSec"],
+          "key_exchange_ports": {
+            "ike": {"port": 500, "protocol": "UDP"},
+            "nat_t": {"port": 4500, "protocol": "UDP"}
+          }
+        },
+        "encryption_algorithms": {
+          "encryption": ["AES-128-GCM", "AES-256-GCM", "AES-128-CBC", "AES-256-CBC", "ChaCha20-Poly1305", "3DES"],
+          "integrity": ["HMAC-SHA256", "HMAC-SHA384", "HMAC-SHA512", "AES-XCBC", "AES-GMAC"],
+          "prf": ["PRF-HMAC-SHA256", "PRF-HMAC-SHA384", "PRF-HMAC-SHA512"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA-P256", "ECDSA-P384", "ECDSA-P521", "Ed25519"],
+          "key_exchange": {
+            "dh_groups": {
+              "modp": ["DH-14 (2048-bit)", "DH-15 (3072-bit)", "DH-16 (4096-bit)", "DH-17 (6144-bit)", "DH-18 (8192-bit)"],
+              "ecp": ["DH-19 (ECP-256)", "DH-20 (ECP-384)", "DH-21 (ECP-521)"],
+              "curve25519": ["DH-31 (Curve25519)", "DH-32 (Curve448)"]
+            }
+          },
+          "quantum_vulnerable": true
+        },
+        "modes": {
+          "transport": "Encrypts payload only, original IP header preserved",
+          "tunnel": "Encrypts entire original IP packet, new IP header added"
+        },
+        "header_structure": {
+          "spi": "Security Parameters Index (32 bits)",
+          "sequence_number": "Anti-replay (32 bits)",
+          "payload": "Encrypted data (variable)",
+          "padding": "Block alignment (0-255 bytes)",
+          "pad_length": "8 bits",
+          "next_header": "Original protocol (8 bits)",
+          "icv": "Integrity Check Value (variable)"
+        }
+      },
+      {
+        "service": "IPSec_AH",
+        "description": "Authentication Header - IPSec authentication (no encryption)",
+        "layer": 3,
+        "ip_protocol_number": 51,
+        "implementations": ["StrongSwan", "Libreswan", "Windows IPSec", "Cisco IOS"],
+        "encryption": "None/IPSec",
+        "encryption_options": {
+          "native": "None",
+          "available": ["IPSec"],
+          "notes": "AH provides authentication and integrity only, NOT encryption"
+        },
+        "encryption_algorithms": {
+          "authentication_only": true,
+          "integrity": ["HMAC-SHA256", "HMAC-SHA384", "HMAC-SHA512", "AES-XCBC", "AES-GMAC"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA-P256", "ECDSA-P384"],
+          "key_exchange": ["DH-14", "DH-15", "DH-16", "ECP-256", "ECP-384"],
+          "quantum_vulnerable": true
+        },
+        "header_structure": {
+          "next_header": "8 bits",
+          "payload_length": "8 bits",
+          "reserved": "16 bits",
+          "spi": "Security Parameters Index (32 bits)",
+          "sequence_number": "Anti-replay (32 bits)",
+          "icv": "Integrity Check Value (variable)"
+        },
+        "limitations": {
+          "nat_incompatible": "AH authenticates IP header including addresses, breaks with NAT",
+          "no_encryption": "Use ESP instead for confidentiality"
+        }
+      },
+      {
+        "service": "GRE",
+        "description": "Generic Routing Encapsulation - Tunneling protocol",
+        "layer": 3,
+        "ip_protocol_number": 47,
+        "implementations": ["Linux", "Cisco IOS", "Windows RRAS"],
+        "encryption": "None/IPSec",
+        "encryption_options": {
+          "native": "None",
+          "available": ["IPSec"],
+          "notes": "GRE has no encryption; often combined with IPSec (GRE over IPSec)"
+        },
+        "header_structure": {
+          "flags": {
+            "C": "Checksum present",
+            "R": "Routing present (deprecated)",
+            "K": "Key present",
+            "S": "Sequence number present"
+          },
+          "version": "3 bits (0 for standard GRE)",
+          "protocol_type": "16 bits (EtherType of encapsulated protocol)",
+          "checksum": "Optional 16 bits",
+          "key": "Optional 32 bits (tunnel identifier)",
+          "sequence_number": "Optional 32 bits"
+        },
+        "common_uses": {
+          "pptp": "PPTP VPN uses GRE for data transport",
+          "gre_over_ipsec": "Secure tunnel with multicast/broadcast support",
+          "nvgre": "Network Virtualization using GRE (data centers)"
+        },
+        "quantum_vulnerable": false,
+        "notes": "No cryptography; tunnel contents may be encrypted at higher layers"
+      },
+      {
+        "service": "IP-in-IP",
+        "description": "IP Encapsulation within IP",
+        "layer": 3,
+        "ip_protocol_number": 4,
+        "implementations": ["Linux", "BSD", "Cisco IOS"],
+        "encryption": "None/IPSec",
+        "encryption_options": {
+          "native": "None",
+          "available": ["IPSec"]
+        },
+        "common_uses": {
+          "mobile_ip": "Mobile IP home agent tunneling",
+          "6to4": "IPv6 transition mechanism"
+        },
+        "quantum_vulnerable": false,
+        "notes": "Simple encapsulation, no security features"
+      },
+      {
+        "service": "IPv6_Encapsulation",
+        "description": "IPv6 encapsulated in IPv4",
+        "layer": 3,
+        "ip_protocol_number": 41,
+        "implementations": ["Linux", "Windows", "BSD"],
+        "encryption": "None/IPSec",
+        "encryption_options": {
+          "native": "None",
+          "available": ["IPSec"]
+        },
+        "common_uses": {
+          "6in4": "Manual IPv6 tunneling",
+          "6to4": "Automatic IPv6 tunneling",
+          "isatap": "Intra-Site Automatic Tunnel Addressing Protocol",
+          "teredo": "IPv6 over UDP (uses port 3544)"
+        },
+        "quantum_vulnerable": false,
+        "notes": "Transition mechanism, no security features"
+      },
+      {
+        "service": "OSPF",
+        "description": "Open Shortest Path First - Interior gateway routing protocol",
+        "layer": 3,
+        "ip_protocol_number": 89,
+        "implementations": ["Quagga", "FRRouting", "BIRD", "Cisco IOS", "Juniper JUNOS"],
+        "encryption": "None/IPSec",
+        "encryption_options": {
+          "native": "None",
+          "available": ["IPSec"],
+          "authentication": ["MD5", "HMAC-SHA-1", "HMAC-SHA-256", "HMAC-SHA-384", "HMAC-SHA-512"],
+          "notes": "OSPFv3 can use IPSec for encryption"
+        },
+        "message_types": {
+          "hello": {"type": 1, "description": "Neighbor discovery and keepalive"},
+          "database_description": {"type": 2, "description": "Summary of link-state database"},
+          "link_state_request": {"type": 3, "description": "Request specific LSAs"},
+          "link_state_update": {"type": 4, "description": "LSA flooding"},
+          "link_state_ack": {"type": 5, "description": "Acknowledge LSAs"}
+        },
+        "authentication": {
+          "type_0": "No authentication",
+          "type_1": "Simple password (cleartext)",
+          "type_2": "Cryptographic (MD5/SHA)"
+        },
+        "quantum_vulnerable": true,
+        "notes": "Authentication keys vulnerable; use IPSec for OSPFv3"
+      },
+      {
+        "service": "EIGRP",
+        "description": "Enhanced Interior Gateway Routing Protocol (Cisco)",
+        "layer": 3,
+        "ip_protocol_number": 88,
+        "implementations": ["Cisco IOS", "Cisco IOS-XE", "Cisco NX-OS"],
+        "encryption": "None/IPSec",
+        "encryption_options": {
+          "native": "None",
+          "available": ["IPSec"],
+          "authentication": ["MD5", "HMAC-SHA-256"]
+        },
+        "message_types": {
+          "update": {"opcode": 1, "description": "Route updates"},
+          "query": {"opcode": 3, "description": "Route queries"},
+          "reply": {"opcode": 4, "description": "Query replies"},
+          "hello": {"opcode": 5, "description": "Neighbor discovery"},
+          "siaquery": {"opcode": 10, "description": "Stuck-in-active query"},
+          "siareply": {"opcode": 11, "description": "Stuck-in-active reply"}
+        },
+        "quantum_vulnerable": true,
+        "notes": "Cisco proprietary; authentication keys vulnerable"
+      },
+      {
+        "service": "VRRP",
+        "description": "Virtual Router Redundancy Protocol",
+        "layer": 3,
+        "ip_protocol_number": 112,
+        "implementations": ["Keepalived", "Linux", "Cisco IOS", "Juniper"],
+        "encryption": "None/IPSec",
+        "encryption_options": {
+          "native": "None",
+          "available": ["IPSec"],
+          "authentication": ["Simple text password", "HMAC-SHA-256 (VRRPv3)"],
+          "notes": "VRRPv2 uses weak authentication; VRRPv3 supports IPSec AH"
+        },
+        "message_types": {
+          "advertisement": {"type": 1, "description": "Master router advertisement"}
+        },
+        "authentication": {
+          "type_0": "No authentication",
+          "type_1": "Simple text password",
+          "type_2": "IP Authentication Header (VRRPv3)"
+        },
+        "quantum_vulnerable": true,
+        "notes": "VRRPv3 with IPSec AH provides stronger security"
+      },
+      {
+        "service": "PIM",
+        "description": "Protocol Independent Multicast",
+        "layer": 3,
+        "ip_protocol_number": 103,
+        "implementations": ["Linux pimd", "Cisco IOS", "Juniper"],
+        "encryption": "None/IPSec",
+        "encryption_options": {
+          "native": "None",
+          "available": ["IPSec"]
+        },
+        "message_types": {
+          "hello": {"type": 0, "description": "Neighbor discovery"},
+          "register": {"type": 1, "description": "Register multicast source"},
+          "register_stop": {"type": 2, "description": "Stop register messages"},
+          "join_prune": {"type": 3, "description": "Join/prune multicast tree"},
+          "bootstrap": {"type": 4, "description": "RP discovery"},
+          "assert": {"type": 5, "description": "Forwarder election"},
+          "graft": {"type": 6, "description": "PIM-DM graft"},
+          "graft_ack": {"type": 7, "description": "PIM-DM graft acknowledgment"},
+          "candidate_rp_advertisement": {"type": 8, "description": "RP candidate announcement"}
+        },
+        "quantum_vulnerable": false,
+        "notes": "No cryptography; relies on network isolation"
+      },
+      {
+        "service": "L2TPv3",
+        "description": "Layer 2 Tunneling Protocol Version 3",
+        "layer": 3,
+        "ip_protocol_number": 115,
+        "implementations": ["Linux", "Cisco IOS", "Juniper"],
+        "encryption": "None/IPSec",
+        "encryption_options": {
+          "native": "None",
+          "available": ["IPSec"],
+          "alternative_transport": {
+            "udp_port": 1701,
+            "protocol": "UDP",
+            "notes": "Can run directly over IP (proto 115) or over UDP"
+          }
+        },
+        "quantum_vulnerable": false,
+        "notes": "Layer 2 tunneling; no native security"
+      },
+      {
+        "service": "SCTP",
+        "description": "Stream Control Transmission Protocol",
+        "layer": 4,
+        "ip_protocol_number": 132,
+        "implementations": ["Linux kernel", "FreeBSD", "Solaris"],
+        "ports": "Uses 16-bit ports like TCP/UDP",
+        "encryption": "None/DTLS",
+        "encryption_options": {
+          "native": "None",
+          "available": ["DTLS", "IPSec"]
+        },
+        "features": {
+          "multi_streaming": "Multiple independent streams per association",
+          "multi_homing": "Multiple IP addresses per endpoint",
+          "message_oriented": "Preserves message boundaries",
+          "ordered_delivery": "Ordered within each stream",
+          "congestion_control": "Yes"
+        },
+        "quantum_vulnerable": true,
+        "notes": "Transport layer protocol; see Layer 4 section for SCTP services"
+      }
+    ]
+  },
+  "layer_4_services": {
+    "description": "Transport layer services using TCP, UDP, or SCTP ports",
+    "email_and_messaging": [
+      {
+        "service": "SMTP",
+        "description": "Simple Mail Transfer Protocol - Mail Transfer Agent",
+        "layer": 4,
+        "implementations": ["Postfix", "Sendmail", "Exim", "Microsoft Exchange"],
+        "ports": {
+          "plain": {"port": 25, "protocol": "TCP", "encryption": "None/STARTTLS"},
+          "smtps": {"port": 465, "protocol": "TCP", "encryption": "TLS"},
+          "submission": {"port": 587, "protocol": "TCP", "encryption": "STARTTLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3"],
+          "ciphers": ["AES-128-GCM", "AES-256-GCM", "ChaCha20-Poly1305"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA-P256", "ECDSA-P384", "ECDSA-P521", "Ed25519"],
+          "key_exchange": ["ECDH", "X25519", "DHE"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "IMAP",
+        "description": "Internet Message Access Protocol - Mail Delivery Agent",
+        "layer": 4,
+        "implementations": ["Dovecot", "Cyrus", "Courier"],
+        "ports": {
+          "plain": {"port": 143, "protocol": "TCP", "encryption": "None/STARTTLS"},
+          "imaps": {"port": 993, "protocol": "TCP", "encryption": "TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3"],
+          "ciphers": ["AES-128-GCM", "AES-256-GCM", "ChaCha20-Poly1305"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA-P256", "ECDSA-P384", "ECDSA-P521", "Ed25519"],
+          "key_exchange": ["ECDH", "X25519", "DHE"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "POP3",
+        "description": "Post Office Protocol v3 - Mail Retrieval",
+        "layer": 4,
+        "implementations": ["Dovecot", "Cyrus", "qpopper"],
+        "ports": {
+          "plain": {"port": 110, "protocol": "TCP", "encryption": "None/STARTTLS"},
+          "pop3s": {"port": 995, "protocol": "TCP", "encryption": "TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3"],
+          "ciphers": ["AES-128-GCM", "AES-256-GCM"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA-P256", "ECDSA-P384"],
+          "key_exchange": ["ECDH", "DHE"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "XMPP",
+        "description": "Extensible Messaging and Presence Protocol",
+        "layer": 4,
+        "implementations": ["ejabberd", "Prosody", "Openfire"],
+        "ports": {
+          "client": {"port": 5222, "protocol": "TCP", "encryption": "None/STARTTLS"},
+          "server": {"port": 5269, "protocol": "TCP", "encryption": "None/STARTTLS"},
+          "legacy_ssl": {"port": 5223, "protocol": "TCP", "encryption": "TLS"},
+          "bosh": {"port": 5280, "protocol": "TCP", "encryption": "None/TLS"},
+          "websocket": {"port": 5443, "protocol": "TCP", "encryption": "TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3"],
+          "ciphers": ["AES-256-GCM"],
+          "e2ee": ["OMEMO"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA", "Ed25519"],
+          "key_exchange": ["ECDH", "Curve25519"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "Matrix",
+        "description": "Matrix Protocol - Decentralized Communication",
+        "layer": 4,
+        "implementations": ["Synapse", "Dendrite"],
+        "ports": {
+          "federation": {"port": 8448, "protocol": "TCP", "encryption": "TLS"},
+          "client": {"port": 443, "protocol": "TCP", "encryption": "TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3"],
+          "ciphers": ["AES-256"],
+          "e2ee": ["Megolm", "Olm"]
+        },
+        "supported_keys": {
+          "asymmetric": ["Ed25519"],
+          "key_exchange": ["Curve25519"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "IRC",
+        "description": "Internet Relay Chat",
+        "layer": 4,
+        "implementations": ["UnrealIRCd", "InspIRCd", "ngircd"],
+        "ports": {
+          "plain": {"port": 6667, "protocol": "TCP", "encryption": "None"},
+          "tls": {"port": 6697, "protocol": "TCP", "encryption": "TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3"],
+          "ciphers": ["AES-256-GCM"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA"],
+          "key_exchange": ["ECDH", "DHE"],
+          "quantum_vulnerable": true
+        }
+      }
+    ],
+    "web_services": [
+      {
+        "service": "HTTP",
+        "description": "Hypertext Transfer Protocol - Unencrypted",
+        "layer": 4,
+        "implementations": ["Apache", "Nginx", "IIS", "LiteSpeed", "Caddy"],
+        "ports": {
+          "default": {"port": 80, "protocol": "TCP", "encryption": "None"},
+          "alt": {"port": 8080, "protocol": "TCP", "encryption": "None"}
+        },
+        "encryption_algorithms": {
+          "protocols": [],
+          "ciphers": [],
+          "notes": "Unencrypted - use HTTPS instead"
+        },
+        "supported_keys": {
+          "asymmetric": [],
+          "key_exchange": [],
+          "quantum_vulnerable": false,
+          "notes": "No encryption"
+        }
+      },
+      {
+        "service": "HTTPS",
+        "description": "HTTP over TLS - Secure Web Traffic",
+        "layer": 4,
+        "implementations": ["Apache", "Nginx", "IIS", "LiteSpeed", "Caddy"],
+        "ports": {
+          "default": {"port": 443, "protocol": "TCP", "encryption": "TLS"},
+          "alt": {"port": 8443, "protocol": "TCP", "encryption": "TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3"],
+          "ciphers": ["AES-128-GCM", "AES-256-GCM", "ChaCha20-Poly1305"],
+          "tls_1.3_suites": ["TLS_AES_256_GCM_SHA384", "TLS_AES_128_GCM_SHA256", "TLS_CHACHA20_POLY1305_SHA256"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA-P256", "ECDSA-P384", "ECDSA-P521", "Ed25519"],
+          "key_exchange": ["ECDH", "X25519", "X448", "DHE"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "HTTP/2",
+        "description": "HTTP version 2 with multiplexing",
+        "layer": 4,
+        "implementations": ["Apache", "Nginx", "h2o", "Caddy"],
+        "ports": {
+          "https": {"port": 443, "protocol": "TCP", "encryption": "TLS"},
+          "h2c_cleartext": {"port": 80, "protocol": "TCP", "encryption": "None"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3"],
+          "ciphers": ["AES-256-GCM", "ChaCha20-Poly1305"],
+          "requirements": ["ALPN negotiation required"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA", "Ed25519"],
+          "key_exchange": ["ECDH", "X25519"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "HTTP/3",
+        "description": "HTTP version 3 over QUIC",
+        "layer": 4,
+        "implementations": ["Nginx", "Caddy", "LiteSpeed", "Cloudflare"],
+        "ports": {
+          "quic": {"port": 443, "protocol": "UDP", "encryption": "QUIC"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.3"],
+          "ciphers": ["AES-128-GCM", "AES-256-GCM", "ChaCha20-Poly1305"],
+          "transport": "QUIC (TLS 1.3 built-in)"
+        },
+        "supported_keys": {
+          "asymmetric": ["ECDSA-P256", "ECDSA-P384", "Ed25519"],
+          "key_exchange": ["X25519", "ECDH"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "WebSocket",
+        "description": "Full-duplex communication over HTTP/TLS",
+        "layer": 4,
+        "implementations": ["ws", "Socket.IO", "SignalR"],
+        "ports": {
+          "ws": {"port": 80, "protocol": "TCP", "encryption": "None"},
+          "wss": {"port": 443, "protocol": "TCP", "encryption": "TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3"],
+          "ciphers": ["AES-256-GCM"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA"],
+          "key_exchange": ["ECDH"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "API Gateway",
+        "description": "API Management and Routing",
+        "layer": 4,
+        "implementations": ["Kong", "Tyk", "AWS API Gateway", "Apigee"],
+        "ports": {
+          "https": {"port": 443, "protocol": "TCP", "encryption": "TLS"},
+          "admin": {"port": 8443, "protocol": "TCP", "encryption": "TLS"},
+          "admin_http": {"port": 8001, "protocol": "TCP", "encryption": "None"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3"],
+          "ciphers": ["AES-256-GCM"],
+          "features": ["mTLS support", "JWT validation"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA", "Ed25519"],
+          "key_exchange": ["ECDH"],
+          "quantum_vulnerable": true
+        }
+      }
+    ],
+    "remote_access": [
+      {
+        "service": "SSH",
+        "description": "Secure Shell Protocol",
+        "layer": 4,
+        "implementations": ["OpenSSH", "Dropbear", "libssh"],
+        "ports": {
+          "default": {"port": 22, "protocol": "TCP", "encryption": "SSH"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["SSH 2.0"],
+          "ciphers": ["chacha20-poly1305@openssh.com", "aes256-gcm@openssh.com", "aes128-gcm@openssh.com", "aes256-ctr", "aes192-ctr", "aes128-ctr"],
+          "macs": ["hmac-sha2-512-etm@openssh.com", "hmac-sha2-256-etm@openssh.com", "umac-128-etm@openssh.com"],
+          "kex": ["curve25519-sha256", "curve25519-sha256@libssh.org", "ecdh-sha2-nistp256", "ecdh-sha2-nistp384", "ecdh-sha2-nistp521", "diffie-hellman-group16-sha512", "diffie-hellman-group18-sha512"]
+        },
+        "supported_keys": {
+          "host_key_algorithms": ["ssh-ed25519", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521", "rsa-sha2-512", "rsa-sha2-256"],
+          "asymmetric": ["RSA-2048", "RSA-4096", "RSA-8192", "ECDSA-P256", "ECDSA-P384", "ECDSA-P521", "Ed25519"],
+          "key_exchange": ["Curve25519", "ECDH-SHA2-nistp256", "ECDH-SHA2-nistp384", "DH-group16-sha512", "DH-group18-sha512"],
+          "deprecated": ["DSA", "ssh-rsa (SHA-1)"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "RDP",
+        "description": "Remote Desktop Protocol",
+        "layer": 4,
+        "implementations": ["Windows Remote Desktop", "xrdp", "FreeRDP"],
+        "ports": {
+          "default": {"port": 3389, "protocol": "TCP", "encryption": "None/TLS"},
+          "udp": {"port": 3389, "protocol": "UDP", "encryption": "None/DTLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3", "CredSSP (NLA)"],
+          "ciphers": ["AES-128", "AES-256", "RC4 (legacy - avoid)"],
+          "security_levels": {
+            "low": "RDP encryption only (56-bit)",
+            "client_compatible": "Maximum supported by client",
+            "high": "128-bit encryption",
+            "fips": "FIPS 140-1 validated"
+          }
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA"],
+          "key_exchange": ["ECDH", "DHE"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "VNC",
+        "description": "Virtual Network Computing",
+        "layer": 4,
+        "implementations": ["TightVNC", "TigerVNC", "RealVNC", "UltraVNC"],
+        "ports": {
+          "display_0": {"port": 5900, "protocol": "TCP", "encryption": "None/TLS"},
+          "display_1": {"port": 5901, "protocol": "TCP", "encryption": "None/TLS"},
+          "display_2": {"port": 5902, "protocol": "TCP", "encryption": "None/TLS"},
+          "web": {"port": 5800, "protocol": "TCP", "encryption": "None/TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2 (VeNCrypt)"],
+          "ciphers": ["AES-128", "AES-256"],
+          "notes": "Native VNC is unencrypted; use VeNCrypt or SSH tunnel"
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA"],
+          "key_exchange": ["ECDH"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "Telnet",
+        "description": "Telnet Protocol (Legacy - DEPRECATED)",
+        "layer": 4,
+        "implementations": ["telnetd", "inetd"],
+        "ports": {
+          "plain": {"port": 23, "protocol": "TCP", "encryption": "None"},
+          "tls": {"port": 992, "protocol": "TCP", "encryption": "TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2"],
+          "ciphers": [],
+          "notes": "DEPRECATED - use SSH instead"
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096"],
+          "key_exchange": ["DHE"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "iLO",
+        "description": "HP Integrated Lights-Out",
+        "layer": 4,
+        "implementations": ["HP iLO 4", "HP iLO 5", "HP iLO 6"],
+        "ports": {
+          "https": {"port": 443, "protocol": "TCP", "encryption": "TLS"},
+          "ssh": {"port": 22, "protocol": "TCP", "encryption": "SSH"},
+          "remote_console": {"port": 17988, "protocol": "TCP", "encryption": "TLS"},
+          "virtual_media": {"port": 17990, "protocol": "TCP", "encryption": "TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3"],
+          "ciphers": ["AES-256-GCM"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA"],
+          "key_exchange": ["ECDH"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "iDRAC",
+        "description": "Dell Integrated Dell Remote Access Controller",
+        "layer": 4,
+        "implementations": ["iDRAC 8", "iDRAC 9"],
+        "ports": {
+          "https": {"port": 443, "protocol": "TCP", "encryption": "TLS"},
+          "ssh": {"port": 22, "protocol": "TCP", "encryption": "SSH"},
+          "virtual_console": {"port": 5900, "protocol": "TCP", "encryption": "None/TLS"},
+          "virtual_media": {"port": 5901, "protocol": "TCP", "encryption": "None/TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3"],
+          "ciphers": ["AES-256-GCM"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA"],
+          "key_exchange": ["ECDH"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "IPMI",
+        "description": "Intelligent Platform Management Interface",
+        "layer": 4,
+        "implementations": ["OpenIPMI", "FreeIPMI", "ipmitool"],
+        "ports": {
+          "rmcp": {"port": 623, "protocol": "UDP", "encryption": "RMCP+"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["RMCP+"],
+          "ciphers": ["AES-CBC-128"],
+          "authentication": ["RAKP-HMAC-SHA1", "RAKP-HMAC-SHA256"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048"],
+          "key_exchange": ["RAKP"],
+          "quantum_vulnerable": true
+        }
+      }
+    ],
+    "databases": [
+      {
+        "service": "MySQL",
+        "description": "MySQL/MariaDB Database Server",
+        "layer": 4,
+        "implementations": ["MySQL", "MariaDB", "Percona"],
+        "ports": {
+          "default": {"port": 3306, "protocol": "TCP", "encryption": "None/TLS"},
+          "x_protocol": {"port": 33060, "protocol": "TCP", "encryption": "None/TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3"],
+          "ciphers": ["AES-128-GCM", "AES-256-GCM"],
+          "authentication": ["caching_sha2_password", "mysql_native_password", "sha256_password"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA-P256", "ECDSA-P384"],
+          "key_exchange": ["ECDH", "DHE"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "PostgreSQL",
+        "description": "PostgreSQL Database Server",
+        "layer": 4,
+        "implementations": ["PostgreSQL", "EnterpriseDB", "Citus"],
+        "ports": {
+          "default": {"port": 5432, "protocol": "TCP", "encryption": "None/TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3"],
+          "ciphers": ["AES-256-GCM"],
+          "authentication": ["scram-sha-256", "md5 (deprecated)", "cert", "gss", "ldap"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA"],
+          "key_exchange": ["ECDH", "DHE"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "SQL Server",
+        "description": "Microsoft SQL Server",
+        "layer": 4,
+        "implementations": ["SQL Server", "Azure SQL"],
+        "ports": {
+          "default": {"port": 1433, "protocol": "TCP", "encryption": "None/TLS"},
+          "browser": {"port": 1434, "protocol": "UDP", "encryption": "None"},
+          "dac": {"port": 1434, "protocol": "TCP", "encryption": "None/TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3"],
+          "ciphers": ["AES-256", "AES-128"],
+          "features": {
+            "tde": "Transparent Data Encryption (AES-256)",
+            "always_encrypted": "Column-level encryption",
+            "force_encryption": "Require TLS for all connections"
+          }
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA"],
+          "key_exchange": ["ECDH", "DHE"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "Oracle",
+        "description": "Oracle Database",
+        "layer": 4,
+        "implementations": ["Oracle Database", "Oracle Autonomous"],
+        "ports": {
+          "listener": {"port": 1521, "protocol": "TCP", "encryption": "None/TLS"},
+          "em_https": {"port": 5500, "protocol": "TCP", "encryption": "TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3", "Oracle Native Network Encryption"],
+          "ciphers": ["AES-256", "AES-192", "AES-128", "3DES (deprecated)"],
+          "native_encryption": {
+            "algorithms": ["AES256", "AES192", "AES128"],
+            "checksums": ["SHA256", "SHA384", "SHA512"]
+          }
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA"],
+          "key_exchange": ["ECDH", "DHE"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "MongoDB",
+        "description": "MongoDB Document Database",
+        "layer": 4,
+        "implementations": ["MongoDB Community", "MongoDB Enterprise", "MongoDB Atlas"],
+        "ports": {
+          "default": {"port": 27017, "protocol": "TCP", "encryption": "None/TLS"},
+          "shard": {"port": 27018, "protocol": "TCP", "encryption": "None/TLS"},
+          "config": {"port": 27019, "protocol": "TCP", "encryption": "None/TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3"],
+          "ciphers": ["AES-256-GCM"],
+          "authentication": ["SCRAM-SHA-256", "SCRAM-SHA-1", "X.509", "LDAP", "Kerberos"],
+          "features": {
+            "csfle": "Client-Side Field Level Encryption",
+            "encryption_at_rest": "WiredTiger encryption"
+          }
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA"],
+          "key_exchange": ["ECDH"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "Redis",
+        "description": "Redis In-Memory Data Store",
+        "layer": 4,
+        "implementations": ["Redis", "Redis Enterprise", "KeyDB", "Valkey"],
+        "ports": {
+          "default": {"port": 6379, "protocol": "TCP", "encryption": "None/TLS"},
+          "cluster_bus": {"port": 16379, "protocol": "TCP", "encryption": "None/TLS"},
+          "sentinel": {"port": 26379, "protocol": "TCP", "encryption": "None/TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3"],
+          "ciphers": ["AES-256-GCM"],
+          "authentication": ["ACL", "AUTH command", "X.509 client certs"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA"],
+          "key_exchange": ["ECDH"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "Cassandra",
+        "description": "Apache Cassandra Distributed Database",
+        "layer": 4,
+        "implementations": ["Apache Cassandra", "DataStax Enterprise", "ScyllaDB"],
+        "ports": {
+          "native": {"port": 9042, "protocol": "TCP", "encryption": "None/TLS"},
+          "native_tls": {"port": 9142, "protocol": "TCP", "encryption": "TLS"},
+          "internode": {"port": 7000, "protocol": "TCP", "encryption": "None"},
+          "internode_tls": {"port": 7001, "protocol": "TCP", "encryption": "TLS"},
+          "jmx": {"port": 7199, "protocol": "TCP", "encryption": "None/TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3"],
+          "ciphers": ["AES-256", "AES-128"],
+          "types": {
+            "client_encryption": "Client to node",
+            "internode_encryption": "Node to node"
+          }
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA"],
+          "key_exchange": ["ECDH"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "Elasticsearch",
+        "description": "Elasticsearch Search Engine",
+        "layer": 4,
+        "implementations": ["Elasticsearch", "OpenSearch"],
+        "ports": {
+          "rest": {"port": 9200, "protocol": "TCP", "encryption": "None/TLS"},
+          "transport": {"port": 9300, "protocol": "TCP", "encryption": "None/TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3"],
+          "ciphers": ["AES-256-GCM"],
+          "features": ["Node-to-node encryption", "HTTP encryption", "Encryption at rest"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA"],
+          "key_exchange": ["ECDH"],
+          "quantum_vulnerable": true
+        }
+      }
+    ],
+    "authentication_identity": [
+      {
+        "service": "LDAP",
+        "description": "Lightweight Directory Access Protocol",
+        "layer": 4,
+        "implementations": ["OpenLDAP", "389 Directory Server", "ApacheDS"],
+        "ports": {
+          "plain": {"port": 389, "protocol": "TCP", "encryption": "None/STARTTLS"},
+          "ldaps": {"port": 636, "protocol": "TCP", "encryption": "TLS"},
+          "global_catalog": {"port": 3268, "protocol": "TCP", "encryption": "None/STARTTLS"},
+          "global_catalog_ssl": {"port": 3269, "protocol": "TCP", "encryption": "TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3"],
+          "ciphers": ["AES-256-GCM"],
+          "authentication": ["Simple bind", "SASL (GSSAPI, DIGEST-MD5, EXTERNAL)"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA"],
+          "key_exchange": ["ECDH", "DHE"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "Kerberos",
+        "description": "Kerberos Authentication Protocol",
+        "layer": 4,
+        "implementations": ["MIT Kerberos", "Heimdal", "Windows KDC"],
+        "ports": {
+          "kdc_tcp": {"port": 88, "protocol": "TCP", "encryption": "Kerberos"},
+          "kdc_udp": {"port": 88, "protocol": "UDP", "encryption": "Kerberos"},
+          "kpasswd_tcp": {"port": 464, "protocol": "TCP", "encryption": "Kerberos"},
+          "kpasswd_udp": {"port": 464, "protocol": "UDP", "encryption": "Kerberos"},
+          "kadmin": {"port": 749, "protocol": "TCP", "encryption": "Kerberos"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["Kerberos 5"],
+          "ciphers": {
+            "current": ["aes256-cts-hmac-sha1-96", "aes128-cts-hmac-sha1-96", "aes256-cts-hmac-sha384-192", "aes128-cts-hmac-sha256-128"],
+            "deprecated": ["des-cbc-crc", "des-cbc-md5", "des3-cbc-sha1", "rc4-hmac"]
+          }
+        },
+        "supported_keys": {
+          "asymmetric": [],
+          "symmetric": ["AES-128", "AES-256"],
+          "key_derivation": "Password-based (string2key)",
+          "quantum_vulnerable": false,
+          "notes": "Symmetric only - Grover's algorithm reduces effective security by half"
+        },
+        "message_types": {
+          "as_req": {"type": 10, "description": "Authentication Service Request"},
+          "as_rep": {"type": 11, "description": "Authentication Service Reply"},
+          "tgs_req": {"type": 12, "description": "Ticket-Granting Service Request"},
+          "tgs_rep": {"type": 13, "description": "Ticket-Granting Service Reply"},
+          "ap_req": {"type": 14, "description": "Application Request"},
+          "ap_rep": {"type": 15, "description": "Application Reply"},
+          "krb_safe": {"type": 20, "description": "Safe (integrity-protected) message"},
+          "krb_priv": {"type": 21, "description": "Private (encrypted) message"},
+          "krb_cred": {"type": 22, "description": "Credential forwarding"},
+          "krb_error": {"type": 30, "description": "Error message"}
+        }
+      },
+      {
+        "service": "RADIUS",
+        "description": "Remote Authentication Dial-In User Service",
+        "layer": 4,
+        "implementations": ["FreeRADIUS", "Microsoft NPS", "Cisco ISE"],
+        "ports": {
+          "auth": {"port": 1812, "protocol": "UDP", "encryption": "None"},
+          "accounting": {"port": 1813, "protocol": "UDP", "encryption": "None"},
+          "radsec": {"port": 2083, "protocol": "TCP", "encryption": "TLS"},
+          "legacy_auth": {"port": 1645, "protocol": "UDP", "encryption": "None"},
+          "legacy_acct": {"port": 1646, "protocol": "UDP", "encryption": "None"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["RadSec (TLS)", "EAP-TLS", "EAP-TTLS", "PEAP"],
+          "ciphers": ["MD5 (legacy attribute hiding)", "AES-256 (RadSec)"],
+          "eap_methods": ["EAP-TLS", "EAP-TTLS", "PEAP", "EAP-FAST", "EAP-SIM", "EAP-AKA"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA"],
+          "key_exchange": ["ECDH (EAP-TLS)"],
+          "quantum_vulnerable": true
+        },
+        "message_types": {
+          "access_request": {"code": 1, "description": "Authentication request"},
+          "access_accept": {"code": 2, "description": "Authentication successful"},
+          "access_reject": {"code": 3, "description": "Authentication failed"},
+          "accounting_request": {"code": 4, "description": "Accounting data"},
+          "accounting_response": {"code": 5, "description": "Accounting acknowledged"},
+          "access_challenge": {"code": 11, "description": "Additional info needed"},
+          "status_server": {"code": 12, "description": "Server status query"},
+          "status_client": {"code": 13, "description": "Client status query"},
+          "disconnect_request": {"code": 40, "description": "CoA - disconnect user"},
+          "disconnect_ack": {"code": 41, "description": "Disconnect acknowledged"},
+          "disconnect_nak": {"code": 42, "description": "Disconnect failed"},
+          "coa_request": {"code": 43, "description": "Change of Authorization"},
+          "coa_ack": {"code": 44, "description": "CoA acknowledged"},
+          "coa_nak": {"code": 45, "description": "CoA failed"}
+        }
+      },
+      {
+        "service": "TACACS+",
+        "description": "Terminal Access Controller Access-Control System Plus",
+        "layer": 4,
+        "implementations": ["Cisco TACACS+", "tac_plus", "TACACS.net"],
+        "ports": {
+          "default": {"port": 49, "protocol": "TCP", "encryption": "None/TLS"}
+        },
+        "encryption_algorithms": {
+          "native": "MD5 obfuscation (weak)",
+          "recommended": "TLS wrapper",
+          "notes": "Native encryption is weak - TLS wrapper strongly recommended"
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096"],
+          "key_exchange": ["DHE (with TLS)"],
+          "quantum_vulnerable": true
+        },
+        "message_types": {
+          "authentication_start": {"type": 1, "description": "Start authentication"},
+          "authentication_reply": {"type": 2, "description": "Authentication response"},
+          "authentication_continue": {"type": 3, "description": "Continue authentication"},
+          "authorization_request": {"type": 1, "description": "Authorization query"},
+          "authorization_response": {"type": 2, "description": "Authorization result"},
+          "accounting_request": {"type": 1, "description": "Accounting data"},
+          "accounting_reply": {"type": 2, "description": "Accounting acknowledged"}
+        }
+      },
+      {
+        "service": "Diameter",
+        "description": "Diameter Protocol - AAA for mobile networks",
+        "layer": 4,
+        "implementations": ["FreeDiameter", "OpenDiameter", "Cisco"],
+        "ports": {
+          "tcp": {"port": 3868, "protocol": "TCP", "encryption": "None/TLS"},
+          "sctp": {"port": 3868, "protocol": "SCTP", "encryption": "None/DTLS"},
+          "tls": {"port": 5868, "protocol": "TCP", "encryption": "TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3", "DTLS", "IPSec"],
+          "ciphers": ["AES-256-GCM"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA"],
+          "key_exchange": ["ECDH"],
+          "quantum_vulnerable": true
+        },
+        "message_types": {
+          "capabilities_exchange": {"command_code": 257, "description": "CER/CEA"},
+          "device_watchdog": {"command_code": 280, "description": "DWR/DWA"},
+          "disconnect_peer": {"command_code": 282, "description": "DPR/DPA"},
+          "re_auth": {"command_code": 258, "description": "RAR/RAA"},
+          "session_termination": {"command_code": 275, "description": "STR/STA"},
+          "abort_session": {"command_code": 274, "description": "ASR/ASA"},
+          "accounting": {"command_code": 271, "description": "ACR/ACA"},
+          "credit_control": {"command_code": 272, "description": "CCR/CCA"}
+        }
+      },
+      {
+        "service": "OAuth2/OIDC",
+        "description": "OAuth 2.0 and OpenID Connect",
+        "layer": 4,
+        "implementations": ["Keycloak", "Auth0", "Okta", "IdentityServer", "Hydra"],
+        "ports": {
+          "https": {"port": 443, "protocol": "TCP", "encryption": "TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3"],
+          "token_signing": {
+            "jwt_algorithms": ["RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "EdDSA", "PS256", "PS384", "PS512"],
+            "jwe_algorithms": ["RSA-OAEP", "RSA-OAEP-256", "A256KW", "ECDH-ES", "ECDH-ES+A256KW"]
+          }
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA-P256", "ECDSA-P384", "ECDSA-P521", "Ed25519"],
+          "key_exchange": ["ECDH-ES"],
+          "quantum_vulnerable": true
+        }
+      }
+    ],
+    "file_transfer_storage": [
+      {
+        "service": "FTP",
+        "description": "File Transfer Protocol (Unencrypted - DEPRECATED)",
+        "layer": 4,
+        "implementations": ["vsftpd", "ProFTPD", "Pure-FTPd"],
+        "ports": {
+          "control": {"port": 21, "protocol": "TCP", "encryption": "None"},
+          "data_active": {"port": 20, "protocol": "TCP", "encryption": "None"},
+          "data_passive": {"port_range": "1024-65535", "protocol": "TCP", "encryption": "None"}
+        },
+        "encryption_algorithms": {
+          "protocols": [],
+          "ciphers": [],
+          "notes": "DEPRECATED - Use SFTP or FTPS instead"
+        },
+        "supported_keys": {
+          "asymmetric": [],
+          "quantum_vulnerable": false,
+          "notes": "No encryption"
+        }
+      },
+      {
+        "service": "SFTP",
+        "description": "SSH File Transfer Protocol",
+        "layer": 4,
+        "implementations": ["OpenSSH", "ProFTPD mod_sftp", "Bitvise"],
+        "ports": {
+          "default": {"port": 22, "protocol": "TCP", "encryption": "SSH"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["SSH 2.0"],
+          "ciphers": ["chacha20-poly1305", "aes256-gcm", "aes128-gcm", "aes256-ctr"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA", "Ed25519"],
+          "key_exchange": ["Curve25519", "ECDH"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "FTPS",
+        "description": "FTP over TLS",
+        "layer": 4,
+        "implementations": ["vsftpd", "ProFTPD", "Pure-FTPd", "FileZilla Server"],
+        "ports": {
+          "explicit_control": {"port": 21, "protocol": "TCP", "encryption": "None/STARTTLS"},
+          "implicit": {"port": 990, "protocol": "TCP", "encryption": "TLS"},
+          "data_passive": {"port_range": "1024-65535", "protocol": "TCP", "encryption": "TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3"],
+          "ciphers": ["AES-256-GCM", "AES-128-GCM"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA"],
+          "key_exchange": ["ECDH", "DHE"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "SCP",
+        "description": "Secure Copy Protocol",
+        "layer": 4,
+        "implementations": ["OpenSSH"],
+        "ports": {
+          "default": {"port": 22, "protocol": "TCP", "encryption": "SSH"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["SSH 2.0"],
+          "ciphers": ["Same as SSH"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA", "Ed25519"],
+          "key_exchange": ["Curve25519", "ECDH"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "NFS",
+        "description": "Network File System",
+        "layer": 4,
+        "implementations": ["Linux NFS", "FreeBSD NFS", "Windows Services for NFS"],
+        "ports": {
+          "nfs_tcp": {"port": 2049, "protocol": "TCP", "encryption": "None/Kerberos"},
+          "nfs_udp": {"port": 2049, "protocol": "UDP", "encryption": "None/Kerberos"},
+          "mountd_tcp": {"port": 20048, "protocol": "TCP", "encryption": "None"},
+          "mountd_udp": {"port": 20048, "protocol": "UDP", "encryption": "None"},
+          "portmapper_tcp": {"port": 111, "protocol": "TCP", "encryption": "None"},
+          "portmapper_udp": {"port": 111, "protocol": "UDP", "encryption": "None"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["Kerberos (sec=krb5p)", "RPCSEC_GSS"],
+          "ciphers": ["AES-256-CTS-HMAC-SHA1"],
+          "security_modes": {
+            "sys": "No security (AUTH_SYS)",
+            "krb5": "Kerberos authentication only",
+            "krb5i": "Kerberos integrity protection",
+            "krb5p": "Kerberos privacy (encryption)"
+          }
+        },
+        "supported_keys": {
+          "asymmetric": [],
+          "symmetric": ["Kerberos keytab derived"],
+          "quantum_vulnerable": false,
+          "notes": "Kerberos symmetric - Grover's reduces effective security"
+        }
+      },
+      {
+        "service": "SMB",
+        "description": "Server Message Block / CIFS",
+        "layer": 4,
+        "implementations": ["Samba", "Windows File Server"],
+        "ports": {
+          "smb_direct": {"port": 445, "protocol": "TCP", "encryption": "None/SMB3"},
+          "netbios_ns": {"port": 137, "protocol": "UDP", "encryption": "None"},
+          "netbios_dgm": {"port": 138, "protocol": "UDP", "encryption": "None"},
+          "netbios_ssn": {"port": 139, "protocol": "TCP", "encryption": "None"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["SMB 3.0", "SMB 3.0.2", "SMB 3.1.1"],
+          "ciphers": {
+            "smb_3.0": ["AES-128-CCM"],
+            "smb_3.0.2": ["AES-128-CCM"],
+            "smb_3.1.1": ["AES-128-CCM", "AES-128-GCM", "AES-256-CCM", "AES-256-GCM"]
+          },
+          "signing": ["AES-CMAC (SMB 3.0)", "AES-GMAC (SMB 3.1.1)"]
+        },
+        "supported_keys": {
+          "asymmetric": [],
+          "symmetric": ["Session key derived from Kerberos/NTLM"],
+          "quantum_vulnerable": false,
+          "notes": "Session key derived - Grover's reduces effective security"
+        }
+      }
+    ],
+    "vpn_tunneling": [
+      {
+        "service": "OpenVPN",
+        "description": "OpenVPN SSL/TLS VPN",
+        "layer": 4,
+        "implementations": ["OpenVPN Community", "OpenVPN Access Server"],
+        "ports": {
+          "default_udp": {"port": 1194, "protocol": "UDP", "encryption": "TLS"},
+          "default_tcp": {"port": 1194, "protocol": "TCP", "encryption": "TLS"},
+          "https_fallback": {"port": 443, "protocol": "TCP", "encryption": "TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3"],
+          "data_channel": {
+            "ciphers": ["AES-256-GCM", "AES-128-GCM", "CHACHA20-POLY1305", "AES-256-CBC"],
+            "hmac": ["SHA256", "SHA384", "SHA512"]
+          },
+          "control_channel": ["TLS 1.2", "TLS 1.3"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA", "Ed25519"],
+          "key_exchange": ["ECDH", "DH-2048", "DH-4096"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "WireGuard",
+        "description": "WireGuard Modern VPN",
+        "layer": 4,
+        "implementations": ["WireGuard"],
+        "ports": {
+          "default": {"port": 51820, "protocol": "UDP", "encryption": "Noise"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["Noise Protocol Framework"],
+          "ciphers": {
+            "cipher": "ChaCha20-Poly1305",
+            "hash": "BLAKE2s",
+            "kdf": "HKDF",
+            "mac": "SipHash24"
+          },
+          "key_exchange": "Curve25519"
+        },
+        "supported_keys": {
+          "asymmetric": ["Curve25519 (X25519)"],
+          "key_exchange": ["Curve25519"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "IPSec_IKE",
+        "description": "IKE Key Exchange for IPSec",
+        "layer": 4,
+        "implementations": ["StrongSwan", "Libreswan", "Cisco", "Windows"],
+        "ports": {
+          "ike": {"port": 500, "protocol": "UDP", "encryption": "IPSec"},
+          "nat_t": {"port": 4500, "protocol": "UDP", "encryption": "IPSec"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["IKEv1", "IKEv2"],
+          "ciphers": {
+            "encryption": ["AES-256-GCM", "AES-256-CBC", "AES-128-GCM", "ChaCha20-Poly1305"],
+            "integrity": ["SHA2-256", "SHA2-384", "SHA2-512"],
+            "prf": ["PRF-HMAC-SHA256", "PRF-HMAC-SHA384", "PRF-HMAC-SHA512"]
+          }
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA-P256", "ECDSA-P384", "ECDSA-P521"],
+          "key_exchange": {
+            "dh_groups": ["DH-14", "DH-15", "DH-16", "DH-19", "DH-20", "DH-21", "DH-31"]
+          },
+          "quantum_vulnerable": true
+        },
+        "message_types": {
+          "ike_sa_init": {"exchange_type": 34, "description": "IKE SA negotiation"},
+          "ike_auth": {"exchange_type": 35, "description": "Authentication"},
+          "create_child_sa": {"exchange_type": 36, "description": "Child SA creation"},
+          "informational": {"exchange_type": 37, "description": "Notifications, deletes"}
+        }
+      },
+      {
+        "service": "L2TP",
+        "description": "Layer 2 Tunneling Protocol",
+        "layer": 4,
+        "implementations": ["xl2tpd", "Windows L2TP"],
+        "ports": {
+          "l2tp": {"port": 1701, "protocol": "UDP", "encryption": "None/IPSec"}
+        },
+        "encryption_algorithms": {
+          "native": "None",
+          "notes": "L2TP has no encryption - must use with IPSec (L2TP/IPSec)"
+        },
+        "supported_keys": {
+          "asymmetric": ["Via IPSec IKE"],
+          "quantum_vulnerable": true
+        },
+        "message_types": {
+          "sccrq": {"type": 1, "description": "Start-Control-Connection-Request"},
+          "sccrp": {"type": 2, "description": "Start-Control-Connection-Reply"},
+          "scccn": {"type": 3, "description": "Start-Control-Connection-Connected"},
+          "stopccn": {"type": 4, "description": "Stop-Control-Connection-Notification"},
+          "hello": {"type": 6, "description": "Keepalive"},
+          "ocrq": {"type": 7, "description": "Outgoing-Call-Request"},
+          "ocrp": {"type": 8, "description": "Outgoing-Call-Reply"},
+          "occn": {"type": 9, "description": "Outgoing-Call-Connected"},
+          "icrq": {"type": 10, "description": "Incoming-Call-Request"},
+          "icrp": {"type": 11, "description": "Incoming-Call-Reply"},
+          "iccn": {"type": 12, "description": "Incoming-Call-Connected"},
+          "cdn": {"type": 14, "description": "Call-Disconnect-Notify"}
+        }
+      },
+      {
+        "service": "PPTP",
+        "description": "Point-to-Point Tunneling Protocol (DEPRECATED - INSECURE)",
+        "layer": 4,
+        "implementations": ["Windows PPTP", "pptpd"],
+        "ports": {
+          "control": {"port": 1723, "protocol": "TCP", "encryption": "None"}
+        },
+        "data_transport": {
+          "protocol": "GRE",
+          "ip_protocol_number": 47,
+          "encryption": "MPPE",
+          "notes": "Data uses GRE (IP Protocol 47), not TCP/UDP"
+        },
+        "encryption_algorithms": {
+          "protocols": ["MPPE"],
+          "ciphers": ["RC4-40", "RC4-56", "RC4-128"],
+          "authentication": ["MS-CHAPv2"],
+          "security_status": "CRYPTOGRAPHICALLY BROKEN - DO NOT USE"
+        },
+        "supported_keys": {
+          "asymmetric": [],
+          "symmetric": ["RC4 derived from password"],
+          "quantum_vulnerable": true,
+          "notes": "Cryptographically broken regardless of quantum"
+        }
+      },
+      {
+        "service": "SSTP",
+        "description": "Secure Socket Tunneling Protocol",
+        "layer": 4,
+        "implementations": ["Windows", "SoftEther"],
+        "ports": {
+          "default": {"port": 443, "protocol": "TCP", "encryption": "TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3"],
+          "ciphers": ["AES-256-GCM", "AES-128-GCM"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA"],
+          "key_exchange": ["ECDH"],
+          "quantum_vulnerable": true
+        }
+      }
+    ],
+    "voice_video": [
+      {
+        "service": "SIP",
+        "description": "Session Initiation Protocol",
+        "layer": 4,
+        "implementations": ["Asterisk", "FreeSWITCH", "Kamailio", "OpenSIPS"],
+        "ports": {
+          "plain_tcp": {"port": 5060, "protocol": "TCP", "encryption": "None"},
+          "plain_udp": {"port": 5060, "protocol": "UDP", "encryption": "None"},
+          "tls": {"port": 5061, "protocol": "TCP", "encryption": "TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3"],
+          "ciphers": ["AES-256-GCM"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA"],
+          "key_exchange": ["ECDH"],
+          "quantum_vulnerable": true
+        },
+        "message_types": {
+          "invite": {"method": "INVITE", "description": "Initiate session"},
+          "ack": {"method": "ACK", "description": "Confirm session"},
+          "bye": {"method": "BYE", "description": "Terminate session"},
+          "cancel": {"method": "CANCEL", "description": "Cancel pending request"},
+          "register": {"method": "REGISTER", "description": "Register location"},
+          "options": {"method": "OPTIONS", "description": "Query capabilities"},
+          "info": {"method": "INFO", "description": "Mid-session info"},
+          "prack": {"method": "PRACK", "description": "Provisional ACK"},
+          "subscribe": {"method": "SUBSCRIBE", "description": "Subscribe to events"},
+          "notify": {"method": "NOTIFY", "description": "Event notification"},
+          "refer": {"method": "REFER", "description": "Transfer request"},
+          "message": {"method": "MESSAGE", "description": "Instant message"},
+          "update": {"method": "UPDATE", "description": "Update session"}
+        },
+        "response_codes": {
+          "1xx": "Provisional (100 Trying, 180 Ringing, 183 Session Progress)",
+          "2xx": "Success (200 OK, 202 Accepted)",
+          "3xx": "Redirection (301 Moved, 302 Moved Temporarily)",
+          "4xx": "Client Error (400 Bad Request, 401 Unauthorized, 403 Forbidden, 404 Not Found)",
+          "5xx": "Server Error (500 Internal Error, 503 Unavailable)",
+          "6xx": "Global Failure (600 Busy, 603 Decline)"
+        }
+      },
+      {
+        "service": "RTP",
+        "description": "Real-time Transport Protocol (Unencrypted)",
+        "layer": 4,
+        "implementations": ["libav", "GStreamer"],
+        "ports": {
+          "range": {"port_range": "10000-20000", "protocol": "UDP", "encryption": "None"}
+        },
+        "encryption_algorithms": {
+          "protocols": [],
+          "ciphers": [],
+          "notes": "Unencrypted - Use SRTP instead"
+        },
+        "supported_keys": {
+          "asymmetric": [],
+          "quantum_vulnerable": false,
+          "notes": "No encryption"
+        },
+        "header_structure": {
+          "version": "2 bits (always 2)",
+          "padding": "1 bit",
+          "extension": "1 bit",
+          "csrc_count": "4 bits",
+          "marker": "1 bit",
+          "payload_type": "7 bits",
+          "sequence_number": "16 bits",
+          "timestamp": "32 bits",
+          "ssrc": "32 bits",
+          "csrc_list": "0-15 items, 32 bits each"
+        }
+      },
+      {
+        "service": "SRTP",
+        "description": "Secure Real-time Transport Protocol",
+        "layer": 4,
+        "implementations": ["libsrtp"],
+        "ports": {
+          "range": {"port_range": "10000-20000", "protocol": "UDP", "encryption": "SRTP"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["SRTP (RFC 3711)"],
+          "ciphers": {
+            "cipher": ["AES-128-CM", "AES-256-CM", "AEAD-AES-128-GCM", "AEAD-AES-256-GCM"],
+            "auth": ["HMAC-SHA1-80", "HMAC-SHA1-32", "GCM"]
+          },
+          "key_management": ["DTLS-SRTP", "SDES", "MIKEY", "ZRTP"]
+        },
+        "supported_keys": {
+          "asymmetric": [],
+          "symmetric": ["Derived from key management protocol"],
+          "key_exchange": ["Via DTLS-SRTP or ZRTP"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "RTCP",
+        "description": "RTP Control Protocol",
+        "layer": 4,
+        "implementations": ["libav", "GStreamer"],
+        "ports": {
+          "range": {"port_range": "RTP port + 1", "protocol": "UDP", "encryption": "None/SRTCP"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["SRTCP when using SRTP"],
+          "ciphers": ["Same as SRTP"]
+        },
+        "message_types": {
+          "sender_report": {"type": 200, "description": "SR - Sender statistics"},
+          "receiver_report": {"type": 201, "description": "RR - Receiver statistics"},
+          "sdes": {"type": 202, "description": "Source Description"},
+          "bye": {"type": 203, "description": "Goodbye"},
+          "app": {"type": 204, "description": "Application-specific"}
+        }
+      },
+      {
+        "service": "WebRTC",
+        "description": "Web Real-Time Communication",
+        "layer": 4,
+        "implementations": ["libwebrtc", "Mediasoup", "Janus"],
+        "ports": {
+          "ice_range": {"port_range": "49152-65535", "protocol": "UDP", "encryption": "DTLS/SRTP"},
+          "tcp_fallback": {"port": 443, "protocol": "TCP", "encryption": "TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["DTLS 1.2", "DTLS 1.3", "SRTP"],
+          "ciphers": ["AES-128-GCM", "AES-256-GCM"],
+          "mandatory": ["DTLS-SRTP required by specification"]
+        },
+        "supported_keys": {
+          "asymmetric": ["ECDSA-P256", "RSA-2048"],
+          "key_exchange": ["ECDH"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "STUN",
+        "description": "Session Traversal Utilities for NAT",
+        "layer": 4,
+        "implementations": ["coturn", "PJNATH"],
+        "ports": {
+          "default_udp": {"port": 3478, "protocol": "UDP", "encryption": "None"},
+          "default_tcp": {"port": 3478, "protocol": "TCP", "encryption": "None"},
+          "tls": {"port": 5349, "protocol": "TCP", "encryption": "TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS (STUNS)"],
+          "ciphers": ["AES-256-GCM"]
+        },
+        "message_types": {
+          "binding_request": {"type": "0x0001", "description": "Discover mapped address"},
+          "binding_response": {"type": "0x0101", "description": "Mapped address response"},
+          "binding_error": {"type": "0x0111", "description": "Binding error"}
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA"],
+          "key_exchange": ["ECDH"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "TURN",
+        "description": "Traversal Using Relays around NAT",
+        "layer": 4,
+        "implementations": ["coturn", "PJNATH"],
+        "ports": {
+          "default_udp": {"port": 3478, "protocol": "UDP", "encryption": "None"},
+          "default_tcp": {"port": 3478, "protocol": "TCP", "encryption": "None"},
+          "tls": {"port": 5349, "protocol": "TCP", "encryption": "TLS"},
+          "dtls": {"port": 5349, "protocol": "UDP", "encryption": "DTLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3", "DTLS"],
+          "ciphers": ["AES-256-GCM"]
+        },
+        "message_types": {
+          "allocate": {"method": "0x003", "description": "Request relay allocation"},
+          "refresh": {"method": "0x004", "description": "Refresh allocation"},
+          "send": {"method": "0x006", "description": "Send data indication"},
+          "data": {"method": "0x007", "description": "Data indication"},
+          "create_permission": {"method": "0x008", "description": "Create permission"},
+          "channel_bind": {"method": "0x009", "description": "Bind channel number"}
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA"],
+          "key_exchange": ["ECDH"],
+          "quantum_vulnerable": true
+        }
+      }
+    ],
+    "dns_network_infrastructure": [
+      {
+        "service": "DNS",
+        "description": "Domain Name System (Unencrypted)",
+        "layer": 4,
+        "implementations": ["BIND", "PowerDNS", "Unbound", "dnsmasq"],
+        "ports": {
+          "default_udp": {"port": 53, "protocol": "UDP", "encryption": "None"},
+          "default_tcp": {"port": 53, "protocol": "TCP", "encryption": "None"}
+        },
+        "encryption_algorithms": {
+          "protocols": [],
+          "ciphers": [],
+          "notes": "Unencrypted - Use DoT or DoH for privacy"
+        },
+        "message_types": {
+          "query": {"qr": 0, "description": "DNS query"},
+          "response": {"qr": 1, "description": "DNS response"}
+        },
+        "opcodes": {
+          "query": {"value": 0, "description": "Standard query"},
+          "iquery": {"value": 1, "description": "Inverse query (obsolete)"},
+          "status": {"value": 2, "description": "Server status"},
+          "notify": {"value": 4, "description": "Zone change notification"},
+          "update": {"value": 5, "description": "Dynamic update"}
+        },
+        "rcodes": {
+          "noerror": {"value": 0, "description": "No error"},
+          "formerr": {"value": 1, "description": "Format error"},
+          "servfail": {"value": 2, "description": "Server failure"},
+          "nxdomain": {"value": 3, "description": "Non-existent domain"},
+          "notimp": {"value": 4, "description": "Not implemented"},
+          "refused": {"value": 5, "description": "Query refused"}
+        },
+        "supported_keys": {
+          "asymmetric": [],
+          "quantum_vulnerable": false,
+          "notes": "No encryption"
+        }
+      },
+      {
+        "service": "DNS_over_TLS",
+        "description": "DNS over TLS (DoT)",
+        "layer": 4,
+        "implementations": ["BIND", "Unbound", "Knot Resolver", "PowerDNS"],
+        "ports": {
+          "dot": {"port": 853, "protocol": "TCP", "encryption": "TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3"],
+          "ciphers": ["AES-256-GCM", "AES-128-GCM", "ChaCha20-Poly1305"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA"],
+          "key_exchange": ["ECDH", "X25519"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "DNS_over_HTTPS",
+        "description": "DNS over HTTPS (DoH)",
+        "layer": 4,
+        "implementations": ["BIND", "Unbound", "Cloudflare", "Google"],
+        "ports": {
+          "doh": {"port": 443, "protocol": "TCP", "encryption": "TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3"],
+          "ciphers": ["AES-256-GCM"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA"],
+          "key_exchange": ["ECDH", "X25519"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "DNS_over_QUIC",
+        "description": "DNS over QUIC (DoQ)",
+        "layer": 4,
+        "implementations": ["AdGuard", "Cloudflare"],
+        "ports": {
+          "doq": {"port": 853, "protocol": "UDP", "encryption": "QUIC"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.3 (via QUIC)"],
+          "ciphers": ["AES-256-GCM", "AES-128-GCM", "ChaCha20-Poly1305"]
+        },
+        "supported_keys": {
+          "asymmetric": ["ECDSA", "Ed25519"],
+          "key_exchange": ["X25519"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "DNSSEC",
+        "description": "DNS Security Extensions",
+        "layer": 4,
+        "implementations": ["BIND", "PowerDNS", "Knot DNS"],
+        "ports": {
+          "dns_udp": {"port": 53, "protocol": "UDP", "encryption": "None"},
+          "dns_tcp": {"port": 53, "protocol": "TCP", "encryption": "None"}
+        },
+        "encryption_algorithms": {
+          "type": "Signatures only (not encryption)",
+          "algorithms": {
+            "current": ["RSASHA256 (8)", "RSASHA512 (10)", "ECDSAP256SHA256 (13)", "ECDSAP384SHA384 (14)", "ED25519 (15)", "ED448 (16)"],
+            "deprecated": ["RSASHA1 (5)", "DSA (3)"]
+          }
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-1024 (deprecated)", "RSA-2048", "RSA-4096", "ECDSA-P256", "ECDSA-P384", "Ed25519", "Ed448"],
+          "key_types": {
+            "zsk": "Zone Signing Key",
+            "ksk": "Key Signing Key"
+          },
+          "quantum_vulnerable": true
+        },
+        "record_types": {
+          "dnskey": {"type": 48, "description": "Public key"},
+          "rrsig": {"type": 46, "description": "Signature"},
+          "nsec": {"type": 47, "description": "Authenticated denial"},
+          "nsec3": {"type": 50, "description": "Hashed authenticated denial"},
+          "nsec3param": {"type": 51, "description": "NSEC3 parameters"},
+          "ds": {"type": 43, "description": "Delegation signer"}
+        }
+      },
+      {
+        "service": "NTP",
+        "description": "Network Time Protocol (Unencrypted)",
+        "layer": 4,
+        "implementations": ["ntpd", "chrony", "systemd-timesyncd"],
+        "ports": {
+          "default": {"port": 123, "protocol": "UDP", "encryption": "None"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["Symmetric key authentication"],
+          "ciphers": ["MD5", "SHA1"],
+          "notes": "Use NTS for secure time synchronization"
+        },
+        "message_types": {
+          "symmetric_active": {"mode": 1, "description": "Peer mode"},
+          "symmetric_passive": {"mode": 2, "description": "Peer response"},
+          "client": {"mode": 3, "description": "Client request"},
+          "server": {"mode": 4, "description": "Server response"},
+          "broadcast": {"mode": 5, "description": "Broadcast"},
+          "control": {"mode": 6, "description": "Control message"},
+          "private": {"mode": 7, "description": "Private use"}
+        },
+        "supported_keys": {
+          "asymmetric": [],
+          "symmetric": ["Shared key"],
+          "quantum_vulnerable": false,
+          "notes": "Symmetric authentication only"
+        }
+      },
+      {
+        "service": "NTS",
+        "description": "Network Time Security",
+        "layer": 4,
+        "implementations": ["NTPsec", "chrony", "Netnod"],
+        "ports": {
+          "nts_ke": {"port": 4460, "protocol": "TCP", "encryption": "TLS"},
+          "ntp": {"port": 123, "protocol": "UDP", "encryption": "NTS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.3", "NTS"],
+          "ciphers": ["AEAD-AES-128-SIV-CMAC"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA"],
+          "key_exchange": ["ECDH"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "SNMPv3",
+        "description": "Simple Network Management Protocol v3",
+        "layer": 4,
+        "implementations": ["Net-SNMP", "SNMP4J"],
+        "ports": {
+          "agent": {"port": 161, "protocol": "UDP", "encryption": "USM"},
+          "trap": {"port": 162, "protocol": "UDP", "encryption": "USM"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["USM (User-based Security Model)", "TSM (TLS)"],
+          "ciphers": {
+            "privacy": ["DES (deprecated)", "3DES", "AES-128-CFB", "AES-192-CFB", "AES-256-CFB"],
+            "authentication": ["MD5 (deprecated)", "SHA-1 (deprecated)", "SHA-224", "SHA-256", "SHA-384", "SHA-512"]
+          },
+          "security_levels": {
+            "noAuthNoPriv": "No authentication, no privacy",
+            "authNoPriv": "Authentication, no privacy",
+            "authPriv": "Authentication and privacy"
+          }
+        },
+        "supported_keys": {
+          "asymmetric": [],
+          "symmetric": ["Localized keys derived from passphrase"],
+          "quantum_vulnerable": false,
+          "notes": "Symmetric-only - Grover's reduces effective security"
+        },
+        "message_types": {
+          "get_request": {"pdu_type": 0, "description": "Get single OID"},
+          "get_next_request": {"pdu_type": 1, "description": "Get next OID"},
+          "get_response": {"pdu_type": 2, "description": "Response"},
+          "set_request": {"pdu_type": 3, "description": "Set OID value"},
+          "get_bulk_request": {"pdu_type": 5, "description": "Bulk retrieval"},
+          "inform_request": {"pdu_type": 6, "description": "Manager-to-manager"},
+          "snmpv2_trap": {"pdu_type": 7, "description": "Trap notification"},
+          "report": {"pdu_type": 8, "description": "Error report"}
+        }
+      },
+      {
+        "service": "Syslog",
+        "description": "System Logging Protocol",
+        "layer": 4,
+        "implementations": ["rsyslog", "syslog-ng", "Fluentd"],
+        "ports": {
+          "plain_udp": {"port": 514, "protocol": "UDP", "encryption": "None"},
+          "plain_tcp": {"port": 514, "protocol": "TCP", "encryption": "None"},
+          "tls": {"port": 6514, "protocol": "TCP", "encryption": "TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3"],
+          "ciphers": ["AES-256-GCM"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA"],
+          "key_exchange": ["ECDH"],
+          "quantum_vulnerable": true
+        },
+        "severity_levels": {
+          "emergency": {"value": 0, "description": "System is unusable"},
+          "alert": {"value": 1, "description": "Immediate action needed"},
+          "critical": {"value": 2, "description": "Critical conditions"},
+          "error": {"value": 3, "description": "Error conditions"},
+          "warning": {"value": 4, "description": "Warning conditions"},
+          "notice": {"value": 5, "description": "Normal but significant"},
+          "informational": {"value": 6, "description": "Informational"},
+          "debug": {"value": 7, "description": "Debug-level messages"}
+        }
+      },
+      {
+        "service": "DHCP",
+        "description": "Dynamic Host Configuration Protocol",
+        "layer": 4,
+        "implementations": ["ISC DHCP", "Kea", "dnsmasq"],
+        "ports": {
+          "server": {"port": 67, "protocol": "UDP", "encryption": "None"},
+          "client": {"port": 68, "protocol": "UDP", "encryption": "None"},
+          "dhcpv6_server": {"port": 547, "protocol": "UDP", "encryption": "None"},
+          "dhcpv6_client": {"port": 546, "protocol": "UDP", "encryption": "None"}
+        },
+        "encryption_algorithms": {
+          "protocols": [],
+          "ciphers": [],
+          "notes": "No encryption - relies on network isolation"
+        },
+        "message_types": {
+          "dhcpdiscover": {"type": 1, "description": "Client discovers servers"},
+          "dhcpoffer": {"type": 2, "description": "Server offers address"},
+          "dhcprequest": {"type": 3, "description": "Client requests address"},
+          "dhcpdecline": {"type": 4, "description": "Client declines offer"},
+          "dhcpack": {"type": 5, "description": "Server acknowledges"},
+          "dhcpnak": {"type": 6, "description": "Server refuses"},
+          "dhcprelease": {"type": 7, "description": "Client releases address"},
+          "dhcpinform": {"type": 8, "description": "Client requests info only"}
+        },
+        "supported_keys": {
+          "asymmetric": [],
+          "quantum_vulnerable": false,
+          "notes": "No encryption"
+        }
+      }
+    ],
+    "industrial_iot": [
+      {
+        "service": "MQTT",
+        "description": "Message Queuing Telemetry Transport",
+        "layer": 4,
+        "implementations": ["Mosquitto", "HiveMQ", "EMQ X", "VerneMQ"],
+        "ports": {
+          "plain": {"port": 1883, "protocol": "TCP", "encryption": "None"},
+          "tls": {"port": 8883, "protocol": "TCP", "encryption": "TLS"},
+          "websocket": {"port": 9001, "protocol": "TCP", "encryption": "None"},
+          "websocket_tls": {"port": 9443, "protocol": "TCP", "encryption": "TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["TLS 1.2", "TLS 1.3"],
+          "ciphers": ["AES-256-GCM", "AES-128-GCM"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA", "Ed25519"],
+          "key_exchange": ["ECDH", "PSK"],
+          "quantum_vulnerable": true
+        },
+        "message_types": {
+          "connect": {"type": 1, "description": "Client connect"},
+          "connack": {"type": 2, "description": "Connect acknowledgment"},
+          "publish": {"type": 3, "description": "Publish message"},
+          "puback": {"type": 4, "description": "Publish acknowledgment (QoS 1)"},
+          "pubrec": {"type": 5, "description": "Publish received (QoS 2)"},
+          "pubrel": {"type": 6, "description": "Publish release (QoS 2)"},
+          "pubcomp": {"type": 7, "description": "Publish complete (QoS 2)"},
+          "subscribe": {"type": 8, "description": "Subscribe request"},
+          "suback": {"type": 9, "description": "Subscribe acknowledgment"},
+          "unsubscribe": {"type": 10, "description": "Unsubscribe request"},
+          "unsuback": {"type": 11, "description": "Unsubscribe acknowledgment"},
+          "pingreq": {"type": 12, "description": "Ping request"},
+          "pingresp": {"type": 13, "description": "Ping response"},
+          "disconnect": {"type": 14, "description": "Client disconnect"},
+          "auth": {"type": 15, "description": "Authentication exchange (MQTT 5.0)"}
+        }
+      },
+      {
+        "service": "CoAP",
+        "description": "Constrained Application Protocol",
+        "layer": 4,
+        "implementations": ["libcoap", "Californium", "Zephyr CoAP"],
+        "ports": {
+          "plain": {"port": 5683, "protocol": "UDP", "encryption": "None"},
+          "dtls": {"port": 5684, "protocol": "UDP", "encryption": "DTLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["DTLS 1.2", "OSCORE"],
+          "ciphers": ["AES-128-CCM", "AES-128-GCM"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "ECDSA-P256"],
+          "key_exchange": ["ECDH", "PSK"],
+          "quantum_vulnerable": true
+        },
+        "message_types": {
+          "con": {"type": 0, "description": "Confirmable"},
+          "non": {"type": 1, "description": "Non-confirmable"},
+          "ack": {"type": 2, "description": "Acknowledgment"},
+          "rst": {"type": 3, "description": "Reset"}
+        },
+        "methods": {
+          "get": {"code": "0.01", "description": "Retrieve resource"},
+          "post": {"code": "0.02", "description": "Create/update resource"},
+          "put": {"code": "0.03", "description": "Update resource"},
+          "delete": {"code": "0.04", "description": "Delete resource"},
+          "fetch": {"code": "0.05", "description": "Fetch with payload"},
+          "patch": {"code": "0.06", "description": "Partial update"},
+          "ipatch": {"code": "0.07", "description": "Idempotent partial update"}
+        }
+      },
+      {
+        "service": "OPC-UA",
+        "description": "OPC Unified Architecture",
+        "layer": 4,
+        "implementations": ["open62541", "NodeOPCUA", "Unified Automation"],
+        "ports": {
+          "tcp": {"port": 4840, "protocol": "TCP", "encryption": "None/TLS"},
+          "https": {"port": 4843, "protocol": "TCP", "encryption": "TLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["OPC UA Security", "TLS 1.2", "TLS 1.3"],
+          "security_policies": {
+            "None": "No security",
+            "Basic256Sha256": "AES-256-CBC, RSA-OAEP, SHA-256",
+            "Aes128_Sha256_RsaOaep": "AES-128-CBC, RSA-OAEP, SHA-256",
+            "Aes256_Sha256_RsaPss": "AES-256-CBC, RSA-PSS, SHA-256"
+          }
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA-P256", "ECDSA-P384"],
+          "key_exchange": ["RSA-OAEP", "ECDH"],
+          "quantum_vulnerable": true
+        },
+        "message_types": {
+          "hello": {"type": "HEL", "description": "Connection initiation"},
+          "acknowledge": {"type": "ACK", "description": "Hello acknowledgment"},
+          "error": {"type": "ERR", "description": "Error response"},
+          "open_secure_channel": {"type": "OPN", "description": "Open secure channel"},
+          "close_secure_channel": {"type": "CLO", "description": "Close secure channel"},
+          "message": {"type": "MSG", "description": "Secure message"}
+        }
+      },
+      {
+        "service": "Modbus_TCP",
+        "description": "Modbus over TCP/IP",
+        "layer": 4,
+        "implementations": ["libmodbus", "pymodbus"],
+        "ports": {
+          "default": {"port": 502, "protocol": "TCP", "encryption": "None"}
+        },
+        "encryption_algorithms": {
+          "native": "None",
+          "notes": "No native encryption - must use TLS wrapper or VPN"
+        },
+        "function_codes": {
+          "read_coils": {"code": 1, "description": "Read discrete outputs"},
+          "read_discrete_inputs": {"code": 2, "description": "Read discrete inputs"},
+          "read_holding_registers": {"code": 3, "description": "Read holding registers"},
+          "read_input_registers": {"code": 4, "description": "Read input registers"},
+          "write_single_coil": {"code": 5, "description": "Write single coil"},
+          "write_single_register": {"code": 6, "description": "Write single register"},
+          "write_multiple_coils": {"code": 15, "description": "Write multiple coils"},
+          "write_multiple_registers": {"code": 16, "description": "Write multiple registers"},
+          "read_write_multiple_registers": {"code": 23, "description": "Read/write registers"}
+        },
+        "supported_keys": {
+          "asymmetric": ["Via TLS wrapper"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "BACnet_IP",
+        "description": "Building Automation and Control Networks",
+        "layer": 4,
+        "implementations": ["BACnet Stack", "YABE"],
+        "ports": {
+          "default": {"port": 47808, "protocol": "UDP", "encryption": "None"}
+        },
+        "encryption_algorithms": {
+          "native": "None",
+          "bacnet_sc": {
+            "protocol": "BACnet/SC (Secure Connect)",
+            "encryption": "TLS"
+          }
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA"],
+          "key_exchange": ["ECDH"],
+          "quantum_vulnerable": true
+        },
+        "message_types": {
+          "confirmed_request": {"type": 0, "description": "Request requiring response"},
+          "unconfirmed_request": {"type": 1, "description": "Request not requiring response"},
+          "simple_ack": {"type": 2, "description": "Simple acknowledgment"},
+          "complex_ack": {"type": 3, "description": "Acknowledgment with data"},
+          "segment_ack": {"type": 4, "description": "Segment acknowledgment"},
+          "error": {"type": 5, "description": "Error response"},
+          "reject": {"type": 6, "description": "Reject message"},
+          "abort": {"type": 7, "description": "Abort transaction"}
+        }
+      },
+      {
+        "service": "DNP3",
+        "description": "Distributed Network Protocol 3",
+        "layer": 4,
+        "implementations": ["OpenDNP3", "Triangle MicroWorks"],
+        "ports": {
+          "tcp": {"port": 20000, "protocol": "TCP", "encryption": "None/SAv5"},
+          "udp": {"port": 20000, "protocol": "UDP", "encryption": "None/SAv5"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["DNP3 Secure Authentication v5"],
+          "ciphers": ["HMAC-SHA256", "AES-256-GMAC"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA"],
+          "key_exchange": ["Asymmetric key update"],
+          "quantum_vulnerable": true
+        },
+        "function_codes": {
+          "confirm": {"code": 0, "description": "Confirmation"},
+          "read": {"code": 1, "description": "Read data"},
+          "write": {"code": 2, "description": "Write data"},
+          "select": {"code": 3, "description": "Select before operate"},
+          "operate": {"code": 4, "description": "Operate control"},
+          "direct_operate": {"code": 5, "description": "Direct operate"},
+          "freeze": {"code": 7, "description": "Freeze counters"},
+          "restart": {"code": 13, "description": "Cold restart"},
+          "warm_restart": {"code": 14, "description": "Warm restart"},
+          "enable_unsolicited": {"code": 20, "description": "Enable unsolicited"},
+          "disable_unsolicited": {"code": 21, "description": "Disable unsolicited"},
+          "authentication_request": {"code": 32, "description": "SAv5 auth request"},
+          "authentication_response": {"code": 131, "description": "SAv5 auth response"}
+        }
+      }
+    ],
+    "sctp_services": [
+      {
+        "service": "Diameter_SCTP",
+        "description": "Diameter AAA Protocol over SCTP",
+        "layer": 4,
+        "implementations": ["FreeDiameter", "OpenDiameter"],
+        "ports": {
+          "sctp": {"port": 3868, "protocol": "SCTP", "encryption": "None/DTLS"}
+        },
+        "encryption_algorithms": {
+          "protocols": ["DTLS", "IPSec"],
+          "ciphers": ["AES-256-GCM"]
+        },
+        "supported_keys": {
+          "asymmetric": ["RSA-2048", "RSA-4096", "ECDSA"],
+          "key_exchange": ["ECDH"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "SIGTRAN_M3UA",
+        "description": "SS7 MTP3 User Adaptation Layer",
+        "layer": 4,
+        "implementations": ["Oort SIGTRAN", "Oort SS7"],
+        "ports": {
+          "sctp": {"port": 2905, "protocol": "SCTP", "encryption": "None/IPSec"}
+        },
+        "encryption_algorithms": {
+          "native": "None",
+          "recommended": "IPSec"
+        },
+        "supported_keys": {
+          "asymmetric": ["Via IPSec"],
+          "quantum_vulnerable": true
+        },
+        "message_types": {
+          "data": {"type": 1, "description": "Protocol data"},
+          "duna": {"type": 2, "description": "Destination unavailable"},
+          "dava": {"type": 3, "description": "Destination available"},
+          "daud": {"type": 4, "description": "Destination audit"},
+          "scon": {"type": 5, "description": "Signaling congestion"},
+          "dupu": {"type": 6, "description": "Destination user part unavailable"},
+          "drst": {"type": 7, "description": "Destination restricted"}
+        }
+      },
+      {
+        "service": "S1AP",
+        "description": "S1 Application Protocol (LTE)",
+        "layer": 4,
+        "implementations": ["Open5GS", "srsRAN"],
+        "ports": {
+          "sctp": {"port": 36412, "protocol": "SCTP", "encryption": "None/IPSec"}
+        },
+        "encryption_algorithms": {
+          "native": "None at S1AP layer",
+          "recommended": "IPSec for backhaul"
+        },
+        "supported_keys": {
+          "asymmetric": ["Via IPSec"],
+          "quantum_vulnerable": true
+        }
+      },
+      {
+        "service": "NGAP",
+        "description": "NG Application Protocol (5G)",
+        "layer": 4,
+        "implementations": ["Open5GS", "free5GC"],
+        "ports": {
+          "sctp": {"port": 38412, "protocol": "SCTP", "encryption": "None/TLS"}
+        },
+        "encryption_algorithms": {
+          "native": "None at NGAP layer",
+          "recommended": "IPSec or TLS for N2 interface"
+        },
+        "supported_keys": {
+          "asymmetric": ["Via IPSec/TLS"],
+          "quantum_vulnerable": true
+        }
+      }
+    ]
+  },
+  "cryptographic_algorithms": {
+    "asymmetric": {
+      "RSA": {
+        "type": "Public Key Encryption/Signature",
+        "key_sizes": [2048, 3072, 4096, 8192],
+        "security_bits": {"2048": 112, "3072": 128, "4096": 152},
+        "quantum_vulnerable": true,
+        "vulnerability": "Shor's algorithm",
+        "cnsa_2.0_status": "Phase out by 2030"
+      },
+      "ECDSA": {
+        "type": "Digital Signature",
+        "curves": ["P-256", "P-384", "P-521", "secp256k1"],
+        "security_bits": {"P-256": 128, "P-384": 192, "P-521": 256},
+        "quantum_vulnerable": true,
+        "vulnerability": "Shor's algorithm",
+        "cnsa_2.0_status": "Phase out by 2030"
+      },
+      "Ed25519": {
+        "type": "Digital Signature",
+        "curve": "Curve25519",
+        "key_size": 256,
+        "security_bits": 128,
+        "quantum_vulnerable": true,
+        "vulnerability": "Shor's algorithm"
+      },
+      "Ed448": {
+        "type": "Digital Signature",
+        "curve": "Curve448",
+        "key_size": 448,
+        "security_bits": 224,
+        "quantum_vulnerable": true,
+        "vulnerability": "Shor's algorithm"
+      }
+    },
+    "key_exchange": {
+      "DH": {
+        "type": "Key Exchange",
+        "sizes": [2048, 3072, 4096, 6144, 8192],
+        "quantum_vulnerable": true,
+        "vulnerability": "Shor's algorithm"
+      },
+      "ECDH": {
+        "type": "Key Exchange",
+        "curves": ["P-256", "P-384", "P-521"],
+        "quantum_vulnerable": true,
+        "vulnerability": "Shor's algorithm"
+      },
+      "X25519": {
+        "type": "Key Exchange",
+        "curve": "Curve25519",
+        "key_size": 256,
+        "quantum_vulnerable": true,
+        "vulnerability": "Shor's algorithm"
+      },
+      "X448": {
+        "type": "Key Exchange",
+        "curve": "Curve448",
+        "key_size": 448,
+        "quantum_vulnerable": true,
+        "vulnerability": "Shor's algorithm"
+      }
+    },
+    "symmetric": {
+      "AES": {
+        "type": "Block Cipher",
+        "key_sizes": [128, 192, 256],
+        "modes": ["GCM", "CBC", "CTR", "CCM", "XTS"],
+        "quantum_vulnerable": false,
+        "quantum_impact": "Grover's algorithm halves effective security",
+        "post_quantum_recommendation": "AES-256 for 128-bit post-quantum security"
+      },
+      "ChaCha20-Poly1305": {
+        "type": "Stream Cipher + AEAD",
+        "key_size": 256,
+        "quantum_vulnerable": false,
+        "quantum_impact": "Grover's algorithm halves effective security"
+      },
+      "3DES": {
+        "type": "Block Cipher",
+        "effective_key_size": 168,
+        "status": "DEPRECATED - Do not use",
+        "quantum_vulnerable": false
+      }
+    },
+    "post_quantum": {
+      "ML-KEM": {
+        "former_name": "Crystals-Kyber",
+        "type": "Key Encapsulation Mechanism",
+        "nist_status": "Standardized (FIPS 203)",
+        "security_levels": {
+          "ML-KEM-512": {"nist_level": 1, "classical_equivalent": "AES-128"},
+          "ML-KEM-768": {"nist_level": 3, "classical_equivalent": "AES-192"},
+          "ML-KEM-1024": {"nist_level": 5, "classical_equivalent": "AES-256"}
+        },
+        "quantum_vulnerable": false,
+        "recommended_for": ["TLS", "SSH", "VPN", "Email"]
+      },
+      "ML-DSA": {
+        "former_name": "Crystals-Dilithium",
+        "type": "Digital Signature",
+        "nist_status": "Standardized (FIPS 204)",
+        "security_levels": {
+          "ML-DSA-44": {"nist_level": 2, "classical_equivalent": "128-bit"},
+          "ML-DSA-65": {"nist_level": 3, "classical_equivalent": "192-bit"},
+          "ML-DSA-87": {"nist_level": 5, "classical_equivalent": "256-bit"}
+        },
+        "quantum_vulnerable": false,
+        "recommended_for": ["Code signing", "Certificates", "Authentication"]
+      },
+      "SLH-DSA": {
+        "former_name": "SPHINCS+",
+        "type": "Hash-based Digital Signature",
+        "nist_status": "Standardized (FIPS 205)",
+        "quantum_vulnerable": false,
+        "notes": "Larger signatures, conservative security assumptions"
+      }
+    }
+  },
+  "ip_protocol_numbers": {
+    "description": "IP Protocol field values for Layer 3 protocols",
+    "protocols": {
+      "1": {"name": "ICMP", "description": "Internet Control Message Protocol"},
+      "2": {"name": "IGMP", "description": "Internet Group Management Protocol"},
+      "4": {"name": "IP-in-IP", "description": "IP encapsulation"},
+      "6": {"name": "TCP", "description": "Transmission Control Protocol"},
+      "17": {"name": "UDP", "description": "User Datagram Protocol"},
+      "41": {"name": "IPv6", "description": "IPv6 encapsulation"},
+      "47": {"name": "GRE", "description": "Generic Routing Encapsulation"},
+      "50": {"name": "ESP", "description": "Encapsulating Security Payload"},
+      "51": {"name": "AH", "description": "Authentication Header"},
+      "58": {"name": "ICMPv6", "description": "ICMP for IPv6"},
+      "88": {"name": "EIGRP", "description": "Enhanced Interior Gateway Routing Protocol"},
+      "89": {"name": "OSPF", "description": "Open Shortest Path First"},
+      "103": {"name": "PIM", "description": "Protocol Independent Multicast"},
+      "112": {"name": "VRRP", "description": "Virtual Router Redundancy Protocol"},
+      "115": {"name": "L2TPv3", "description": "Layer 2 Tunneling Protocol v3"},
+      "132": {"name": "SCTP", "description": "Stream Control Transmission Protocol"}
+    }
+  },
+  "encryption_values_reference": {
+    "description": "Reference for encryption field values used throughout this document",
+    "values": {
+      "None": "No encryption available or configured",
+      "TLS": "Implicit TLS - connection starts encrypted",
+      "STARTTLS": "Upgrade mechanism from plaintext to TLS",
+      "SSH": "SSH protocol encryption",
+      "DTLS": "Datagram TLS for UDP",
+      "QUIC": "QUIC transport with built-in TLS 1.3",
+      "IPSec": "IPSec encryption (ESP)",
+      "Kerberos": "Kerberos encryption",
+      "SRTP": "Secure RTP encryption",
+      "SRTCP": "Secure RTCP encryption",
+      "RMCP+": "RMCP+ encryption for IPMI",
+      "USM": "User-based Security Model (SNMPv3)",
+      "Noise": "Noise Protocol Framework (WireGuard)",
+      "OMEMO": "OMEMO end-to-end encryption",
+      "Megolm": "Megolm end-to-end encryption (Matrix)",
+      "OSCORE": "Object Security for Constrained RESTful Environments",
+      "SAv5": "DNP3 Secure Authentication v5",
+      "NTS": "Network Time Security",
+      "SMB3": "SMB 3.x encryption",
+      "MPPE": "Microsoft Point-to-Point Encryption (deprecated)"
+    },
+    "combination_format": {
+      "description": "When a port supports multiple encryption options, format is 'default/available'",
+      "examples": {
+        "None": "No encryption at all",
+        "TLS": "TLS required/implicit",
+        "None/TLS": "Unencrypted by default, TLS available",
+        "None/STARTTLS": "Unencrypted by default, STARTTLS upgrade available",
+        "STARTTLS": "STARTTLS required",
+        "None/IPSec": "No native encryption, IPSec recommended",
+        "None/Kerberos": "No default encryption, Kerberos available",
+        "None/SAv5": "No default encryption, Secure Auth v5 available",
+        "DTLS/SRTP": "DTLS for key exchange, SRTP for media"
+      }
+    }
+  },
+  "compliance_frameworks": {
+    "CNSA_2.0": {
+      "authority": "NSA",
+      "target": "National Security Systems",
+      "timeline": {
+        "2025": "Begin transition planning",
+        "2027": "Software/firmware signing must support PQC",
+        "2030": "Web browsers/servers, cloud services must be quantum-resistant",
+        "2033": "All cryptography must be quantum-resistant"
+      },
+      "algorithms": {
+        "key_establishment": "ML-KEM-768 or ML-KEM-1024",
+        "digital_signature": "ML-DSA-65 or ML-DSA-87",
+        "symmetric": "AES-256",
+        "hash": "SHA-384 or SHA-512"
+      }
+    },
+    "PCI_DSS_4.0": {
+      "authority": "PCI Security Standards Council",
+      "target": "Payment Card Industry",
+      "requirements": {
+        "tls_version": "TLS 1.2 minimum",
+        "key_sizes": "RSA-2048 minimum",
+        "monitoring": "Cryptographic inventory required"
+      }
+    },
+    "FIPS_140-3": {
+      "authority": "NIST",
+      "target": "Federal Information Processing",
+      "cryptographic_modules": "Must be FIPS 140-3 validated"
+    }
+  },
+  "pqc_migration_priority": {
+    "tier_1_critical": {
+      "description": "High HNDL risk - immediate migration priority",
+      "services": ["SSH", "TLS/HTTPS", "IPSec VPN", "Email (SMTP/IMAP)"]
+    },
+    "tier_2_high": {
+      "description": "Important enterprise services",
+      "services": ["Database TLS", "LDAP/AD", "API Gateways", "Kubernetes"]
+    },
+    "tier_3_medium": {
+      "description": "IoT and Industrial (constrained environments)",
+      "services": ["MQTT", "OPC-UA", "CoAP", "Modbus over TLS"]
+    },
+    "tier_4_blockchain": {
+      "description": "Cryptocurrency systems",
+      "services": ["Bitcoin", "Ethereum"]
+    }
+  }
+}

@@ -1,0 +1,217 @@
+{
+  "name": "name of server",
+  "description": "",
+  "application_env_var": "entry directory for application config files",
+  "thread_pool_size": 128,
+  "thread_pool_java_type": false,
+  "base_uri": "",
+  "tls_only": true,
+  "properties": {
+    "shiro": {
+      "config": "classpath:shiro-proxy.ini",
+      "subjects": {
+        "LocalAdmin": ""
+      }
+    },
+    "keep-alive": {
+      "time_out": "5s",
+      "maximum": 20
+    },
+    "on-startup": {
+      "bean": "io.xlogistx.http.services.OnStartupOnShutdown"
+    },
+    "post-startup": {
+      "bean": "io.xlogistx.http.services.OnStartupOnShutdown"
+    },
+    "on-shutdown": {
+      "bean": "io.xlogistx.http.services.OnStartupOnShutdown"
+    },
+    "redirect_config": {
+      "domains": "localhost",
+      "location" : "https//xlogistx.io",
+      "exclusion-filter": "-i -r *.well-known*"
+    }
+  },
+  "connections": [
+    {
+      "name": "http",
+      "schemes": [
+        "http"
+      ],
+      "socket_config": {
+        "port": 6080,
+        "backlog": 256
+      }
+    },
+    {
+      "name": "https",
+      "schemes": [
+        "https"
+      ],
+      "socket_config": {
+        "port": 6443,
+        "backlog": 256
+      },
+      "ssl_config": {
+        "name": "SSLCONFIG",
+        "keystore_file": "web.ec.xlogistx.io.jks",
+        "simple_state_machine": true,
+        "keystore_type": "pkcs12",
+        "keystore_password": "password",
+        //        "protocols": [
+        //          "TLSv1.2",
+        //          "TLSv1.3"
+        //        ],
+        "ciphers": [
+        ],
+        "groups:": [
+          "X25519MLKEM768",
+          // PQC hybrid (browser default)
+          "SecP256r1MLKEM768",
+          // PQC hybrid (FIPS)
+          "SecP384r1MLKEM1024",
+          // PQC hybrid (high security)
+          "x25519",
+          // Classical fallback
+          "secp256r1",
+          "secp384r1"
+        ]
+      }
+    }
+  ],
+  "endpoints": [
+    //    {
+    //      "name": "ping",
+    //      "bean": "org.server.Handle",
+    //      "methods": [ "GET", "POST"]
+    //    },
+
+    {
+      "bean": "io.xlogistx.http.services.Ping",
+      "properties": {
+        "server_name": "NIOHTTPServer",
+        "version": "NIO-HS-1.0"
+      }
+    },
+    {
+      "methods": [
+        "POST",
+        "get"
+      ],
+      "bean": "io.xlogistx.http.services.CurrentTimestamp"
+    },
+    {
+      "bean": "io.xlogistx.nosneak.services.QDZChecker",
+      "properties": {
+        "start-count-at": 1279
+      }
+    },
+    {
+      "bean": "io.xlogistx.http.services.SysConfig"
+    },
+    {
+      "bean": "io.xlogistx.http.services.HTTPUploadHandler",
+      "properties": {
+        "base_folder": "/webs/test/apps"
+      }
+    },
+    //    {
+    //      "bean": "io.xlogistx.http.services.DNSCache",
+    //      "properties": {
+    //        "resolver": "10.0.0.1",
+    //        "port": 53,
+    //        "parallel": false,
+    //        "log-enabled": false
+    //      }
+    //    },
+    {
+      "bean": "io.xlogistx.http.services.EchoChat"
+    },
+    {
+      "bean": "io.xlogistx.http.services.EchoChatTest"
+    },
+    {
+      "bean": "io.xlogistx.http.services.SysCommand",
+      "properties": {
+        "reboot-command": "reboot-command",
+        "reboot-delay": "00:00:05",
+        "shutdown-command": "shutdown command",
+        "shutdown-delay": "00:00:05"
+      }
+    },
+    {
+      "bean": "io.xlogistx.http.services.AppCommand"
+    },
+    {
+      "bean": "io.xlogistx.http.services.MapURLs"
+    },
+    {
+      "bean": "io.xlogistx.http.services.CaptchaService"
+    },
+    {
+      "bean": "io.xlogistx.http.services.EmailWebForm",
+      "properties": {
+        "mailer-config": {
+          "class_type": "io.xlogistx.shared.data.MailerConfig",
+          "smtp_config": {
+            "class_type": "io.xlogistx.shared.data.SMTPConfig",
+            "user": "user@webmail.com",
+            "password": "password",
+            "host": "webmail.com",
+            "port": 465
+          },
+          "template": {
+            "class_type": "io.xlogistx.shared.data.DocumentTemplate",
+            "content": "XlogistX WebForm\n\nName: $$contact-name$$\nCompany: $$company-name$$\nPhone: $$contact-phone$$\nEmail: $$email$$\n\n$$message$$\n\nSend via EmailWebForm by http://xlogistx.io .",
+            "tags": [
+              "contact-name",
+              "company-name",
+              "contact-phone",
+              "email",
+              "message"
+            ],
+            "pre_tag": "$$",
+            "post_tag": "$$",
+            "title": "FormEmail"
+          },
+          "recipients": "batata@webmail.com",
+          "subject": "Contact Form"
+        }
+      }
+    },
+    {
+      "bean": "io.xlogistx.http.services.Login"
+    },
+    {
+      "bean": "io.xlogistx.http.services.Logout"
+    },
+    {
+      "name": "public_file_loader",
+      "description": "This handler will point to a PATH and local directory to enable file loading",
+      "bean": "io.xlogistx.http.services.HTTPFileServiceHandler",
+      "paths": [
+        "/"
+      ],
+      "permissions": [
+        "none"
+      ],
+      "roles": [
+        "none"
+      ],
+      "methods": [
+        "GET"
+      ],
+      "protocols": [
+        "HTTP",
+        "HTTPS"
+      ],
+      "properties": {
+        "base_folder": "/webs/xlogistx.io",
+        #,
+        "html_uri": "file:///d:/dev/data/java/projects/rubuspi/rubuspi-html/target/rubuspi-html-1.0.0-SNAPSHOT.jar",
+        "default_file": "RubusPi.html",
+        "caching": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+
+    <parent>
+        <groupId>io.xlogistx</groupId>
+        <artifactId>xlogistx-mvn</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <name>no-sneak</name>
+    <artifactId>no-sneak</artifactId>
+    <version>1.0.0</version>
+    <packaging>pom</packaging>
+
+    <properties>
+        <maven.compiler.source>25</maven.compiler.source>
+        <maven.compiler.target>25</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <jdk.version>25</jdk.version>
+        <xlogistx.version>1.0.0</xlogistx.version>
+    </properties>
+
+    <scm>
+        <url>https://github.com/fidusio/io-xlogistx.git</url>
+        <connection>scm:git:https://github.com/fidusio/io-xlogistx.git</connection>
+        <developerConnection>scm:git:git@github.com:fidusio/io-xlogistx.git</developerConnection>
+    </scm>
+
+
+    <modules>
+
+        <module>no-sneak-core</module>
+        <module>no-sneak-app</module>
+
+    </modules>
+
+    <dependencyManagement>
+        <dependencies>
+
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter-params</artifactId>
+                <version>${junit.version}</version>
+                <scope>test</scope>
+            </dependency>
+
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter-api</artifactId>
+                <version>${junit.version}</version>
+                <scope>test</scope>
+            </dependency>
+
+
+            <dependency>
+                <groupId>org.zoxweb</groupId>
+                <artifactId>zoxweb-core</artifactId>
+                <version>${zoxweb-core.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.sshd</groupId>
+                <artifactId>sshd-core</artifactId>
+                <version>${apache-ssh.version}</version> <!-- or latest -->
+            </dependency>
+
+            <dependency>
+                <groupId>com.squareup.okhttp3</groupId>
+                <artifactId>okhttp-jvm</artifactId>
+                <version>${okhttp.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>javax.websocket</groupId>
+                <artifactId>javax.websocket-api</artifactId>
+                <version>${websocket.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>io.xlogistx</groupId>
+                <artifactId>xlogistx-http</artifactId>
+                <version>${xlogistx.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.xlogistx</groupId>
+                <artifactId>xlogistx-common</artifactId>
+                <version>${xlogistx.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.xlogistx</groupId>
+                <artifactId>xlogistx-core</artifactId>
+                <version>${xlogistx.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>io.xlogistx</groupId>
+                <artifactId>xlogistx-gui-audio</artifactId>
+                <version>${xlogistx.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>io.xlogistx</groupId>
+                <artifactId>xlogistx-opsec</artifactId>
+                <version>${xlogistx.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>io.xlogistx</groupId>
+                <artifactId>xlogistx-shiro</artifactId>
+                <version>${xlogistx.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.xlogistx</groupId>
+                <artifactId>xlogistx-no-sneak</artifactId>
+                <version>${xlogistx.version}</version>
+            </dependency>
+
+
+            <dependency>
+                <groupId>org.yaml</groupId>
+                <artifactId>snakeyaml</artifactId>
+                <version>${snakeyaml.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>dnsjava</groupId>
+                <artifactId>dnsjava</artifactId>
+                <version>${dnsjava.version}</version>
+            </dependency>
+
+
+        </dependencies>
+    </dependencyManagement>
+
+</project>

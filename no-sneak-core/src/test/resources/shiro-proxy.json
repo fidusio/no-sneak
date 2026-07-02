@@ -1,0 +1,26 @@
+{
+  "shiro-proxy-http-api" : {
+    "domain": "xlogistx.io",
+    "hmci-config": {
+      "class_type": "org.zoxweb.shared.http.HTTPMessageConfig",
+      "name": "remote-login",
+      "description": "Profile API configuration",
+      "url": "https://api.xlogistx.io/",
+      "uri": "subject/login",
+      "redirect_enabled": true,
+      "http_method": "GET",
+      "headers": {
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+      },
+      "enable_secure_check": true,
+      "http_parameter_formatter": "URL_ENCODED",
+      "error_as_exception": true
+    },
+    "credential-hasher":
+    {
+      "hash_type": "sha-256",
+      "iteration": 128
+    }
+  }
+}
