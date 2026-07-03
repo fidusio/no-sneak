@@ -1,19 +1,24 @@
 package io.xlogistx.nosneak.app.mock.utility;
 
+import io.xlogistx.nosneak.app.mock.SubjectPanel;
+import org.zoxweb.server.security.CryptoUtil;
 import org.zoxweb.server.security.HashUtil;
 import org.zoxweb.shared.crypto.CIPassword;
+import org.zoxweb.shared.crypto.CryptoConst;
 import org.zoxweb.shared.data.PropertyDAO;
 import org.zoxweb.shared.filters.FilterType;
-import org.zoxweb.shared.security.CredentialInfo;
-import org.zoxweb.shared.security.DomainSecurityManager;
-import org.zoxweb.shared.security.PrincipalIdentifier;
-import org.zoxweb.shared.security.SubjectIdentifier;
+import org.zoxweb.shared.security.*;
+import org.zoxweb.shared.util.Const;
 import org.zoxweb.shared.util.NVGenericMap;
+import org.zoxweb.shared.util.SharedBase64;
 
+import javax.crypto.SecretKey;
 import java.beans.PropertyChangeListener;
 import java.beans.PropertyChangeSupport;
+import java.security.NoSuchAlgorithmException;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Mock authentication/session state. Tracks whether a subject is signed in and
@@ -83,15 +88,25 @@ public class Session {
      */
     //@TODO
     public boolean loginAPIKey(char[] apiKey) {
-        /*
-        this.subject = "";
+
+        try {
+            byte[] raw = SharedBase64.decode(SharedBase64.Base64Type.URL, new String(apiKey));
+            String hashed = HashUtil.hashAsBase64(CryptoConst.HashType.SHA_256, raw);
+            subjectIdentifier = domainSecurityManager.loginApiKey(hashed);
+        } catch (ArrayIndexOutOfBoundsException | SecurityException | NoSuchAlgorithmException p) {
+            return false;
+        }
+
+        if (subjectIdentifier == null) return false;
+
+        PrincipalIdentifier[] principals = domainSecurityManager.lookupAllPrincipalIdentifiers(subjectIdentifier.getGUID());
+        this.subject = (principals.length > 0) ? principals[0].getPrincipalID() : null;
+
         boolean old = this.authenticated;
         this.authenticated = true;
         pcs.firePropertyChange("authenticated", old, true);
-        */
 
-
-        return false;
+        return true;
     }
 
     /**
@@ -127,16 +142,35 @@ public class Session {
 
     }
 
-    /**
-     * Mock API-key registration; currently just delegates to {@link #loginAPIKey}.
-     *
-     * @param apiKey the API key
-     */
-    //@TODO
-    public boolean registerAPIKey(char[] apiKey) {
-        //loginAPIKey(apiKey);
 
-        return false;
+    //@TODO
+    public String createAPIKey() {
+
+        if (subject == null) return null;
+        SecretKey secretKey;
+
+        try {
+            secretKey = CryptoUtil.generateKey(CryptoConst.CryptoAlgo.AES, 256);
+        } catch (NoSuchAlgorithmException e) {
+            return null;
+        }
+
+        byte[] raw = secretKey.getEncoded();
+        String rawKey = SharedBase64.encodeAsString(SharedBase64.Base64Type.URL, raw);
+        String stored;
+        try {
+            stored = HashUtil.hashAsBase64(CryptoConst.HashType.SHA_256, raw);
+        } catch (NoSuchAlgorithmException e) {
+            return null;
+        }
+
+        SubjectAPIKey key = new SubjectAPIKey();
+        key.setValue(SubjectAPIKey.Param.API_KEY, stored);
+        key.setPrincipalID(subject);
+        key.setStatus(Const.Status.ACTIVE);
+        domainSecurityManager.createCredential(subject, key);
+
+        return rawKey;
     }
 
     /**

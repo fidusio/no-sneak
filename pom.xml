@@ -22,6 +22,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <jdk.version>25</jdk.version>
         <xlogistx.version>1.0.0</xlogistx.version>
+        <xlogistx.datastore.version>1.0.0</xlogistx.datastore.version>
     </properties>
 
     <scm>

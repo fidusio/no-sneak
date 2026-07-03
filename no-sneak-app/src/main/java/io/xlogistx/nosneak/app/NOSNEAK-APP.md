@@ -6,14 +6,15 @@ navigation, and a stubbed session/security layer. The mock exists to prove out t
 and screen flow ahead of binding the real PQC scanner and security backend.
 
 > **Status:** prototype. The session layer (`mock.utility.Session`) is backed by zoxweb's
-> **`DomainSecurityManagerDefault`** — a real `DomainSecurityManager` over a
-> `MockAPIDataStore` wired in `Main`, which also **seeds a `kailen` / `Password1!` user** so
-> you can log in without registering each run. Working end-to-end against it:
-> username/password **register + login**, **change password**, **add/remove identifiers**,
-> and **profile save/load** (name/address stored in the subject's property bag). Blocking
-> calls (login/register/change-password) run **off the EDT** via `BackgroundTask`.
-> Still stubs: **API-key/passkey** (login/register return `false`), the security-manager
-> admin tables, and the scanner/file-sharing screens.
+> **`DomainSecurityManagerDefault`** — a real `DomainSecurityManager` over a **MongoDB**
+> `XlogistxMongoDataStore` wired in `Main` (against a local `mongodb://localhost:27017`
+> instance). The store **persists across restarts** and is **not seeded**, so a fresh
+> database has no accounts — create one via the Register flow before you can log in.
+> Working end-to-end against it: username/password **register + login**, **change password**,
+> **add/remove identifiers**, and **profile save/load** (name/address stored in the subject's
+> property bag). Blocking calls (login/register/change-password) run **off the EDT** via
+> `BackgroundTask`. Still stubs: **API-key/passkey** (login/register return `false`), the
+> security-manager admin tables, and the scanner/file-sharing screens.
 
 ## Layout
 
@@ -43,12 +44,20 @@ io.xlogistx.nosneak.app
 ### `Main`
 Bootstraps the app: installs the FlatLaf **FlatLightLaf** look-and-feel and shows
 `Main.AppFrame` on the Swing EDT. The nested `AppFrame` (a `JFrame`, 800×600,
-title "NoSneak") constructs `new DomainSecurityManagerDefault().setDataStore(new
-MockAPIDataStore())`, **seeds a `kailen` / `Password1!` subject** (`createSubjectID` +
-bcrypt) so there's a login on a fresh run, creates the single `AppContext` from it, builds
-the menu bar via `MenuBarFactory`, and installs `AppShell` as the content pane. The menu
-bar starts hidden and is toggled visible/invisible by subscribing to
-`session().onAuthChange(...)` — it only appears once the user is authenticated.
+title "NoSneak") builds the security manager via `createDomainSecManager()` — which stands
+up a **MongoDB-backed** `XlogistxMongoDataStore` (config built by `XlogistxMongoDSCreator`
+from the `DB_URL` constant, `mongodb://localhost:27017/xlog_datastore_test?replicaSet=rs0`),
+initializes `OPSecUtil.singleton()`, and returns a `DomainSecurityManagerDefault` over that
+store with `CIPassword` and `SubjectAPIKey` registered as credential types. It then creates
+the single `AppContext` from it, builds the menu bar via `MenuBarFactory`, and installs
+`AppShell` as the content pane. The menu bar starts hidden and is toggled visible/invisible
+by subscribing to `session().onAuthChange(...)` — it only appears once the user is
+authenticated.
+
+> The store is **not seeded** — a fresh database has no login, so register an account first.
+> Construction also assumes the Mongo instance in `DB_URL` is reachable (and its replica set
+> initialized); if it isn't, `createDomainSecManager()` throws on the EDT during frame
+> construction and the app fails to start with no user-facing dialog.
 
 ## `mock` — UI screens & wiring
 
@@ -182,17 +191,20 @@ section of that screen*. They are separate `CardLayout`s (the in-panel ones wrap
 `CardStack`).
 
 ### Security backend — `DomainSecurityManagerDefault` (zoxweb)
-`Main.AppFrame` constructs zoxweb's `org.zoxweb.server.security.DomainSecurityManagerDefault`
-over a `MockAPIDataStore` and passes it to `AppContext` → `Session`. It implements the full
-security model — subject/principal/credential CRUD, the permission/role/role-group catalog,
-and grants — with the same keying the code relies on: `login(principalID, credential)`
-resolves the principal to its subject and validates the `PASSWORD` `CIPassword` via
+`Main.AppFrame.createDomainSecManager()` constructs zoxweb's
+`org.zoxweb.server.security.DomainSecurityManagerDefault` over a **MongoDB**
+`XlogistxMongoDataStore` (config from `XlogistxMongoDSCreator.toAPIConfigInfo(DB_URL)`),
+registers `CIPassword` and `SubjectAPIKey` as credential types, and passes it to
+`AppContext` → `Session`. It implements the full security model —
+subject/principal/credential CRUD, the permission/role/role-group catalog, and grants —
+with the same keying the code relies on: `login(principalID, credential)` resolves the
+principal to its subject and validates the `PASSWORD` `CIPassword` via
 `SecUtil.isPasswordValid` (throws `SecurityException` on mismatch); identifiers are keyed by
 **subjectGUID** and credentials by **principalID**. Two behaviours to know:
-- **Seeded, not empty** — `Main` seeds `kailen` / `Password1!`, so you can log in immediately;
-  the store is still in-memory (wiped on restart).
-- **`createSubjectID` throws on a duplicate** principal (`"principal already exists"`) — unlike
-  the old mock. `registerUsernamePassword` catches this and returns `false`.
+- **Persistent, not seeded** — data lives in MongoDB and **survives restarts**, but nothing
+  is seeded, so a fresh database has no accounts; register one before you can log in.
+- **`createSubjectID` throws on a duplicate** principal (`"principal already exists"`).
+  `registerUsernamePassword` catches this and returns `false`.
 
 > The subject's profile fields (name/DOB/address) are stored in the `SubjectIdentifier`'s
 > inherited `PropertyDAO` property bag (`getProperties()` → `NVGenericMap`), persisted via
@@ -380,7 +392,7 @@ Tracked work items for the `mock` UI.
   Permissions / Roles / Role groups / Grants tables to the `DomainSecurityManager`
   catalog (`getPermissions()`, `getRoles()`, `getRoleGroups()`, the grant getters, etc.)
   and make the per-section search bars filter. The backend exists
-  (`DomainSecurityManagerDefault`); the panel just isn't wired to it yet, and the in-memory
+  (`DomainSecurityManagerDefault`); the panel just isn't wired to it yet, and the MongoDB
   store has no seeded catalog data.
 
 > These are UI/UX gaps in the prototype. The username/password session path — plus

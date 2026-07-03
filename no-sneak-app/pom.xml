@@ -54,6 +54,12 @@
             <groupId>io.xlogistx</groupId>
             <artifactId>xlogistx-gui-audio</artifactId>
         </dependency>
+        <dependency>
+            <groupId>org.zoxweb</groupId>
+            <artifactId>xlogistx-datastore</artifactId>
+            <version>${xlogistx.datastore.version}</version>
+        </dependency>
+
     </dependencies>
 
 

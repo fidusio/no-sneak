@@ -157,12 +157,32 @@ public class SubjectPanel extends JPanel {
 
     private JPanel buildCredentialList() {
         credentials = new ListSection("Login credentials", "+ Add login method",
-                () -> JOptionPane.showMessageDialog(this, "Add login method — not implemented yet."),
+                this::addCredentialPage,
                 this::credentialEntries);
 
         JPanel p = new JPanel(new BorderLayout());
         p.add(credentials, BorderLayout.CENTER);
         return p;
+    }
+
+    private void addCredentialPage() {
+        String[] options = {"API Key"};
+        int choice = JOptionPane.showOptionDialog(
+                this,
+                "Choose a login method to add",
+                "Add Login Method",
+                JOptionPane.DEFAULT_OPTION,
+                JOptionPane.PLAIN_MESSAGE,
+                null,
+                options,
+                options[0]
+        );
+
+        if (choice == 0) {
+            String key = ctx.session().createAPIKey();
+            JOptionPane.showMessageDialog(this, "Your API Key is " + key + " dont forget it!");
+        }
+
     }
 
     private List<ListSection.Entry> credentialEntries() {

@@ -13,8 +13,22 @@ public class ScanPanel extends JPanel {
 
     public ScanPanel(AppContext ctx) {
         setLayout(new BorderLayout());
-        cardStack.add(new JPanel(), "temp");
+        cardStack.add(buildLocalScanPanel(), "Web");
+        cardStack.add(buildWebScanPanel(), "Local");
 
-        add(panelBuilder.buildDefaultSplitPanel(cardStack.view(), new JToggleButton("PLACEHOLDER"), new JToggleButton("PLACEHOLDER")));
+        JToggleButton webScanButton = new JToggleButton("Web Scan");
+        webScanButton.addActionListener(e -> cardStack.show("Web"));
+        JToggleButton localScanButton = new JToggleButton("Local Scan");
+        localScanButton.addActionListener(e -> cardStack.show("Local"));
+
+        add(panelBuilder.buildDefaultSplitPanel(cardStack.view(), webScanButton, localScanButton));
+    }
+
+    private JPanel buildWebScanPanel() {
+        return new JPanel();
+    }
+
+    private JPanel buildLocalScanPanel() {
+        return new JPanel();
     }
 }

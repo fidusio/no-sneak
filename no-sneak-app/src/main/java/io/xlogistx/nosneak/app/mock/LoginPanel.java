@@ -75,7 +75,7 @@ public class LoginPanel extends JPanel {
         });
         apiKeyAction.addActionListener(e -> {
             if (login) ctx.session().loginAPIKey(apiKey.getPassword());
-            else ctx.session().registerAPIKey(apiKey.getPassword());
+            //else ctx.session().registerAPIKey(apiKey.getPassword());
         });
         passkeyAction.addActionListener(e -> {
             if (login) ctx.session().loginPasskey();
