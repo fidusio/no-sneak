@@ -74,11 +74,11 @@
                 <version>${okhttp.version}</version>
             </dependency>
 
-            <dependency>
-                <groupId>javax.websocket</groupId>
-                <artifactId>javax.websocket-api</artifactId>
-                <version>${websocket.version}</version>
-            </dependency>
+<!--            <dependency>-->
+<!--                <groupId>javax.websocket</groupId>-->
+<!--                <artifactId>javax.websocket-api</artifactId>-->
+<!--                <version>${websocket.version}</version>-->
+<!--            </dependency>-->
 
             <dependency>
                 <groupId>io.xlogistx</groupId>
@@ -119,18 +119,25 @@
                 <version>${xlogistx.version}</version>
             </dependency>
 
-
             <dependency>
-                <groupId>org.yaml</groupId>
-                <artifactId>snakeyaml</artifactId>
-                <version>${snakeyaml.version}</version>
+                <groupId>org.zoxweb</groupId>
+                <artifactId>xlogistx-datastore</artifactId>
+                <version>${xlogistx.datastore.version}</version>
             </dependency>
 
-            <dependency>
-                <groupId>dnsjava</groupId>
-                <artifactId>dnsjava</artifactId>
-                <version>${dnsjava.version}</version>
-            </dependency>
+
+
+            <!--            <dependency>-->
+<!--                <groupId>org.yaml</groupId>-->
+<!--                <artifactId>snakeyaml</artifactId>-->
+<!--                <version>${snakeyaml.version}</version>-->
+<!--            </dependency>-->
+
+<!--            <dependency>-->
+<!--                <groupId>dnsjava</groupId>-->
+<!--                <artifactId>dnsjava</artifactId>-->
+<!--                <version>${dnsjava.version}</version>-->
+<!--            </dependency>-->
 
 
         </dependencies>
