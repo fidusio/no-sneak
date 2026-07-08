@@ -52,7 +52,7 @@ public class AppShell extends JPanel {
 
         ctx.session().onAuthChange(e -> {
             if ((boolean) e.getNewValue()) {
-                session.setText("session: mock-build | subject: " + ctx.session().getSubject());
+                session.setText("session: mock-build | subject: " + ctx.session().getPrincipalID());
             } else {
                 session.setText("session: none | subject: --");
             }

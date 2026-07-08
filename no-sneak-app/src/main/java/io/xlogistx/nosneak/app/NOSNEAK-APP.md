@@ -11,9 +11,13 @@ and screen flow ahead of binding the real PQC scanner and security backend.
 > instance). The store **persists across restarts** and is **not seeded**, so a fresh
 > database has no accounts — create one via the Register flow before you can log in.
 > Working end-to-end against it: username/password **register + login**, **change password**,
-> **add/remove identifiers**, and **profile save/load** (name/address stored in the subject's
-> property bag). Blocking calls (login/register/change-password) run **off the EDT** via
-> `BackgroundTask`. Still stubs: **API-key/passkey** (login/register return `false`), the
+> **add/remove identifiers**, **profile save/load** (name/address stored in the subject's
+> property bag), and the **full API-key lifecycle** — generate or import a key, **create**,
+> **login**, **edit label/description**, **rotate**, and **revoke** from the Subject panel.
+> API keys are stored **plain** (the raw URL-Base64 key, no hashing), so `loginAPIKey` looks
+> them up as-is. All blocking `Session` calls (login/register/change-password, add/remove
+> identifier, create/rotate/revoke API key, save profile) run **off the EDT** via
+> `BackgroundTask`. Still stubs: **passkey** (login/register return `false`), the
 > security-manager admin tables, and the scanner/file-sharing screens.
 
 ## Layout
@@ -99,11 +103,14 @@ UI, and the action button is disabled while in flight). Reporting: failed login 
 "Invalid Credentials"; register confirm-mismatch → "Passwords do not match" (an instant
 EDT check *before* the worker); register success → "Registered Successfully" (clears fields
 and flips to Login mode). Login *success* shows no dialog — the `"authenticated"` event
-navigates away. The API-key/passkey actions are wired to `Session` but those methods are
-stubs that return `false`, so those tabs currently do nothing (no feedback).
+navigates away. The **API-key** action is now real — it calls `Session.loginAPIKey` (paste a
+key → sign in) via `BackgroundTask.runReason`, so a bad key surfaces its reason dialog. The
+**passkey** action is still wired to a `Session` stub that returns `false`, so that tab does
+nothing (no feedback).
 
-> Known gap: register only returns `boolean`, so a **taken username** currently shows the
-> password-rules message. See *Needed fixes → Register flow*.
+> `registerUsernamePassword` now returns the **reason-string** convention, so a **taken
+> username** shows "That username is already taken" (distinct from the password-rules
+> message). Register runs off the EDT via `runReason`.
 
 ### `PQCRegistryPanel`
 The `MAIN` screen — PQC file-sharing registry. A `JSplitPane` with a `TreeTextWidget`
@@ -131,11 +138,26 @@ login and clearing on logout (the `Session` getters return empty when signed out
     (stored in the subject's property bag). *(No verification/canonical-ID/status metadata —
     the model has no such fields; see below.)*
 - **Login credential** (card key `Credentials`) — a nested `CardStack` (`credentialCards`)
-  with a **list** view and a **change-password** view. The list is a `ListSection` bound to
-  `Session.getAllCredentialForLoggedInUser()`: the **Password** row's **Edit** flips to the
-  change-password form (current/new/confirm → `Session.changePassword` via `BackgroundTask`,
-  off the EDT); non-password credentials render as "… — not editable". **+ Add login
-  method** is a stub dialog (no non-password credential impl exists).
+  with three views: a **list**, a **change-password** form, and an **edit-API-key** form
+  (`editAPI`). The list card is a header + description over **two** `ListSection`s stacked
+  in a `BorderLayout` (Password `NORTH`, API keys `CENTER`), each with its own supplier and
+  an empty-state row ("No password set" / "No API keys yet"):
+  - **Password section** (no add button) — the **Password** row's **Edit** flips to the
+    change-password form (current/new/confirm → `Session.changePassword` via `BackgroundTask`,
+    off the EDT).
+  - **API keys section** — one row per key showing its label (`"API key — " +
+    SubjectAPIKey.getName()`); the row's **Edit** opens the `editAPI` card for that key. Its
+    **+ Add API Key** button opens the add dialog: a **Generate new / Enter Existing**
+    selector with Label + Description. *Generate* shows a freshly `Session.generateAPIKey()`'d
+    key in a read-only, copyable field (shown once); *Enter Existing* takes a pasted key. On
+    **Create key** it stores via `Session.createAPIKey(label, description, rawKey)` (off the
+    EDT) and refreshes.
+  - The `editAPI` card is now **fully wired**: the secret shows in a masked `JPasswordField`
+    with a **Show/Hide** reveal toggle (re-masked on every open) and a **Copy** button
+    (copies `getAPIKey()`); editable **Label**/**Description** save via
+    `Session.changeAPIDetails`; **Rotate** (`Session.rotateAPIKey`) and **Revoke**
+    (`Session.revokeAPIKey`) each confirm first, run off the EDT, and refresh — Rotate
+    re-populates the card with the new secret, Revoke navigates back to the list.
 
 The **Simple/Technical** toggle is still not built — see *Target behaviour*.
 
@@ -210,6 +232,16 @@ principal to its subject and validates the `PASSWORD` `CIPassword` via
 > inherited `PropertyDAO` property bag (`getProperties()` → `NVGenericMap`), persisted via
 > `updateSubjectID` — the schema itself has no such fields. Round-trip (save/load, overwrite,
 > across logout/login) is covered by `ProfileRoundTripTest`.
+>
+> **Tests** (`src/test/...`, over an in-memory `MockAPIDataStore`; each registers the credential
+> types via `addCredentialType`, mirroring `Main`): `RegisterRoundTripTest` (register → login,
+> weak-password + duplicate-username rejection, no auto-login), `ProfileRoundTripTest` (save/load,
+> overwrite, across logout-login, signed-out guard), `APIKeyRoundTripTest` (generate → create →
+> login, label/description round-trip, `changeAPIDetails` edit + clear, **revoke** removes-and-
+> blocks-login, **rotate** old-dies/new-works, bad-input guards), `ChangePasswordRoundTripTest`
+> (old rejected / new works across logout-login, plus failure modes), and `IdentifierRoundTripTest`
+> (add/remove, last-identifier guard, null + non-active removal, subject repoint). Surefire is
+> skipped by the parent POM — run with `-DskipTests=false -Dmaven.test.skip=false`.
 
 ## `mock.utility` — application services
 
@@ -222,34 +254,63 @@ one session and one navigator.
 
 ### `Session`
 Authentication/session state built on `PropertyChangeSupport`, holding the shared
-`DomainSecurityManager`, the current `subject` (**principalID** — the username, *not* the
-GUID) and its `subjectIdentifier`. Two result conventions coexist deliberately:
-- **`boolean`** for auth (`loginUsernamePassword` / `registerUsernamePassword` /
-  `loginAPIKey` / `loginPasskey` / `register*` / `logout`) — success/failure.
-- **reason `String`** for account edits (`addIdentifier`, `removeIdentifier`,
-  `changePassword`) — `null` = success, else a human-readable message the panel shows.
-  Failure is a return value, never a broadcast event.
+`DomainSecurityManager`, the current `principalID` (the username, *not* the GUID — the field
+was formerly named `subject`; accessor `getPrincipalID()`) and its `subjectIdentifier`. Two
+result conventions coexist deliberately:
+- **`boolean`** for `loginUsernamePassword`, `loginPasskey`, `registerPasskey`, `logout` —
+  success/failure.
+- **reason `String`** (`null` = success, else a human-readable message the panel shows) for
+  everything else: `registerUsernamePassword`, `loginAPIKey`, `addIdentifier`,
+  `removeIdentifier`, `changePassword`, `createAPIKey`, `changeAPIDetails`, `rotateAPIKey`,
+  `revokeAPIKey`, `saveProfile`. Failure is a return value, never a broadcast event.
 
 Auth (username/password is real against the store):
-- `loginUsernamePassword` calls `login(subject, new String(password))`, catching
-  `SecurityException` → `false`; on success it stores `subject` (the **principalID**, since
+- `loginUsernamePassword` calls `login(principalID, new String(password))`, catching
+  `SecurityException` → `false`; on success it stores the `principalID` (since
   `SubjectIdentifier.getSubjectID()` returns the GUID) and the `subjectIdentifier`, flips
   `authenticated`, fires the event. Use `new String(password)`, **not** `Arrays.toString`.
-- `registerUsernamePassword` gates on `FilterType.PASSWORD`, persists a bcrypt `CIPassword`
-  via `createSubjectID`, and catches the duplicate-principal `SecurityException` → `false`.
-- `loginAPIKey` / `loginPasskey` / `registerAPIKey` / `registerPasskey` are stubs that
-  **return `false`** (no concrete non-password credential impl exists).
+- `registerUsernamePassword` gates on `FilterType.PASSWORD` (returns the rules message on
+  failure), persists a bcrypt `CIPassword` via `createSubjectID`, and catches the
+  duplicate-principal `SecurityException` → `"That username is already taken"`; `null` on
+  success. It does **not** auto-login.
+- `loginAPIKey` is **real** and matches the plain-storage model: it passes the presented key
+  **as-is** (no hashing) to `DomainSecurityManager.loginApiKey(...)`, then resolves the
+  signed-in principal from the returned subject's identifiers. `loginPasskey` /
+  `registerPasskey` remain stubs that **return `false`**.
+
+API-key lifecycle (all reason-string; the raw key is stored **plain**):
+- `generateAPIKey()` — a fresh AES-256 key, URL-Base64 encoded; no persistence, shown once.
+  Returns `null` when signed out or on a crypto failure.
+- `createAPIKey(String label, String description, String rawKey)` — stores the raw key
+  verbatim (`setAPIKey(rawKey)`, no hashing) in a `SubjectAPIKey` (`STATUS` = ACTIVE,
+  optional `name`/`description`) via `createCredential`. Guards: `"Not signed in"` /
+  `"Key cannot be empty"`. *(No format validation today — a malformed paste is accepted and
+  simply never matches at login.)*
+- `changeAPIDetails(key, label, description)` — updates the key's label/description in place
+  via `updateCredential`. Unlike create it **sets** blanks, so passing empty clears them.
+- `rotateAPIKey(key)` — generates a fresh secret, replaces the stored one via
+  `updateCredential` (old key stops working, new one works). Guards against persisting a
+  `null` secret; the new secret is read back from the mutated `key.getAPIKey()`.
+- `revokeAPIKey(key)` — deletes the credential via `deleteCredential` (the key can no longer
+  log in).
 
 Account data (all backed by `DomainSecurityManager`, keyed off the signed-in subject):
 - `getAllPrincipalIDForLoggedInUser()` — identifiers, via `lookupAllPrincipalIdentifiers(
   subjectIdentifier.getGUID())` (keyed by GUID); returns empty when signed out.
-- `getAllCredentialForLoggedInUser()` — credentials, via `lookupAllPrincipalCredentials(subject)`.
+- `getAllCredentialForLoggedInUser()` — credentials, via
+  `lookupAllPrincipalCredentials(principalID)`.
+- `getAllCredentialForUserByType(CredentialInfo.Type)` — credentials of one type, via
+  `lookupCredentialsBySubjectGUID(subjectIdentifier.getSubjectGUID(), type)` (keyed by
+  subjectGUID); guards both null args.
 - `addIdentifier` — rejects blank/duplicate (`lookupPrincipalID`), else `addPrincipalID`.
 - `removeIdentifier` — refuses to remove the **last** identifier; if you remove the one you
-  logged in as, it **repoints `subject`** to a survivor so credential lookups keep working.
+  logged in as, it **repoints `principalID`** to a survivor so credential lookups keep working.
 - `changePassword` — verifies the current password, validates the new one, then updates the
-  existing `CIPassword` **in place** (`updateCredential`, keyed by GUID) — atomic, never a
-  password-less window.
+  existing `CIPassword` **in place** via `updateCredential(subjectIdentifier, credential)` (the
+  two-arg backend signature; the entity keeps its GUID so it's an in-place update) — atomic,
+  never a password-less window. Crucially it also refreshes the credential's **`canonicalID`**
+  (the `$2a$…` bcrypt string bcrypt validation actually reads); updating only salt/hash/rounds
+  would leave the old password working.
 - `saveProfile(Map)` / `loadProfile(String...)` — name/DOB/address in the subject's
   `PropertyDAO` property bag (`getProperties()`), persisted via `updateSubjectID`.
 
@@ -279,16 +340,24 @@ Shared Swing layout helpers (formerly `PaneBuilder`):
   the right, wired through `buildHorizontalSplitView`.
 - `buildJPanelWithFields(JComponent...)` — a single-column `GridBagLayout` form stacking
   the given components vertically.
-- Also has `row(...)`, `group(...)`, `detail(title, onBack, content)` (a back-linked detail
-  view, used by the change-password form), and `listPage(...)` — the last is **superseded by
+- `detail(title, onBack, content)` — a back-linked detail view (used by the change-password
+  and edit-API-key forms). Its body is a **`MigLayout`** single left-aligned column so fields
+  keep their preferred size instead of stretching to the panel width (the old `BoxLayout`
+  behaviour).
+- `title(text)` / `title(text, styleClass)` — a heading `JLabel` styled via FlatLaf
+  `STYLE_CLASS` (default `h2`); used for section/page headings so titles are bigger/consistent.
+- Also has `row(...)`, `group(...)`, and `listPage(...)` — the last is **superseded by
   `ListSection`** for data-driven lists and kept only for static ones.
 
 ### `ListSection`
 A titled, refreshable list component. Constructed with a title, an add-button label + action,
 and a `Supplier<List<Entry>>` data source; `refresh()` rebuilds the rows from the supplier
-(call it after any mutation). Each `Entry(label, onEdit, onRemove)` renders a row with
-optional per-row **Edit**/**Remove** buttons (null handler hides that button). Used by
-`SubjectPanel` for the Identifiers and Login-credentials lists.
+(call it after any mutation). A **null `onAdd`** omits the add button (used by the read-only
+Password section). The title renders as a `PanelBuilder.title` **h2** label inside an etched
+box (not a `TitledBorder`). Each `Entry(label, onEdit, onRemove)` renders a row with optional
+per-row **Edit**/**Remove** buttons (null handler hides that button); an `Entry` with both
+handlers null is a plain label row (used for the empty-state lines). Used by `SubjectPanel`
+for the Identifiers list and the Password / API keys sections.
 
 ### `BackgroundTask`
 A `SwingWorker` helper so blocking work never runs on the EDT. `run(owner, toDisable, work,
@@ -296,7 +365,10 @@ onDone)` runs `work` (a `Callable<T>`) off the EDT and delivers the result to `o
 EDT, disabling `toDisable` while in flight and showing any thrown exception as a dialog.
 `runReason(owner, toDisable, work, onSuccess)` is the convenience for the reason-string
 convention: a non-null reason is shown as an error dialog, `null` runs `onSuccess`. Used by
-`LoginPanel` (login/register) and `SubjectPanel` (change password).
+`LoginPanel` (login/register/API-key login) and `SubjectPanel` (change password, add/remove
+identifier, create/rotate/revoke/edit API key, save profile). Post-work UI (refresh,
+navigation, confirmation dialogs) belongs in the `onSuccess` callback so it runs after the
+background work completes, not before.
 
 ## How it fits together
 
@@ -332,16 +404,31 @@ fingerprints, KEM/algorithm specifics); **Simple** hides them. Presentational on
 changes *how much* is shown, never *what you can do*.
 
 ### Login-credential types (security model)
-Intended per-type behaviour once non-password credentials exist (today only **Password** is
-built; the rest render as "not editable"):
+Intended per-type behaviour (today **Password** and the **full API-key lifecycle** are built;
+**passkey** is not):
 - **Password** — *write-only*: never shown or recovered; the only op is *replace* (current +
   new × confirm). Stored as a verifier.
-- **API key** — a *retrievable shared secret*: masked by default, with **Reveal**, **Copy**,
-  **Rotate** (new + invalidate old), **Revoke**. *(Reveal-on-demand implies the backend keeps
-  the raw secret; show-once-at-creation + store-a-hash is an open alternative.)*
+- **API key** — **fully built**: create (generate or import) → login → edit label/description
+  → **Rotate** (new secret, invalidates the old) → **Revoke** (delete). Stored **plain**, so
+  the secret is viewable on the `editAPI` card via reveal-on-demand and copyable at any time —
+  *not* show-once-only. (See the design note below: plain storage was a deliberate choice for
+  the prototype; a hash-at-rest model would make reveal impossible and force show-once +
+  rotate-to-recover.)
 - **Passkey** — only the *public key* is held; manage = view device + remove.
 
-**+ Add login method** would register an additional credential of any type.
+> **API-key ↔ subject linkage.** In zoxweb-core 2.4.0 the backend `loginApiKey` finds the key
+> by its stored value (plain, no hash) and resolves the subject via **`sak.getSubjectGUID()`** —
+> the same subjectGUID keying password credentials use. So an API key **survives identifier
+> churn**: removing the identifier it was minted under does not orphan it. (An earlier version
+> resolved by principalID, which did orphan keys — no longer the case.)
+>
+> **Storage note.** Keys are persisted **plain** — a deliberate prototype choice so the
+> `editAPI` card can reveal/copy the secret on demand. For production you'd hash at rest
+> (`createAPIKey` hashes on store, `loginAPIKey` hashes the presented key the same way), which
+> makes reveal impossible and shifts the UX to show-once + rotate-to-recover.
+
+**+ Add login method** would register an additional credential of any type (today only
+**API Key** is offered from the API keys section).
 
 ### Identifier & profile metadata
 All target-only, because the model has nowhere to store them: per-identifier **status**
@@ -356,9 +443,9 @@ Tracked work items for the `mock` UI.
 ### Register flow (`LoginPanel` / `Session`)
 - ~~**Password filter / validation fails silently.**~~ **Done.** A filter rejection now
   surfaces a detailed password-requirements dialog and keeps the user on the register form.
-  Remaining gap: because `registerUsernamePassword` returns `boolean`, a **duplicate
-  username** also shows that same password-rules message — switch to the reason-string
-  convention to distinguish "username already taken".
+- ~~**Duplicate username shows the password-rules message.**~~ **Done.**
+  `registerUsernamePassword` now returns the reason-string convention, so a taken username
+  shows "That username is already taken" (verified by `RegisterRoundTripTest`).
 - **Confirmation warning on Register.** Clicking **Register** must prompt a confirmation
   dialog before proceeding (e.g. "Register using this email / username?"). *(Still
   missing — register proceeds straight to the filter/persist call.)*
@@ -382,10 +469,13 @@ Tracked work items for the `mock` UI.
 - ~~**Identifiers folded into Profile, not yet built.**~~ **Done** (core). Built as a
   `ListSection` with add + guarded remove. Still target-only (no model fields): per-entry
   status/type, Edit/rename, verification-before-active, and a minimum-one-email rule.
-- **Login credentials — password done, rest stubbed.** Password replace is built (change
-  form → `Session.changePassword`, atomic, off-EDT). Still stubbed: passkey
-  view-device/remove and API-key reveal/copy/rotate/revoke, and **+ Add login method** —
-  all blocked on a non-password `CredentialInfo` implementation.
+- ~~**Login credentials — password done, rest stubbed.**~~ **Done** (except passkey). Password
+  replace (change form → `Session.changePassword`, atomic, off-EDT) and the **full API-key
+  lifecycle** are built: **+ Add API Key** generates or imports a key (`generateAPIKey` /
+  `createAPIKey`), it logs in via `loginAPIKey`, and the `editAPI` card supports reveal/copy,
+  **edit** label/description (`changeAPIDetails`), **Rotate** (`rotateAPIKey`) and **Revoke**
+  (`revokeAPIKey`) — each confirmed, off-EDT, with refresh. Still stubbed: passkey
+  view-device/remove.
 
 ### Subject Security Manager (`SubjectSecManagerPanel`)
 - **All tables are empty stubs** and **search is not wired.** Bind the Subjects /
@@ -396,7 +486,8 @@ Tracked work items for the `mock` UI.
   store has no seeded catalog data.
 
 > These are UI/UX gaps in the prototype. The username/password session path — plus
-> identifiers, change-password, and profile save/load — is real against
-> `DomainSecurityManagerDefault`, but the API-key/passkey `Session` methods still return
-> `false` (no non-password credential impl) and the security-manager admin tables are
-> unbound, so those areas still need wiring alongside the UI work.
+> identifiers, change-password, profile save/load, and the **full API-key lifecycle**
+> (create/login/edit/rotate/revoke, stored plain) — is real against
+> `DomainSecurityManagerDefault`. Still outstanding: **passkey** (`Session` stubs return
+> `false`), the **Simple/Technical** tier toggle, and the security-manager admin tables
+> (unbound), which need wiring alongside the UI work.

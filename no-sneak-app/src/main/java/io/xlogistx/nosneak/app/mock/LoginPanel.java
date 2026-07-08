@@ -5,7 +5,6 @@ import io.xlogistx.nosneak.app.mock.utility.AppContext;
 import io.xlogistx.nosneak.app.mock.utility.BackgroundTask;
 import io.xlogistx.nosneak.app.mock.utility.CardStack;
 import io.xlogistx.nosneak.app.mock.utility.PanelBuilder;
-import org.zoxweb.shared.security.PrincipalIdentifier;
 
 import javax.swing.*;
 import java.awt.*;
@@ -69,13 +68,19 @@ public class LoginPanel extends JPanel {
                             password.setText("");
                             confirmPassword.setText("");
                             username.setText("");
+                            apiKey.setText("");
                             toggleMode();
                         });
             }
         });
         apiKeyAction.addActionListener(e -> {
-            if (login) ctx.session().loginAPIKey(apiKey.getPassword());
-            //else ctx.session().registerAPIKey(apiKey.getPassword());
+            if (login) {
+                BackgroundTask.runReason(this, passwordAction,
+                        () -> ctx.session().loginAPIKey(apiKey.getPassword()),
+                        () -> {
+                        });
+                ;
+            }
         });
         passkeyAction.addActionListener(e -> {
             if (login) ctx.session().loginPasskey();
@@ -88,6 +93,7 @@ public class LoginPanel extends JPanel {
             if (!(boolean) e.getNewValue()) {
                 password.setText("");
                 username.setText("");
+                apiKey.setText("");
             }
         });
 
@@ -110,7 +116,7 @@ public class LoginPanel extends JPanel {
 
         // Add Title
         c.gridy = 2;
-        JLabel title = new JLabel("NoSneak");
+        JLabel title = PanelBuilder.title("NoSneak");
         add(title, c);
 
         // Add Wordmark

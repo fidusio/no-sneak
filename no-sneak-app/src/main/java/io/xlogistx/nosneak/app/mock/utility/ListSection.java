@@ -12,8 +12,11 @@ import java.util.function.Supplier;
  * so the caller owns the data source and this component just renders it.
  */
 public class ListSection extends JPanel {
-    /** One row: a label plus optional Edit/Remove handlers (null hides that button). */
-    public record Entry(String label, Runnable onEdit, Runnable onRemove) {}
+    /**
+     * One row: a label plus optional Edit/Remove handlers (null hides that button).
+     */
+    public record Entry(String label, Runnable onEdit, Runnable onRemove) {
+    }
 
     private final JPanel rows = new JPanel();
     private final Supplier<List<Entry>> source;
@@ -21,20 +24,28 @@ public class ListSection extends JPanel {
     public ListSection(String title, String addLabel, Runnable onAdd, Supplier<List<Entry>> source) {
         this.source = source;
         setLayout(new BorderLayout());
-        setBorder(BorderFactory.createTitledBorder(title));
+        // Plain outline (no embedded text) + padding, with the larger h2 title on top.
+        setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createEtchedBorder(),
+                BorderFactory.createEmptyBorder(6, 8, 6, 8)));
+        add(PanelBuilder.title(title), BorderLayout.NORTH);
 
         rows.setLayout(new BoxLayout(rows, BoxLayout.Y_AXIS));
 
-        JButton add = new JButton(addLabel);
-        add.addActionListener(e -> onAdd.run());
+        if (onAdd != null) {
+            JButton add = new JButton(addLabel);
+            add.addActionListener(e -> onAdd.run());
 
+            add(add, BorderLayout.SOUTH);
+        }
         add(rows, BorderLayout.CENTER);
-        add(add, BorderLayout.SOUTH);
 
         refresh();
     }
 
-    /** Rebuilds the rows from the supplier. Call after any add/remove. */
+    /**
+     * Rebuilds the rows from the supplier. Call after any add/remove.
+     */
     public void refresh() {
         rows.removeAll();
         for (Entry en : source.get()) {

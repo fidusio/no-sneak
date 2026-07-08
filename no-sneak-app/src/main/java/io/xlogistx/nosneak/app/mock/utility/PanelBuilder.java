@@ -62,7 +62,7 @@ public class PanelBuilder {
         JPanel view = new JPanel(new BorderLayout());
         view.add(content, BorderLayout.CENTER);
 
-        JSplitPane split = buildHorizontalSplitView(new JScrollPane(optionsRow), view, 140, 0);
+        JSplitPane split = buildHorizontalSplitView(new JScrollPane(optionsRow), view, 145, 0);
         panel.add(split, BorderLayout.CENTER);
         return panel;
     }
@@ -113,16 +113,12 @@ public class PanelBuilder {
     }
 
     public static JPanel detail(String title, Runnable onBack, Consumer<JPanel> content) {
-        JPanel panel = new JPanel();
-        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
-        panel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+        JPanel panel = new JPanel(new MigLayout("wrap 1, insets 10, gapy 6", "[left]"));
 
-        JButton back = new JButton("<- Back");
+        JButton back = new JButton("Back");
         back.addActionListener(e -> onBack.run());
         panel.add(back);
-        panel.add(Box.createVerticalStrut(10));
-        panel.add(new JLabel(title));
-        panel.add(Box.createVerticalStrut(10));
+        panel.add(title(title), "gaptop 6, gapbottom 4");
 
         content.accept(panel);
         return panel;
@@ -134,5 +130,11 @@ public class PanelBuilder {
             group.add(row(item, new JButton("edit")));
         }
         return group;
+    }
+
+    public static JLabel title(String text) {
+        JLabel label = new JLabel(text);
+        label.putClientProperty(FlatClientProperties.STYLE_CLASS, "h2");
+        return label;
     }
 }

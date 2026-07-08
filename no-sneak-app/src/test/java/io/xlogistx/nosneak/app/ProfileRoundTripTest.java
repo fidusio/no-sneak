@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.zoxweb.server.security.DomainSecurityManagerDefault;
 import org.zoxweb.server.security.HashUtil;
 import org.zoxweb.server.util.MockAPIDataStore;
+import org.zoxweb.shared.crypto.CIPassword;
 import org.zoxweb.shared.security.DomainSecurityManager;
 
 import java.util.LinkedHashMap;
@@ -21,7 +22,8 @@ public class ProfileRoundTripTest {
 
     private static Session freshSession() {
         DomainSecurityManager dsm =
-                new DomainSecurityManagerDefault().setDataStore(new MockAPIDataStore());
+                new DomainSecurityManagerDefault().setDataStore(new MockAPIDataStore())
+                        .addCredentialType(CIPassword.class);
         dsm.createSubjectID("kailen", HashUtil.toBCryptPassword("Password1!"));
         return new Session(dsm);
     }
@@ -58,9 +60,17 @@ public class ProfileRoundTripTest {
     }
 
     @Test
+    public void saveRejectedWhenSignedOut() {
+        Session s = freshSession();   // never logged in
+        assertEquals("Not Logged in", s.saveProfile(map("firstName", "Jane")),
+                "saving a profile with no signed-in subject must be refused");
+    }
+
+    @Test
     public void survivesLogoutLogin() {
         DomainSecurityManager dsm =
-                new DomainSecurityManagerDefault().setDataStore(new MockAPIDataStore());
+                new DomainSecurityManagerDefault().setDataStore(new MockAPIDataStore())
+                        .addCredentialType(CIPassword.class);
         dsm.createSubjectID("kailen", HashUtil.toBCryptPassword("Password1!"));
         Session s = new Session(dsm);
 
