@@ -53,13 +53,13 @@ public class ListSection extends JPanel {
         for (Entry en : source.get()) {
             List<JButton> buttons = new ArrayList<>();
             if (en.onEdit() != null) {
-                JButton edit = new JButton(new FlatSVGIcon("icons/pencil.svg", 16, 16));
+                JButton edit = PanelBuilder.iconButton(new FlatSVGIcon("icons/pencil.svg", 16, 16));
                 edit.setToolTipText("Edit");
                 edit.addActionListener(_ -> en.onEdit().run());
                 buttons.add(edit);
             }
             if (en.onRemove() != null) {
-                JButton remove = new JButton(new FlatSVGIcon("icons/trash.svg", 16, 16));
+                JButton remove = PanelBuilder.iconButton(new FlatSVGIcon("icons/trash.svg", 16, 16));
                 remove.setToolTipText("Remove");
                 remove.addActionListener(_ -> en.onRemove().run());
                 buttons.add(remove);

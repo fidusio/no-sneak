@@ -2,11 +2,13 @@ package io.xlogistx.nosneak.app.mock;
 
 import com.formdev.flatlaf.extras.FlatSVGIcon;
 import io.xlogistx.nosneak.app.mock.utility.*;
+import org.zoxweb.shared.data.DataConst;
 import org.zoxweb.shared.security.APIKey;
 import org.zoxweb.shared.security.CredentialInfo;
 import org.zoxweb.shared.security.PrincipalIdentifier;
 import org.zoxweb.shared.security.SubjectAPIKey;
 import org.zoxweb.shared.util.NVGenericMap;
+import org.zoxweb.shared.util.NVPair;
 
 import javax.swing.*;
 import java.awt.*;
@@ -40,10 +42,12 @@ public class SubjectPanel extends JPanel {
     private final JPasswordField editKeySecret = new JPasswordField(30);
     private final JTextField editKeyLabel = new JTextField(20);
     private final JTextField editKeyDescription = new JTextField(20);
+    private final JTextField keyAppID = new JTextField(20);
+    private final JTextField keyDomainID = new JTextField(20);
     private SubjectAPIKey selectedKey;
     private boolean isKeyShown = false;
     private final char defaultEcho = editKeySecret.getEchoChar();
-    private final JButton showKey = new JButton(new FlatSVGIcon("icons/eye.svg", 16, 16));
+    private final JButton showKey = PanelBuilder.iconButton(new FlatSVGIcon("icons/eye.svg", 16, 16));
 
     // ---- Edit-address fields (populated from the clicked address; null selection = new address) ----
     private final JTextField addrLabel = new JTextField(20);
@@ -51,8 +55,15 @@ public class SubjectPanel extends JPanel {
     private final JTextField addrCity = new JTextField(20);
     private final JTextField addrRegion = new JTextField(20);
     private final JTextField addrPostCode = new JTextField(20);
-    private final JTextField addrCountry = new JTextField(20);
+    private final String[] countries = DataConst.COUNTRIES.getValue().stream()
+            .map(NVPair::getValue)
+            .toArray(String[]::new);
+    private final JComboBox<String> addrCountry = new JComboBox<>(countries);
     private NVGenericMap selectedAddress;
+
+    // Field keys for an address map (stored inline in the subject's property bag)
+    private static final String A_LABEL = "label", A_STREET = "street", A_CITY = "city",
+            A_STATE = "state", A_POSTAL = "postal", A_COUNTRY = "country";
 
     // ---- Data-driven sections (refreshed on auth) + detail card switching ----
     private ListSection identifiers;
@@ -95,15 +106,18 @@ public class SubjectPanel extends JPanel {
                 editKeySecret.setText("");
                 editKeyLabel.setText("");
                 editKeyDescription.setText("");
+                keyAppID.setText("");
+                keyDomainID.setText("");
                 selectedKey = null;
+                setKeyMasked(true);
                 profileCards.show("profile");
                 addrLabel.setText("");
                 addrStreet.setText("");
                 addrCity.setText("");
                 addrRegion.setText("");
                 addrPostCode.setText("");
-                addrCountry.setText("");
                 selectedAddress = null;
+                addrCountry.setSelectedIndex(-1);
             }
         });
 
@@ -191,44 +205,56 @@ public class SubjectPanel extends JPanel {
 
     private List<ListSection.Entry> addressEntries() {
         List<ListSection.Entry> out = new ArrayList<>();
-        for (NVGenericMap address : ctx.session().getAddresses()) {
-            out.add(new ListSection.Entry(addressLabel(address),
-                    () -> onEditAddress(address), () -> onRemoveAddress(address)));
+
+        for (NVGenericMap addr : ctx.session().getAllAddresses()) {
+            out.add(new ListSection.Entry(addressLabel(addr), () -> showEditAddress(addr), () -> onDeleteAddress(addr)));
         }
-        if (out.isEmpty()) out.add(new ListSection.Entry("No addresses yet", null, null));
+        if (out.isEmpty()) out.add(new ListSection.Entry("No Addresses", null, null));
         return out;
+    }
+
+    /**
+     * Reads a string field from an address map, empty string when unset.
+     */
+    private static String field(NVGenericMap a, String key) {
+        Object v = a.getValue(key);
+        return v == null ? "" : v.toString();
     }
 
     /**
      * Row label: the address's own label, else a "street, city" summary, else "Address".
      */
     private static String addressLabel(NVGenericMap a) {
-        String label = a.getValue("label");
-        if (label != null && !label.isBlank()) return label;
-        String street = a.getValue("street");
-        String city = a.getValue("city");
-        String s = street == null ? "" : street.trim();
-        String c = city == null ? "" : city.trim();
+        String label = field(a, A_LABEL);
+        if (!label.isBlank()) return label;
+        String s = field(a, A_STREET).trim(), c = field(a, A_CITY).trim();
         String joined = (s.isBlank() || c.isBlank()) ? (s + c) : (s + ", " + c);
         return joined.isBlank() ? "Address" : joined;
     }
 
     private void onAddAddress() {
-        showEditAddress(null);   // null selection = adding a new address
+        selectedAddress = null;
+        addrLabel.setText("");
+        addrStreet.setText("");
+        addrCity.setText("");
+        addrRegion.setText("");
+        addrPostCode.setText("");
+        addrCountry.setSelectedIndex(-1);
+        profileCards.show("editAddress");
+
     }
 
-    private void onEditAddress(NVGenericMap address) {
-        showEditAddress(address);
-    }
-
-    private void onRemoveAddress(NVGenericMap address) {
+    private void onDeleteAddress(NVGenericMap addr) {
         int ok = JOptionPane.showConfirmDialog(this,
-                "Delete this address?", "Delete address",
-                JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
+                "Delete this address? This permanently removes it.",
+                "Delete address", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
         if (ok != JOptionPane.OK_OPTION) return;
         BackgroundTask.runCatching(this, null,
-                () -> ctx.session().removeAddress(address),
-                () -> addressSection.refresh());
+                () -> ctx.session().deleteAddress(addr),
+                () -> {
+                    addressSection.refresh();
+                    JOptionPane.showMessageDialog(this, "Successfully deleted address");
+                });
     }
 
     /**
@@ -262,35 +288,44 @@ public class SubjectPanel extends JPanel {
      */
     private void showEditAddress(NVGenericMap address) {
         selectedAddress = address;
-        addrLabel.setText(text(address, "label"));
-        addrStreet.setText(text(address, "street"));
-        addrCity.setText(text(address, "city"));
-        addrRegion.setText(text(address, "region"));
-        addrPostCode.setText(text(address, "postCode"));
-        addrCountry.setText(text(address, "country"));
+        addrLabel.setText(field(address, A_LABEL));
+        addrStreet.setText(field(address, A_STREET));
+        addrCity.setText(field(address, A_CITY));
+        addrRegion.setText(field(address, A_STATE));
+        addrPostCode.setText(field(address, A_POSTAL));
+        String country = field(address, A_COUNTRY);
+        if (country.isBlank()) addrCountry.setSelectedIndex(-1);
+        else addrCountry.setSelectedItem(country);
         profileCards.show("editAddress");
     }
 
-    private static String text(NVGenericMap map, String key) {
-        if (map == null) return "";
-        String v = map.getValue(key);
-        return v == null ? "" : v;
-    }
 
     private void onSaveAddress(JButton save) {
-        boolean creating = selectedAddress == null;
-        NVGenericMap address = creating ? new NVGenericMap() : selectedAddress;
-        address.build("label", addrLabel.getText().trim());
-        address.build("street", addrStreet.getText().trim());
-        address.build("city", addrCity.getText().trim());
-        address.build("region", addrRegion.getText().trim());
-        address.build("postCode", addrPostCode.getText().trim());
-        address.build("country", addrCountry.getText().trim());
+        // Require at least a label or street so we don't store an empty "Address" row.
+        if (addrLabel.getText().isBlank() && addrStreet.getText().isBlank()) {
+            JOptionPane.showMessageDialog(this,
+                    "Enter at least a label or a street before saving.",
+                    "Missing information", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
 
+        NVGenericMap target = (selectedAddress != null) ? selectedAddress : new NVGenericMap();
+        Object country = addrCountry.getSelectedItem();
+        target.build(A_LABEL, addrLabel.getText())
+                .build(A_STREET, addrStreet.getText())
+                .build(A_CITY, addrCity.getText())
+                .build(A_STATE, addrRegion.getText())
+                .build(A_POSTAL, addrPostCode.getText())
+                .build(A_COUNTRY, country == null ? "" : country.toString());
+
+        boolean isNew = (selectedAddress == null);
         BackgroundTask.runCatching(this, save,
                 () -> {
-                    if (creating) ctx.session().addAddress(address);
-                    else ctx.session().saveAddresses();   // address was mutated in place
+                    if (isNew) {
+                        ctx.session().addAddress(target);
+                    } else {
+                        ctx.session().changeAddressDetails(target);
+                    }
                 },
                 () -> {
                     selectedAddress = null;
@@ -359,7 +394,7 @@ public class SubjectPanel extends JPanel {
                 SubjectAPIKey key = (SubjectAPIKey) ci;
                 String label = key.getName();
                 String display = (label == null || label.isBlank()) ? "API key" : "API key — " + label;
-                out.add(new ListSection.Entry(display, () -> showEditAPIKey(key), null));
+                out.add(new ListSection.Entry(display, () -> showEditAPIKey(key), () -> deleteAPIKey(key)));
             }
         }
         if (out.isEmpty()) out.add(new ListSection.Entry("No API keys yet", null, null));
@@ -383,7 +418,7 @@ public class SubjectPanel extends JPanel {
         JTextField genDescription = new JTextField(20);
         JTextField genKey = new JTextField(generated.getAPIKey(), 30);
         genKey.setEditable(false);               // selectable + copyable, not editable
-        JButton copy = new JButton(new FlatSVGIcon("icons/copy.svg", 16, 16));
+        JButton copy = PanelBuilder.iconButton(new FlatSVGIcon("icons/copy.svg", 16, 16));
         copy.setToolTipText("Copy");
         copy.addActionListener(_ -> {
             Toolkit.getDefaultToolkit().getSystemClipboard()
@@ -391,7 +426,7 @@ public class SubjectPanel extends JPanel {
             copy.setIcon(new FlatSVGIcon("icons/check.svg", 16, 16));
             copy.setToolTipText("Copied!");
         });
-        JButton refresh = new JButton(new FlatSVGIcon("icons/rotate.svg", 16, 16));
+        JButton refresh = PanelBuilder.iconButton(new FlatSVGIcon("icons/rotate.svg", 16, 16));
         refresh.setToolTipText("Refresh");
         refresh.addActionListener(_ -> {
             APIKey<String> refreshed;
@@ -402,6 +437,9 @@ public class SubjectPanel extends JPanel {
                 return;
             }
             genKey.setText(refreshed.getAPIKey());
+            // new key → the old "Copied!" state no longer applies
+            copy.setIcon(new FlatSVGIcon("icons/copy.svg", 16, 16));
+            copy.setToolTipText("Copy");
         });
         JPanel copyRow = new JPanel(new FlowLayout(FlowLayout.LEFT));
         copyRow.add(genKey);
@@ -465,7 +503,7 @@ public class SubjectPanel extends JPanel {
         }
 
         BackgroundTask.runCatching(this, null,
-                () -> ctx.session().createAPIKey(label, description, domainId, appId, key),
+                () -> ctx.session().storeAPIKey(label, description, domainId, appId, key),
                 () -> {
                     passwordSection.refresh();
                     apiKeySection.refresh();
@@ -517,17 +555,24 @@ public class SubjectPanel extends JPanel {
     // ============================ Edit API key ============================
 
     private JPanel buildEditAPIKey() {
-        JButton submit = new JButton(new FlatSVGIcon("icons/pencil.svg", 16, 16));
-        submit.setToolTipText("Edit API Key");
-        JButton copyKey = new JButton(new FlatSVGIcon("icons/copy.svg", 16, 16));
+
+        // save api key button
+        JButton submit = PanelBuilder.iconButton(new FlatSVGIcon("icons/check.svg", 16, 16));
+        submit.setToolTipText("Save");
+
+        // rotate api key button
+        JButton rotate = PanelBuilder.iconButton(new FlatSVGIcon("icons/rotate.svg", 16, 16));
+        rotate.setToolTipText("Rotate");
+        rotate.addActionListener(_ -> onRotateAPIKey(rotate));
+
+        // copy api key button
+        JButton copyKey = PanelBuilder.iconButton(new FlatSVGIcon("icons/copy.svg", 16, 16));
         copyKey.setToolTipText("Copy");
         submit.addActionListener(_ -> onEditAPIDetails(submit));
         copyKey.addActionListener(_ -> {
             if (selectedKey != null && selectedKey.getAPIKey() != null) {
                 Toolkit.getDefaultToolkit().getSystemClipboard()
                         .setContents(new StringSelection(selectedKey.getAPIKey()), null);
-                copyKey.setIcon(new FlatSVGIcon("icons/check.svg", 16, 16));
-                copyKey.setToolTipText("Copied!");
             }
         });
 
@@ -535,29 +580,21 @@ public class SubjectPanel extends JPanel {
         showKey.addActionListener(_ -> setKeyMasked(isKeyShown));
 
         editKeySecret.setEditable(false);
+        keyAppID.setEditable(false);
+        keyDomainID.setEditable(false);
 
         JPanel keyView = new JPanel(new FlowLayout(FlowLayout.LEFT));
+
         keyView.add(editKeySecret);
+        keyView.add(rotate);
         keyView.add(copyKey);
         keyView.add(showKey);
-
-        JButton rotate = new JButton(new FlatSVGIcon("icons/rotate.svg", 16, 16));
-        rotate.setToolTipText("Rotate");
-        rotate.addActionListener(_ -> onRotateAPIKey(rotate));
-
-        JButton delete = new JButton(new FlatSVGIcon("icons/trash.svg", 16, 16));
-        delete.setToolTipText("Delete");
-        delete.addActionListener(_ -> onDeleteAPIKey(delete));
-
-        JPanel apiButtons = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        apiButtons.add(rotate);
-        apiButtons.add(delete);
+        keyView.add(submit);
 
         return PanelBuilder.detail("Edit API key",
                 () -> credentialCards.show("list"),
                 panel -> {
-                    panel.add(new JLabel("Secret key"));
-                    panel.add(keyView);
+
 
                     panel.add(new JLabel("Label"));
                     panel.add(editKeyLabel);
@@ -565,11 +602,14 @@ public class SubjectPanel extends JPanel {
                     panel.add(new JLabel("Description"));
                     panel.add(editKeyDescription);
 
-                    panel.add(submit);
+                    panel.add(new JLabel("App ID"));
+                    panel.add(keyAppID);
 
-                    panel.add(PanelBuilder.title("Rotate or Delete"));
-                    panel.add(new JLabel("Rotating issues a new secret for this key and invalidates the current one."));
-                    panel.add(apiButtons);
+                    panel.add(new JLabel("Domain ID"));
+                    panel.add(keyDomainID);
+
+                    panel.add(new JLabel("API Key"));
+                    panel.add(keyView);
                 }
         );
     }
@@ -581,6 +621,15 @@ public class SubjectPanel extends JPanel {
         setKeyMasked(true);   // every key opens hidden, regardless of the previous selection
         editKeyLabel.setText(key.getName());
         editKeyDescription.setText(key.getDescription());
+
+        if (key.getAppID() != null) {
+            keyAppID.setText(key.getAppID().getAppID());
+            keyDomainID.setText(key.getAppID().getDomainID());
+        } else {
+            keyAppID.setText("");
+            keyDomainID.setText("");
+        }
+
         credentialCards.show("editAPI");
     }
 
@@ -600,6 +649,8 @@ public class SubjectPanel extends JPanel {
                     editKeySecret.setText("");
                     editKeyLabel.setText("");
                     editKeyDescription.setText("");
+                    keyAppID.setText("");
+                    keyDomainID.setText("");
                     credentialCards.show("list");
                     passwordSection.refresh();
                     apiKeySection.refresh();
@@ -623,18 +674,16 @@ public class SubjectPanel extends JPanel {
                 });
     }
 
-    private void onDeleteAPIKey(JButton src) {
-        if (selectedKey == null) return;
+    private void deleteAPIKey(APIKey<String> key) {
+        if (key == null) return;
         int ok = JOptionPane.showConfirmDialog(this,
                 "Delete this key? This permanently removes it.",
                 "Delete API key", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
         if (ok != JOptionPane.OK_OPTION) return;
 
-        BackgroundTask.runCatching(this, src,
-                () -> ctx.session().deleteAPIKey(selectedKey),
+        BackgroundTask.runCatching(this, null,
+                () -> ctx.session().deleteAPIKey(key),
                 () -> {
-                    selectedKey = null;
-                    credentialCards.show("list");   // the edit card now points at a deleted key
                     apiKeySection.refresh();
                     JOptionPane.showMessageDialog(this, "API key Deleted.");
                 });

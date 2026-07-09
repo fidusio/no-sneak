@@ -39,7 +39,7 @@ public class SubjectSecManagerPanel extends JPanel {
 
     private JPanel buildSubjectPanel() {
         JTextField search = new JTextField(20);
-        JButton searchButton = new JButton(new FlatSVGIcon("icons/search.svg", 16, 16));
+        JButton searchButton = PanelBuilder.iconButton(new FlatSVGIcon("icons/search.svg", 16, 16));
         searchButton.setToolTipText("Search");
         JPanel searchBar = new JPanel(new FlowLayout(FlowLayout.LEFT));
         searchBar.add(search);
@@ -58,7 +58,7 @@ public class SubjectSecManagerPanel extends JPanel {
 
     private JPanel buildPermissionsPanel() {
         JTextField search = new JTextField(20);
-        JButton searchButton = new JButton(new FlatSVGIcon("icons/search.svg", 16, 16));
+        JButton searchButton = PanelBuilder.iconButton(new FlatSVGIcon("icons/search.svg", 16, 16));
         searchButton.setToolTipText("Search");
         JPanel searchBar = new JPanel(new FlowLayout(FlowLayout.LEFT));
         searchBar.add(search);
@@ -76,7 +76,7 @@ public class SubjectSecManagerPanel extends JPanel {
 
     private JPanel buildRolesPanel() {
         JTextField search = new JTextField(20);
-        JButton searchButton = new JButton(new FlatSVGIcon("icons/search.svg", 16, 16));
+        JButton searchButton = PanelBuilder.iconButton(new FlatSVGIcon("icons/search.svg", 16, 16));
         searchButton.setToolTipText("Search");
         JPanel searchBar = new JPanel(new FlowLayout(FlowLayout.LEFT));
         searchBar.add(search);
@@ -94,7 +94,7 @@ public class SubjectSecManagerPanel extends JPanel {
 
     private JPanel buildRoleGroupsPanel() {
         JTextField search = new JTextField(20);
-        JButton searchButton = new JButton(new FlatSVGIcon("icons/search.svg", 16, 16));
+        JButton searchButton = PanelBuilder.iconButton(new FlatSVGIcon("icons/search.svg", 16, 16));
         searchButton.setToolTipText("Search");
         JPanel searchBar = new JPanel(new FlowLayout(FlowLayout.LEFT));
         searchBar.add(search);
@@ -112,7 +112,7 @@ public class SubjectSecManagerPanel extends JPanel {
 
     private JPanel buildGrantsPanel() {
         JTextField search = new JTextField(20);
-        JButton searchButton = new JButton(new FlatSVGIcon("icons/search.svg", 16, 16));
+        JButton searchButton = PanelBuilder.iconButton(new FlatSVGIcon("icons/search.svg", 16, 16));
         searchButton.setToolTipText("Search");
         JPanel searchBar = new JPanel(new FlowLayout(FlowLayout.LEFT));
         searchBar.add(search);

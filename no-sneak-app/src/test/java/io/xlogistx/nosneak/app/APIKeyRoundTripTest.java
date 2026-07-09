@@ -21,10 +21,10 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * Covers the split API-key flow: {@link Session#generateAPIKey()} produces a fresh
  * {@link SubjectAPIKey} (its {@code getAPIKey()} is the raw secret),
- * {@link Session#createAPIKey(String, String, String, String, String)} stores it (with a label and
+ * {@link Session#storeAPIKey(String, String, String, String, String)} stores it (with a label and
  * description), and {@link Session#loginAPIKey(char[])} logs in with it.
  * Also covers the label/description round-trip, editing the metadata via
- * {@link Session#changeAPIDetails}, and the create/validation failure paths.
+ * {@link Session#changeAPIDetails}, and the creation/validation failure paths.
  *
  * <p>Failure is signalled by a thrown exception ({@link SecurityException} for the
  * business-rule guards, {@link IllegalArgumentException} for the AppID filters);
@@ -56,8 +56,8 @@ public class APIKeyRoundTripTest {
 
         String apiKey = s.generateAPIKey().getAPIKey();
         assertNotNull(apiKey, "generateAPIKey returned null");
-        assertDoesNotThrow(() -> s.createAPIKey("prod-key", "for production", null, null, apiKey),
-                "createAPIKey should succeed");
+        assertDoesNotThrow(() -> s.storeAPIKey("prod-key", "for production", null, null, apiKey),
+                "storeAPIKey should succeed");
 
         s.logout();
         assertFalse(s.isAuthenticated());
@@ -71,7 +71,7 @@ public class APIKeyRoundTripTest {
     public void labelRoundTripsIntoCredentialList() {
         Session s = mockSession();
         s.loginUsernamePassword("kailen", "Password1!".toCharArray());
-        assertDoesNotThrow(() -> s.createAPIKey("prod-key", "for production", null, null, s.generateAPIKey().getAPIKey()));
+        assertDoesNotThrow(() -> s.storeAPIKey("prod-key", "for production", null, null, s.generateAPIKey().getAPIKey()));
 
         SubjectAPIKey stored = firstApiKey(s);
         assertNotNull(stored, "the API key should appear in the credential list");
@@ -83,7 +83,7 @@ public class APIKeyRoundTripTest {
     public void changeApiDetailsUpdatesLabelAndDescription() {
         Session s = mockSession();
         s.loginUsernamePassword("kailen", "Password1!".toCharArray());
-        assertDoesNotThrow(() -> s.createAPIKey("old-label", "old desc", null, null, s.generateAPIKey().getAPIKey()));
+        assertDoesNotThrow(() -> s.storeAPIKey("old-label", "old desc", null, null, s.generateAPIKey().getAPIKey()));
 
         SubjectAPIKey stored = firstApiKey(s);
         assertNotNull(stored, "the API key should exist before editing");
@@ -101,12 +101,12 @@ public class APIKeyRoundTripTest {
     public void changeApiDetailsCanClearMetadata() {
         Session s = mockSession();
         s.loginUsernamePassword("kailen", "Password1!".toCharArray());
-        assertDoesNotThrow(() -> s.createAPIKey("label", "desc", null, null, s.generateAPIKey().getAPIKey()));
+        assertDoesNotThrow(() -> s.storeAPIKey("label", "desc", null, null, s.generateAPIKey().getAPIKey()));
 
         SubjectAPIKey stored = firstApiKey(s);
         assertNotNull(stored);
 
-        // Unlike createAPIKey (which skips blank label/description), the edit path sets
+        // Unlike storeAPIKey (which skips blank label/description), the edit path sets
         // whatever it's handed — so passing blanks clears the fields.
         assertDoesNotThrow(() -> s.changeAPIDetails(stored, "", ""), "clearing metadata should succeed");
 
@@ -132,7 +132,7 @@ public class APIKeyRoundTripTest {
         Session s = mockSession();
         s.loginUsernamePassword("kailen", "Password1!".toCharArray());
         String secret = s.generateAPIKey().getAPIKey();
-        assertDoesNotThrow(() -> s.createAPIKey("doomed", "desc", null, null, secret));
+        assertDoesNotThrow(() -> s.storeAPIKey("doomed", "desc", null, null, secret));
 
         SubjectAPIKey stored = firstApiKey(s);
         assertNotNull(stored);
@@ -163,7 +163,7 @@ public class APIKeyRoundTripTest {
         Session s = mockSession();
         s.loginUsernamePassword("kailen", "Password1!".toCharArray());
         String oldSecret = s.generateAPIKey().getAPIKey();
-        assertDoesNotThrow(() -> s.createAPIKey("rotate-me", "desc", null, null, oldSecret));
+        assertDoesNotThrow(() -> s.storeAPIKey("rotate-me", "desc", null, null, oldSecret));
 
         SubjectAPIKey stored = firstApiKey(s);
         assertNotNull(stored);
@@ -205,12 +205,12 @@ public class APIKeyRoundTripTest {
                 "generateAPIKey is refused when signed out");
         assertEquals("Not signed in",
                 assertThrows(SecurityException.class,
-                        () -> s.createAPIKey("label", "desc", null, null, "anything")).getMessage());
+                        () -> s.storeAPIKey("label", "desc", null, null, "anything")).getMessage());
 
         s.loginUsernamePassword("kailen", "Password1!".toCharArray());
         assertEquals("Key cannot be empty",
                 assertThrows(SecurityException.class,
-                        () -> s.createAPIKey("label", "desc", null, null, "   ")).getMessage());
+                        () -> s.storeAPIKey("label", "desc", null, null, "   ")).getMessage());
         // NOTE: the "Invalid API key format" branch is not asserted here — SharedBase64.decode
         // is lenient and does not throw on arbitrary junk, so a malformed key is currently
         // accepted (it just never matches at login). See the review note.
@@ -221,7 +221,7 @@ public class APIKeyRoundTripTest {
         Session s = mockSession();
         s.loginUsernamePassword("kailen", "Password1!".toCharArray());
 
-        s.createAPIKey("real", "desc", null, null, s.generateAPIKey().getAPIKey());
+        s.storeAPIKey("real", "desc", null, null, s.generateAPIKey().getAPIKey());
         String phantom = s.generateAPIKey().getAPIKey();   // validly formatted, but never stored
         s.logout();
 
@@ -234,7 +234,7 @@ public class APIKeyRoundTripTest {
     public void createStoresDomainAndAppIDWhenBothProvided() {
         Session s = mockSession();
         s.loginUsernamePassword("kailen", "Password1!".toCharArray());
-        assertDoesNotThrow(() -> s.createAPIKey("labelled", "desc", "example.com", "myapp123", s.generateAPIKey().getAPIKey()),
+        assertDoesNotThrow(() -> s.storeAPIKey("labelled", "desc", "example.com", "myapp123", s.generateAPIKey().getAPIKey()),
                 "create with a valid domain + app id should succeed");
 
         SubjectAPIKey stored = firstApiKey(s);
@@ -249,7 +249,7 @@ public class APIKeyRoundTripTest {
         Session s = mockSession();
         s.loginUsernamePassword("kailen", "Password1!".toCharArray());
         // The domain and app-id filters lower-case their input, so mixed-case entry is normalized.
-        assertDoesNotThrow(() -> s.createAPIKey("labelled", "desc", "Example.COM", "MyApp123", s.generateAPIKey().getAPIKey()));
+        assertDoesNotThrow(() -> s.storeAPIKey("labelled", "desc", "Example.COM", "MyApp123", s.generateAPIKey().getAPIKey()));
 
         SubjectAPIKey stored = firstApiKey(s);
         assertNotNull(stored);
@@ -264,7 +264,7 @@ public class APIKeyRoundTripTest {
 
         // Only a domain (no app id): the app-id block requires both, so it is skipped and the
         // key is still created without an app-id association.
-        assertDoesNotThrow(() -> s.createAPIKey("dom-only", "desc", "example.com", "  ", s.generateAPIKey().getAPIKey()),
+        assertDoesNotThrow(() -> s.storeAPIKey("dom-only", "desc", "example.com", "  ", s.generateAPIKey().getAPIKey()),
                 "a domain with a blank app id should still create the key");
         SubjectAPIKey stored = firstApiKey(s);
         assertNotNull(stored, "the key must be created even though the app id was skipped");
@@ -276,7 +276,7 @@ public class APIKeyRoundTripTest {
         s.loginUsernamePassword("kailen", "Password1!".toCharArray());
         // "not a domain" fails FilterType.DOMAIN, which throws rather than returning a reason.
         assertThrows(IllegalArgumentException.class,
-                () -> s.createAPIKey("bad-domain", "desc", "not a domain", "myapp123", s.generateAPIKey().getAPIKey()),
+                () -> s.storeAPIKey("bad-domain", "desc", "not a domain", "myapp123", s.generateAPIKey().getAPIKey()),
                 "an invalid domain must be rejected");
     }
 
@@ -286,7 +286,7 @@ public class APIKeyRoundTripTest {
         s.loginUsernamePassword("kailen", "Password1!".toCharArray());
         // AppIDNameFilter only accepts letters and digits, so "my-app" (a dash) is rejected.
         assertThrows(IllegalArgumentException.class,
-                () -> s.createAPIKey("bad-app", "desc", "example.com", "my-app", s.generateAPIKey().getAPIKey()),
+                () -> s.storeAPIKey("bad-app", "desc", "example.com", "my-app", s.generateAPIKey().getAPIKey()),
                 "a non-alphanumeric app id must be rejected");
     }
 
@@ -314,7 +314,7 @@ public class APIKeyRoundTripTest {
         session.loginUsernamePassword("Kailen", "Password1!".toCharArray());
 
         String key = session.generateAPIKey().getAPIKey();
-        assertDoesNotThrow(() -> session.createAPIKey("smoke", "desc", null, null, key));
+        assertDoesNotThrow(() -> session.storeAPIKey("smoke", "desc", null, null, key));
         System.out.println(key);
 
         session.logout();

@@ -15,6 +15,7 @@ import javax.crypto.SecretKey;
 import java.beans.PropertyChangeListener;
 import java.beans.PropertyChangeSupport;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -38,6 +39,7 @@ public class Session {
             • Include at least one number (0–9).
             • Include at least one special character (such as !, @, #, $, %, &, *).
             • Cannot be empty or contain only spaces.""";
+    private static final String ADDRESSES = "addresses";
     private final PropertyChangeSupport pcs = new PropertyChangeSupport(this);
     private final DomainSecurityManager domainSecurityManager;
     private boolean authenticated;
@@ -92,7 +94,7 @@ public class Session {
     public void loginAPIKey(char[] apiKey) throws SecurityException {
 
         try {
-            // Stored plain (see createAPIKey), so look it up as-is — no hashing.
+            // Stored plain (see storeAPIKey), so look it up as-is — no hashing.
             subjectIdentifier = domainSecurityManager.loginApiKey(new String(apiKey));
         } catch (SecurityException p) {
             throw new SecurityException("API Key Invalid", p);
@@ -159,7 +161,7 @@ public class Session {
     /**
      * Stores a new API key (plain) with an optional label/description. @return {@code null} on success, else an error message.
      */
-    public void createAPIKey(String label, String description, String domainID, String appID, String rawKey) throws SecurityException {
+    public void storeAPIKey(String label, String description, String domainID, String appID, String rawKey) throws SecurityException {
 
         // TBD change the name, throw exception, signature to void
 
@@ -177,6 +179,11 @@ public class Session {
             } catch (IllegalArgumentException e) {
                 throw new SecurityException("Invalid domain or app ID", e);
             }
+        } else {
+            AppIDDefault noSneakAppID = new AppIDDefault();
+            noSneakAppID.setDomainAppID("xlogistx.io", "nosneak");
+
+            key.setAppID(noSneakAppID);
         }
 
 
@@ -362,42 +369,6 @@ public class Session {
         domainSecurityManager.updateSubjectID(subjectIdentifier);
     }
 
-    private NVGenericMapList addressList(boolean create) {
-        NVGenericMap props = subjectIdentifier.getProperties();
-        if (props == null) {
-            if (!create) return null;
-            props = new NVGenericMap();
-            subjectIdentifier.setValue(PropertyDAO.Param.PROPERTIES, props);
-        }
-        NVGenericMapList list = props.lookup("addresses");
-        if (list == null && create) { list = new NVGenericMapList("addresses"); props.add(list); }
-        return list;
-    }
-
-    public List<NVGenericMap> getAddresses() {
-        if (subjectIdentifier == null) return java.util.List.of();
-        NVGenericMapList list = addressList(false);
-        return list == null ? java.util.List.of() : list.getValue();
-    }
-
-    public void addAddress(NVGenericMap address) throws SecurityException {
-        if (subjectIdentifier == null) throw new SecurityException("Not Logged in");
-        addressList(true).add(address);
-        domainSecurityManager.updateSubjectID(subjectIdentifier);
-    }
-
-    // call after mutating an address in place (edit)
-    public void saveAddresses() throws SecurityException {
-        if (subjectIdentifier == null) throw new SecurityException("Not Logged in");
-        domainSecurityManager.updateSubjectID(subjectIdentifier);
-    }
-
-    public void removeAddress(NVGenericMap address) throws SecurityException {
-        if (subjectIdentifier == null) throw new SecurityException("Not Logged in");
-        NVGenericMapList list = addressList(false);
-        if (list != null) list.getValue().remove(address); // remove by reference
-        domainSecurityManager.updateSubjectID(subjectIdentifier);
-    }
 
     /**
      * @return the given profile keys mapped to their stored values (empty string when unset or signed out).
@@ -410,6 +381,61 @@ public class Session {
             out.put(key, v == null ? "" : v.toString());
         }
         return out;
+    }
+
+
+    public List<NVGenericMap> getAllAddresses() {
+        if (subjectIdentifier == null) return new ArrayList<>();
+        NVGenericMap props = subjectIdentifier.getProperties();
+        if (props == null) return new ArrayList<>();
+
+        NVGenericMapList list = props.lookup(ADDRESSES);
+        if (list == null) return new ArrayList<>();
+
+        return new ArrayList<>(list.getValue());
+    }
+
+
+    public void changeAddressDetails(NVGenericMap address) throws SecurityException {
+        if (subjectIdentifier == null) throw new SecurityException("Not Logged in");
+        if (address == null) throw new SecurityException("Invalid address");
+
+        NVGenericMap props = subjectIdentifier.getProperties();
+        NVGenericMapList list = props == null ? null : props.lookup(ADDRESSES);
+        boolean stored = list != null && list.getValue().stream().anyMatch(a -> a == address);
+        if (!stored) throw new SecurityException("Address not found");
+
+        domainSecurityManager.updateSubjectID(subjectIdentifier);
+    }
+
+    public void addAddress(NVGenericMap address) throws SecurityException {
+        if (subjectIdentifier == null) throw new SecurityException("Not Logged in");
+        if (address == null) throw new SecurityException("Invalid address");
+
+        NVGenericMap props = subjectIdentifier.getProperties();
+        if (props == null) {
+            props = new NVGenericMap();
+            subjectIdentifier.setValue(PropertyDAO.Param.PROPERTIES, props);
+        }
+        NVGenericMapList list = props.lookup(ADDRESSES);
+        if (list == null) {
+            list = new NVGenericMapList(ADDRESSES);
+            props.add(list);
+        }
+        list.add(address);
+        domainSecurityManager.updateSubjectID(subjectIdentifier);
+    }
+
+    public void deleteAddress(NVGenericMap address) throws SecurityException {
+        if (subjectIdentifier == null) throw new SecurityException("Not Logged in");
+        if (address == null)          throw new SecurityException("Invalid address");
+
+        NVGenericMap props = subjectIdentifier.getProperties();
+        NVGenericMapList list = props == null ? null : props.lookup(ADDRESSES);
+        if (list == null) throw new SecurityException("No addresses to delete");
+
+        list.getValue().remove(address);
+        domainSecurityManager.updateSubjectID(subjectIdentifier);
     }
 
     /**

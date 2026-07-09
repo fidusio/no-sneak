@@ -140,14 +140,17 @@ mirroring how the Credentials screen switches between its list and detail cards.
     per-row **Remove** (trash icon) → `Session.removeIdentifier` (guarded against removing the
     last one). Both surface the thrown `SecurityException`'s message on failure. There is no
     *Principal IDs* card — identifiers live here.
-  - **Addresses** is a `ListSection` bound to `Session.getAddresses()`. **+ Add address**
+  - **Addresses** is a `ListSection` bound to `Session.getAllAddresses()`. **+ Add address**
     opens the **editAddress** card blank; each row's **Edit** (pencil) opens it pre-filled;
-    **Remove** (trash) confirms then `Session.removeAddress`. The editAddress card
+    **Remove** (trash) confirms then `Session.deleteAddress`. The editAddress card
     (`buildEditAddress`, via `PanelBuilder.detail` so it gets a back arrow) has Label / Street /
-    City / State-region / Postal / Country fields and a **Save address** button — Add stores a
-    fresh `NVGenericMap` via `Session.addAddress`, Edit mutates the selected map in place and
-    persists via `Session.saveAddresses`. Each address is its own `NVGenericMap` inside an
-    `NVGenericMapList("addresses")` in the subject's property bag.
+    City / State-region / Postal fields plus a **Country** combo box (populated from
+    `DataConst.COUNTRIES`) and a **Save address** button — Add stores a fresh `NVGenericMap` via
+    `Session.addAddress`, Edit mutates the selected map in place and persists via
+    `Session.changeAddressDetails`. Save requires at least a **Label or Street** (blocks with a
+    "Missing information" dialog otherwise). Each address is its own `NVGenericMap` (keys
+    `label`/`street`/`city`/`state`/`postal`/`country`) inside an `NVGenericMapList("addresses")`
+    in the subject's property bag.
   - **Save Changes** collects only name/DOB into a map and calls `Session.saveProfile(...)`;
     `populateProfile()` reads them back via `Session.loadProfile`. *(Address lives in the
     nested list above, not the flat profile map. No verification/canonical-ID/status metadata —
@@ -168,7 +171,7 @@ mirroring how the Credentials screen switches between its list and detail cards.
     and a **Copy** button; *Add third party* takes a pasted key plus App Id / Domain ID. The
     displayed field is the source of truth — copy and **Create key** both read it, so a
     refreshed key is the one actually stored. On **Create key** it stores via
-    `Session.createAPIKey(label, description, domainID, appID, rawKey)` (off the EDT) — the
+    `Session.storeAPIKey(label, description, domainID, appID, rawKey)` (off the EDT) — the
     optional domain/app-id pair is validated by the AppID filters — and refreshes the list.
   - The `editAPI` card is **fully wired**: the secret shows in a masked `JPasswordField`
     with a **Show/Hide** reveal toggle (eye / eye-off icon, re-masked on every open) and a
@@ -181,12 +184,17 @@ mirroring how the Credentials screen switches between its list and detail cards.
 > (from `src/main/resources/icons/*.svg`, rendered via `flatlaf-extras` + `jsvg`) with
 > tooltips rather than text: **pencil** (edit), **trash** (delete/remove), **rotate** (rotate /
 > regenerate), **copy** → green **check** on success, **eye/eye-off** (reveal), plus **search**
-> (`SubjectSecManagerPanel`) and **arrow-left** (`PanelBuilder.detail` back). Primary/confirming
-> buttons keep their text; the save-style ones (Save Changes, Change password, Save address)
-> additionally carry a neutral-gray **save** check icon (`save.svg` — same shape as the green
-> success `check.svg`, in the `#5A5A5A` action gray). Create key and Login/Register stay
-> text-only. `SVGIconButtonTest` (test sources) is a runnable visual check — its `main` shows
-> every bundled icon on real buttons at 16/24 px plus the disabled state.
+> (`SubjectSecManagerPanel`) and **arrow-left** (`PanelBuilder.detail` back). Icon-only buttons
+> are built through one of two helpers: **`PanelBuilder.iconButton(Icon)`** keeps the
+> look-and-feel's natural padding (used for the 16×16 action icons), while
+> **`GUIUtil.iconButton(Icon)`** (from `io.xlogistx.gui`) sizes the button tight to the icon.
+> The **back arrow** uses `PanelBuilder.iconButton` at **32×32** — larger than the action icons,
+> and kept square because `arrow-left.svg` has a 24×24 viewBox (unequal width/height would
+> stretch it). Primary/confirming buttons keep their text; the save-style ones (Save Changes,
+> Change password, Save address) additionally carry a neutral-gray **save** check icon
+> (`save.svg` — same shape as the green success `check.svg`, in the `#5A5A5A` action gray).
+> Create key and Login/Register stay text-only. `SVGIconButtonTest` (test sources) is a runnable
+> visual check — its `main` shows every bundled icon on real buttons plus the disabled state.
 
 The **Simple/Technical** toggle is still not built — see *Target behaviour*.
 
@@ -275,8 +283,8 @@ principal to its subject and validates the `PASSWORD` `CIPassword` via
 > guards), `ChangePasswordRoundTripTest` (old rejected / new works across logout-login, plus
 > failure modes), `IdentifierRoundTripTest` (add/remove, last-identifier guard, null +
 > non-active removal, subject repoint), `AddressRoundTripTest` (add → list, multiple, edit-in-
-> place replace-not-append, remove-by-reference, persistence across logout/login, signed-out
-> guards), and `AppIDDefaultTest` (the domain + app-id filters directly: case/`www.`/subdomain
+> place replace-not-append, remove-by-reference, all-fields + edit-all-fields round-trip,
+> persistence across logout/login, signed-out guards), and `AppIDDefaultTest` (the domain + app-id filters directly: case/`www.`/subdomain
 > normalization, invalid-domain and non-alphanumeric-app-id rejection, `create(domainAppID)`
 > parsing, canonical form, case-insensitive equality).
 > Surefire is skipped by the parent POM — run with `-DskipTests=false -Dmaven.test.skip=false`.
@@ -299,9 +307,9 @@ Result convention (migrated from the old reason-string model): the account/auth 
 return **`void`** and **throw `SecurityException`** on failure — the exception message is the
 human-readable reason the panel shows; success returns normally. This covers
 `loginUsernamePassword`, `registerUsernamePassword`, `loginAPIKey`, `addIdentifier`,
-`removeIdentifier`, `changePassword`, `createAPIKey`, `changeAPIDetails`, `rotateAPIKey`,
-`deleteAPIKey`, `saveProfile`, and the address mutators (`addAddress` / `saveAddresses` /
-`removeAddress`). `SecurityException` is **unchecked** (extends `RuntimeException`), so callers
+`removeIdentifier`, `changePassword`, `storeAPIKey`, `changeAPIDetails`, `rotateAPIKey`,
+`deleteAPIKey`, `saveProfile`, and the address mutators (`addAddress` / `changeAddressDetails` /
+`deleteAddress`). `SecurityException` is **unchecked** (extends `RuntimeException`), so callers
 aren't forced to catch it — `BackgroundTask.runCatching` centralizes the error dialog off the
 EDT. Failure is thrown, never a broadcast event. Two exceptions to the pattern:
 - **No-op / `void` stubs** — `loginPasskey` / `registerPasskey` are empty `void` stubs (not
@@ -330,7 +338,7 @@ API-key lifecycle (failures throw `SecurityException`; the raw key is stored **p
 - `generateAPIKey()` — a fresh AES-256 key, URL-Base64 encoded, wrapped in a `SubjectAPIKey`
   (`getAPIKey()` is the raw secret); no persistence. **Throws** `"Not signed in"` when signed
   out and `"Could not generate a key"` on a crypto failure (no longer returns `null`).
-- `createAPIKey(String label, String description, String domainID, String appID, String rawKey)`
+- `storeAPIKey(String label, String description, String domainID, String appID, String rawKey)`
   — stores the raw key verbatim (`setAPIKey(rawKey)`, no hashing) in a `SubjectAPIKey`
   (`STATUS` = ACTIVE, optional `name`/`description`) via `createCredential`. When **both**
   `domainID` and `appID` are non-blank it attaches an `AppIDDefault`, which runs them through
@@ -347,13 +355,20 @@ API-key lifecycle (failures throw `SecurityException`; the raw key is stored **p
   log in). Guards (thrown): `"Not signed in"` / `"Empty Key"`. *(Formerly `revokeAPIKey`.)*
 
 Addresses (stored as an `NVGenericMapList("addresses")` inside the subject's property bag —
-each address its own `NVGenericMap` with `label`/`street`/`city`/`region`/`postCode`/`country`;
-the profile map holds them as a nested list rather than flat fields):
-- `getAddresses()` — the live `List<NVGenericMap>` (empty when signed out).
-- `addAddress(NVGenericMap)` — appends to the list and persists via `updateSubjectID`.
-- `saveAddresses()` — persists after an address has been mutated in place (the edit path).
-- `removeAddress(NVGenericMap)` — removes by reference and persists.
-  All three throw `"Not Logged in"` when signed out.
+each address its own `NVGenericMap` with keys `label`/`street`/`city`/`state`/`postal`/`country`;
+the profile map holds them as a nested list rather than flat fields. `NVGenericMapList` is used
+deliberately: it is the one list container the Mongo property-bag serializer round-trips — an
+`NVEntityReferenceList` of `AddressDAO` is silently dropped on write, so addresses aren't stored
+as entity references):
+- `getAllAddresses()` — the live `List<NVGenericMap>` (empty when signed out); returned maps are
+  the stored instances, so mutating one and calling `changeAddressDetails` persists the edit.
+- `addAddress(NVGenericMap)` — creates the `addresses` list on first use, appends, and persists
+  via `updateSubjectID`.
+- `changeAddressDetails(NVGenericMap)` — persists after an address has been mutated in place (the
+  edit path). Guarded: the map must actually be in the stored list (identity check), else throws
+  `"Address not found"` — so a detached map can't be a silent no-op.
+- `deleteAddress(NVGenericMap)` — removes by reference and persists.
+  All throw `"Not Logged in"` when signed out.
 
 Account data (all backed by `DomainSecurityManager`, keyed off the signed-in subject):
 - `getAllPrincipalIDForLoggedInUser()` — identifiers, via `lookupAllPrincipalIdentifiers(
@@ -490,7 +505,7 @@ Intended per-type behaviour (today **Password** and the **full API-key lifecycle
 >
 > **Storage note.** Keys are persisted **plain** — a deliberate prototype choice so the
 > `editAPI` card can reveal/copy the secret on demand. For production you'd hash at rest
-> (`createAPIKey` hashes on store, `loginAPIKey` hashes the presented key the same way), which
+> (`storeAPIKey` hashes on store, `loginAPIKey` hashes the presented key the same way), which
 > makes reveal impossible and shifts the UX to show-once + rotate-to-recover.
 
 **+ Add login method** would register an additional credential of any type (today only
@@ -529,16 +544,17 @@ Tracked work items for the `mock` UI.
   action listener, and `SubjectPanel` has no toggle. Add the toggle, back both controls
   with a single shared Technical-mode flag, and make Simple/Technical actually
   show/hide the underlying detail (per the *Tier toggle* contract above).
-- ~~**Profile is static.**~~ **Done** (persistence). **Save Changes** writes name/DOB/address
-  to the subject's property bag (`Session.saveProfile`) and reloads via `loadProfile`. Still
-  target-only: Email-change verification and a gated Canonical ID field.
+- ~~**Profile is static.**~~ **Done** (persistence). **Save Changes** writes name/DOB to the
+  subject's property bag (`Session.saveProfile`) and reloads via `loadProfile`; addresses persist
+  separately through the address book (see *Addresses* above). Still target-only: Email-change
+  verification and a gated Canonical ID field.
 - ~~**Identifiers folded into Profile, not yet built.**~~ **Done** (core). Built as a
   `ListSection` with add + guarded remove. Still target-only (no model fields): per-entry
   status/type, Edit/rename, verification-before-active, and a minimum-one-email rule.
 - ~~**Login credentials — password done, rest stubbed.**~~ **Done** (except passkey). Password
   replace (change form → `Session.changePassword`, atomic, off-EDT) and the **full API-key
   lifecycle** are built: **+ Add API Key** generates or imports a key (`generateAPIKey` /
-  `createAPIKey`), it logs in via `loginAPIKey`, and the `editAPI` card supports reveal/copy,
+  `storeAPIKey`), it logs in via `loginAPIKey`, and the `editAPI` card supports reveal/copy,
   **edit** label/description (`changeAPIDetails`), **Rotate** (`rotateAPIKey`) and **Delete**
   (`deleteAPIKey`) — each confirmed, off-EDT, with refresh. Still stubbed: passkey
   view-device/remove.
@@ -547,12 +563,11 @@ Tracked work items for the `mock` UI.
   from its edit affordance. Blocked on the model: `PrincipalIdentifier` currently holds only
   the id string, so this needs a status field (and its persistence) before the UI can surface
   it — until then all identifiers render statusless.
-- **Address optional / `*`-for-mandatory convention.** The profile/address forms have no
-  required-field convention. Adopt a single rule: mandatory fields are marked with a trailing
-  `*` in their label and validated before save (block + message on empty); everything else is
-  explicitly "— optional". Apply it consistently across the address card (decide the mandatory
-  set, e.g. Street + City + Country) and the profile fields, replacing the current ad-hoc
-  "— optional" suffixes.
+- **Address optional / `*`-for-mandatory convention.** *Partially done* — the address card now
+  blocks saving unless at least a **Label or Street** is filled ("Missing information" dialog).
+  Still target-only: a consistent convention across profile + address forms marking mandatory
+  fields with a trailing `*` in the label and everything else explicitly "— optional" (decide the
+  full mandatory set, e.g. Street + City + Country), replacing the ad-hoc "— optional" suffixes.
 
 ### Subject Security Manager (`SubjectSecManagerPanel`)
 - **All tables are empty stubs** and **search is not wired.** Bind the Subjects /
