@@ -182,7 +182,11 @@ mirroring how the Credentials screen switches between its list and detail cards.
 > tooltips rather than text: **pencil** (edit), **trash** (delete/remove), **rotate** (rotate /
 > regenerate), **copy** → green **check** on success, **eye/eye-off** (reveal), plus **search**
 > (`SubjectSecManagerPanel`) and **arrow-left** (`PanelBuilder.detail` back). Primary/confirming
-> buttons (Save Changes, Change password, Save address, Create key, Login/Register) stay text.
+> buttons keep their text; the save-style ones (Save Changes, Change password, Save address)
+> additionally carry a neutral-gray **save** check icon (`save.svg` — same shape as the green
+> success `check.svg`, in the `#5A5A5A` action gray). Create key and Login/Register stay
+> text-only. `SVGIconButtonTest` (test sources) is a runnable visual check — its `main` shows
+> every bundled icon on real buttons at 16/24 px plus the disabled state.
 
 The **Simple/Technical** toggle is still not built — see *Target behaviour*.
 

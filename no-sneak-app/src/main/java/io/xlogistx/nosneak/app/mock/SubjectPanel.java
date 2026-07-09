@@ -29,7 +29,7 @@ public class SubjectPanel extends JPanel {
     private final JTextField dob = new JTextField(20);
 
     private static final String[] PROFILE_KEYS = {"firstName", "lastName", "dob"};
-    private final JButton saveProfile = new JButton("Save Changes");
+    private final JButton saveProfile = new JButton("Save Changes", new FlatSVGIcon("icons/save.svg", 16, 16));
 
     // ---- Change-password fields ----
     private final JPasswordField currentPwd = new JPasswordField(20);
@@ -235,7 +235,7 @@ public class SubjectPanel extends JPanel {
      * The address detail card (fields + Save), reached by "+ Add address" or a per-row Edit.
      */
     private JPanel buildEditAddress() {
-        JButton save = new JButton("Save address");
+        JButton save = new JButton("Save address", new FlatSVGIcon("icons/save.svg", 16, 16));
         save.addActionListener(_ -> onSaveAddress(save));
 
         return PanelBuilder.detail("Address",
@@ -476,7 +476,7 @@ public class SubjectPanel extends JPanel {
     // ============================ Change password ============================
 
     private JPanel buildChangePassword() {
-        JButton submit = new JButton("Change password");
+        JButton submit = new JButton("Change password", new FlatSVGIcon("icons/save.svg", 16, 16));
         submit.addActionListener(_ -> onChangePassword(submit));
 
         return PanelBuilder.detail("Change password",
