@@ -1,5 +1,6 @@
 package io.xlogistx.nosneak.app.mock;
 
+import io.xlogistx.gui.DynamicComboBox;
 import io.xlogistx.gui.IconStatusWidget;
 import io.xlogistx.nosneak.app.mock.utility.AppContext;
 import io.xlogistx.nosneak.app.mock.utility.BackgroundTask;
@@ -12,7 +13,7 @@ import java.net.URL;
 
 public class LoginPanel extends JPanel {
     private final JTextField username = new JTextField(20);
-    private final JTextField domain = new JTextField(20);
+    DynamicComboBox domain = new DynamicComboBox(true, true);
     private final JPasswordField password = new JPasswordField(20);
     private final JPasswordField confirmPassword = new JPasswordField(20);
     private final JLabel confirmPasswordLabel = new JLabel("Confirm Password");
@@ -46,14 +47,14 @@ public class LoginPanel extends JPanel {
         cardStack.show("Password");
 
         // Action buttons branch on the current mode at click time.
-        passwordAction.addActionListener(e -> {
+        passwordAction.addActionListener(_ -> {
             String user = username.getText();
             char[] pwd = password.getPassword();
 
             if (login) {
 
-                BackgroundTask.runReason(this, passwordAction,
-                        () -> ctx.session().loginUsernamePassword(user, pwd) ? null : "Invalid Credentials",
+                BackgroundTask.runCatching(this, passwordAction,
+                        () -> ctx.session().loginUsernamePassword(user, pwd),
                         null);
             } else {
                 if (!java.util.Arrays.equals(pwd, confirmPassword.getPassword())) {
@@ -61,7 +62,7 @@ public class LoginPanel extends JPanel {
                             JOptionPane.ERROR_MESSAGE);
                     return;
                 }
-                BackgroundTask.runReason(this, passwordAction,
+                BackgroundTask.runCatching(this, passwordAction,
                         () -> ctx.session().registerUsernamePassword(user, pwd),
                         () -> {
                             JOptionPane.showMessageDialog(this, "Registered Successfully");
@@ -73,20 +74,19 @@ public class LoginPanel extends JPanel {
                         });
             }
         });
-        apiKeyAction.addActionListener(e -> {
+        apiKeyAction.addActionListener(_ -> {
             if (login) {
-                BackgroundTask.runReason(this, passwordAction,
+                BackgroundTask.runCatching(this, passwordAction,
                         () -> ctx.session().loginAPIKey(apiKey.getPassword()),
                         () -> {
                         });
-                ;
             }
         });
-        passkeyAction.addActionListener(e -> {
+        passkeyAction.addActionListener(_ -> {
             if (login) ctx.session().loginPasskey();
             else ctx.session().registerPasskey();
         });
-        modeToggle.addActionListener(e -> toggleMode());
+        modeToggle.addActionListener(_ -> toggleMode());
         applyMode();
 
         ctx.session().onAuthChange(e -> {
@@ -136,15 +136,17 @@ public class LoginPanel extends JPanel {
         // Login <-> Register mode toggle
         c.gridy = 6;
         add(modeToggle, c);
+
+        domain.addItem("xlogistx.io-nosneak");
     }
 
     private JPanel buildSelectorPane() {
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.CENTER));
         ButtonGroup selector = new ButtonGroup();
 
-        passwordSelector.addActionListener(e -> cardStack.show("Password"));
-        apiKeySelector.addActionListener(e -> cardStack.show("APIKey"));
-        passkeySelector.addActionListener(e -> cardStack.show("Passkey"));
+        passwordSelector.addActionListener(_ -> cardStack.show("Password"));
+        apiKeySelector.addActionListener(_ -> cardStack.show("APIKey"));
+        passkeySelector.addActionListener(_ -> cardStack.show("Passkey"));
 
         passwordSelector.setSelected(true);
 

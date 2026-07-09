@@ -1,5 +1,6 @@
 package io.xlogistx.nosneak.app.mock;
 
+import com.formdev.flatlaf.extras.FlatSVGIcon;
 import io.xlogistx.nosneak.app.mock.utility.AppContext;
 import io.xlogistx.nosneak.app.mock.utility.CardStack;
 import io.xlogistx.nosneak.app.mock.utility.PanelBuilder;
@@ -38,7 +39,8 @@ public class SubjectSecManagerPanel extends JPanel {
 
     private JPanel buildSubjectPanel() {
         JTextField search = new JTextField(20);
-        JButton searchButton = new JButton("Search");
+        JButton searchButton = new JButton(new FlatSVGIcon("icons/search.svg", 16, 16));
+        searchButton.setToolTipText("Search");
         JPanel searchBar = new JPanel(new FlowLayout(FlowLayout.LEFT));
         searchBar.add(search);
         searchBar.add(searchButton);
@@ -56,7 +58,8 @@ public class SubjectSecManagerPanel extends JPanel {
 
     private JPanel buildPermissionsPanel() {
         JTextField search = new JTextField(20);
-        JButton searchButton = new JButton("Search");
+        JButton searchButton = new JButton(new FlatSVGIcon("icons/search.svg", 16, 16));
+        searchButton.setToolTipText("Search");
         JPanel searchBar = new JPanel(new FlowLayout(FlowLayout.LEFT));
         searchBar.add(search);
         searchBar.add(searchButton);
@@ -73,7 +76,8 @@ public class SubjectSecManagerPanel extends JPanel {
 
     private JPanel buildRolesPanel() {
         JTextField search = new JTextField(20);
-        JButton searchButton = new JButton("Search");
+        JButton searchButton = new JButton(new FlatSVGIcon("icons/search.svg", 16, 16));
+        searchButton.setToolTipText("Search");
         JPanel searchBar = new JPanel(new FlowLayout(FlowLayout.LEFT));
         searchBar.add(search);
         searchBar.add(searchButton);
@@ -90,7 +94,8 @@ public class SubjectSecManagerPanel extends JPanel {
 
     private JPanel buildRoleGroupsPanel() {
         JTextField search = new JTextField(20);
-        JButton searchButton = new JButton("Search");
+        JButton searchButton = new JButton(new FlatSVGIcon("icons/search.svg", 16, 16));
+        searchButton.setToolTipText("Search");
         JPanel searchBar = new JPanel(new FlowLayout(FlowLayout.LEFT));
         searchBar.add(search);
         searchBar.add(searchButton);
@@ -107,7 +112,8 @@ public class SubjectSecManagerPanel extends JPanel {
 
     private JPanel buildGrantsPanel() {
         JTextField search = new JTextField(20);
-        JButton searchButton = new JButton("Search");
+        JButton searchButton = new JButton(new FlatSVGIcon("icons/search.svg", 16, 16));
+        searchButton.setToolTipText("Search");
         JPanel searchBar = new JPanel(new FlowLayout(FlowLayout.LEFT));
         searchBar.add(search);
         searchBar.add(searchButton);

@@ -12,7 +12,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Verifies the profile properties-bag round-trip: save → load, overwrite (replace not
@@ -62,8 +62,10 @@ public class ProfileRoundTripTest {
     @Test
     public void saveRejectedWhenSignedOut() {
         Session s = freshSession();   // never logged in
-        assertEquals("Not Logged in", s.saveProfile(map("firstName", "Jane")),
+        SecurityException ex = assertThrows(SecurityException.class,
+                () -> s.saveProfile(map("firstName", "Jane")),
                 "saving a profile with no signed-in subject must be refused");
+        assertEquals("Not Logged in", ex.getMessage());
     }
 
     @Test

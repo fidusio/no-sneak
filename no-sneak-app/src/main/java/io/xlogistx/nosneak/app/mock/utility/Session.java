@@ -9,13 +9,14 @@ import org.zoxweb.shared.data.PropertyDAO;
 import org.zoxweb.shared.filters.FilterType;
 import org.zoxweb.shared.security.*;
 import org.zoxweb.shared.util.NVGenericMap;
-import org.zoxweb.shared.util.SharedBase64;
+import org.zoxweb.shared.util.NVGenericMapList;
 
 import javax.crypto.SecretKey;
 import java.beans.PropertyChangeListener;
 import java.beans.PropertyChangeSupport;
 import java.security.NoSuchAlgorithmException;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 
@@ -29,12 +30,14 @@ import java.util.Map;
  * The plain login methods return a {@code boolean} instead.</p>
  */
 public class Session {
-    private static final String PASSWORD_RULES_MESSAGE = "Your password must meet all of the following requirements:\n\n" +
-            "• Be at least 8 characters long.\n" +
-            "• Include at least one uppercase letter (A–Z).\n" +
-            "• Include at least one number (0–9).\n" +
-            "• Include at least one special character (such as !, @, #, $, %, &, *).\n" +
-            "• Cannot be empty or contain only spaces.";
+    private static final String PASSWORD_RULES_MESSAGE = """
+            Your password must meet all of the following requirements:
+            
+            • Be at least 8 characters long.
+            • Include at least one uppercase letter (A–Z).
+            • Include at least one number (0–9).
+            • Include at least one special character (such as !, @, #, $, %, &, *).
+            • Cannot be empty or contain only spaces.""";
     private final PropertyChangeSupport pcs = new PropertyChangeSupport(this);
     private final DomainSecurityManager domainSecurityManager;
     private boolean authenticated;
@@ -68,113 +71,112 @@ public class Session {
     /**
      * Logs in with a username/password. @return {@code true} on success, {@code false} otherwise.
      */
-    public boolean loginUsernamePassword(String subject, char[] password) {
+    public void loginUsernamePassword(String subject, char[] password) throws SecurityException {
 
         try {
             subjectIdentifier = domainSecurityManager.login(subject, new String(password));
         } catch (SecurityException e) {
-            return false;
+            throw new SecurityException("Invalid Credentials", e);
         }
 
-        // Keep the principalID (the username the user typed) — SubjectIdentifier.getSubjectID()
-        // returns the numeric GUID, and the backend's credential lookups are keyed by principalID.
         this.principalID = subject;
         boolean old = this.authenticated;
         this.authenticated = true;
         pcs.firePropertyChange("authenticated", old, true);
-
-        return true;
     }
 
 
     /**
      * Logs in with a (plain-stored) API key. @return {@code null} on success, else an error message.
      */
-    public String loginAPIKey(char[] apiKey) {
+    public void loginAPIKey(char[] apiKey) throws SecurityException {
 
         try {
             // Stored plain (see createAPIKey), so look it up as-is — no hashing.
             subjectIdentifier = domainSecurityManager.loginApiKey(new String(apiKey));
         } catch (SecurityException p) {
-            return "API Key Invalid";
+            throw new SecurityException("API Key Invalid", p);
         }
 
-        if (subjectIdentifier == null) return "Not Logged in";
+        if (subjectIdentifier == null) throw new SecurityException("Could not log in");
 
         PrincipalIdentifier[] principals = domainSecurityManager.lookupAllPrincipalIdentifiers(subjectIdentifier.getGUID());
         this.principalID = (principals.length > 0) ? principals[0].getPrincipalID() : null;
 
+        if (principals.length == 0) {
+            subjectIdentifier = null;
+            throw new SecurityException("Could not log in");
+        }
+
         boolean old = this.authenticated;
         this.authenticated = true;
         pcs.firePropertyChange("authenticated", old, true);
-
-        return null;
     }
 
     /**
      * Mock passkey login; not implemented yet. @return {@code false}.
      */
     //@TODO
-    public boolean loginPasskey() {
-        /*
-        this.subject = "";
-        boolean old = this.authenticated;
-        this.authenticated = true;
-        pcs.firePropertyChange("authenticated", old, true);
-        */
-        return false;
+    public void loginPasskey() {
+
     }
 
 
     /**
      * Creates a new username/password account (does not log in). @return {@code null} on success, else an error message.
      */
-    public String registerUsernamePassword(String subject, char[] password) {
-        if (!FilterType.PASSWORD.isValid(new String(password))) return PASSWORD_RULES_MESSAGE;
+    public void registerUsernamePassword(String subject, char[] password) throws SecurityException {
+        // TBD change the signature to void explicitly declare thrown exception
+        if (!FilterType.PASSWORD.isValid(new String(password))) throw new SecurityException(PASSWORD_RULES_MESSAGE);
         try {
             domainSecurityManager.createSubjectID(subject, HashUtil.toBCryptPassword(new String(password)));
-            return null;
         } catch (SecurityException e) {
-            return "That username is already taken";
+            throw new SecurityException("That username is already taken", e);
         }
-
     }
 
     /**
      * Generates a fresh AES-256 key as a URL-Base64 string (not stored). @return the key, or {@code null} when signed out or generation fails.
      */
-    public String generateAPIKey() {
-        if (principalID == null) return null;
+    public SubjectAPIKey generateAPIKey() throws SecurityException {
+        // TBD return api key, or null if it cannot
+        // principalID should be changed to support security model of logged-in user
+        // refer to MN
+        if (principalID == null) throw new SecurityException("Not signed in");
         SecretKey secretKey;
 
         try {
             secretKey = CryptoUtil.generateKey(CryptoConst.CryptoAlgo.AES, 256);
         } catch (NoSuchAlgorithmException e) {
-            return null;
+            throw new SecurityException("Could not generate a key", e);
         }
 
-        byte[] raw = secretKey.getEncoded();
-
-        return SharedBase64.encodeAsString(SharedBase64.Base64Type.URL, raw);
+        SubjectAPIKey sak = new SubjectAPIKey();
+        sak.setAPIKeyAsBytes(secretKey.getEncoded());
+        return sak;
     }
 
     /**
      * Stores a new API key (plain) with an optional label/description. @return {@code null} on success, else an error message.
      */
-    public String createAPIKey(String label, String description, String domainID, String appID, String rawKey) {
+    public void createAPIKey(String label, String description, String domainID, String appID, String rawKey) throws SecurityException {
 
-        // no hash, store as bytes
+        // TBD change the name, throw exception, signature to void
 
-        if (principalID == null) return "Not signed in";
-        if (rawKey == null || rawKey.isBlank()) return "Key cannot be empty";
+        if (principalID == null) throw new SecurityException("Not signed in");
+        if (rawKey == null || rawKey.isBlank()) throw new SecurityException("Key cannot be empty");
 
         APIKey<String> key = new SubjectAPIKey();
 
-        if(appID != null && !appID.isBlank() && domainID != null && !domainID.isBlank()) {
+        if (appID != null && !appID.isBlank() && domainID != null && !domainID.isBlank()) {
             String trimmedAppID = appID.trim();
             String trimmedDomainID = domainID.trim();
             AppIDDefault tempAppID = new AppIDDefault(trimmedDomainID, trimmedAppID);
-            key.setAppID(tempAppID);
+            try {
+                key.setAppID(tempAppID);
+            } catch (IllegalArgumentException e) {
+                throw new SecurityException("Invalid domain or app ID", e);
+            }
         }
 
 
@@ -184,66 +186,52 @@ public class Session {
         if (label != null && !label.isBlank()) key.setName(label.trim());
         if (description != null && !description.isBlank()) key.setDescription(description.trim());
         domainSecurityManager.createCredential(subjectIdentifier, key);
-
-        return null;
     }
 
     /**
      * Permanently deletes an API key. @return {@code null} on success, else an error message.
      */
-    public String revokeAPIKey(APIKey<String> key) {
+    public void deleteAPIKey(APIKey<String> key) throws SecurityException {
 
-        if (subjectIdentifier == null) return "Not signed in";
-        if (key == null) return "Empty Key";
+        // signature to void, throw security exception
+        if (subjectIdentifier == null) throw new SecurityException("Not signed in");
+        if (key == null) throw new SecurityException("Empty Key");
 
         domainSecurityManager.deleteCredential(key);
-
-        return null;
     }
 
 
-    /**
-     * Issues a fresh secret for {@code key}, invalidating the old one. Follows the
-     * {@code null == success} convention so it works with {@code BackgroundTask.runReason}.
-     * On success the new secret is available from {@code key.getAPIKey()} (the passed
-     * key is mutated in place), so the caller can show/copy it.
-     */
-    public String rotateAPIKey(APIKey<String> key) {
+    public void rotateAPIKey(APIKey<String> key) throws SecurityException {
 
-        if (subjectIdentifier == null) return "Not signed in";
-        if (key == null) return "Empty Key";
+        if (subjectIdentifier == null) throw new SecurityException("Not signed in");
+        if (key == null) throw new SecurityException("Empty Key");
 
-        String fresh = generateAPIKey();
-        if (fresh == null) return "Could not generate a new key";
+        SubjectAPIKey fresh = generateAPIKey();
 
-        key.setAPIKey(fresh);
+        key.setAPIKey(fresh.getAPIKey());
 
         domainSecurityManager.updateCredential(subjectIdentifier, key);
-        return null;
     }
 
     /**
      * Mock passkey registration; not implemented yet. @return {@code false}.
      */
     //@TODO
-    public boolean registerPasskey() {
+    public void registerPasskey() {
         //loginPasskey();
 
-        return false;
     }
 
 
     /**
      * Signs the subject out and fires the {@code "authenticated"} change event. @return {@code true}.
      */
-    public boolean logout() {
+    public void logout() {
         boolean old = this.authenticated;
         this.authenticated = false;
         this.principalID = null;
         this.subjectIdentifier = null;
         pcs.firePropertyChange("authenticated", old, false);
-
-        return true;
     }
 
     /**
@@ -275,14 +263,13 @@ public class Session {
     /**
      * Adds a new identifier to the signed-in subject (rejects blank/duplicate). @return {@code null} on success, else an error message.
      */
-    public String addIdentifier(String principalID) {
-        if (subjectIdentifier == null) return "Not signed in";
-        if (principalID == null || principalID.isBlank()) return "Identifier cannot be empty";
+    public void addIdentifier(String principalID) throws SecurityException {
+        if (subjectIdentifier == null) throw new SecurityException("Not signed in");
+        if (principalID == null || principalID.isBlank()) throw new SecurityException("Identifier cannot be empty");
         if (domainSecurityManager.lookupPrincipalID(principalID) != null) {
-            return "That identifier is already in use";
+            throw new SecurityException("That identifier is already in use");
         }
         domainSecurityManager.addPrincipalID(subjectIdentifier, principalID);
-        return null;
     }
 
 
@@ -290,13 +277,15 @@ public class Session {
      * Removes an identifier (never the last one); if it was the identifier you logged in as,
      * the active principalID is repointed to a survivor. @return {@code null} on success, else an error message.
      */
-    public String removeIdentifier(PrincipalIdentifier principal) {
+    public void removeIdentifier(PrincipalIdentifier principal) throws SecurityException {
 
-        if (!((getAllPrincipalIDForLoggedInUser().length - 1) > 0)) return "Cannot remove the last identifier";
-        if (principal == null) return "Identifier cannot be empty";
+        if (principal == null) throw new SecurityException("Identifier cannot be empty");
+        if (subjectIdentifier == null) throw new SecurityException("Not Signed in");
+        if (!((getAllPrincipalIDForLoggedInUser().length - 1) > 0))
+            throw new SecurityException("Cannot remove the last identifier");
 
         if (!domainSecurityManager.deletePrincipalID(principal)) {
-            return "Could not remove identifier";
+            throw new SecurityException("Could not remove identifier");
         }
 
         if (principal.getPrincipalID().equals(principalID)) {
@@ -305,27 +294,25 @@ public class Session {
                 principalID = remaining[0].getPrincipalID();
             }
         }
-
-        return null;
     }
 
 
     /**
      * Verifies the current password and replaces it in place. @return {@code null} on success, else an error message.
      */
-    public String changePassword(char[] current, char[] next) {
-        if (principalID == null) return "Not signed in";
+    public void changePassword(char[] current, char[] next) throws SecurityException {
+        if (principalID == null) throw new SecurityException("Not Logged in");
 
         // 1. verify the current password
         try {
             domainSecurityManager.login(principalID, new String(current));
         } catch (SecurityException e) {
-            return "Current password is incorrect";
+            throw new SecurityException("Current password is incorrect", e);
         }
 
         // 2. validate the new password against the policy
         if (!FilterType.PASSWORD.isValid(new String(next))) {
-            return "New password does not meet requirements";
+            throw new SecurityException("New password does not meet requirements");
         }
 
         // 3. replace the PASSWORD credential. Hash first, then update the existing entity
@@ -344,29 +331,27 @@ public class Session {
             // No existing password credential (shouldn't happen for a normal account) — create one.
             domainSecurityManager.createCredential(principalID, fresh);
         }
-        return null;
     }
 
     /**
      * Updates an API key's label and description (blanks clear them). @return {@code null} on success, else an error message.
      */
-    public String changeAPIDetails(APIKey<String> apiKey, String label, String description) {
+    public void changeAPIDetails(APIKey<String> apiKey, String label, String description) throws SecurityException {
 
-        if (principalID == null) return "Not signed in";
+        if (principalID == null) throw new SecurityException("Not Logged in");
+        if (apiKey == null) throw new SecurityException("Invalid API Key");
 
         apiKey.setName(label.trim());
         apiKey.setDescription(description.trim());
 
         domainSecurityManager.updateCredential(subjectIdentifier, apiKey);
-
-        return null;
     }
 
     /**
      * Saves the given profile fields into the subject's property bag. @return {@code null} on success, else an error message.
      */
-    public String saveProfile(Map<String, String> fields) {
-        if (subjectIdentifier == null) return "Not Logged in";
+    public void saveProfile(Map<String, String> fields) throws SecurityException {
+        if (subjectIdentifier == null) throw new SecurityException("Not Logged in");
         NVGenericMap props = subjectIdentifier.getProperties();
         if (props == null) {
             props = new NVGenericMap();
@@ -375,8 +360,43 @@ public class Session {
         NVGenericMap finalProps = props;
         fields.forEach((k, v) -> finalProps.build(k, v == null ? "" : v));
         domainSecurityManager.updateSubjectID(subjectIdentifier);
+    }
 
-        return null;
+    private NVGenericMapList addressList(boolean create) {
+        NVGenericMap props = subjectIdentifier.getProperties();
+        if (props == null) {
+            if (!create) return null;
+            props = new NVGenericMap();
+            subjectIdentifier.setValue(PropertyDAO.Param.PROPERTIES, props);
+        }
+        NVGenericMapList list = props.lookup("addresses");
+        if (list == null && create) { list = new NVGenericMapList("addresses"); props.add(list); }
+        return list;
+    }
+
+    public List<NVGenericMap> getAddresses() {
+        if (subjectIdentifier == null) return java.util.List.of();
+        NVGenericMapList list = addressList(false);
+        return list == null ? java.util.List.of() : list.getValue();
+    }
+
+    public void addAddress(NVGenericMap address) throws SecurityException {
+        if (subjectIdentifier == null) throw new SecurityException("Not Logged in");
+        addressList(true).add(address);
+        domainSecurityManager.updateSubjectID(subjectIdentifier);
+    }
+
+    // call after mutating an address in place (edit)
+    public void saveAddresses() throws SecurityException {
+        if (subjectIdentifier == null) throw new SecurityException("Not Logged in");
+        domainSecurityManager.updateSubjectID(subjectIdentifier);
+    }
+
+    public void removeAddress(NVGenericMap address) throws SecurityException {
+        if (subjectIdentifier == null) throw new SecurityException("Not Logged in");
+        NVGenericMapList list = addressList(false);
+        if (list != null) list.getValue().remove(address); // remove by reference
+        domainSecurityManager.updateSubjectID(subjectIdentifier);
     }
 
     /**

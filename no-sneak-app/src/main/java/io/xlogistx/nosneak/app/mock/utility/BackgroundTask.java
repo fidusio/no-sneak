@@ -15,6 +15,11 @@ public final class BackgroundTask {
     private BackgroundTask() {
     }
 
+    @FunctionalInterface
+    public interface ThrowingRunnable {
+        void run() throws Exception;
+    }
+
     /**
      * Generic form: run {@code work} on a background thread, then hand its result to
      * {@code onDone} on the EDT. If {@code work} throws, an error dialog is shown and
@@ -44,8 +49,10 @@ public final class BackgroundTask {
                 } catch (InterruptedException | ExecutionException ex) {
                     Throwable cause = (ex instanceof ExecutionException && ex.getCause() != null)
                             ? ex.getCause() : ex;
-                    JOptionPane.showMessageDialog(owner,
-                            "Unexpected error: " + cause.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+                    String msg = (cause instanceof SecurityException)
+                            ? cause.getMessage()
+                            : "Unexpected error: " + cause.getMessage();
+                    JOptionPane.showMessageDialog(owner, msg, "Error", JOptionPane.ERROR_MESSAGE);
                     return;
                 }
                 onDone.accept(result);
@@ -54,18 +61,18 @@ public final class BackgroundTask {
     }
 
     /**
-     * Convenience for the app's "null = success, else message" convention. Runs
-     * {@code work} off the EDT; a non-null reason is shown as an error dialog, and a
-     * null reason runs {@code onSuccess} (may be null).
+     * Convenience for the exception convention: run {@code work} off the EDT; if it throws,
+     * {@link #run}'s handler shows the error dialog (a {@link SecurityException} message as-is,
+     * anything else as an unexpected error) and {@code onSuccess} is skipped. On success,
+     * {@code onSuccess} (may be null) runs on the EDT.
      */
-    public static void runReason(Component owner, JComponent toDisable,
-                                 Callable<String> work, Runnable onSuccess) {
-        run(owner, toDisable, work, reason -> {
-            if (reason != null) {
-                JOptionPane.showMessageDialog(owner, reason, "Error", JOptionPane.ERROR_MESSAGE);
-            } else if (onSuccess != null) {
-                onSuccess.run();
-            }
+    public static void runCatching(Component owner, JComponent toDisable,
+                                   ThrowingRunnable work, Runnable onSuccess) {
+        run(owner, toDisable, () -> {
+            work.run();
+            return null;
+        }, _ -> {
+            if (onSuccess != null) onSuccess.run();
         });
     }
 }

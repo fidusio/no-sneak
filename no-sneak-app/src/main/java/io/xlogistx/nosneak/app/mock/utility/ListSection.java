@@ -1,5 +1,7 @@
 package io.xlogistx.nosneak.app.mock.utility;
 
+import com.formdev.flatlaf.extras.FlatSVGIcon;
+
 import javax.swing.*;
 import java.awt.*;
 import java.util.ArrayList;
@@ -34,7 +36,7 @@ public class ListSection extends JPanel {
 
         if (onAdd != null) {
             JButton add = new JButton(addLabel);
-            add.addActionListener(e -> onAdd.run());
+            add.addActionListener(_ -> onAdd.run());
 
             add(add, BorderLayout.SOUTH);
         }
@@ -51,13 +53,15 @@ public class ListSection extends JPanel {
         for (Entry en : source.get()) {
             List<JButton> buttons = new ArrayList<>();
             if (en.onEdit() != null) {
-                JButton edit = new JButton("Edit");
-                edit.addActionListener(e -> en.onEdit().run());
+                JButton edit = new JButton(new FlatSVGIcon("icons/pencil.svg", 16, 16));
+                edit.setToolTipText("Edit");
+                edit.addActionListener(_ -> en.onEdit().run());
                 buttons.add(edit);
             }
             if (en.onRemove() != null) {
-                JButton remove = new JButton("Remove");
-                remove.addActionListener(e -> en.onRemove().run());
+                JButton remove = new JButton(new FlatSVGIcon("icons/trash.svg", 16, 16));
+                remove.setToolTipText("Remove");
+                remove.addActionListener(_ -> en.onRemove().run());
                 buttons.add(remove);
             }
             rows.add(PanelBuilder.row(en.label(), buttons.toArray(new JButton[0])));

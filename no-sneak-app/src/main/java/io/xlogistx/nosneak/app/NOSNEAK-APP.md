@@ -11,14 +11,17 @@ and screen flow ahead of binding the real PQC scanner and security backend.
 > instance). The store **persists across restarts** and is **not seeded**, so a fresh
 > database has no accounts — create one via the Register flow before you can log in.
 > Working end-to-end against it: username/password **register + login**, **change password**,
-> **add/remove identifiers**, **profile save/load** (name/address stored in the subject's
-> property bag), and the **full API-key lifecycle** — generate or import a key, **create**,
-> **login**, **edit label/description**, **rotate**, and **revoke** from the Subject panel.
-> API keys are stored **plain** (the raw URL-Base64 key, no hashing), so `loginAPIKey` looks
-> them up as-is. All blocking `Session` calls (login/register/change-password, add/remove
-> identifier, create/rotate/revoke API key, save profile) run **off the EDT** via
-> `BackgroundTask`. Still stubs: **passkey** (login/register return `false`), the
-> security-manager admin tables, and the scanner/file-sharing screens.
+> **add/remove identifiers**, **profile save/load** (name/DOB in the subject's property bag),
+> a **multi-address book** (add/edit/remove addresses, each a nested `NVGenericMap`), and the
+> **full API-key lifecycle** — generate or import a key, **create**, **login**, **edit
+> label/description**, **rotate**, and **delete** from the Subject panel. API keys are stored
+> **plain** (the raw URL-Base64 key, no hashing), so `loginAPIKey` looks them up as-is. All
+> blocking `Session` calls (login/register/change-password, add/remove identifier,
+> create/rotate/delete API key, add/edit/remove address, save profile) run **off the EDT** via
+> `BackgroundTask.runCatching` (failures surface as a dialog from the thrown `SecurityException`).
+> Row actions render as **SVG icons** (pencil/trash/rotate/copy/eye/search/back). Still stubs:
+> **passkey** (login/register are empty `void` no-ops), the security-manager admin tables, and
+> the scanner/file-sharing screens.
 
 ## Layout
 
@@ -35,7 +38,7 @@ io.xlogistx.nosneak.app
     ├── MenuBarFactory.java        ← builds the application menu bar
     └── utility/
         ├── AppContext.java        ← per-app service locator (Session + Navigator)
-        ├── Session.java           ← auth + identifiers + credentials + profile (over DomainSecurityManager)
+        ├── Session.java           ← auth + identifiers + credentials + profile + addresses (over DomainSecurityManager)
         ├── Navigator.java         ← top-level screen switching over a CardLayout
         ├── CardStack.java         ← reusable CardLayout wrapper (in-panel sections)
         ├── PanelBuilder.java      ← shared Swing layout helpers
@@ -98,19 +101,20 @@ The password card also has an optional **DomainAppID** field. Field rows are lai
 `PanelBuilder.buildJPanelWithFields(JComponent...)`.
 
 The password action captures the field values on the EDT, then runs the `Session` call
-**off the EDT** via `BackgroundTask.runReason(...)` (so bcrypt/round-trips never freeze the
-UI, and the action button is disabled while in flight). Reporting: failed login →
+**off the EDT** via `BackgroundTask.runCatching(...)` (so bcrypt/round-trips never freeze the
+UI, and the action button is disabled while in flight). Failures are signalled by a thrown
+`SecurityException` whose message the worker shows as an error dialog. Reporting: failed login →
 "Invalid Credentials"; register confirm-mismatch → "Passwords do not match" (an instant
 EDT check *before* the worker); register success → "Registered Successfully" (clears fields
 and flips to Login mode). Login *success* shows no dialog — the `"authenticated"` event
 navigates away. The **API-key** action is now real — it calls `Session.loginAPIKey` (paste a
-key → sign in) via `BackgroundTask.runReason`, so a bad key surfaces its reason dialog. The
-**passkey** action is still wired to a `Session` stub that returns `false`, so that tab does
-nothing (no feedback).
+key → sign in) via `BackgroundTask.runCatching`, so a bad key surfaces its error dialog (the
+thrown message). The **passkey** action is still wired to a `Session` stub that returns
+`false`, so that tab does nothing (no feedback).
 
-> `registerUsernamePassword` now returns the **reason-string** convention, so a **taken
+> `registerUsernamePassword` **throws a `SecurityException`** on failure, so a **taken
 > username** shows "That username is already taken" (distinct from the password-rules
-> message). Register runs off the EDT via `runReason`.
+> message). Register runs off the EDT via `runCatching`.
 
 ### `PQCRegistryPanel`
 The `MAIN` screen — PQC file-sharing registry. A `JSplitPane` with a `TreeTextWidget`
@@ -125,39 +129,60 @@ it subscribes to `onAuthChange` and, on **both** login and logout, calls
 `identifiers.refresh()` / `credentials.refresh()` / `populateProfile()` — repopulating on
 login and clearing on logout (the `Session` getters return empty when signed out).
 
-- **Profile** — First/Last name, an **Identifiers** list, Date of birth, and a **Mailing
-  address** block (Street/City/State/Postal/Country), plus **Save Changes**. Wrapped in a
-  `JScrollPane`.
+The **Profile** screen is itself a nested `CardStack` (`profileCards`, built by
+`buildProfileArea`) with a **profile** card (the form) and an **editAddress** detail card —
+mirroring how the Credentials screen switches between its list and detail cards.
+
+- **Profile** (card key `profile`) — First/Last name, Date of birth, an **Identifiers**
+  list, and an **Addresses** list, plus **Save Changes**. Wrapped in a `JScrollPane`.
   - **Identifiers** is a `ListSection` bound to `Session.getAllPrincipalIDForLoggedInUser()`.
     **+ Add identifier** prompts for a value → `Session.addIdentifier` (dedupe/validation),
-    per-row **Remove** → `Session.removeIdentifier` (guarded against removing the last one).
-    Both surface the returned reason string on failure. There is no *Principal IDs* card —
-    identifiers live here.
-  - **Save Changes** collects the name/DOB/address fields into a map and calls
-    `Session.saveProfile(...)`; `populateProfile()` reads them back via `Session.loadProfile`
-    (stored in the subject's property bag). *(No verification/canonical-ID/status metadata —
+    per-row **Remove** (trash icon) → `Session.removeIdentifier` (guarded against removing the
+    last one). Both surface the thrown `SecurityException`'s message on failure. There is no
+    *Principal IDs* card — identifiers live here.
+  - **Addresses** is a `ListSection` bound to `Session.getAddresses()`. **+ Add address**
+    opens the **editAddress** card blank; each row's **Edit** (pencil) opens it pre-filled;
+    **Remove** (trash) confirms then `Session.removeAddress`. The editAddress card
+    (`buildEditAddress`, via `PanelBuilder.detail` so it gets a back arrow) has Label / Street /
+    City / State-region / Postal / Country fields and a **Save address** button — Add stores a
+    fresh `NVGenericMap` via `Session.addAddress`, Edit mutates the selected map in place and
+    persists via `Session.saveAddresses`. Each address is its own `NVGenericMap` inside an
+    `NVGenericMapList("addresses")` in the subject's property bag.
+  - **Save Changes** collects only name/DOB into a map and calls `Session.saveProfile(...)`;
+    `populateProfile()` reads them back via `Session.loadProfile`. *(Address lives in the
+    nested list above, not the flat profile map. No verification/canonical-ID/status metadata —
     the model has no such fields; see below.)*
-- **Login credential** (card key `Credentials`) — a nested `CardStack` (`credentialCards`)
+- **Credentials** (card key `Credentials`) — a nested `CardStack` (`credentialCards`)
   with three views: a **list**, a **change-password** form, and an **edit-API-key** form
   (`editAPI`). The list card is a header + description over **two** `ListSection`s stacked
   in a `BorderLayout` (Password `NORTH`, API keys `CENTER`), each with its own supplier and
   an empty-state row ("No password set" / "No API keys yet"):
-  - **Password section** (no add button) — the **Password** row's **Edit** flips to the
-    change-password form (current/new/confirm → `Session.changePassword` via `BackgroundTask`,
-    off the EDT).
+  - **Password section** (no add button) — the **Password** row's **Edit** (pencil) flips to
+    the change-password form (current/new/confirm → `Session.changePassword` via
+    `BackgroundTask`, off the EDT).
   - **API keys section** — one row per key showing its label (`"API key — " +
     SubjectAPIKey.getName()`); the row's **Edit** opens the `editAPI` card for that key. Its
-    **+ Add API Key** button opens the add dialog: a **Generate new / Enter Existing**
+    **+ Add API Key** button opens the add dialog: a **Generate local / Add third party**
     selector with Label + Description. *Generate* shows a freshly `Session.generateAPIKey()`'d
-    key in a read-only, copyable field (shown once); *Enter Existing* takes a pasted key. On
-    **Create key** it stores via `Session.createAPIKey(label, description, rawKey)` (off the
-    EDT) and refreshes.
-  - The `editAPI` card is now **fully wired**: the secret shows in a masked `JPasswordField`
-    with a **Show/Hide** reveal toggle (re-masked on every open) and a **Copy** button
-    (copies `getAPIKey()`); editable **Label**/**Description** save via
-    `Session.changeAPIDetails`; **Rotate** (`Session.rotateAPIKey`) and **Revoke**
-    (`Session.revokeAPIKey`) each confirm first, run off the EDT, and refresh — Rotate
-    re-populates the card with the new secret, Revoke navigates back to the list.
+    key in a read-only, copyable field with a **Refresh** button (regenerates the shown key)
+    and a **Copy** button; *Add third party* takes a pasted key plus App Id / Domain ID. The
+    displayed field is the source of truth — copy and **Create key** both read it, so a
+    refreshed key is the one actually stored. On **Create key** it stores via
+    `Session.createAPIKey(label, description, domainID, appID, rawKey)` (off the EDT) — the
+    optional domain/app-id pair is validated by the AppID filters — and refreshes the list.
+  - The `editAPI` card is **fully wired**: the secret shows in a masked `JPasswordField`
+    with a **Show/Hide** reveal toggle (eye / eye-off icon, re-masked on every open) and a
+    **Copy** button (copies `getAPIKey()`); editable **Label**/**Description** save via
+    `Session.changeAPIDetails`; **Rotate** (`Session.rotateAPIKey`) and **Delete**
+    (`Session.deleteAPIKey`) each confirm first, run off the EDT, and refresh — Rotate
+    re-populates the card with the new secret, Delete navigates back to the list.
+
+> **Icon buttons.** The credential/identifier/address actions render as FlatLaf `FlatSVGIcon`s
+> (from `src/main/resources/icons/*.svg`, rendered via `flatlaf-extras` + `jsvg`) with
+> tooltips rather than text: **pencil** (edit), **trash** (delete/remove), **rotate** (rotate /
+> regenerate), **copy** → green **check** on success, **eye/eye-off** (reveal), plus **search**
+> (`SubjectSecManagerPanel`) and **arrow-left** (`PanelBuilder.detail` back). Primary/confirming
+> buttons (Save Changes, Change password, Save address, Create key, Login/Register) stay text.
 
 The **Simple/Technical** toggle is still not built — see *Target behaviour*.
 
@@ -204,7 +229,7 @@ The app uses **two independent navigation layers**, deliberately kept separate:
   no separate "Subject" menu; the subject screen is reached from **View → Subject
   Profile**.)
 - **Left selector inside a panel** — sub-section switching *within* a screen, via a local
-  `CardStack` (e.g. `SubjectPanel`'s Profile / Login credential, or
+  `CardStack` (e.g. `SubjectPanel`'s Profile / Credentials, or
   `SubjectSecManagerPanel`'s Subjects / Permissions / Roles / Role groups / Grants). This
   is local to the panel and does **not** go through the top-level `Navigator`.
 
@@ -226,22 +251,31 @@ principal to its subject and validates the `PASSWORD` `CIPassword` via
 - **Persistent, not seeded** — data lives in MongoDB and **survives restarts**, but nothing
   is seeded, so a fresh database has no accounts; register one before you can log in.
 - **`createSubjectID` throws on a duplicate** principal (`"principal already exists"`).
-  `registerUsernamePassword` catches this and returns `false`.
+  `registerUsernamePassword` catches this and rethrows `SecurityException("That username is
+  already taken")`.
 
-> The subject's profile fields (name/DOB/address) are stored in the `SubjectIdentifier`'s
-> inherited `PropertyDAO` property bag (`getProperties()` → `NVGenericMap`), persisted via
-> `updateSubjectID` — the schema itself has no such fields. Round-trip (save/load, overwrite,
-> across logout/login) is covered by `ProfileRoundTripTest`.
+> The subject's profile fields (name/DOB) and its address book are stored in the
+> `SubjectIdentifier`'s inherited `PropertyDAO` property bag (`getProperties()` →
+> `NVGenericMap`) — name/DOB as flat keys, addresses as a nested `NVGenericMapList` — persisted
+> via `updateSubjectID`; the schema itself has no such fields. Round-trips are covered by
+> `ProfileRoundTripTest` (name/DOB) and `AddressRoundTripTest` (the nested address list).
 >
 > **Tests** (`src/test/...`, over an in-memory `MockAPIDataStore`; each registers the credential
-> types via `addCredentialType`, mirroring `Main`): `RegisterRoundTripTest` (register → login,
-> weak-password + duplicate-username rejection, no auto-login), `ProfileRoundTripTest` (save/load,
-> overwrite, across logout-login, signed-out guard), `APIKeyRoundTripTest` (generate → create →
-> login, label/description round-trip, `changeAPIDetails` edit + clear, **revoke** removes-and-
-> blocks-login, **rotate** old-dies/new-works, bad-input guards), `ChangePasswordRoundTripTest`
-> (old rejected / new works across logout-login, plus failure modes), and `IdentifierRoundTripTest`
-> (add/remove, last-identifier guard, null + non-active removal, subject repoint). Surefire is
-> skipped by the parent POM — run with `-DskipTests=false -Dmaven.test.skip=false`.
+> types via `addCredentialType`, mirroring `Main`). Success paths assert `assertDoesNotThrow`
+> and failures assert the thrown `SecurityException` (message = the reason), matching the
+> exception convention: `RegisterRoundTripTest` (register → login, weak-password +
+> duplicate-username rejection, no auto-login), `ProfileRoundTripTest` (save/load, overwrite,
+> across logout-login, signed-out guard), `APIKeyRoundTripTest` (generate → create → login,
+> label/description round-trip, `changeAPIDetails` edit + clear, **delete** removes-and-blocks-
+> login, **rotate** old-dies/new-works, domain/app-id store + case-normalization, bad-input
+> guards), `ChangePasswordRoundTripTest` (old rejected / new works across logout-login, plus
+> failure modes), `IdentifierRoundTripTest` (add/remove, last-identifier guard, null +
+> non-active removal, subject repoint), `AddressRoundTripTest` (add → list, multiple, edit-in-
+> place replace-not-append, remove-by-reference, persistence across logout/login, signed-out
+> guards), and `AppIDDefaultTest` (the domain + app-id filters directly: case/`www.`/subdomain
+> normalization, invalid-domain and non-alphanumeric-app-id rejection, `create(domainAppID)`
+> parsing, canonical form, case-insensitive equality).
+> Surefire is skipped by the parent POM — run with `-DskipTests=false -Dmaven.test.skip=false`.
 
 ## `mock.utility` — application services
 
@@ -255,44 +289,67 @@ one session and one navigator.
 ### `Session`
 Authentication/session state built on `PropertyChangeSupport`, holding the shared
 `DomainSecurityManager`, the current `principalID` (the username, *not* the GUID — the field
-was formerly named `subject`; accessor `getPrincipalID()`) and its `subjectIdentifier`. Two
-result conventions coexist deliberately:
-- **`boolean`** for `loginUsernamePassword`, `loginPasskey`, `registerPasskey`, `logout` —
-  success/failure.
-- **reason `String`** (`null` = success, else a human-readable message the panel shows) for
-  everything else: `registerUsernamePassword`, `loginAPIKey`, `addIdentifier`,
-  `removeIdentifier`, `changePassword`, `createAPIKey`, `changeAPIDetails`, `rotateAPIKey`,
-  `revokeAPIKey`, `saveProfile`. Failure is a return value, never a broadcast event.
+was formerly named `subject`; accessor `getPrincipalID()`) and its `subjectIdentifier`.
+
+Result convention (migrated from the old reason-string model): the account/auth mutators
+return **`void`** and **throw `SecurityException`** on failure — the exception message is the
+human-readable reason the panel shows; success returns normally. This covers
+`loginUsernamePassword`, `registerUsernamePassword`, `loginAPIKey`, `addIdentifier`,
+`removeIdentifier`, `changePassword`, `createAPIKey`, `changeAPIDetails`, `rotateAPIKey`,
+`deleteAPIKey`, `saveProfile`, and the address mutators (`addAddress` / `saveAddresses` /
+`removeAddress`). `SecurityException` is **unchecked** (extends `RuntimeException`), so callers
+aren't forced to catch it — `BackgroundTask.runCatching` centralizes the error dialog off the
+EDT. Failure is thrown, never a broadcast event. Two exceptions to the pattern:
+- **No-op / `void` stubs** — `loginPasskey` / `registerPasskey` are empty `void` stubs (not
+  implemented — the passkey tab does nothing); `logout` returns `void` and always succeeds.
+- **`generateAPIKey()`** returns a `SubjectAPIKey` value (its `getAPIKey()` is the raw
+  secret) and **throws** `SecurityException` when signed out (`"Not signed in"`) or on a
+  crypto failure (`"Could not generate a key"`).
 
 Auth (username/password is real against the store):
-- `loginUsernamePassword` calls `login(principalID, new String(password))`, catching
-  `SecurityException` → `false`; on success it stores the `principalID` (since
-  `SubjectIdentifier.getSubjectID()` returns the GUID) and the `subjectIdentifier`, flips
-  `authenticated`, fires the event. Use `new String(password)`, **not** `Arrays.toString`.
-- `registerUsernamePassword` gates on `FilterType.PASSWORD` (returns the rules message on
+- `loginUsernamePassword` calls `login(principalID, new String(password))`, catching the
+  backend `SecurityException` and rethrowing `SecurityException("Invalid Credentials")`; on
+  success it stores the `principalID` (since `SubjectIdentifier.getSubjectID()` returns the
+  GUID) and the `subjectIdentifier`, flips `authenticated`, fires the event. Use
+  `new String(password)`, **not** `Arrays.toString`.
+- `registerUsernamePassword` gates on `FilterType.PASSWORD` (throws the rules message on
   failure), persists a bcrypt `CIPassword` via `createSubjectID`, and catches the
-  duplicate-principal `SecurityException` → `"That username is already taken"`; `null` on
-  success. It does **not** auto-login.
+  duplicate-principal `SecurityException` → rethrows `"That username is already taken"`;
+  returns normally on success. It does **not** auto-login.
 - `loginAPIKey` is **real** and matches the plain-storage model: it passes the presented key
-  **as-is** (no hashing) to `DomainSecurityManager.loginApiKey(...)`, then resolves the
-  signed-in principal from the returned subject's identifiers. `loginPasskey` /
-  `registerPasskey` remain stubs that **return `false`**.
+  **as-is** (no hashing) to `DomainSecurityManager.loginApiKey(...)`, throwing
+  `SecurityException("API Key Invalid")` on a bad key, then resolves the signed-in principal
+  from the returned subject's identifiers. `loginPasskey` / `registerPasskey` remain empty
+  **`void` no-op stubs**.
 
-API-key lifecycle (all reason-string; the raw key is stored **plain**):
-- `generateAPIKey()` — a fresh AES-256 key, URL-Base64 encoded; no persistence, shown once.
-  Returns `null` when signed out or on a crypto failure.
-- `createAPIKey(String label, String description, String rawKey)` — stores the raw key
-  verbatim (`setAPIKey(rawKey)`, no hashing) in a `SubjectAPIKey` (`STATUS` = ACTIVE,
-  optional `name`/`description`) via `createCredential`. Guards: `"Not signed in"` /
-  `"Key cannot be empty"`. *(No format validation today — a malformed paste is accepted and
-  simply never matches at login.)*
+API-key lifecycle (failures throw `SecurityException`; the raw key is stored **plain**):
+- `generateAPIKey()` — a fresh AES-256 key, URL-Base64 encoded, wrapped in a `SubjectAPIKey`
+  (`getAPIKey()` is the raw secret); no persistence. **Throws** `"Not signed in"` when signed
+  out and `"Could not generate a key"` on a crypto failure (no longer returns `null`).
+- `createAPIKey(String label, String description, String domainID, String appID, String rawKey)`
+  — stores the raw key verbatim (`setAPIKey(rawKey)`, no hashing) in a `SubjectAPIKey`
+  (`STATUS` = ACTIVE, optional `name`/`description`) via `createCredential`. When **both**
+  `domainID` and `appID` are non-blank it attaches an `AppIDDefault`, which runs them through
+  `FilterType.DOMAIN` + `AppIDNameFilter` (normalizes case, strips `www.`/subdomains, rejects
+  bad input with `IllegalArgumentException`); if only one part is given the AppID is skipped.
+  Guards (thrown): `"Not signed in"` / `"Key cannot be empty"`. *(No key-format validation
+  today — a malformed paste is accepted and simply never matches at login.)*
 - `changeAPIDetails(key, label, description)` — updates the key's label/description in place
   via `updateCredential`. Unlike create it **sets** blanks, so passing empty clears them.
 - `rotateAPIKey(key)` — generates a fresh secret, replaces the stored one via
   `updateCredential` (old key stops working, new one works). Guards against persisting a
   `null` secret; the new secret is read back from the mutated `key.getAPIKey()`.
-- `revokeAPIKey(key)` — deletes the credential via `deleteCredential` (the key can no longer
-  log in).
+- `deleteAPIKey(key)` — deletes the credential via `deleteCredential` (the key can no longer
+  log in). Guards (thrown): `"Not signed in"` / `"Empty Key"`. *(Formerly `revokeAPIKey`.)*
+
+Addresses (stored as an `NVGenericMapList("addresses")` inside the subject's property bag —
+each address its own `NVGenericMap` with `label`/`street`/`city`/`region`/`postCode`/`country`;
+the profile map holds them as a nested list rather than flat fields):
+- `getAddresses()` — the live `List<NVGenericMap>` (empty when signed out).
+- `addAddress(NVGenericMap)` — appends to the list and persists via `updateSubjectID`.
+- `saveAddresses()` — persists after an address has been mutated in place (the edit path).
+- `removeAddress(NVGenericMap)` — removes by reference and persists.
+  All three throw `"Not Logged in"` when signed out.
 
 Account data (all backed by `DomainSecurityManager`, keyed off the signed-in subject):
 - `getAllPrincipalIDForLoggedInUser()` — identifiers, via `lookupAllPrincipalIdentifiers(
@@ -311,8 +368,9 @@ Account data (all backed by `DomainSecurityManager`, keyed off the signed-in sub
   never a password-less window. Crucially it also refreshes the credential's **`canonicalID`**
   (the `$2a$…` bcrypt string bcrypt validation actually reads); updating only salt/hash/rounds
   would leave the old password working.
-- `saveProfile(Map)` / `loadProfile(String...)` — name/DOB/address in the subject's
-  `PropertyDAO` property bag (`getProperties()`), persisted via `updateSubjectID`.
+- `saveProfile(Map)` / `loadProfile(String...)` — **name/DOB only** (flat keys) in the
+  subject's `PropertyDAO` property bag (`getProperties()`), persisted via `updateSubjectID`.
+  Address moved out to the nested `addresses` list (see above).
 
 State changes fire an `"authenticated"` property event; listeners subscribe via
 `onAuthChange(...)` — how `AppFrame` toggles the menu bar and `AppShell`/`SubjectPanel`
@@ -362,13 +420,17 @@ for the Identifiers list and the Password / API keys sections.
 ### `BackgroundTask`
 A `SwingWorker` helper so blocking work never runs on the EDT. `run(owner, toDisable, work,
 onDone)` runs `work` (a `Callable<T>`) off the EDT and delivers the result to `onDone` on the
-EDT, disabling `toDisable` while in flight and showing any thrown exception as a dialog.
-`runReason(owner, toDisable, work, onSuccess)` is the convenience for the reason-string
-convention: a non-null reason is shown as an error dialog, `null` runs `onSuccess`. Used by
-`LoginPanel` (login/register/API-key login) and `SubjectPanel` (change password, add/remove
-identifier, create/rotate/revoke/edit API key, save profile). Post-work UI (refresh,
-navigation, confirmation dialogs) belongs in the `onSuccess` callback so it runs after the
-background work completes, not before.
+EDT, disabling `toDisable` while in flight. If `work` throws, `run` shows an error dialog on
+the EDT instead of calling `onDone` — a `SecurityException`'s message is shown **as-is** (an
+expected validation failure), anything else is prefixed `"Unexpected error: "` (a genuine
+crash). `runCatching(owner, toDisable, work, onSuccess)` is the convenience for the exception
+convention: it runs a throwing `work` (a `ThrowingRunnable`) off the EDT and, **only on
+success**, runs `onSuccess` on the EDT; any thrown exception is surfaced by `run`'s handler
+and `onSuccess` is skipped. Used by `LoginPanel` (login/register/API-key login) and
+`SubjectPanel` (change password, add/remove identifier, create/rotate/delete/edit API key,
+add/edit/remove address,
+save profile). Post-work UI (refresh, navigation, confirmation dialogs) belongs in the
+`onSuccess` callback so it runs after the background work completes, not before.
 
 ## How it fits together
 
@@ -444,7 +506,7 @@ Tracked work items for the `mock` UI.
 - ~~**Password filter / validation fails silently.**~~ **Done.** A filter rejection now
   surfaces a detailed password-requirements dialog and keeps the user on the register form.
 - ~~**Duplicate username shows the password-rules message.**~~ **Done.**
-  `registerUsernamePassword` now returns the reason-string convention, so a taken username
+  `registerUsernamePassword` now throws a `SecurityException` on failure, so a taken username
   shows "That username is already taken" (verified by `RegisterRoundTripTest`).
 - **Confirmation warning on Register.** Clicking **Register** must prompt a confirmation
   dialog before proceeding (e.g. "Register using this email / username?"). *(Still
@@ -453,7 +515,7 @@ Tracked work items for the `mock` UI.
 ### Method availability (`LoginPanel`)
 - **API key is add-only, never register.** Registration via API key is already removed
   from the UI; API keys are *attached* to an existing account from the Subject panel's
-  *Login credentials*, not created at registration.
+  *Credentials* section, not created at registration.
 - **Passkey hidden everywhere.** The Passkey method is not implemented — it stays hidden in
   **both** login and register modes via `passkeySelector.setVisible(false)` until built
   out.
@@ -473,9 +535,20 @@ Tracked work items for the `mock` UI.
   replace (change form → `Session.changePassword`, atomic, off-EDT) and the **full API-key
   lifecycle** are built: **+ Add API Key** generates or imports a key (`generateAPIKey` /
   `createAPIKey`), it logs in via `loginAPIKey`, and the `editAPI` card supports reveal/copy,
-  **edit** label/description (`changeAPIDetails`), **Rotate** (`rotateAPIKey`) and **Revoke**
-  (`revokeAPIKey`) — each confirmed, off-EDT, with refresh. Still stubbed: passkey
+  **edit** label/description (`changeAPIDetails`), **Rotate** (`rotateAPIKey`) and **Delete**
+  (`deleteAPIKey`) — each confirmed, off-EDT, with refresh. Still stubbed: passkey
   view-device/remove.
+- **Principal ID needs a status.** Each identifier should carry a status (e.g.
+  primary / alias / verified / pending) shown in the Identifiers `ListSection` and settable
+  from its edit affordance. Blocked on the model: `PrincipalIdentifier` currently holds only
+  the id string, so this needs a status field (and its persistence) before the UI can surface
+  it — until then all identifiers render statusless.
+- **Address optional / `*`-for-mandatory convention.** The profile/address forms have no
+  required-field convention. Adopt a single rule: mandatory fields are marked with a trailing
+  `*` in their label and validated before save (block + message on empty); everything else is
+  explicitly "— optional". Apply it consistently across the address card (decide the mandatory
+  set, e.g. Street + City + Country) and the profile fields, replacing the current ad-hoc
+  "— optional" suffixes.
 
 ### Subject Security Manager (`SubjectSecManagerPanel`)
 - **All tables are empty stubs** and **search is not wired.** Bind the Subjects /
@@ -485,9 +558,47 @@ Tracked work items for the `mock` UI.
   (`DomainSecurityManagerDefault`); the panel just isn't wired to it yet, and the MongoDB
   store has no seeded catalog data.
 
+### Security hardening
+From a security pass over the app's own code (issues fixable here, not in the zoxweb
+dependency). Ordered by priority.
+
+- **`loginAPIKey` can authenticate with a null principal** (`Session.loginAPIKey`, ~line 100).
+  When a key resolves to a subject with **zero** identifiers, `principalID` is set to `null`
+  but `authenticated` is still flipped to `true` — the footer then shows `subject: null` and
+  `principalID`-guarded methods silently no-op on a session that looks logged in. Fix: if
+  `principals.length == 0`, clear `subjectIdentifier` and throw rather than authenticating.
+- **Clipboard secret never cleared** (`SubjectPanel`, the generate-card **Copy** and `editAPI`
+  **Copy** actions). A copied API-key secret sits on the system clipboard indefinitely
+  (readable by any process / clipboard-history tool). Add an auto-clear after a timeout
+  (Swing `Timer`, e.g. 60 s), guarded to only clear if the clipboard still holds that value —
+  the password-manager pattern.
+- **`char[]` secrets are never zeroed** (`LoginPanel`/`SubjectPanel` — `password.getPassword()`
+  and the change-password fields). Wipe the arrays (`Arrays.fill(pwd, '\0')`) in a `finally`
+  after use. **Partial only:** `Session` immediately does `new String(secret)` for the backend
+  API, and that immutable copy can't be wiped — so this shrinks the exposure window but can't
+  close it without a `char[]`-accepting backend. Same limitation applies to `JPasswordField`'s
+  internal buffer on `setText("")`.
+- **Inconsistent signed-in guards in `Session`.** Some methods guard on `principalID`
+  (`getAllCredentialForLoggedInUser`, `changeAPIDetails`) while others guard on
+  `subjectIdentifier`; `removeIdentifier` checks the "last identifier" rule *before* its
+  null/signed-out guard, so a signed-out or null call reports the wrong reason. Standardize on
+  `subjectIdentifier` and fix the check ordering.
+- **`showEditAPIKey` calls `setText(null)`** (`SubjectPanel`, ~line 393) for keys created
+  without a label/description (`getName()`/`getDescription()` return `null`). Null-coalesce to
+  `""`. Low impact, defensive.
+- **External favicon fetch on the login screen** (`LoginPanel`, ~lines 101-108). Startup pulls
+  `https://xlogistx.io/favicon.ico` (HTTPS, exceptions swallowed) — a minor privacy /
+  supply-chain "phone home." Bundle a local icon or drop it.
+
+> Explicitly considered and **not** treated as issues here: menu items are unreachable while
+> signed out (the whole `JMenuBar` is hidden until auth — `Main` toggles it); profile /
+> identifier / AppID fields need no injection hardening (single-user local app, Mongo backend
+> so no SQL, values render in `JTextField`s with no HTML, and AppID/domain are already filter-
+> validated); the hardcoded `DB_URL` is a credential-less localhost test URL.
+
 > These are UI/UX gaps in the prototype. The username/password session path — plus
-> identifiers, change-password, profile save/load, and the **full API-key lifecycle**
-> (create/login/edit/rotate/revoke, stored plain) — is real against
-> `DomainSecurityManagerDefault`. Still outstanding: **passkey** (`Session` stubs return
-> `false`), the **Simple/Technical** tier toggle, and the security-manager admin tables
+> identifiers, change-password, profile save/load, the **address book**, and the **full
+> API-key lifecycle** (create/login/edit/rotate/delete, stored plain) — is real against
+> `DomainSecurityManagerDefault`. Still outstanding: **passkey** (`Session` stubs are empty
+> `void` no-ops), the **Simple/Technical** tier toggle, and the security-manager admin tables
 > (unbound), which need wiring alongside the UI work.
