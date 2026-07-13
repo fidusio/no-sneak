@@ -19,7 +19,7 @@ and screen flow ahead of binding the real PQC scanner and security backend.
 > blocking `Session` calls (login/register/change-password, add/remove identifier,
 > create/rotate/delete API key, add/edit/remove address, save profile) run **off the EDT** via
 > `BackgroundTask.runCatching` (failures surface as a dialog from the thrown `SecurityException`).
-> Row actions render as **SVG icons** (pencil/trash/rotate/copy/eye/search/back). Still stubs:
+> Row actions render as **`IconUtil` SVG icons** (edit/delete/refresh/copy/visible/search/back). Still stubs:
 > **passkey** (login/register are empty `void` no-ops), the security-manager admin tables, and
 > the scanner/file-sharing screens.
 
@@ -174,27 +174,25 @@ mirroring how the Credentials screen switches between its list and detail cards.
     `Session.storeAPIKey(label, description, domainID, appID, rawKey)` (off the EDT) — the
     optional domain/app-id pair is validated by the AppID filters — and refreshes the list.
   - The `editAPI` card is **fully wired**: the secret shows in a masked `JPasswordField`
-    with a **Show/Hide** reveal toggle (eye / eye-off icon, re-masked on every open) and a
+    with a **Show/Hide** reveal toggle (`VisibleIcon` / `InvisibleIcon`, re-masked on every open) and a
     **Copy** button (copies `getAPIKey()`); editable **Label**/**Description** save via
     `Session.changeAPIDetails`; **Rotate** (`Session.rotateAPIKey`) and **Delete**
     (`Session.deleteAPIKey`) each confirm first, run off the EDT, and refresh — Rotate
     re-populates the card with the new secret, Delete navigates back to the list.
 
-> **Icon buttons.** The credential/identifier/address actions render as FlatLaf `FlatSVGIcon`s
-> (from `src/main/resources/icons/*.svg`, rendered via `flatlaf-extras` + `jsvg`) with
-> tooltips rather than text: **pencil** (edit), **trash** (delete/remove), **rotate** (rotate /
-> regenerate), **copy** → green **check** on success, **eye/eye-off** (reveal), plus **search**
-> (`SubjectSecManagerPanel`) and **arrow-left** (`PanelBuilder.detail` back). Icon-only buttons
-> are built through one of two helpers: **`PanelBuilder.iconButton(Icon)`** keeps the
-> look-and-feel's natural padding (used for the 16×16 action icons), while
-> **`GUIUtil.iconButton(Icon)`** (from `io.xlogistx.gui`) sizes the button tight to the icon.
-> The **back arrow** uses `PanelBuilder.iconButton` at **32×32** — larger than the action icons,
-> and kept square because `arrow-left.svg` has a 24×24 viewBox (unequal width/height would
-> stretch it). Primary/confirming buttons keep their text; the save-style ones (Save Changes,
-> Change password, Save address) additionally carry a neutral-gray **save** check icon
-> (`save.svg` — same shape as the green success `check.svg`, in the `#5A5A5A` action gray).
+> **Icon buttons.** The credential/identifier/address actions render as `io.xlogistx.gui.IconUtil`
+> icons (jsvg-rendered `SVGIconWidget`s bundled with `xlogistx-gui-audio`) with tooltips rather
+> than text: **EditIcon** (pencil), **DeleteIcon** (trash), **RefreshIcon** (rotate / regenerate),
+> **CopyIcon** → **SaveIcon** check on success, **VisibleIcon/InvisibleIcon** (reveal), plus
+> **SearchIcon** (`SubjectSecManagerPanel`) and **BackIcon** (`PanelBuilder.detail`
+> back). Icon-only buttons are built through **`GUIUtil.iconButton(Icon)`** (from
+> `io.xlogistx.gui`), which sizes the button tight to the icon. The **back arrow** uses
+> **32×32** — larger than the 16×16 action icons. Primary/confirming buttons keep their text; the
+> save-style ones (Save Changes, Change password, Save address) additionally carry a **SaveIcon**.
 > Create key and Login/Register stay text-only. `SVGIconButtonTest` (test sources) is a runnable
-> visual check — its `main` shows every bundled icon on real buttons plus the disabled state.
+> visual check — its `main` shows every icon the app uses on real buttons plus the disabled state.
+> The app-bundled `src/main/resources/icons/*.svg` files are **no longer referenced** (the
+> `IconUtil` icons ship inside `xlogistx-gui-audio`) and can be removed.
 
 The **Simple/Technical** toggle is still not built — see *Target behaviour*.
 

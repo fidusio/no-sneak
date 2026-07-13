@@ -100,7 +100,7 @@ public class LoginPanel extends JPanel {
         // Add Image @TODO probably replace with local image
         IconStatusWidget stateIcon = new IconStatusWidget(40, 40);
         try {
-            Icon xlogistxIcon = new ImageIcon(new URL("https://xlogistx.io/favicon.ico"));
+            ImageIcon xlogistxIcon = new ImageIcon(new URL("https://xlogistx.io/favicon.ico"));
             stateIcon.mapStatus("xlogistx", xlogistxIcon);
             stateIcon.setStatus("xlogistx");
         } catch (Exception _) {

@@ -1,6 +1,7 @@
 package io.xlogistx.nosneak.app.mock;
 
-import com.formdev.flatlaf.extras.FlatSVGIcon;
+import io.xlogistx.gui.GUIUtil;
+import io.xlogistx.gui.IconUtil;
 import io.xlogistx.nosneak.app.mock.utility.*;
 import org.zoxweb.shared.data.DataConst;
 import org.zoxweb.shared.security.APIKey;
@@ -31,7 +32,7 @@ public class SubjectPanel extends JPanel {
     private final JTextField dob = new JTextField(20);
 
     private static final String[] PROFILE_KEYS = {"firstName", "lastName", "dob"};
-    private final JButton saveProfile = new JButton("Save Changes", new FlatSVGIcon("icons/save.svg", 16, 16));
+    private final JButton saveProfile = new JButton("Save Changes", new IconUtil.SaveIcon(16));
 
     // ---- Change-password fields ----
     private final JPasswordField currentPwd = new JPasswordField(20);
@@ -47,7 +48,7 @@ public class SubjectPanel extends JPanel {
     private SubjectAPIKey selectedKey;
     private boolean isKeyShown = false;
     private final char defaultEcho = editKeySecret.getEchoChar();
-    private final JButton showKey = PanelBuilder.iconButton(new FlatSVGIcon("icons/eye.svg", 16, 16));
+    private final JButton showKey = GUIUtil.iconButton(new IconUtil.VisibleIcon(16));
 
     // ---- Edit-address fields (populated from the clicked address; null selection = new address) ----
     private final JTextField addrLabel = new JTextField(20);
@@ -261,7 +262,7 @@ public class SubjectPanel extends JPanel {
      * The address detail card (fields + Save), reached by "+ Add address" or a per-row Edit.
      */
     private JPanel buildEditAddress() {
-        JButton save = new JButton("Save address", new FlatSVGIcon("icons/save.svg", 16, 16));
+        JButton save = new JButton("Save address", new IconUtil.SaveIcon(16));
         save.addActionListener(_ -> onSaveAddress(save));
 
         return PanelBuilder.detail("Address",
@@ -418,15 +419,15 @@ public class SubjectPanel extends JPanel {
         JTextField genDescription = new JTextField(20);
         JTextField genKey = new JTextField(generated.getAPIKey(), 30);
         genKey.setEditable(false);               // selectable + copyable, not editable
-        JButton copy = PanelBuilder.iconButton(new FlatSVGIcon("icons/copy.svg", 16, 16));
+        JButton copy = GUIUtil.iconButton(new IconUtil.CopyIcon(16));
         copy.setToolTipText("Copy");
         copy.addActionListener(_ -> {
             Toolkit.getDefaultToolkit().getSystemClipboard()
                     .setContents(new StringSelection(genKey.getText()), null);
-            copy.setIcon(new FlatSVGIcon("icons/check.svg", 16, 16));
+            copy.setIcon(new IconUtil.SaveIcon(16));
             copy.setToolTipText("Copied!");
         });
-        JButton refresh = PanelBuilder.iconButton(new FlatSVGIcon("icons/rotate.svg", 16, 16));
+        JButton refresh = GUIUtil.iconButton(new IconUtil.RefreshIcon(16));
         refresh.setToolTipText("Refresh");
         refresh.addActionListener(_ -> {
             APIKey<String> refreshed;
@@ -438,7 +439,7 @@ public class SubjectPanel extends JPanel {
             }
             genKey.setText(refreshed.getAPIKey());
             // new key → the old "Copied!" state no longer applies
-            copy.setIcon(new FlatSVGIcon("icons/copy.svg", 16, 16));
+            copy.setIcon(new IconUtil.CopyIcon(16));
             copy.setToolTipText("Copy");
         });
         JPanel copyRow = new JPanel(new FlowLayout(FlowLayout.LEFT));
@@ -514,7 +515,7 @@ public class SubjectPanel extends JPanel {
     // ============================ Change password ============================
 
     private JPanel buildChangePassword() {
-        JButton submit = new JButton("Change password", new FlatSVGIcon("icons/save.svg", 16, 16));
+        JButton submit = new JButton("Change password", new IconUtil.SaveIcon(16));
         submit.addActionListener(_ -> onChangePassword(submit));
 
         return PanelBuilder.detail("Change password",
@@ -557,16 +558,16 @@ public class SubjectPanel extends JPanel {
     private JPanel buildEditAPIKey() {
 
         // save api key button
-        JButton submit = PanelBuilder.iconButton(new FlatSVGIcon("icons/check.svg", 16, 16));
+        JButton submit = GUIUtil.iconButton(new IconUtil.SaveIcon(16));
         submit.setToolTipText("Save");
 
         // rotate api key button
-        JButton rotate = PanelBuilder.iconButton(new FlatSVGIcon("icons/rotate.svg", 16, 16));
+        JButton rotate = GUIUtil.iconButton(new IconUtil.RefreshIcon(16));
         rotate.setToolTipText("Rotate");
         rotate.addActionListener(_ -> onRotateAPIKey(rotate));
 
         // copy api key button
-        JButton copyKey = PanelBuilder.iconButton(new FlatSVGIcon("icons/copy.svg", 16, 16));
+        JButton copyKey = GUIUtil.iconButton(new IconUtil.CopyIcon(16));
         copyKey.setToolTipText("Copy");
         submit.addActionListener(_ -> onEditAPIDetails(submit));
         copyKey.addActionListener(_ -> {
@@ -635,7 +636,7 @@ public class SubjectPanel extends JPanel {
 
     private void setKeyMasked(boolean masked) {
         editKeySecret.setEchoChar(masked ? defaultEcho : (char) 0);
-        showKey.setIcon(new FlatSVGIcon(masked ? "icons/eye.svg" : "icons/eye-off.svg", 16, 16));
+        showKey.setIcon(masked ? new IconUtil.VisibleIcon(16) : new IconUtil.InvisibleIcon(16));
         showKey.setToolTipText(masked ? "Show" : "Hide");
         isKeyShown = !masked;
     }

@@ -1,8 +1,8 @@
 package io.xlogistx.nosneak.app.mock.utility;
 
 import com.formdev.flatlaf.FlatClientProperties;
-import com.formdev.flatlaf.extras.FlatSVGIcon;
 import io.xlogistx.gui.GUIUtil;
+import io.xlogistx.gui.IconUtil;
 import net.miginfocom.swing.MigLayout;
 
 import javax.swing.*;
@@ -114,14 +114,14 @@ public class PanelBuilder {
         return group;
     }
 
-    public static JButton iconButton(Icon icon) {
-        return new JButton(icon);
-    }
+//    public static JButton iconButton(Icon icon) {
+//        return new JButton(icon);
+//    }
 
     public static JPanel detail(String title, Runnable onBack, Consumer<JPanel> content) {
         JPanel panel = new JPanel(new MigLayout("wrap 1, insets 10, gapy 6", "[left]"));
 
-        JButton back = PanelBuilder.iconButton(new FlatSVGIcon("icons/arrow-left.svg", 32, 32));
+        JButton back = GUIUtil.iconButton(new IconUtil.BackIcon(32), true);
         back.setToolTipText("Back");
         back.addActionListener(e -> onBack.run());
         panel.add(back);

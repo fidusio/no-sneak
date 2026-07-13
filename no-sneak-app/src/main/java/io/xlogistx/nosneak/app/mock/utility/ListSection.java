@@ -1,6 +1,7 @@
 package io.xlogistx.nosneak.app.mock.utility;
 
-import com.formdev.flatlaf.extras.FlatSVGIcon;
+import io.xlogistx.gui.GUIUtil;
+import io.xlogistx.gui.IconUtil;
 
 import javax.swing.*;
 import java.awt.*;
@@ -53,13 +54,13 @@ public class ListSection extends JPanel {
         for (Entry en : source.get()) {
             List<JButton> buttons = new ArrayList<>();
             if (en.onEdit() != null) {
-                JButton edit = PanelBuilder.iconButton(new FlatSVGIcon("icons/pencil.svg", 16, 16));
+                JButton edit = GUIUtil.iconButton(new IconUtil.EditIcon(16));
                 edit.setToolTipText("Edit");
                 edit.addActionListener(_ -> en.onEdit().run());
                 buttons.add(edit);
             }
             if (en.onRemove() != null) {
-                JButton remove = PanelBuilder.iconButton(new FlatSVGIcon("icons/trash.svg", 16, 16));
+                JButton remove = GUIUtil.iconButton(new IconUtil.DeleteIcon(16));
                 remove.setToolTipText("Remove");
                 remove.addActionListener(_ -> en.onRemove().run());
                 buttons.add(remove);
