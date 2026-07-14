@@ -271,11 +271,11 @@ public class Session {
      * Adds a new identifier to the signed-in subject (rejects blank/duplicate). @return {@code null} on success, else an error message.
      */
     public void addIdentifier(String principalID) throws SecurityException {
-        if (subjectIdentifier == null) throw new SecurityException("Not signed in");
-        if (principalID == null || principalID.isBlank()) throw new SecurityException("Identifier cannot be empty");
-        if (domainSecurityManager.lookupPrincipalID(principalID) != null) {
-            throw new SecurityException("That identifier is already in use");
-        }
+//        if (subjectIdentifier == null) throw new SecurityException("Not signed in");
+//        if (principalID == null || principalID.isBlank()) throw new SecurityException("Identifier cannot be empty");
+//        if (domainSecurityManager.lookupPrincipalID(principalID) != null) {
+//            throw new SecurityException("That identifier is already in use");
+//        }
         domainSecurityManager.addPrincipalID(subjectIdentifier, principalID);
     }
 
@@ -288,8 +288,8 @@ public class Session {
 
         if (principal == null) throw new SecurityException("Identifier cannot be empty");
         if (subjectIdentifier == null) throw new SecurityException("Not Signed in");
-        if (!((getAllPrincipalIDForLoggedInUser().length - 1) > 0))
-            throw new SecurityException("Cannot remove the last identifier");
+//        if (!((getAllPrincipalIDForLoggedInUser().length - 1) > 0))
+//            throw new SecurityException("Cannot remove the last identifier");
 
         if (!domainSecurityManager.deletePrincipalID(principal)) {
             throw new SecurityException("Could not remove identifier");
