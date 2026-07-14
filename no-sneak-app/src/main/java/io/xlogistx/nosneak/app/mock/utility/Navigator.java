@@ -11,7 +11,7 @@ public class Navigator {
     /**
      * The top-level screens. {@code REGISTER} is currently unused (register is a mode of LOGIN).
      */
-    public enum Screen {LOGIN, REGISTER, MAIN, SCAN, SUBJECT, MANAGER}
+    public enum Screen {LOGIN, REGISTER, MAIN, SCAN, SUBJECT, MANAGER, INTERFACE}
 
     private final CardLayout cards;
     private final JPanel content;

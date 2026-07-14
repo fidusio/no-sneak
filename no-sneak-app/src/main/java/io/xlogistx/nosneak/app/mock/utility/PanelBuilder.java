@@ -14,7 +14,7 @@ import java.util.function.Consumer;
  * master–detail shells, and simple stacked field forms.
  */
 public class PanelBuilder {
-    public PanelBuilder() {
+    private PanelBuilder() {
     }
 
     /**
@@ -26,7 +26,7 @@ public class PanelBuilder {
      * @param resizeWeight how extra space is split (0 = all to right, 1 = all to left)
      * @return the configured split pane
      */
-    public JSplitPane buildHorizontalSplitView(Component left, Component right, int divLocation, int resizeWeight) {
+    public static JSplitPane buildHorizontalSplitView(Component left, Component right, int divLocation, int resizeWeight) {
         JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, right);
         split.setDividerLocation(divLocation);
         split.setResizeWeight(resizeWeight);
@@ -42,7 +42,7 @@ public class PanelBuilder {
      * @param buttons the left-hand section toggle buttons (added to one {@link ButtonGroup})
      * @return the assembled panel
      */
-    public JPanel buildDefaultSplitPanel(JComponent content, JToggleButton... buttons) {
+    public static JPanel buildDefaultSplitPanel(JComponent content, JToggleButton... buttons) {
         JPanel panel = new JPanel(new BorderLayout());
         JPanel options = new JPanel();
         options.setLayout(new GridLayout(0, 1, 0, 8));
@@ -75,7 +75,7 @@ public class PanelBuilder {
      * @param fields the components to stack, top to bottom
      * @return a panel containing the stacked components
      */
-    public JPanel buildJPanelWithFields(JComponent... fields) {
+    public static JPanel buildJPanelWithFields(JComponent... fields) {
         JPanel panel = new JPanel(new GridBagLayout());
         GridBagConstraints c = new GridBagConstraints();
         c.insets = new Insets(6, 6, 6, 6);
@@ -137,6 +137,27 @@ public class PanelBuilder {
             group.add(row(item, new JButton("edit")));
         }
         return group;
+    }
+
+
+    public static JPanel passwordField(JPasswordField field) {
+        JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        row.add(field);
+        row.add(passwordToggle(field));
+        return row;
+    }
+
+    private static JButton passwordToggle(JPasswordField field) {
+        char echo = field.getEchoChar();
+        JButton toggle = GUIUtil.iconButton(new IconUtil.VisibleIcon(16));
+        toggle.setToolTipText("Show");
+        toggle.addActionListener(e -> {
+            boolean shown = field.getEchoChar() == 0;   // currently visible?
+            field.setEchoChar(shown ? echo : (char) 0);
+            toggle.setIcon(shown ? new IconUtil.VisibleIcon(16) : new IconUtil.InvisibleIcon(16));
+            toggle.setToolTipText(shown ? "Show" : "Hide");
+        });
+        return toggle;
     }
 
     public static JLabel title(String text) {

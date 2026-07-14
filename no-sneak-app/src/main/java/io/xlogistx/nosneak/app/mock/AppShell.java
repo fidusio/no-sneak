@@ -21,6 +21,7 @@ public class AppShell extends JPanel {
         content.add(new SubjectPanel(ctx), Navigator.Screen.SUBJECT.name());
         content.add(new ScanPanel(ctx), Navigator.Screen.SCAN.name());
         content.add(new SubjectSecManagerPanel(ctx), Navigator.Screen.MANAGER.name());
+        content.add(new AIAssistantPanel(ctx), Navigator.Screen.INTERFACE.name());
 
         add(buildContent(), BorderLayout.CENTER);
         add(buildFooter(), BorderLayout.SOUTH);

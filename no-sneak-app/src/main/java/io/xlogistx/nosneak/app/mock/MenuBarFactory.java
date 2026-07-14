@@ -38,11 +38,14 @@ public class MenuBarFactory {
         subject.addActionListener(e -> ctx.nav().show(Navigator.Screen.SUBJECT));
         JMenuItem manager = new JMenuItem("Subject Security Manager");
         manager.addActionListener(e -> ctx.nav().show(Navigator.Screen.MANAGER));
+        JMenuItem aiChat = new JMenuItem("AI Chat");
+        aiChat.addActionListener(_ -> ctx.nav().show(Navigator.Screen.INTERFACE));
 
         view.add(scanner);
         view.add(pqc);
         view.add(subject);
         view.add(manager);
+        view.add(aiChat);
 
         file.add(menuItem);
         mode.add(modeToggle);

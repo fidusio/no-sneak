@@ -23,7 +23,6 @@ public class SubjectPanel extends JPanel {
 
     // ---- Services ----
     private final CardStack cardStack = new CardStack();
-    private final PanelBuilder panelBuilder = new PanelBuilder();
     private final AppContext ctx;
 
     // ---- Profile fields ----
@@ -49,6 +48,7 @@ public class SubjectPanel extends JPanel {
     private boolean isKeyShown = false;
     private final char defaultEcho = editKeySecret.getEchoChar();
     private final JButton showKey = GUIUtil.iconButton(new IconUtil.VisibleIcon(16));
+    private final JButton rotateKey = GUIUtil.iconButton(new IconUtil.RefreshIcon(16));
 
     // ---- Edit-address fields (populated from the clicked address; null selection = new address) ----
     private final JTextField addrLabel = new JTextField(20);
@@ -122,7 +122,7 @@ public class SubjectPanel extends JPanel {
             }
         });
 
-        add(panelBuilder.buildDefaultSplitPanel(cardStack.view(), profileButton, credentialButton));
+        add(PanelBuilder.buildDefaultSplitPanel(cardStack.view(), profileButton, credentialButton));
     }
 
     // ============================ Profile & identifiers ============================
@@ -145,7 +145,7 @@ public class SubjectPanel extends JPanel {
 
         saveProfile.addActionListener(_ -> onSaveProfile());
 
-        return panelBuilder.buildJPanelWithFields(
+        return PanelBuilder.buildJPanelWithFields(
                 PanelBuilder.title("Profile"),
                 new JLabel("Details about your account. Some fields are managed by the system and can't be changed."),
                 new JLabel("First name"),
@@ -446,7 +446,7 @@ public class SubjectPanel extends JPanel {
         copyRow.add(genKey);
         copyRow.add(refresh);
         copyRow.add(copy);
-        JPanel generateCard = panelBuilder.buildJPanelWithFields(
+        JPanel generateCard = PanelBuilder.buildJPanelWithFields(
                 new JLabel("Label"), genLabel, new JLabel("Description"), genDescription,
                 new JLabel("Copy this key now"), copyRow);
 
@@ -456,9 +456,9 @@ public class SubjectPanel extends JPanel {
         JTextField inAppID = new JTextField(30);
         JTextField inDomainID = new JTextField(30);
         JTextField inKey = new JTextField(30);
-        JPanel inputCard = panelBuilder.buildJPanelWithFields(
+        JPanel inputCard = PanelBuilder.buildJPanelWithFields(
                 new JLabel("Label"), inLabel, new JLabel("Description"), inDescription,
-                new JLabel("App Id"), inAppID, new JLabel("Domain ID"), inDomainID,
+                new JLabel("App Id (ex: nosneak)"), inAppID, new JLabel("Domain ID (ex: xlogistx.io)"), inDomainID,
                 new JLabel("Paste existing key"), inKey);
 
         // --- selector + cards ---
@@ -479,7 +479,7 @@ public class SubjectPanel extends JPanel {
         buttons.add(generateButton);
         buttons.add(existingButton);
 
-        JPanel dialog = panelBuilder.buildJPanelWithFields(
+        JPanel dialog = PanelBuilder.buildJPanelWithFields(
                 PanelBuilder.title("Generate a new key, or enter one you already have."),
                 buttons, cards.view());
 
@@ -522,11 +522,11 @@ public class SubjectPanel extends JPanel {
                 () -> credentialCards.show("list"),
                 panel -> {
                     panel.add(new JLabel("Current password"));
-                    panel.add(currentPwd);
+                    panel.add(PanelBuilder.passwordField(currentPwd));
                     panel.add(new JLabel("New password"));
-                    panel.add(newPwd);
+                    panel.add(PanelBuilder.passwordField(newPwd));
                     panel.add(new JLabel("Confirm new password"));
-                    panel.add(confirmPwd);
+                    panel.add(PanelBuilder.passwordField(confirmPwd));
                     panel.add(submit);
                 });
     }
@@ -561,10 +561,8 @@ public class SubjectPanel extends JPanel {
         JButton submit = GUIUtil.iconButton(new IconUtil.SaveIcon(16));
         submit.setToolTipText("Save");
 
-        // rotate api key button
-        JButton rotate = GUIUtil.iconButton(new IconUtil.RefreshIcon(16));
-        rotate.setToolTipText("Rotate");
-        rotate.addActionListener(_ -> onRotateAPIKey(rotate));
+        rotateKey.setToolTipText("Rotate");
+        rotateKey.addActionListener(_ -> onRotateAPIKey(rotateKey));
 
         // copy api key button
         JButton copyKey = GUIUtil.iconButton(new IconUtil.CopyIcon(16));
@@ -587,7 +585,7 @@ public class SubjectPanel extends JPanel {
         JPanel keyView = new JPanel(new FlowLayout(FlowLayout.LEFT));
 
         keyView.add(editKeySecret);
-        keyView.add(rotate);
+        keyView.add(rotateKey);
         keyView.add(copyKey);
         keyView.add(showKey);
         keyView.add(submit);
@@ -617,6 +615,12 @@ public class SubjectPanel extends JPanel {
 
     private void showEditAPIKey(SubjectAPIKey key) {
         selectedKey = key;
+
+        // External (third-party) keys aren't issued by us, so they can't be rotated.
+        boolean external = ctx.session().isExternalKey(key);
+        rotateKey.setEnabled(!external);
+        rotateKey.setToolTipText(external ? "External keys can't be rotated" : "Rotate");
+
         editKeySecret.setText(key.getAPIKey());
         editKeySecret.setCaretPosition(0);
         setKeyMasked(true);   // every key opens hidden, regardless of the previous selection

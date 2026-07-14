@@ -16,6 +16,7 @@ public class LoginPanel extends JPanel {
     DynamicComboBox domain = new DynamicComboBox(true, true);
     private final JPasswordField password = new JPasswordField(20);
     private final JPasswordField confirmPassword = new JPasswordField(20);
+    private final JPanel confirmPasswordField = PanelBuilder.passwordField(confirmPassword);
     private final JLabel confirmPasswordLabel = new JLabel("Confirm Password");
     private final JPasswordField apiKey = new JPasswordField(30);
     private final CardStack cardStack = new CardStack();
@@ -30,7 +31,6 @@ public class LoginPanel extends JPanel {
     private final JButton apiKeyAction = new JButton();
     private final JButton passkeyAction = new JButton();
     private final JButton modeToggle = new JButton();
-    private final PanelBuilder panelBuilder = new PanelBuilder();
 
     private boolean login = true;
 
@@ -163,15 +163,15 @@ public class LoginPanel extends JPanel {
     }
 
     private JPanel buildPasswordScreen() {
-        return panelBuilder.buildJPanelWithFields(new JLabel("Username"), username, new JLabel("Password"), password, confirmPasswordLabel, confirmPassword, new JLabel("DomainAppID — optional"), domain, passwordAction);
+        return PanelBuilder.buildJPanelWithFields(new JLabel("Username"), username, new JLabel("Password"), PanelBuilder.passwordField(password), confirmPasswordLabel, confirmPasswordField, new JLabel("DomainAppID — optional"), domain, passwordAction);
     }
 
     private JPanel buildAPIKeyScreen() {
-        return panelBuilder.buildJPanelWithFields(new JLabel("API Key"), apiKey, apiKeyAction);
+        return PanelBuilder.buildJPanelWithFields(new JLabel("API Key"), PanelBuilder.passwordField(apiKey), apiKeyAction);
     }
 
     private JPanel buildPasskeyScreen() {
-        return panelBuilder.buildJPanelWithFields(new JLabel("NOT IMPLEMENTED"), passkeyAction);
+        return PanelBuilder.buildJPanelWithFields(new JLabel("NOT IMPLEMENTED"), passkeyAction);
     }
 
     private void toggleMode() {
@@ -188,7 +188,7 @@ public class LoginPanel extends JPanel {
 
         // Confirm-password is only collected when registering.
         confirmPasswordLabel.setVisible(!login);
-        confirmPassword.setVisible(!login);
+        confirmPasswordField.setVisible(!login);
         if (login) {
             confirmPassword.setText("");
         }

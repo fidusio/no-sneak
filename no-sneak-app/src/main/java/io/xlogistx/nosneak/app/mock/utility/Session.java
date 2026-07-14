@@ -8,6 +8,7 @@ import org.zoxweb.shared.crypto.CryptoConst;
 import org.zoxweb.shared.data.PropertyDAO;
 import org.zoxweb.shared.filters.FilterType;
 import org.zoxweb.shared.security.*;
+import org.zoxweb.shared.util.NVBoolean;
 import org.zoxweb.shared.util.NVGenericMap;
 import org.zoxweb.shared.util.NVGenericMapList;
 
@@ -169,6 +170,7 @@ public class Session {
         if (rawKey == null || rawKey.isBlank()) throw new SecurityException("Key cannot be empty");
 
         APIKey<String> key = new SubjectAPIKey();
+        if(key == null) throw new SecurityException("Failed to create key");
 
         if (appID != null && !appID.isBlank() && domainID != null && !domainID.isBlank()) {
             String trimmedAppID = appID.trim();
@@ -179,6 +181,7 @@ public class Session {
             } catch (IllegalArgumentException e) {
                 throw new SecurityException("Invalid domain or app ID", e);
             }
+            key.getProperties().build(new NVBoolean("external", true));
         } else {
             AppIDDefault noSneakAppID = new AppIDDefault();
             noSneakAppID.setDomainAppID("xlogistx.io", "nosneak");
@@ -213,11 +216,19 @@ public class Session {
         if (subjectIdentifier == null) throw new SecurityException("Not signed in");
         if (key == null) throw new SecurityException("Empty Key");
 
+        if(isExternalKey(key)) throw new SecurityException("Cannot rotate external key");
+
         SubjectAPIKey fresh = generateAPIKey();
 
         key.setAPIKey(fresh.getAPIKey());
 
         domainSecurityManager.updateCredential(subjectIdentifier, key);
+    }
+
+    public boolean isExternalKey(APIKey<String> key) {
+        if(key == null) return false;
+        NVGenericMap p = key.getProperties();
+        return p != null && Boolean.TRUE.equals(p.getValue("external"));
     }
 
     /**

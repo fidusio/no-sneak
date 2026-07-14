@@ -11,7 +11,6 @@ import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 
 public class SubjectSecManagerPanel extends JPanel {
-    private final PanelBuilder panelBuilder = new PanelBuilder();
     private final CardStack cardStack = new CardStack();
 
     SubjectSecManagerPanel(AppContext ctx) {
@@ -35,7 +34,7 @@ public class SubjectSecManagerPanel extends JPanel {
         JToggleButton grantButton = new JToggleButton("Grants");
         grantButton.addActionListener(e -> cardStack.show("Grants"));
 
-        add(panelBuilder.buildDefaultSplitPanel(cardStack.view(), subjectButton, permissionButton, roleButton, roleGroupButton, grantButton));
+        add(PanelBuilder.buildDefaultSplitPanel(cardStack.view(), subjectButton, permissionButton, roleButton, roleGroupButton, grantButton));
     }
 
     private JPanel buildSubjectPanel() {
@@ -46,7 +45,7 @@ public class SubjectSecManagerPanel extends JPanel {
         searchBar.add(search);
         searchBar.add(searchButton);
 
-        return panelBuilder.buildJPanelWithFields(
+        return PanelBuilder.buildJPanelWithFields(
                 new JLabel("Subjects"),
                 new JLabel("Security subjects and their principals, credentials, and grants."),
                 searchBar,
@@ -65,7 +64,7 @@ public class SubjectSecManagerPanel extends JPanel {
         searchBar.add(search);
         searchBar.add(searchButton);
 
-        return panelBuilder.buildJPanelWithFields(
+        return PanelBuilder.buildJPanelWithFields(
                 new JLabel("Permissions"),
                 new JLabel("Permission definitions, scoped by application (AppID)."),
                 searchBar,
@@ -83,7 +82,7 @@ public class SubjectSecManagerPanel extends JPanel {
         searchBar.add(search);
         searchBar.add(searchButton);
 
-        return panelBuilder.buildJPanelWithFields(
+        return PanelBuilder.buildJPanelWithFields(
                 new JLabel("Roles"),
                 new JLabel("Named bundles of permissions."),
                 searchBar,
@@ -101,7 +100,7 @@ public class SubjectSecManagerPanel extends JPanel {
         searchBar.add(search);
         searchBar.add(searchButton);
 
-        return panelBuilder.buildJPanelWithFields(
+        return PanelBuilder.buildJPanelWithFields(
                 new JLabel("Role groups"),
                 new JLabel("Bundles of roles granted together."),
                 searchBar,
@@ -119,7 +118,7 @@ public class SubjectSecManagerPanel extends JPanel {
         searchBar.add(search);
         searchBar.add(searchButton);
 
-        return panelBuilder.buildJPanelWithFields(
+        return PanelBuilder.buildJPanelWithFields(
                 new JLabel("Grants"),
                 new JLabel("Permission, role, and role-group grants bound to subjects."),
                 searchBar,

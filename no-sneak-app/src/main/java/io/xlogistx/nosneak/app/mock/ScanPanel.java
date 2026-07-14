@@ -8,7 +8,6 @@ import javax.swing.*;
 import java.awt.*;
 
 public class ScanPanel extends JPanel {
-    private final PanelBuilder panelBuilder = new PanelBuilder();
     private final CardStack cardStack = new CardStack();
 
     public ScanPanel(AppContext ctx) {
@@ -21,7 +20,7 @@ public class ScanPanel extends JPanel {
         JToggleButton localScanButton = new JToggleButton("Local Scan");
         localScanButton.addActionListener(e -> cardStack.show("Local"));
 
-        add(panelBuilder.buildDefaultSplitPanel(cardStack.view(), webScanButton, localScanButton));
+        add(PanelBuilder.buildDefaultSplitPanel(cardStack.view(), webScanButton, localScanButton));
     }
 
     private JPanel buildWebScanPanel() {
