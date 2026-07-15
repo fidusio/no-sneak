@@ -41,6 +41,9 @@ public class Session {
             • Include at least one special character (such as !, @, #, $, %, &, *).
             • Cannot be empty or contain only spaces.""";
     private static final String ADDRESSES = "addresses";
+    private static final String PROVIDER = "provider";
+    private static final String BASE_URL = "base_url";
+    private static final String AI_PROVIDER = "ai_provider";
     private final PropertyChangeSupport pcs = new PropertyChangeSupport(this);
     private final DomainSecurityManager domainSecurityManager;
     private boolean authenticated;
@@ -162,7 +165,8 @@ public class Session {
     /**
      * Stores a new API key (plain) with an optional label/description. @return {@code null} on success, else an error message.
      */
-    public void storeAPIKey(String label, String description, String domainID, String appID, String rawKey) throws SecurityException {
+    public void storeAPIKey(String label, String description, String domainID, String appID, String rawKey,
+                            String provider, String baseURI, Boolean aiUse) throws SecurityException {
 
         // TBD change the name, throw exception, signature to void
 
@@ -170,8 +174,8 @@ public class Session {
         if (rawKey == null || rawKey.isBlank()) throw new SecurityException("Key cannot be empty");
 
         APIKey<String> key = new SubjectAPIKey();
-        if(key == null) throw new SecurityException("Failed to create key");
 
+        // if appID and domainID are not null assume the key is external else internal
         if (appID != null && !appID.isBlank() && domainID != null && !domainID.isBlank()) {
             String trimmedAppID = appID.trim();
             String trimmedDomainID = domainID.trim();
@@ -189,9 +193,15 @@ public class Session {
             key.setAppID(noSneakAppID);
         }
 
-
         key.setAPIKey(rawKey);
         key.setCredentialStatus(SecConst.SecStatus.ACTIVE);
+
+        if (provider != null && !provider.isBlank())
+            key.getProperties().build(PROVIDER, provider.trim());
+        if (baseURI != null && !baseURI.isBlank())
+            key.getProperties().build(BASE_URL, baseURI.trim());
+        if (Boolean.TRUE.equals(aiUse))
+            key.getProperties().build(new NVBoolean(AI_PROVIDER, true));
 
         if (label != null && !label.isBlank()) key.setName(label.trim());
         if (description != null && !description.isBlank()) key.setDescription(description.trim());
@@ -216,7 +226,7 @@ public class Session {
         if (subjectIdentifier == null) throw new SecurityException("Not signed in");
         if (key == null) throw new SecurityException("Empty Key");
 
-        if(isExternalKey(key)) throw new SecurityException("Cannot rotate external key");
+        if (isExternalKey(key)) throw new SecurityException("Cannot rotate external key");
 
         SubjectAPIKey fresh = generateAPIKey();
 
@@ -226,9 +236,29 @@ public class Session {
     }
 
     public boolean isExternalKey(APIKey<String> key) {
-        if(key == null) return false;
+        if (key == null) return false;
         NVGenericMap p = key.getProperties();
         return p != null && Boolean.TRUE.equals(p.getValue("external"));
+    }
+
+    /** @return true if this key was flagged for use by the AI assistant. */
+    public boolean isAIKey(APIKey<String> key) {
+        NVGenericMap p = key == null ? null : key.getProperties();
+        return p != null && Boolean.TRUE.equals(p.getValue(AI_PROVIDER));
+    }
+
+    /** @return the stored AI provider type (e.g. "anthropic"), or null. */
+    public String providerOf(APIKey<String> key) {
+        NVGenericMap p = key == null ? null : key.getProperties();
+        Object v = p == null ? null : p.getValue(PROVIDER);
+        return v == null ? null : v.toString();
+    }
+
+    /** @return the stored AI endpoint base URL, or null. */
+    public String baseUrlOf(APIKey<String> key) {
+        NVGenericMap p = key == null ? null : key.getProperties();
+        Object v = p == null ? null : p.getValue(BASE_URL);
+        return v == null ? null : v.toString();
     }
 
     /**
@@ -352,15 +382,22 @@ public class Session {
     }
 
     /**
-     * Updates an API key's label and description (blanks clear them). @return {@code null} on success, else an error message.
+     * Updates an API key's label, description, and AI-assistant metadata (provider, base URL,
+     * and whether it appears in the AI assistant). Blanks clear the text fields.
      */
-    public void changeAPIDetails(APIKey<String> apiKey, String label, String description) throws SecurityException {
+    public void changeAPIDetails(APIKey<String> apiKey, String label, String description,
+                                 String provider, String baseURI, Boolean aiUse) throws SecurityException {
 
         if (principalID == null) throw new SecurityException("Not Logged in");
         if (apiKey == null) throw new SecurityException("Invalid API Key");
 
         apiKey.setName(label.trim());
         apiKey.setDescription(description.trim());
+
+        // Rewrite the AI metadata each save so unchecking the box / clearing a field sticks.
+        apiKey.getProperties().build(PROVIDER, provider == null ? "" : provider.trim());
+        apiKey.getProperties().build(BASE_URL, baseURI == null ? "" : baseURI.trim());
+        apiKey.getProperties().build(new NVBoolean(AI_PROVIDER, Boolean.TRUE.equals(aiUse)));
 
         domainSecurityManager.updateCredential(subjectIdentifier, apiKey);
     }
@@ -439,7 +476,7 @@ public class Session {
 
     public void deleteAddress(NVGenericMap address) throws SecurityException {
         if (subjectIdentifier == null) throw new SecurityException("Not Logged in");
-        if (address == null)          throw new SecurityException("Invalid address");
+        if (address == null) throw new SecurityException("Invalid address");
 
         NVGenericMap props = subjectIdentifier.getProperties();
         NVGenericMapList list = props == null ? null : props.lookup(ADDRESSES);

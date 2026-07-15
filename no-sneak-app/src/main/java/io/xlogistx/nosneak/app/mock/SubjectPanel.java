@@ -2,6 +2,7 @@ package io.xlogistx.nosneak.app.mock;
 
 import io.xlogistx.gui.GUIUtil;
 import io.xlogistx.gui.IconUtil;
+import io.xlogistx.gui.*;
 import io.xlogistx.nosneak.app.mock.utility.*;
 import org.zoxweb.shared.data.DataConst;
 import org.zoxweb.shared.security.APIKey;
@@ -44,6 +45,9 @@ public class SubjectPanel extends JPanel {
     private final JTextField editKeyDescription = new JTextField(20);
     private final JTextField keyAppID = new JTextField(20);
     private final JTextField keyDomainID = new JTextField(20);
+    private final JTextField keyProvider = new JTextField(20);
+    private final JTextField keyURI = new JTextField(20);
+    private final JCheckBox keyAIUse = new JCheckBox("Use for AI assistant?");
     private SubjectAPIKey selectedKey;
     private boolean isKeyShown = false;
     private final char defaultEcho = editKeySecret.getEchoChar();
@@ -109,6 +113,9 @@ public class SubjectPanel extends JPanel {
                 editKeyDescription.setText("");
                 keyAppID.setText("");
                 keyDomainID.setText("");
+                keyProvider.setText("");
+                keyURI.setText("");
+                keyAIUse.setSelected(false);
                 selectedKey = null;
                 setKeyMasked(true);
                 profileCards.show("profile");
@@ -456,15 +463,24 @@ public class SubjectPanel extends JPanel {
         JTextField inAppID = new JTextField(30);
         JTextField inDomainID = new JTextField(30);
         JTextField inKey = new JTextField(30);
+        JTextField inProvider = new JTextField(30);
+        JTextField inBaseURI = new JTextField(30);
+        JCheckBox inAIUse = new JCheckBox("Use for ai assistant?");
+
         JPanel inputCard = PanelBuilder.buildJPanelWithFields(
-                new JLabel("Label"), inLabel, new JLabel("Description"), inDescription,
-                new JLabel("App Id (ex: nosneak)"), inAppID, new JLabel("Domain ID (ex: xlogistx.io)"), inDomainID,
+                new JLabel("Label"), inLabel,
+                new JLabel("Description"), inDescription,
+                new JLabel("App Id (ex: nosneak)"), inAppID,
+                new JLabel("Domain ID (ex: xlogistx.io)"), inDomainID,
+                new JLabel("Provider (ex: anthropic, openai)"), inProvider,
+                new JLabel("Base URL (ex: https://api.anthropic.com)"), inBaseURI,
+                new JLabel(), inAIUse,
                 new JLabel("Paste existing key"), inKey);
 
         // --- selector + cards ---
         CardStack cards = new CardStack();
         cards.add(generateCard, "generate");
-        cards.add(inputCard, "input");
+        cards.add(new JScrollPane(inputCard), "input");
         cards.show("generate");
 
         JToggleButton generateButton = new JToggleButton("Generate local key", true);
@@ -494,6 +510,9 @@ public class SubjectPanel extends JPanel {
         String appId = generating ? "" : inAppID.getText().trim();
         String domainId = generating ? "" : inDomainID.getText().trim();
         String key = generating ? genKey.getText() : inKey.getText().trim();
+        String provider = generating ? "" : inProvider.getText().trim();
+        String baseURI = generating ? "" : inBaseURI.getText().trim();
+        Boolean aiUse = !generating && inAIUse.isSelected();
 
         // An external (third party) key requires both the AppID and the key.
         if (!generating && (appId.isBlank() || key.isBlank())) {
@@ -504,7 +523,7 @@ public class SubjectPanel extends JPanel {
         }
 
         BackgroundTask.runCatching(this, null,
-                () -> ctx.session().storeAPIKey(label, description, domainId, appId, key),
+                () -> ctx.session().storeAPIKey(label, description, domainId, appId, key, provider, baseURI, aiUse),
                 () -> {
                     passwordSection.refresh();
                     apiKeySection.refresh();
@@ -581,6 +600,8 @@ public class SubjectPanel extends JPanel {
         editKeySecret.setEditable(false);
         keyAppID.setEditable(false);
         keyDomainID.setEditable(false);
+        keyProvider.setEditable(true);
+        keyURI.setEditable(true);
 
         JPanel keyView = new JPanel(new FlowLayout(FlowLayout.LEFT));
 
@@ -606,6 +627,14 @@ public class SubjectPanel extends JPanel {
 
                     panel.add(new JLabel("Domain ID"));
                     panel.add(keyDomainID);
+
+                    panel.add(new JLabel("Provider"));
+                    panel.add(keyProvider);
+
+                    panel.add(new JLabel("Base URI"));
+                    panel.add(keyURI);
+
+                    panel.add(keyAIUse);
 
                     panel.add(new JLabel("API Key"));
                     panel.add(keyView);
@@ -635,6 +664,12 @@ public class SubjectPanel extends JPanel {
             keyDomainID.setText("");
         }
 
+        String provider = ctx.session().providerOf(key);
+        String baseUrl = ctx.session().baseUrlOf(key);
+        keyProvider.setText(provider == null ? "" : provider);
+        keyURI.setText(baseUrl == null ? "" : baseUrl);
+        keyAIUse.setSelected(ctx.session().isAIKey(key));
+
         credentialCards.show("editAPI");
     }
 
@@ -647,7 +682,8 @@ public class SubjectPanel extends JPanel {
 
     private void onEditAPIDetails(JButton submit) {
         BackgroundTask.runCatching(this, submit,
-                () -> ctx.session().changeAPIDetails(selectedKey, editKeyLabel.getText(), editKeyDescription.getText()),
+                () -> ctx.session().changeAPIDetails(selectedKey, editKeyLabel.getText(), editKeyDescription.getText(),
+                        keyProvider.getText(), keyURI.getText(), keyAIUse.isSelected()),
                 () -> {
                     JOptionPane.showMessageDialog(this, "API Key updated");
                     selectedKey = null;
@@ -656,6 +692,9 @@ public class SubjectPanel extends JPanel {
                     editKeyDescription.setText("");
                     keyAppID.setText("");
                     keyDomainID.setText("");
+                    keyProvider.setText("");
+                    keyURI.setText("");
+                    keyAIUse.setSelected(false);
                     credentialCards.show("list");
                     passwordSection.refresh();
                     apiKeySection.refresh();

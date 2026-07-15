@@ -1,8 +1,8 @@
 package io.xlogistx.nosneak.app.mock;
 
 import io.xlogistx.nosneak.app.mock.utility.AppContext;
-import io.xlogistx.nosneak.app.mock.utility.CardStack;
-import io.xlogistx.nosneak.app.mock.utility.PanelBuilder;
+import io.xlogistx.gui.CardStack;
+import io.xlogistx.gui.PanelBuilder;
 
 import javax.swing.*;
 import java.awt.*;

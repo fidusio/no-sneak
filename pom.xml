@@ -17,8 +17,8 @@
     <packaging>pom</packaging>
 
     <properties>
-        <maven.compiler.source>25</maven.compiler.source>
-        <maven.compiler.target>25</maven.compiler.target>
+<!--        <maven.compiler.source>25</maven.compiler.source>-->
+<!--        <maven.compiler.target>25</maven.compiler.target>-->
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <jdk.version>25</jdk.version>
         <xlogistx.version>1.0.0</xlogistx.version>
@@ -36,6 +36,7 @@
 
         <module>no-sneak-core</module>
         <module>no-sneak-app</module>
+        <module>ai-assistant</module>
 
     </modules>
 

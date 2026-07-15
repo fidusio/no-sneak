@@ -14,14 +14,18 @@ and screen flow ahead of binding the real PQC scanner and security backend.
 > **add/remove identifiers**, **profile save/load** (name/DOB in the subject's property bag),
 > a **multi-address book** (add/edit/remove addresses, each a nested `NVGenericMap`), and the
 > **full API-key lifecycle** — generate or import a key, **create**, **login**, **edit
-> label/description**, **rotate**, and **delete** from the Subject panel. API keys are stored
-> **plain** (the raw URL-Base64 key, no hashing), so `loginAPIKey` looks them up as-is. All
-> blocking `Session` calls (login/register/change-password, add/remove identifier,
-> create/rotate/delete API key, add/edit/remove address, save profile) run **off the EDT** via
+> label/description**, **rotate**, and **delete** from the Subject panel. Imported (third-party)
+> keys also carry **AI-assistant metadata** — a `provider`, a `base_url`, and an
+> **"Use for AI assistant"** flag — captured on the add/edit form and stored on the key's property
+> bag. API keys are stored **plain** (the raw URL-Base64 key, no hashing), so `loginAPIKey` looks
+> them up as-is. The **AI Assistant** screen (`ASSISTANT`, reached via **View → AI Chat**) hosts the
+> `ai-assistant` module's `AssistantPanel`, fed its provider keys through a `SessionAICredentialSource`
+> adapter. All blocking `Session` calls (login/register/change-password, add/remove identifier,
+> create/rotate/delete/edit API key, add/edit/remove address, save profile) run **off the EDT** via
 > `BackgroundTask.runCatching` (failures surface as a dialog from the thrown `SecurityException`).
 > Row actions render as **`IconUtil` SVG icons** (edit/delete/refresh/copy/visible/search/back). Still stubs:
-> **passkey** (login/register are empty `void` no-ops), the security-manager admin tables, and
-> the scanner/file-sharing screens.
+> **passkey** (login/register are empty `void` no-ops), the security-manager admin tables, the
+> scanner/file-sharing screens, and the AI assistant's Chat/History/Skills pages (only Providers is wired).
 
 ## Layout
 
@@ -29,7 +33,7 @@ and screen flow ahead of binding the real PQC scanner and security backend.
 io.xlogistx.nosneak.app
 ├── Main.java                      ← entry point + top-level JFrame
 └── mock/                          ← prototype UI (screens, menu, mock security)
-    ├── AppShell.java              ← root content pane, CardLayout host
+    ├── AppShell.java              ← root content pane, CardLayout host (mounts ai-assistant's AssistantPanel)
     ├── LoginPanel.java            ← login/register screen (method + mode toggle)
     ├── PQCRegistryPanel.java      ← PQC file-sharing registry view
     ├── SubjectPanel.java          ← subject account view (master–detail)
@@ -39,6 +43,7 @@ io.xlogistx.nosneak.app
     └── utility/
         ├── AppContext.java        ← per-app service locator (Session + Navigator)
         ├── Session.java           ← auth + identifiers + credentials + profile + addresses (over DomainSecurityManager)
+        ├── SessionAICredentialSource.java ← adapts the subject's AI-flagged keys → ai-assistant's AICredential
         ├── Navigator.java         ← top-level screen switching over a CardLayout
         ├── CardStack.java         ← reusable CardLayout wrapper (in-panel sections)
         ├── PanelBuilder.java      ← shared Swing layout helpers
@@ -70,11 +75,18 @@ authenticated.
 
 ### `AppShell`
 The root panel (`BorderLayout`). Hosts a `CardLayout` content area registering one card
-per `Navigator.Screen` (`LOGIN`, `MAIN`, `SUBJECT`, `SCAN`, `MANAGER`) plus a footer
-status bar. On construction it builds the `Navigator`, registers it on the `AppContext`,
+per `Navigator.Screen` (`LOGIN`, `MAIN`, `SUBJECT`, `SCAN`, `MANAGER`, `ASSISTANT`) plus a footer
+status bar. On construction, it builds the `Navigator`, registers it on the `AppContext`,
 and wires `session().onAuthChange(...)` so that a successful auth navigates to `SUBJECT`
 and a logout navigates back to `LOGIN`. The footer (left: `session: … | subject: …`,
 right: status) also subscribes to auth changes. Starts on the `LOGIN` screen.
+
+The `ASSISTANT` card is the `ai-assistant` module's `gui.AssistantPanel`, constructed with a
+`new SessionAICredentialSource(ctx.session())` so it can list the subject's AI-flagged keys. Because
+the panel is built once (before login), `AppShell` calls `assistantPanel.refresh()` on login (the
+credential source is empty until then) and `assistantPanel.cleanup()` on logout (which re-runs the
+refresh, clearing the list). This is the **only** coupling point — the dependency runs
+`no-sneak-app → ai-assistant`, never the reverse.
 
 ### `LoginPanel`
 The authentication screen, registered as the `LOGIN` card. Built on a `GridBagLayout`
@@ -168,17 +180,24 @@ mirroring how the Credentials screen switches between its list and detail cards.
     **+ Add API Key** button opens the add dialog: a **Generate local / Add third party**
     selector with Label + Description. *Generate* shows a freshly `Session.generateAPIKey()`'d
     key in a read-only, copyable field with a **Refresh** button (regenerates the shown key)
-    and a **Copy** button; *Add third party* takes a pasted key plus App Id / Domain ID. The
-    displayed field is the source of truth — copy and **Create key** both read it, so a
-    refreshed key is the one actually stored. On **Create key** it stores via
-    `Session.storeAPIKey(label, description, domainID, appID, rawKey)` (off the EDT) — the
-    optional domain/app-id pair is validated by the AppID filters — and refreshes the list.
+    and a **Copy** button; *Add third party* takes a pasted key plus App Id / Domain ID and the
+    **AI-assistant fields** — **Provider** (e.g. `anthropic`), **Base URL**, and a **"Use for ai
+    assistant?"** checkbox. The displayed field is the source of truth — copy and **Create key**
+    both read it, so a refreshed key is the one actually stored. On **Create key** it stores via
+    `Session.storeAPIKey(label, description, domainID, appID, rawKey, provider, baseURI, aiUse)`
+    (off the EDT) — the optional domain/app-id pair is validated by the AppID filters, and
+    provider/baseURI/aiUse are written to the key's property bag — and refreshes the list. (The
+    *Generate local* path passes those three as blank/`false`, since a locally-minted login key is
+    never an AI provider.)
   - The `editAPI` card is **fully wired**: the secret shows in a masked `JPasswordField`
     with a **Show/Hide** reveal toggle (`VisibleIcon` / `InvisibleIcon`, re-masked on every open) and a
-    **Copy** button (copies `getAPIKey()`); editable **Label**/**Description** save via
-    `Session.changeAPIDetails`; **Rotate** (`Session.rotateAPIKey`) and **Delete**
-    (`Session.deleteAPIKey`) each confirm first, run off the EDT, and refresh — Rotate
-    re-populates the card with the new secret, Delete navigates back to the list.
+    **Copy** button (copies `getAPIKey()`); editable **Label**/**Description**, plus editable
+    **Provider** / **Base URI** fields and the **"Use for AI assistant?"** checkbox — all populated
+    from the key on open (`providerOf` / `baseUrlOf` / `isAIKey`) and saved together via
+    `Session.changeAPIDetails(key, label, description, provider, baseURI, aiUse)`. App ID / Domain ID
+    show read-only. **Rotate** (`Session.rotateAPIKey`) and **Delete** (`Session.deleteAPIKey`) each
+    confirm first, run off the EDT, and refresh — Rotate re-populates the card with the new secret,
+    Delete navigates back to the list.
 
 > **Icon buttons.** The credential/identifier/address actions render as `io.xlogistx.gui.IconUtil`
 > icons (jsvg-rendered `SVGIconWidget`s bundled with `xlogistx-gui-audio`) with tooltips rather
@@ -228,16 +247,16 @@ Builds the application `JMenuBar`: `File`, `View`, `Tools`, `Help`, and a right-
 `Mode` menu (with a "Technical Mode" checkbox). **File** has a placeholder *Test* item and
 **Logout** (`session().logout()`). The **View** items navigate via the `AppContext`'s
 `Navigator` — *Network scanner* → `SCAN`, *PQC file sharing* → `MAIN`, *Subject Profile* →
-`SUBJECT`, *Subject Security Manager* → `MANAGER`.
+`SUBJECT`, *Subject Security Manager* → `MANAGER`, *AI Chat* → `ASSISTANT`.
 
 #### Navigation model
 The app uses **two independent navigation layers**, deliberately kept separate:
 
 - **Top menu bar (`JMenuBar`)** — app-level destinations. The **View** menu drives the
   `Navigator` between top-level screens: *Network scanner* → `SCAN`, *PQC file sharing* →
-  `MAIN`, *Subject Profile* → `SUBJECT`, *Subject Security Manager* → `MANAGER`. (There is
-  no separate "Subject" menu; the subject screen is reached from **View → Subject
-  Profile**.)
+  `MAIN`, *Subject Profile* → `SUBJECT`, *Subject Security Manager* → `MANAGER`, *AI Chat* →
+  `ASSISTANT`. (There is no separate "Subject" menu; the subject screen is reached from
+  **View → Subject Profile**.)
 - **Left selector inside a panel** — sub-section switching *within* a screen, via a local
   `CardStack` (e.g. `SubjectPanel`'s Profile / Credentials, or
   `SubjectSecManagerPanel`'s Subjects / Permissions / Roles / Role groups / Grants). This
@@ -336,16 +355,23 @@ API-key lifecycle (failures throw `SecurityException`; the raw key is stored **p
 - `generateAPIKey()` — a fresh AES-256 key, URL-Base64 encoded, wrapped in a `SubjectAPIKey`
   (`getAPIKey()` is the raw secret); no persistence. **Throws** `"Not signed in"` when signed
   out and `"Could not generate a key"` on a crypto failure (no longer returns `null`).
-- `storeAPIKey(String label, String description, String domainID, String appID, String rawKey)`
-  — stores the raw key verbatim (`setAPIKey(rawKey)`, no hashing) in a `SubjectAPIKey`
-  (`STATUS` = ACTIVE, optional `name`/`description`) via `createCredential`. When **both**
-  `domainID` and `appID` are non-blank it attaches an `AppIDDefault`, which runs them through
-  `FilterType.DOMAIN` + `AppIDNameFilter` (normalizes case, strips `www.`/subdomains, rejects
-  bad input with `IllegalArgumentException`); if only one part is given the AppID is skipped.
-  Guards (thrown): `"Not signed in"` / `"Key cannot be empty"`. *(No key-format validation
-  today — a malformed paste is accepted and simply never matches at login.)*
-- `changeAPIDetails(key, label, description)` — updates the key's label/description in place
-  via `updateCredential`. Unlike create it **sets** blanks, so passing empty clears them.
+- `storeAPIKey(String label, String description, String domainID, String appID, String rawKey,
+  String provider, String baseURI, Boolean aiUse)` — stores the raw key verbatim (`setAPIKey(rawKey)`,
+  no hashing) in a `SubjectAPIKey` (`STATUS` = ACTIVE, optional `name`/`description`) via
+  `createCredential`. When **both** `domainID` and `appID` are non-blank it attaches an `AppIDDefault`,
+  which runs them through `FilterType.DOMAIN` + `AppIDNameFilter` (normalizes case, strips
+  `www.`/subdomains, rejects bad input with `IllegalArgumentException`); if only one part is given the
+  AppID is skipped. The **AI-assistant metadata** is written to the key's property bag: `provider` and
+  `base_url` (each only when non-blank) and an `ai_provider` `NVBoolean` (only when `aiUse` is true).
+  These feed `SessionAICredentialSource`. Guards (thrown): `"Not signed in"` / `"Key cannot be empty"`.
+  *(No key-format validation today — a malformed paste is accepted and simply never matches at login.)*
+- `changeAPIDetails(key, label, description, provider, baseURI, aiUse)` — updates the key in place via
+  `updateCredential`. Unlike create it **sets** blanks, so passing empty clears them; it also
+  **rewrites** the `provider` / `base_url` / `ai_provider` properties every save, so unchecking the box
+  or clearing a field actually sticks (create only ever *writes* them).
+- `isExternalKey(key)` / `isAIKey(key)` / `providerOf(key)` / `baseUrlOf(key)` — read the metadata
+  back off the property bag (`external` / `ai_provider` booleans, `provider` / `base_url` strings).
+  `SessionAICredentialSource` uses these to filter and adapt keys for the AI assistant.
 - `rotateAPIKey(key)` — generates a fresh secret, replaces the stored one via
   `updateCredential` (old key stops working, new one works). Guards against persisting a
   `null` secret; the new secret is read back from the mutated `key.getAPIKey()`.
@@ -393,12 +419,24 @@ State changes fire an `"authenticated"` property event; listeners subscribe via
 `onAuthChange(...)` — how `AppFrame` toggles the menu bar and `AppShell`/`SubjectPanel`
 react on login/logout.
 
+### `SessionAICredentialSource`
+The adapter that lets the `ai-assistant` module reach NoSneak's keys without depending on
+`no-sneak-app` — it implements the module's `agent.AICredentialSource` over a `Session`. Its
+`credentials()` walks `getAllCredentialForUserByType(CredentialInfo.Type.API_KEY)`, keeps only the
+keys where `session.isAIKey(key)` is true (the **"Use for AI assistant"** flag), and adapts each to an
+`agent.AICredential` — `getName()` from the key, `providerType()` / `baseUrl()` from
+`session.providerOf` / `session.baseUrlOf`, and `secret()` from `getAPIKey().toCharArray()`. Returns an
+empty list when signed out, so `AssistantPanel.refresh()` (called by `AppShell` on login) shows the
+provider list only for the signed-in subject. This is the single point where the app meets the
+AI-assistant module; the dependency is one-way (`no-sneak-app → ai-assistant`).
+
 ### `Navigator`
 Thin top-level screen-switcher over a `CardLayout`. Defines the `Screen` enum
-(`LOGIN, REGISTER, MAIN, SCAN, SUBJECT, MANAGER`) and `show(Screen)` flips the shared
+(`LOGIN, REGISTER, MAIN, SCAN, SUBJECT, MANAGER, ASSISTANT`) and `show(Screen)` flips the shared
 content panel to the matching card (cards are keyed by `Screen.name()`). Note: `REGISTER`
 is currently **unused** — register is a *mode* of the `LOGIN` screen, not its own
-screen/card.
+screen/card. `ASSISTANT` hosts the `ai-assistant` module's `AssistantPanel` (reached via
+**View → AI Chat**).
 
 ### `CardStack`
 A small reusable wrapper around a `CardLayout` + backing `JPanel`, used for **in-panel**
@@ -461,7 +499,8 @@ Main.AppFrame
         ├─ PQCRegistryPanel     (MAIN)                                  │ onAuthChange
         ├─ SubjectPanel         (SUBJECT)                               │  → nav to SUBJECT
         ├─ SubjectSecManagerPanel (MANAGER)                            │  + show menu bar
-        └─ ScanPanel            (SCAN)                                  │  (logout → LOGIN)
+        ├─ ScanPanel            (SCAN)                                  │  (logout → LOGIN)
+        └─ AssistantPanel       (ASSISTANT) ← SessionAICredentialSource │  + assistant.refresh()
                                                               Session ◄─┘
 ```
 

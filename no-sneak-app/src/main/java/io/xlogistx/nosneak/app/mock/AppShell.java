@@ -1,8 +1,10 @@
 package io.xlogistx.nosneak.app.mock;
 
 
+import gui.AssistantPanel;
 import io.xlogistx.nosneak.app.mock.utility.AppContext;
 import io.xlogistx.nosneak.app.mock.utility.Navigator;
+import io.xlogistx.nosneak.app.mock.utility.SessionAICredentialSource;
 
 import javax.swing.*;
 import java.awt.*;
@@ -12,16 +14,21 @@ public class AppShell extends JPanel {
     private final JPanel content = new JPanel(cards);
     private final AppContext ctx;
 
+    // import assistant panel from ai-assistant gui
+    private final AssistantPanel assistantPanel;
+
     public AppShell(AppContext ctx) {
         setLayout(new BorderLayout());
         this.ctx = ctx;
+
+        assistantPanel = new AssistantPanel(new SessionAICredentialSource(ctx.session()));
 
         content.add(new LoginPanel(ctx), Navigator.Screen.LOGIN.name());
         content.add(new PQCRegistryPanel(ctx), Navigator.Screen.MAIN.name());
         content.add(new SubjectPanel(ctx), Navigator.Screen.SUBJECT.name());
         content.add(new ScanPanel(ctx), Navigator.Screen.SCAN.name());
         content.add(new SubjectSecManagerPanel(ctx), Navigator.Screen.MANAGER.name());
-        content.add(new AIAssistantPanel(ctx), Navigator.Screen.INTERFACE.name());
+        content.add(assistantPanel, Navigator.Screen.ASSISTANT.name());
 
         add(buildContent(), BorderLayout.CENTER);
         add(buildFooter(), BorderLayout.SOUTH);
@@ -30,8 +37,14 @@ public class AppShell extends JPanel {
         ctx.session().onAuthChange(e -> {
             if ((boolean) e.getNewValue()) {
                 ctx.nav().show(Navigator.Screen.SUBJECT);
+
+                // load this subject's AI provider keys into the assistant
+                assistantPanel.refresh();
             } else {
                 ctx.nav().show(Navigator.Screen.LOGIN);
+
+                // reset ai assistant panel
+                assistantPanel.cleanup();
             }
         });
 
