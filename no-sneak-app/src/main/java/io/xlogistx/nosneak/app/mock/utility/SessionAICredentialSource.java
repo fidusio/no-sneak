@@ -1,7 +1,7 @@
 package io.xlogistx.nosneak.app.mock.utility;
 
-import agent.AICredential;
 import agent.AICredentialSource;
+import org.zoxweb.shared.security.APIKey;
 import org.zoxweb.shared.security.CredentialInfo;
 import org.zoxweb.shared.security.SubjectAPIKey;
 
@@ -15,33 +15,24 @@ public class SessionAICredentialSource implements AICredentialSource {
         this.session = session;
     }
 
+
     @Override
-    public List<AICredential> credentials() {
-        List<AICredential> out = new ArrayList<>();
+    public List<APIKey<String>> APIKeys() {
+        List<APIKey<String>> out = new ArrayList<>();
+
         for (CredentialInfo ci : session.getAllCredentialForUserByType(CredentialInfo.Type.API_KEY)) {
 
             SubjectAPIKey k = (SubjectAPIKey) ci;
 
             if (!session.isAIKey(k)) continue;
-            out.add(
-                    new AICredential() {
-                        public String getName() {
-                            return k.getName();
-                        }
-
-                        public String providerType() {
-                            return session.providerOf(k);
-                        }
-
-                        public String baseUrl() {
-                            return session.baseUrlOf(k);
-                        }
-
-                        public char[] secret() {
-                            return k.getAPIKey().toCharArray();
-                        }
-                    });
+            out.add(k);
         }
         return out;
+
+    }
+
+    @Override
+    public void addAPIKey(APIKey<String> key) {
+
     }
 }

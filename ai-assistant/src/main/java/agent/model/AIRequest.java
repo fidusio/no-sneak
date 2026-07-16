@@ -5,26 +5,84 @@ import org.zoxweb.shared.util.NVGenericMap;
 import java.util.List;
 
 /**
- * A vendor-neutral request to an AI model. Providers translate this into their own wire format.
- *
- * @param model        the model id to answer
- * @param systemPrompt the system prompt (active skills, concatenated)
- * @param messages     the conversation so far
- * @param maxTokens    the answer length limit
- * @param options      extra settings like temperature and vendor-specific extras
+ * Creates a request that can be sent to an AI that will send a response back.
  */
-public record AIRequest(
-        String model,
-        String systemPrompt,                                      // skills, concatenated
-        List<AIMessage> messages,
-        int maxTokens,
-        NVGenericMap options                                      // temperature, vendor extras
-) {
-    /**
-     * Copies this request with a different model. Lets a fan-out reuse one request
-     * (same prompt/skills/messages) across many models.
-     */
-    public AIRequest withModel(String m) {
-        return new AIRequest(m, systemPrompt, messages, maxTokens, options);
+public class AIRequest {
+    private String model;
+    private String systemPrompt;                                      // skills, concatenated
+    private List<AIMessage> messages;
+    private String correlationID;                                     // we generate correlation id uuid
+    private String topicID;
+    //can have chat/topic where you get an id or one message chat
+    private int maxTokens;
+    private NVGenericMap options;
+
+    public AIRequest() {
+    }
+
+    public AIRequest(String model, String systemPrompt, List<AIMessage> messages, String correlationID, String topicID, int maxTokens, NVGenericMap options) {
+        this.model = model;
+        this.systemPrompt = systemPrompt;
+        this.messages = messages;
+        this.correlationID = correlationID;
+        this.topicID = topicID;
+        this.maxTokens = maxTokens;
+        this.options = options;
+    }
+
+    public String getModel() {
+        return model;
+    }
+
+    public void setModel(String model) {
+        this.model = model;
+    }
+
+    public String getSystemPrompt() {
+        return systemPrompt;
+    }
+
+    public void setSystemPrompt(String systemPrompt) {
+        this.systemPrompt = systemPrompt;
+    }
+
+    public List<AIMessage> getMessages() {
+        return messages;
+    }
+
+    public void setMessages(List<AIMessage> messages) {
+        this.messages = messages;
+    }
+
+    public String getCorrelationID() {
+        return correlationID;
+    }
+
+    public void setCorrelationID(String correlationID) {
+        this.correlationID = correlationID;
+    }
+
+    public String getTopicID() {
+        return topicID;
+    }
+
+    public void setTopicID(String topicID) {
+        this.topicID = topicID;
+    }
+
+    public int getMaxTokens() {
+        return maxTokens;
+    }
+
+    public void setMaxTokens(int maxTokens) {
+        this.maxTokens = maxTokens;
+    }
+
+    public NVGenericMap getOptions() {
+        return options;
+    }
+
+    public void setOptions(NVGenericMap options) {
+        this.options = options;
     }
 }

@@ -14,15 +14,15 @@ public interface AIModelCatalog {
     /**
      * @return the cached models for this credential (may be empty if never synced).
      */
-    List<AIModel> models(AICredential cred);
+    List<AIModel> models();
 
     /**
      * Forces a fresh discovery call and updates the cache. @return the newly discovered models.
      */
-    List<AIModel> refresh(AICredential cred) throws AIException;   // Refresh button
+    List<AIModel> refresh() throws AIException;   // Refresh button
 
     /**
      * @return when this credential's models were last synced, or null if never.
      */
-    Instant lastSynced(AICredential cred);
+    Instant lastSynced();
 }

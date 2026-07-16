@@ -1,36 +1,35 @@
 package agent;
 
-import agent.model.AIModel;
 import agent.model.AIRequest;
 import agent.model.AIResponse;
+import org.zoxweb.server.http.HTTPAPICaller;
+import org.zoxweb.shared.security.APIKey;
+import org.zoxweb.shared.util.GetDescription;
+import org.zoxweb.shared.util.GetName;
 
-import java.util.List;
 
 /**
- * The vendor boundary: one implementation per AI provider (Anthropic, OpenAI, ...). It is the only
- * place that knows a vendor's wire format — everything above it stays vendor-neutral. Implementations
- * are resolved by {@link #providerType()} through an {@link AIProviderRegistry}.
+ * Main interface to implement for each type of provider (Claude, open AI, etc.).
+ * Holds reference to the AI models under the provider that the user has access to,
+ * the api key to access the provider, and a way to send and receive api calls to an
+ * AI.
  */
-public interface AIProvider {
+public interface AIProvider extends GetName, GetDescription {
 
-    /**
-     * @return the vendor id this impl handles (matched against {@link AICredential#providerType()}).
-     */
-    String providerType();
 
-    /**
-     * Discovers the models this credential can use (the Providers "Refresh").
-     */
-    List<AIModel> listModels(AICredential cred) throws AIException;
+    AIModelCatalog getModelCatalog() throws AIException;
 
-    /**
-     * Sends one request and waits for the full answer.
-     */
-    AIResponse send(AICredential cred, AIRequest req) throws AIException;
+    void setAPIKey(APIKey<String> key);
 
-    /**
-     * Sends one request and streams the answer back in pieces via {@code listener}; {@code token} can cancel it.
-     */
-    void stream(AICredential cred, AIRequest req,
-                AIStreamListener listener, AICancelToken token) throws AIException;
+    APIKey<String> getAPIKey();
+
+    void setHTTPAPICaller(HTTPAPICaller APICaller);
+
+    HTTPAPICaller getHTTPAPICaller();
+
+    AIResponse send(AIRequest req) throws AIException;
+
+    // async should return a reference or identifier in case we want to cancel it AIRequestStatus
+    void asyncSend(AIRequest req, AICallback callback) throws AIException;
+
 }

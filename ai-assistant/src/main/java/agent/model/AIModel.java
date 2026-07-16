@@ -1,15 +1,52 @@
 package agent.model;
 
-/**
- * A model a provider offers.
- *
- * @param id          the wire id used in requests
- * @param displayName the human-friendly name shown in the UI
- */
-public record AIModel(String id, String displayName) {
+import org.zoxweb.shared.data.SetNameDescriptionDAO;
+import org.zoxweb.shared.util.*;
 
-    /** Uses the id as the display name too. */
-    public AIModel(String id) {
-        this(id, id);
+
+/**
+ * Defines an AI model with name, description, and AI provider
+ */
+public class AIModel extends SetNameDescriptionDAO {
+
+    public enum Param implements GetNVConfig {
+        PROVIDER(NVConfigManager.createNVConfig("provider", "the ai provider", "Provider", true, true, String.class));
+
+        private final NVConfig nvc;
+
+        Param(NVConfig nvc) {
+            this.nvc = nvc;
+        }
+
+        public NVConfig getNVConfig() {
+            return nvc;
+        }
+    }
+
+    public static final NVConfigEntity NVC_AI_MODEL = new NVConfigEntityPortable(
+            "ai_model", null, "AIModel", true, false, false, false,
+            AIModel.class, SharedUtil.extractNVConfigs(Param.values()), null, false,
+            SetNameDescriptionDAO.NVC_NAME_DESCRIPTION_DAO);
+
+    protected AIModel() {
+        super(NVC_AI_MODEL);
+    }
+
+    public AIModel(String modelID, String provider) {
+        this();
+        setProvider(provider);
+        setName(modelID);
+    }
+
+    public String getProvider() {
+        return lookupValue(Param.PROVIDER);
+    }
+
+    public void setProvider(String id) {
+        setValue(Param.PROVIDER, id);
+    }
+
+    public String getModelID() {
+        return getName();
     }
 }

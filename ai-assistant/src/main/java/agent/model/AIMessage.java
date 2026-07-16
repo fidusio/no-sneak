@@ -1,39 +1,39 @@
 package agent.model;
 
-/**
- * One turn in a conversation. Vendor-neutral: it holds a role and typed content (text or attachments),
- * and each provider adapts these to its own wire format.
- *
- * <p>Note: the role/content fields aren't defined yet — today this record only hosts the {@link Role}
- * and {@link Content} types it will be built from.</p>
- */
-public record AIMessage() {
 
-    /** Who sent the message. */
+/**
+ * Creates a message to send to an AI provider
+ */
+public class AIMessage {
+
     public enum Role {
         USER, ASSISTANT;
-
-        /** @return the lowercase wire form (e.g. {@code "user"}). */
-        public String wire() {
-            return name().toLowerCase();
-        }
     }
 
-    /**
-     * A piece of message content. Vendor-neutral. Each provider adapts these to its own wire format.
-     */
-    public sealed interface Content permits Text, Image, Document {
+    private Role role;
+    private String content;
+
+    public AIMessage() {
     }
 
-    /** Plain text content. */
-    public record Text(String value) implements Content {
+    public AIMessage(Role role, String content) {
+        this.role = role;
+        this.content = content;
     }
 
-    /** An image attachment (raw bytes + MIME type + name). */
-    public record Image(String name, String mime, byte[] bytes) implements Content {
+    public Role getRole() {
+        return role;
     }
 
-    /** A document attachment (raw bytes + MIME type + name). */
-    public record Document(String name, String mime, byte[] bytes) implements Content {
+    public void setRole(Role role) {
+        this.role = role;
+    }
+
+    public String getContent() {
+        return content;
+    }
+
+    public void setContent(String content) {
+        this.content = content;
     }
 }

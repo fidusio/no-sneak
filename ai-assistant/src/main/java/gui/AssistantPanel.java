@@ -1,9 +1,9 @@
 package gui;
 
-import agent.AICredential;
 import agent.AICredentialSource;
 import io.xlogistx.gui.CardStack;
 import io.xlogistx.gui.PanelBuilder;
+import org.zoxweb.shared.security.APIKey;
 
 import javax.swing.*;
 import java.awt.*;
@@ -72,15 +72,13 @@ public class AssistantPanel extends JPanel {
     private void refreshProviders() {
         providersList.removeAll();
 
-        List<AICredential> creds = credentials.credentials();
+        List<APIKey<String>> creds = credentials.APIKeys();
         if (creds.isEmpty()) {
             providersList.add(new JLabel(
                     "No AI provider keys. Add one under Subject → Credentials and tick \"Use for AI assistant\"."));
         } else {
-            for (AICredential c : creds) {
-                String provider = blankTo(c.providerType(), "(no provider)");
-                String baseUrl = blankTo(c.baseUrl(), "(no base URL)");
-                providersList.add(new JLabel(c.getName() + "  —  " + provider + "  @  " + baseUrl));
+            for (APIKey<String> c : creds) {
+                providersList.add(new JLabel(c.getName() + "  —  " + c.getProperties().getValue("provider") + "  @  " + c.getProperties().getValue("base_url")));
             }
         }
 
@@ -88,11 +86,6 @@ public class AssistantPanel extends JPanel {
         providersList.repaint();
     }
 
-    private static String blankTo(String value, String fallback) {
-        return (value == null || value.isBlank()) ? fallback : value;
-    }
-
-    /** Call after login/logout so the provider list reflects the current subject. */
     public void refresh() {
         if (SwingUtilities.isEventDispatchThread()) refreshProviders();
         else SwingUtilities.invokeLater(this::refreshProviders);

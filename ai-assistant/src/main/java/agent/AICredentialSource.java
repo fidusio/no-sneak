@@ -1,15 +1,15 @@
 package agent;
 
+import org.zoxweb.shared.security.APIKey;
+
 import java.util.List;
 
+
 /**
- * Supplies the list of {@link AICredential}s the UI can use. This is the seam between the engine and
- * wherever keys are stored — the host implements it (NoSneak reads the subject's AI-flagged keys).
+ * Interface that receives api keys from a source
  */
 public interface AICredentialSource {
 
-    /**
-     * @return the currently available credentials (empty, never null, when none are available).
-     */
-    List<AICredential> credentials();
+    List<APIKey<String>> APIKeys();
+
 }
