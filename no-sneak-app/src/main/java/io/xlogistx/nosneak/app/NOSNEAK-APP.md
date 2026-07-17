@@ -15,12 +15,12 @@ and screen flow ahead of binding the real PQC scanner and security backend.
 > a **multi-address book** (add/edit/remove addresses, each a nested `NVGenericMap`), and the
 > **full API-key lifecycle** — generate or import a key, **create**, **login**, **edit
 > label/description**, **rotate**, and **delete** from the Subject panel. Imported (third-party)
-> keys also carry **AI-assistant metadata** — a `provider`, a `base_url`, and an
-> **"Use for AI assistant"** flag — captured on the add/edit form and stored on the key's property
-> bag. API keys are stored **plain** (the raw URL-Base64 key, no hashing), so `loginAPIKey` looks
-> them up as-is. The **AI Assistant** screen (`ASSISTANT`, reached via **View → AI Chat**) hosts the
-> `ai-assistant` module's `AssistantPanel`, fed its provider keys through a `SessionAICredentialSource`
-> adapter. All blocking `Session` calls (login/register/change-password, add/remove identifier,
+> keys also carry **AI-assistant metadata** — a `provider`, a `base-url`, a free-text **auth scheme**
+> (`auth-type`, e.g. `Bearer`), and an optional **header name** (`header-name`, e.g. `x-api-key`) —
+> captured on the add/edit form and stored on the key's property bag. API keys are stored **plain** (the raw
+> URL-Base64 key, no hashing), so `loginAPIKey` looks them up as-is. The **AI Assistant** screen
+> (`ASSISTANT`, reached via **View → AI Chat**) hosts the `ai-assistant` module's `AssistantPanel`,
+> fed **all** the subject's API keys through a `SessionAICredentialSource` adapter. All blocking `Session` calls (login/register/change-password, add/remove identifier,
 > create/rotate/delete/edit API key, add/edit/remove address, save profile) run **off the EDT** via
 > `BackgroundTask.runCatching` (failures surface as a dialog from the thrown `SecurityException`).
 > Row actions render as **`IconUtil` SVG icons** (edit/delete/refresh/copy/visible/search/back). Still stubs:
@@ -43,7 +43,7 @@ io.xlogistx.nosneak.app
     └── utility/
         ├── AppContext.java        ← per-app service locator (Session + Navigator)
         ├── Session.java           ← auth + identifiers + credentials + profile + addresses (over DomainSecurityManager)
-        ├── SessionAICredentialSource.java ← adapts the subject's AI-flagged keys → ai-assistant's AICredential
+        ├── SessionAICredentialSource.java ← exposes the subject's API keys to ai-assistant (implements AICredentialSource.APIKeys())
         ├── Navigator.java         ← top-level screen switching over a CardLayout
         ├── CardStack.java         ← reusable CardLayout wrapper (in-panel sections)
         ├── PanelBuilder.java      ← shared Swing layout helpers
@@ -82,7 +82,7 @@ and a logout navigates back to `LOGIN`. The footer (left: `session: … | subjec
 right: status) also subscribes to auth changes. Starts on the `LOGIN` screen.
 
 The `ASSISTANT` card is the `ai-assistant` module's `gui.AssistantPanel`, constructed with a
-`new SessionAICredentialSource(ctx.session())` so it can list the subject's AI-flagged keys. Because
+`new SessionAICredentialSource(ctx.session())` so it can list the subject's API keys. Because
 the panel is built once (before login), `AppShell` calls `assistantPanel.refresh()` on login (the
 credential source is empty until then) and `assistantPanel.cleanup()` on logout (which re-runs the
 refresh, clearing the list). This is the **only** coupling point — the dependency runs
@@ -148,9 +148,9 @@ mirroring how the Credentials screen switches between its list and detail cards.
 - **Profile** (card key `profile`) — First/Last name, Date of birth, an **Identifiers**
   list, and an **Addresses** list, plus **Save Changes**. Wrapped in a `JScrollPane`.
   - **Identifiers** is a `ListSection` bound to `Session.getAllPrincipalIDForLoggedInUser()`.
-    **+ Add identifier** prompts for a value → `Session.addIdentifier` (dedupe/validation),
-    per-row **Remove** (trash icon) → `Session.removeIdentifier` (guarded against removing the
-    last one). Both surface the thrown `SecurityException`'s message on failure. There is no
+    **+ Add identifier** prompts for a value → `Session.addIdentifier` (validation currently
+    delegated to the backend — see *Needed fixes*), per-row **Remove** (trash icon) →
+    `Session.removeIdentifier`. Both surface the thrown `SecurityException`'s message on failure. There is no
     *Principal IDs* card — identifiers live here.
   - **Addresses** is a `ListSection` bound to `Session.getAllAddresses()`. **+ Add address**
     opens the **editAddress** card blank; each row's **Edit** (pencil) opens it pre-filled;
@@ -180,24 +180,30 @@ mirroring how the Credentials screen switches between its list and detail cards.
     **+ Add API Key** button opens the add dialog: a **Generate local / Add third party**
     selector with Label + Description. *Generate* shows a freshly `Session.generateAPIKey()`'d
     key in a read-only, copyable field with a **Refresh** button (regenerates the shown key)
-    and a **Copy** button; *Add third party* takes a pasted key plus App Id / Domain ID and the
-    **AI-assistant fields** — **Provider** (e.g. `anthropic`), **Base URL**, and a **"Use for ai
-    assistant?"** checkbox. The displayed field is the source of truth — copy and **Create key**
-    both read it, so a refreshed key is the one actually stored. On **Create key** it stores via
-    `Session.storeAPIKey(label, description, domainID, appID, rawKey, provider, baseURI, aiUse)`
-    (off the EDT) — the optional domain/app-id pair is validated by the AppID filters, and
-    provider/baseURI/aiUse are written to the key's property bag — and refreshes the list. (The
-    *Generate local* path passes those three as blank/`false`, since a locally-minted login key is
-    never an AI provider.)
+    and a **Copy** button; *Add third party* is a **sectioned form** (`Key` / `Scope` / `Provider
+    endpoint`, built with `PanelBuilder.addSection` + `addRow` over placeholder-hint `textField`s):
+    a pasted key plus App Id / Domain ID and the **AI-assistant fields** — **Provider** (e.g.
+    `anthropic`), **Base URL**, a free-text **API auth type** (e.g. `Bearer`), and an optional
+    **Header name** (e.g. `x-api-key`). The displayed generate field is the source of truth — copy
+    and **Create key** both read it, so a refreshed key is the one actually stored. On **Create key**
+    it stores via `Session.storeAPIKey(label, description, domainID, appID, rawKey, provider,
+    baseURI, authScheme, headerName, external)` (off the EDT), passing `external = !generating` so a
+    third-party key is flagged external while an internal one falls back to the default
+    `xlogistx.io/nosneak` AppID. The AppID filters validate the optional domain/app-id pair (an
+    invalid domain/app id now surfaces as a `SecurityException`, not a raw
+    `IllegalArgumentException`), and provider/baseURI/authScheme/headerName are written to the key's
+    property bag — then the list refreshes. (The *Generate local* path passes the metadata blank and
+    `external = false`, since a locally-minted login key is never an AI provider.)
   - The `editAPI` card is **fully wired**: the secret shows in a masked `JPasswordField`
     with a **Show/Hide** reveal toggle (`VisibleIcon` / `InvisibleIcon`, re-masked on every open) and a
     **Copy** button (copies `getAPIKey()`); editable **Label**/**Description**, plus editable
-    **Provider** / **Base URI** fields and the **"Use for AI assistant?"** checkbox — all populated
-    from the key on open (`providerOf` / `baseUrlOf` / `isAIKey`) and saved together via
-    `Session.changeAPIDetails(key, label, description, provider, baseURI, aiUse)`. App ID / Domain ID
-    show read-only. **Rotate** (`Session.rotateAPIKey`) and **Delete** (`Session.deleteAPIKey`) each
-    confirm first, run off the EDT, and refresh — Rotate re-populates the card with the new secret,
-    Delete navigates back to the list.
+    **Provider** / **Base URI** / **API auth type** / **Header name** fields — all populated
+    from the key on open (`providerOf` / `baseUrlOf` / `authTypeOf` / `headerNameOf`) and saved
+    together via
+    `Session.changeAPIDetails(key, label, description, provider, baseURI, authScheme, headerName)`.
+    App ID / Domain ID show read-only. **Rotate** (`Session.rotateAPIKey`, disabled for external
+    keys) and **Delete** (`Session.deleteAPIKey`) each confirm first, run off the EDT, and refresh —
+    Rotate re-populates the card with the new secret, Delete navigates back to the list.
 
 > **Icon buttons.** The credential/identifier/address actions render as `io.xlogistx.gui.IconUtil`
 > icons (jsvg-rendered `SVGIconWidget`s bundled with `xlogistx-gui-audio`) with tooltips rather
@@ -296,10 +302,11 @@ principal to its subject and validates the `PASSWORD` `CIPassword` via
 > duplicate-username rejection, no auto-login), `ProfileRoundTripTest` (save/load, overwrite,
 > across logout-login, signed-out guard), `APIKeyRoundTripTest` (generate → create → login,
 > label/description round-trip, `changeAPIDetails` edit + clear, **delete** removes-and-blocks-
-> login, **rotate** old-dies/new-works, domain/app-id store + case-normalization, bad-input
-> guards), `ChangePasswordRoundTripTest` (old rejected / new works across logout-login, plus
-> failure modes), `IdentifierRoundTripTest` (add/remove, last-identifier guard, null +
-> non-active removal, subject repoint), `AddressRoundTripTest` (add → list, multiple, edit-in-
+> login, **rotate** old-dies/new-works, domain/app-id store + case-normalization, invalid
+> domain/app-id → `SecurityException`, **external-flag** marking + provider/base-url/auth-type/
+> header-name metadata round-trip, bad-input guards), `ChangePasswordRoundTripTest` (old rejected /
+> new works across logout-login, plus failure modes), `IdentifierRoundTripTest` (add/remove, blank
+> rejection, null + non-active removal, subject repoint), `AddressRoundTripTest` (add → list, multiple, edit-in-
 > place replace-not-append, remove-by-reference, all-fields + edit-all-fields round-trip,
 > persistence across logout/login, signed-out guards), and `AppIDDefaultTest` (the domain + app-id filters directly: case/`www.`/subdomain
 > normalization, invalid-domain and non-alphanumeric-app-id rejection, `create(domainAppID)`
@@ -356,22 +363,27 @@ API-key lifecycle (failures throw `SecurityException`; the raw key is stored **p
   (`getAPIKey()` is the raw secret); no persistence. **Throws** `"Not signed in"` when signed
   out and `"Could not generate a key"` on a crypto failure (no longer returns `null`).
 - `storeAPIKey(String label, String description, String domainID, String appID, String rawKey,
-  String provider, String baseURI, Boolean aiUse)` — stores the raw key verbatim (`setAPIKey(rawKey)`,
-  no hashing) in a `SubjectAPIKey` (`STATUS` = ACTIVE, optional `name`/`description`) via
-  `createCredential`. When **both** `domainID` and `appID` are non-blank it attaches an `AppIDDefault`,
-  which runs them through `FilterType.DOMAIN` + `AppIDNameFilter` (normalizes case, strips
-  `www.`/subdomains, rejects bad input with `IllegalArgumentException`); if only one part is given the
-  AppID is skipped. The **AI-assistant metadata** is written to the key's property bag: `provider` and
-  `base_url` (each only when non-blank) and an `ai_provider` `NVBoolean` (only when `aiUse` is true).
-  These feed `SessionAICredentialSource`. Guards (thrown): `"Not signed in"` / `"Key cannot be empty"`.
+  String provider, String baseURI, String authScheme, String headerName, Boolean external)` — stores
+  the raw key verbatim (`setAPIKey(rawKey)`, no hashing) in a `SubjectAPIKey` (`STATUS` = ACTIVE,
+  optional `name`/`description`) via `createCredential`. The `external` flag drives the AppID: when
+  **`external`** and **both** `domainID`/`appID` are non-blank it attaches an `AppIDDefault` (run
+  through `FilterType.DOMAIN` + `AppIDNameFilter`: normalizes case, strips `www.`/subdomains) and sets
+  the `external` property `true`; when **not** external it falls back to the default
+  `xlogistx.io/nosneak` AppID. An invalid domain/app id is caught and rethrown as
+  `SecurityException("Invalid domain or app ID")` (no longer a raw `IllegalArgumentException`). The
+  **AI-assistant metadata** is written to the key's property bag via a `putIfPresent` helper — keyed by
+  the `Session.APIKeyInfo` enum (`GetName`): `provider` (`PROVIDER`), `base-url` (`BASE_URL`),
+  `auth-type` (`AUTH_SCHEME`), and `header-name` (`HEADER_NAME`), each only when non-blank. Guards
+  (thrown): `"Not signed in"` / `"Key cannot be empty"`.
   *(No key-format validation today — a malformed paste is accepted and simply never matches at login.)*
-- `changeAPIDetails(key, label, description, provider, baseURI, aiUse)` — updates the key in place via
-  `updateCredential`. Unlike create it **sets** blanks, so passing empty clears them; it also
-  **rewrites** the `provider` / `base_url` / `ai_provider` properties every save, so unchecking the box
-  or clearing a field actually sticks (create only ever *writes* them).
-- `isExternalKey(key)` / `isAIKey(key)` / `providerOf(key)` / `baseUrlOf(key)` — read the metadata
-  back off the property bag (`external` / `ai_provider` booleans, `provider` / `base_url` strings).
-  `SessionAICredentialSource` uses these to filter and adapt keys for the AI assistant.
+- `changeAPIDetails(key, label, description, provider, baseURI, authScheme, headerName)` — updates the
+  key in place via `updateCredential`. Unlike create it **sets** blanks, so passing empty clears them;
+  it also **rewrites** the `provider` / `base-url` / `auth-type` / `header-name` properties every save,
+  so clearing a field or changing the scheme actually sticks (create only ever *writes* them).
+- `isExternalKey(key)` / `providerOf(key)` / `baseUrlOf(key)` / `authTypeOf(key)` / `headerNameOf(key)`
+  — read the metadata back off the property bag (the `external` boolean, and the `provider` /
+  `base-url` / `auth-type` / `header-name` strings via the `APIKeyInfo` enum).
+  `SessionAICredentialSource` exposes the keys to the AI assistant.
 - `rotateAPIKey(key)` — generates a fresh secret, replaces the stored one via
   `updateCredential` (old key stops working, new one works). Guards against persisting a
   `null` secret; the new secret is read back from the mutated `key.getAPIKey()`.
@@ -402,9 +414,14 @@ Account data (all backed by `DomainSecurityManager`, keyed off the signed-in sub
 - `getAllCredentialForUserByType(CredentialInfo.Type)` — credentials of one type, via
   `lookupCredentialsBySubjectGUID(subjectIdentifier.getSubjectGUID(), type)` (keyed by
   subjectGUID); guards both null args.
-- `addIdentifier` — rejects blank/duplicate (`lookupPrincipalID`), else `addPrincipalID`.
-- `removeIdentifier` — refuses to remove the **last** identifier; if you remove the one you
-  logged in as, it **repoints `principalID`** to a survivor so credential lookups keep working.
+- `addIdentifier` — delegates straight to `addPrincipalID`; the Session-side blank/duplicate guards
+  are currently **commented out**, so a blank value surfaces the backend's `"Principal ID can't be
+  empty"` and duplicates are no longer rejected here (see *Needed fixes*).
+- `removeIdentifier` — rejects a `null` principal (`"Identifier cannot be empty"`), then calls
+  `deletePrincipalID` (failure → `"Could not remove identifier"`); the dedicated **last-identifier**
+  guard has been removed, though the backend still refuses to delete the only one. If you remove the
+  identifier you logged in as, it **repoints `principalID`** to a survivor so credential lookups keep
+  working.
 - `changePassword` — verifies the current password, validates the new one, then updates the
   existing `CIPassword` **in place** via `updateCredential(subjectIdentifier, credential)` (the
   two-arg backend signature; the entity keeps its GUID so it's an in-place update) — atomic,
@@ -422,13 +439,13 @@ react on login/logout.
 ### `SessionAICredentialSource`
 The adapter that lets the `ai-assistant` module reach NoSneak's keys without depending on
 `no-sneak-app` — it implements the module's `agent.AICredentialSource` over a `Session`. Its
-`credentials()` walks `getAllCredentialForUserByType(CredentialInfo.Type.API_KEY)`, keeps only the
-keys where `session.isAIKey(key)` is true (the **"Use for AI assistant"** flag), and adapts each to an
-`agent.AICredential` — `getName()` from the key, `providerType()` / `baseUrl()` from
-`session.providerOf` / `session.baseUrlOf`, and `secret()` from `getAPIKey().toCharArray()`. Returns an
-empty list when signed out, so `AssistantPanel.refresh()` (called by `AppShell` on login) shows the
-provider list only for the signed-in subject. This is the single point where the app meets the
-AI-assistant module; the dependency is one-way (`no-sneak-app → ai-assistant`).
+`APIKeys()` walks `getAllCredentialForUserByType(CredentialInfo.Type.API_KEY)` and returns **every**
+API key as a `List<APIKey<String>>` (the earlier AI-only filter and the per-credential `AICredential`
+adaptation are gone — the module now reads the metadata off each key's property bag itself, e.g.
+`getProperties().getValue("provider")`). Returns an empty list when signed out, so
+`AssistantPanel.refresh()` (called by `AppShell` on login) shows the provider list only for the
+signed-in subject. This is the single point where the app meets the AI-assistant module; the
+dependency is one-way (`no-sneak-app → ai-assistant`).
 
 ### `Navigator`
 Thin top-level screen-switcher over a `CardLayout`. Defines the `Screen` enum
@@ -457,8 +474,14 @@ Shared Swing layout helpers (formerly `PaneBuilder`):
   and edit-API-key forms). Its body is a **`MigLayout`** single left-aligned column so fields
   keep their preferred size instead of stretching to the panel width (the old `BoxLayout`
   behaviour).
-- `title(text)` / `title(text, styleClass)` — a heading `JLabel` styled via FlatLaf
-  `STYLE_CLASS` (default `h2`); used for section/page headings so titles are bigger/consistent.
+- `title(text)` — a heading `JLabel` styled via FlatLaf `STYLE_CLASS` `h2`; used for section/page
+  headings so titles are bigger/consistent.
+- **Two-column form helpers** (used by the sectioned Add-API-key form, moved here from `SubjectPanel`):
+  `textField(placeholder)` / `textField(placeholder, width)` — a `JTextField` with a FlatLaf
+  `JTextField.placeholderText` hint; `sectionHeader(title)` — an uppercased, muted bold header row;
+  `addRow(form, label, field)` — adds a `JLabel` + a `growx` field into a `MigLayout("wrap 2",
+  "[left][grow,fill]")` grid; `addSection(form, title)` — a full-width `sectionHeader` + `JSeparator`
+  spanning both columns.
 - Also has `row(...)`, `group(...)`, and `listPage(...)` — the last is **superseded by
   `ListSection`** for data-driven lists and kept only for static ones.
 
@@ -636,9 +659,12 @@ dependency). Ordered by priority.
   internal buffer on `setText("")`.
 - **Inconsistent signed-in guards in `Session`.** Some methods guard on `principalID`
   (`getAllCredentialForLoggedInUser`, `changeAPIDetails`) while others guard on
-  `subjectIdentifier`; `removeIdentifier` checks the "last identifier" rule *before* its
-  null/signed-out guard, so a signed-out or null call reports the wrong reason. Standardize on
-  `subjectIdentifier` and fix the check ordering.
+  `subjectIdentifier`. Standardize on `subjectIdentifier`.
+- **Identifier validation was dropped.** `addIdentifier`'s blank/duplicate guards are commented out
+  and `removeIdentifier`'s last-identifier guard was removed, so duplicates can be added and the only
+  identifier can be (attempted to be) removed — it fails now only because the backend refuses.
+  Restore the guards (or confirm the backend enforces both) — the tests were relaxed to match, not to
+  bless the loss.
 - **`showEditAPIKey` calls `setText(null)`** (`SubjectPanel`, ~line 393) for keys created
   without a label/description (`getName()`/`getDescription()` return `null`). Null-coalesce to
   `""`. Low impact, defensive.

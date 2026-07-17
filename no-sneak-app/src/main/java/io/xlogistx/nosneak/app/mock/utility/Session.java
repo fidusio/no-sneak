@@ -8,6 +8,7 @@ import org.zoxweb.shared.crypto.CryptoConst;
 import org.zoxweb.shared.data.PropertyDAO;
 import org.zoxweb.shared.filters.FilterType;
 import org.zoxweb.shared.security.*;
+import org.zoxweb.shared.util.GetName;
 import org.zoxweb.shared.util.NVBoolean;
 import org.zoxweb.shared.util.NVGenericMap;
 import org.zoxweb.shared.util.NVGenericMapList;
@@ -34,21 +35,36 @@ import java.util.Map;
 public class Session {
     private static final String PASSWORD_RULES_MESSAGE = """
             Your password must meet all of the following requirements:
-            
+  
             • Be at least 8 characters long.
             • Include at least one uppercase letter (A–Z).
             • Include at least one number (0–9).
             • Include at least one special character (such as !, @, #, $, %, &, *).
             • Cannot be empty or contain only spaces.""";
     private static final String ADDRESSES = "addresses";
-    private static final String PROVIDER = "provider";
-    private static final String BASE_URL = "base_url";
-    private static final String AI_PROVIDER = "ai_provider";
     private final PropertyChangeSupport pcs = new PropertyChangeSupport(this);
     private final DomainSecurityManager domainSecurityManager;
     private boolean authenticated;
     private String principalID;
     private SubjectIdentifier subjectIdentifier;
+
+    public enum APIKeyInfo implements GetName {
+        PROVIDER("provider"),
+        BASE_URL("base-url"),
+        AUTH_SCHEME("auth-type"),
+        HEADER_NAME("header-name");
+
+        private final String name;
+
+        APIKeyInfo(String name) {
+            this.name = name;
+        }
+
+        @Override
+        public String getName() {
+            return name;
+        }
+    }
 
     /**
      * Creates a session over the given security manager; starts signed out.
@@ -166,46 +182,46 @@ public class Session {
      * Stores a new API key (plain) with an optional label/description. @return {@code null} on success, else an error message.
      */
     public void storeAPIKey(String label, String description, String domainID, String appID, String rawKey,
-                            String provider, String baseURI, Boolean aiUse) throws SecurityException {
+                            String provider, String baseURI, String authScheme, String headerName, Boolean external) throws SecurityException {
 
-        // TBD change the name, throw exception, signature to void
 
         if (principalID == null) throw new SecurityException("Not signed in");
         if (rawKey == null || rawKey.isBlank()) throw new SecurityException("Key cannot be empty");
 
         APIKey<String> key = new SubjectAPIKey();
+        NVGenericMap props = key.getProperties();
 
-        // if appID and domainID are not null assume the key is external else internal
-        if (appID != null && !appID.isBlank() && domainID != null && !domainID.isBlank()) {
-            String trimmedAppID = appID.trim();
-            String trimmedDomainID = domainID.trim();
-            AppIDDefault tempAppID = new AppIDDefault(trimmedDomainID, trimmedAppID);
-            try {
-                key.setAppID(tempAppID);
-            } catch (IllegalArgumentException e) {
-                throw new SecurityException("Invalid domain or app ID", e);
+        if (external) {
+            if (appID != null && !appID.isBlank() && domainID != null && !domainID.isBlank()) {
+                try {
+                    key.setAppID(new AppIDDefault(domainID.trim(), appID.trim()));
+                } catch (IllegalArgumentException e) {
+                    throw new SecurityException("Invalid domain or app ID", e);
+                }
+                props.build(new NVBoolean("external", true));
             }
-            key.getProperties().build(new NVBoolean("external", true));
         } else {
             AppIDDefault noSneakAppID = new AppIDDefault();
             noSneakAppID.setDomainAppID("xlogistx.io", "nosneak");
-
+            props.build(new NVBoolean("external", false));
             key.setAppID(noSneakAppID);
         }
 
         key.setAPIKey(rawKey);
         key.setCredentialStatus(SecConst.SecStatus.ACTIVE);
 
-        if (provider != null && !provider.isBlank())
-            key.getProperties().build(PROVIDER, provider.trim());
-        if (baseURI != null && !baseURI.isBlank())
-            key.getProperties().build(BASE_URL, baseURI.trim());
-        if (Boolean.TRUE.equals(aiUse))
-            key.getProperties().build(new NVBoolean(AI_PROVIDER, true));
+        putIfPresent(props, APIKeyInfo.PROVIDER, provider);
+        putIfPresent(props, APIKeyInfo.BASE_URL, baseURI);
+        putIfPresent(props, APIKeyInfo.AUTH_SCHEME, authScheme);
+        putIfPresent(props, APIKeyInfo.HEADER_NAME, headerName);
 
         if (label != null && !label.isBlank()) key.setName(label.trim());
         if (description != null && !description.isBlank()) key.setDescription(description.trim());
         domainSecurityManager.createCredential(subjectIdentifier, key);
+    }
+
+    private static void putIfPresent(NVGenericMap props, GetName name, String value) {
+        if (value != null && !value.isBlank()) props.build(name, value.trim());
     }
 
     /**
@@ -241,23 +257,37 @@ public class Session {
         return p != null && Boolean.TRUE.equals(p.getValue("external"));
     }
 
-    /** @return true if this key was flagged for use by the AI assistant. */
-    public boolean isAIKey(APIKey<String> key) {
-        NVGenericMap p = key == null ? null : key.getProperties();
-        return p != null && Boolean.TRUE.equals(p.getValue(AI_PROVIDER));
-    }
 
-    /** @return the stored AI provider type (e.g. "anthropic"), or null. */
+    /**
+     * @return the stored AI provider type (e.g. "anthropic"), or null.
+     */
     public String providerOf(APIKey<String> key) {
         NVGenericMap p = key == null ? null : key.getProperties();
-        Object v = p == null ? null : p.getValue(PROVIDER);
+        Object v = p == null ? null : p.getValue(APIKeyInfo.PROVIDER);
         return v == null ? null : v.toString();
     }
 
-    /** @return the stored AI endpoint base URL, or null. */
+    /**
+     * @return the stored AI endpoint base URL, or null.
+     */
     public String baseUrlOf(APIKey<String> key) {
         NVGenericMap p = key == null ? null : key.getProperties();
-        Object v = p == null ? null : p.getValue(BASE_URL);
+        Object v = p == null ? null : p.getValue(APIKeyInfo.BASE_URL);
+        return v == null ? null : v.toString();
+    }
+
+    /**
+     * @return the stored auth scheme name (e.g. "Bearer"), or null.
+     */
+    public String authTypeOf(APIKey<String> key) {
+        NVGenericMap p = key == null ? null : key.getProperties();
+        Object v = p == null ? null : p.getValue(APIKeyInfo.AUTH_SCHEME);
+        return v == null ? null : v.toString();
+    }
+
+    public String headerNameOf(APIKey<String> key) {
+        NVGenericMap p = key == null ? null : key.getProperties();
+        Object v = p == null ? null : p.getValue(APIKeyInfo.HEADER_NAME);
         return v == null ? null : v.toString();
     }
 
@@ -329,8 +359,6 @@ public class Session {
 
         if (principal == null) throw new SecurityException("Identifier cannot be empty");
         if (subjectIdentifier == null) throw new SecurityException("Not Signed in");
-//        if (!((getAllPrincipalIDForLoggedInUser().length - 1) > 0))
-//            throw new SecurityException("Cannot remove the last identifier");
 
         if (!domainSecurityManager.deletePrincipalID(principal)) {
             throw new SecurityException("Could not remove identifier");
@@ -386,18 +414,18 @@ public class Session {
      * and whether it appears in the AI assistant). Blanks clear the text fields.
      */
     public void changeAPIDetails(APIKey<String> apiKey, String label, String description,
-                                 String provider, String baseURI, Boolean aiUse) throws SecurityException {
+                                 String provider, String baseURI, String authScheme, String headerName) throws SecurityException {
 
         if (principalID == null) throw new SecurityException("Not Logged in");
         if (apiKey == null) throw new SecurityException("Invalid API Key");
 
-        apiKey.setName(label.trim());
-        apiKey.setDescription(description.trim());
+        if (label != null) apiKey.setName(label.trim());
+        if (description != null) apiKey.setDescription(description.trim());
 
-        // Rewrite the AI metadata each save so unchecking the box / clearing a field sticks.
-        apiKey.getProperties().build(PROVIDER, provider == null ? "" : provider.trim());
-        apiKey.getProperties().build(BASE_URL, baseURI == null ? "" : baseURI.trim());
-        apiKey.getProperties().build(new NVBoolean(AI_PROVIDER, Boolean.TRUE.equals(aiUse)));
+        apiKey.getProperties().build(APIKeyInfo.PROVIDER, provider == null ? "" : provider.trim());
+        apiKey.getProperties().build(APIKeyInfo.BASE_URL, baseURI == null ? "" : baseURI.trim());
+        apiKey.getProperties().build(APIKeyInfo.AUTH_SCHEME, authScheme == null ? "" : authScheme.trim());
+        apiKey.getProperties().build(APIKeyInfo.HEADER_NAME, headerName == null ? "" : headerName.trim());
 
         domainSecurityManager.updateCredential(subjectIdentifier, apiKey);
     }

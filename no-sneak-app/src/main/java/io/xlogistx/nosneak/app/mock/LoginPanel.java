@@ -157,7 +157,11 @@ public class LoginPanel extends JPanel {
         buttons.add(passwordSelector);
         buttons.add(apiKeySelector);
         buttons.add(passkeySelector);
+
+        // apikey and passkey selectors can be turned off and on from here. Right now they are both off
+        // also turn on in applyMode
         passkeySelector.setVisible(false);
+        apiKeySelector.setVisible(false);
 
         return buttons;
     }
@@ -193,11 +197,11 @@ public class LoginPanel extends JPanel {
             confirmPassword.setText("");
         }
 
-        // API key registration is not allowed — selector is login-only.
-        apiKeySelector.setVisible(login);
-        if (!login && apiKeySelector.isSelected()) {
-            passwordSelector.setSelected(true);
-            cardStack.show("Password");
-        }
+        // uncomment to turn api key login back on
+//            apiKeySelector.setVisible(login);
+//            if (!login && apiKeySelector.isSelected()) {
+//                passwordSelector.setSelected(true);
+//                cardStack.show("Password");
+//            }
     }
 }

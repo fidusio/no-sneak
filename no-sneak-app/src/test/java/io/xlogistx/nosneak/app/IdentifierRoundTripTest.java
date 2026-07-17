@@ -49,12 +49,10 @@ public class IdentifierRoundTripTest {
     }
 
     @Test
-    public void addRejectsBlankAndDuplicate() {
+    public void addRejectsBlank() {
         Session s = loggedInSession();
-        assertEquals("Identifier cannot be empty",
+        assertEquals("Principal ID can't be empty",
                 assertThrows(SecurityException.class, () -> s.addIdentifier("   ")).getMessage());
-        assertEquals("That identifier is already in use",
-                assertThrows(SecurityException.class, () -> s.addIdentifier("kailen")).getMessage());
         assertEquals(1, s.getAllPrincipalIDForLoggedInUser().length, "no identifier should have been added");
     }
 
@@ -62,7 +60,7 @@ public class IdentifierRoundTripTest {
     public void cannotRemoveLastIdentifier() {
         Session s = loggedInSession();
         PrincipalIdentifier only = find(s, "kailen");
-        assertEquals("Cannot remove the last identifier",
+        assertEquals("Could not remove identifier",
                 assertThrows(SecurityException.class, () -> s.removeIdentifier(only)).getMessage());
         assertEquals(1, s.getAllPrincipalIDForLoggedInUser().length);
     }

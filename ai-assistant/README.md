@@ -1,219 +1,219 @@
-# AI Assistant
+# NoSneak AI Assistant — UI Orientation
 
-A reusable Swing AI-assistant module: a headless, vendor-neutral **engine** (`agent`) plus its
-**Swing UI** (`gui`). It lets a subject send their own data to a third-party AI and compare answers
-across models, using **API keys the host supplies** — it ships **no built-in AI connections**.
+A top-level Swing window (`View > AI Assistant`) that lets the subject send their own network
+data to third-party AI models and compare answers across them.
 
-It is built to run in two contexts:
+The assistant owns **no** API keys and adds **no** AI connections of its own. It reads keys from an
+external `AICredentialSource` (the NoSneak credential store) and keeps a list of the ones the subject
+has chosen to use.
 
-- **Inside NoSneak** — keys come from credentials the subject stored under
-  `Subject account → Credentials` and flagged **"Use for AI assistant"**. NoSneak adapts those keys
-  into the module through a narrow port; see [Wiring a host](#wiring-a-host).
-- **Standalone / other zoxweb-ecosystem projects** — any project that can produce a list of zoxweb
-  `APIKey<String>` can mount the same panel.
-
-The module depends only on `xlogistx-gui-audio` (shared widget kit — `PanelBuilder`, `CardStack`)
-and `zoxweb-core`; it must **never** depend on `no-sneak-app`. Keys reach the panel through a narrow
-port the host implements, so the module graph stays one-directional:
-`no-sneak-app → ai-assistant`, never the reverse.
-
-> **Status: interfaces first.** The `agent` layer is currently interfaces + vendor-neutral DTOs with
-> **no provider implementations yet**. It compiles and the Providers UI is wired; the actual AI calls,
-> async runner, and catalog impls are still to come (see [Not built yet](#not-built-yet)).
-
-> The `agent` engine is written to be headless and testable without a screen. Today the module is a
-> single Maven artifact, so depending on the engine still pulls in the Swing widget kit transitively.
-> Splitting `agent` and `gui` into separate `-core` / `-ui` artifacts is a planned follow-up.
+> **Implementation status.** This document is the UI design spec. Today the module ships only
+> `gui.AssistantPanel` (a minimal Providers list fed by `AICredentialSource.APIKeys()`) plus the
+> `agent` backend **interfaces** — everything below is the target, and the Prompt / Job queue /
+> History / Skills pages and every provider implementation are not built yet. `no-sneak-app` mounts
+> `AssistantPanel` on its `ASSISTANT` screen via a `SessionAICredentialSource`; the dependency is
+> one-way (`no-sneak-app → ai-assistant`).
 
 ---
 
-## Standardization approach
+## 1. Window shape
 
-The module standardizes on **zoxweb's existing types** rather than inventing parallel ones, so any
-ecosystem project's keys drop in without a bespoke adapter:
+`JFrame` with its own `JMenuBar` (File / View / Tools / Help).
 
-- **`APIKey<String>`** (zoxweb `org.zoxweb.shared.security.APIKey`, impl `SubjectAPIKey`) is the
-  credential currency — it carries the secret (`getAPIKey()`), a name/description, and a properties
-  bag (`getProperties()`) that holds the AI metadata (`provider`, `base_url`).
-- **`AIException extends org.zoxweb.shared.api.APIException`** — errors are zoxweb `APIException`s.
-- **`AIModel extends org.zoxweb.shared.data.SetNameDescriptionDAO`** — a model is a zoxweb meta-DAO
-  (typed `Param`/`NVConfig`), not a hand-rolled bean.
-- **`AIProviderRegistrar extends org.zoxweb.shared.util.RegistrarMapDefault`** — provider lookup uses
-  the house registrar, self-keyed by `AIProvider.getName()`.
-- **`NVGenericMap`** is the option/property bag on `AIRequest` — the same bag used across zoxweb.
+Left sidebar, **208 px, navigation only** — no actions, no lists. It selects which page renders in
+the detail pane via `CardLayout`, matching the Subject panel master/detail pattern. Section label
+`ASSISTANT` (uppercase, muted) above the items.
 
-When provider implementations are written, they will **delegate to the existing xlogistx AI clients**
-(`io.xlogistx.api.anthropic.AnthropicAPI`, `io.xlogistx.api.ai.AIAPI` in `xlogistx-apis`) — both are
-`org.zoxweb.server.http.HTTPAPICaller`s that already handle the wire format, auth, and rate limiting.
-Vendor JSON stays in those clients; everything in `agent` above the provider adapter is vendor-neutral.
+| Nav item | Page |
+|---|---|
+| Prompt | The conversation |
+| Job queue | Items feedable to a prompt |
+| History | Past prompts (rename / delete live here) |
+| Skills | Reusable instruction sets (list + editor) |
+| Providers | Keys the assistant may use (added from the source) |
 
----
-
-## Code layout
-
-```
-ai-assistant/src/main/java/
-├── agent/                          # engine — vendor-neutral, headless
-│   ├── AIProvider.java             # SPI: one impl per vendor; send / asyncSend / getModelCatalog
-│   ├── AICredentialSource.java     # host-supplied source of the APIKey list (APIKeys())
-│   ├── AIModelCatalog.java         # per-provider model cache: models() / refresh() / lastSynced()
-│   ├── AIRunner.java               # fan-out ABOVE the SPI: send(req, AIProvider...) → AICallbackCollection
-│   ├── AICallback.java             # async result for one call: onResponse / onError
-│   ├── AICallbackCollection.java   # aggregate of a fan-out: size / completed / responses / errors / onComplete
-│   ├── AIException.java            # extends zoxweb APIException; carries a Kind
-│   └── model/                      # vendor-neutral DTOs
-│       ├── AIRequest.java          #   model, systemPrompt, messages, correlationID, topicID, maxTokens, options
-│       ├── AIResponse.java         #   model, content, correlationID, topicID, tokens, latencyMillis, stopReason
-│       ├── AIMessage.java          #   Role (USER / ASSISTANT) + String content
-│       ├── AIModel.java            #   SetNameDescriptionDAO; name = model id, Param.MODEL_ID
-│       └── AIProviderRegistrar.java#   RegistrarMapDefault<String, AIProvider>, self-keyed by getName()
-│
-└── gui/                            # Swing UI — reuses the io.xlogistx.gui widget kit
-    └── AssistantPanel.java         # toggle nav (Chat / History / Skills / Providers) → CardStack detail
-                                    #   Providers page lists the keys from the source
-```
-
-There is **no `agent/impl/` package yet** — provider adapters land there (or delegate out to
-`xlogistx-apis`) when implementation starts.
+Page-level actions live in each page's own toolbar (`New prompt`, `Add item`, `Add skill`,
+`Add key`), never in the sidebar.
 
 ---
 
-## Engine contracts
+## 2. Prompt page
 
-### Credential port
-The host supplies keys; the engine never knows where they came from.
-```java
-public interface AICredentialSource {
-    List<APIKey<String>> APIKeys();
-}
-```
-Each `APIKey<String>` carries its secret via `getAPIKey()` and its AI metadata in `getProperties()`
-(`"provider"` selects the `AIProvider`; `"base_url"` is the endpoint).
+The conversation view. Bottom composer with:
 
-### Provider SPI
-One implementation per vendor, resolved by name via `AIProviderRegistrar`:
-```java
-public interface AIProvider extends GetName, GetDescription {
-    AIModelCatalog getModelCatalog() throws AIException;
+- A `+` button that opens a **popup** (icon flips plus↔x, click-outside dismisses) with two sections:
+  **Job queue** (attach ready items) and **Skills for this message** (per-message skill override).
+- Selected items and skills appear as **removable chips** above the input.
+- Send button.
 
-    void setAPIKey(APIKey<String> key);
-    APIKey<String> getAPIKey();
+Header shows the prompt title plus a compact binding:
+- one model → `key · model` (mono chip)
+- several → `N models` (and `· best <model>` once one is marked)
+- an `Auto feed` chip when queue auto-feed is on.
 
-    void setHTTPAPICaller(HTTPAPICaller caller);
-    HTTPAPICaller getHTTPAPICaller();
+### Single vs. multi-model answers
 
-    AIResponse send(AIRequest req) throws AIException;             // sync
-    void asyncSend(AIRequest req, AICallback callback) throws AIException;   // async
-}
-```
-- **`AIRequest`** — `model`, `systemPrompt` (active skills, concatenated), `messages`,
-  `correlationID` + `topicID` (chat/topic threading), `maxTokens`, `options` (`NVGenericMap` for
-  temperature and vendor extras).
-- **`AIResponse`** — `model`, `content`, `correlationID` + `topicID` (echoed back), `tokens`,
-  `latencyMillis`, `stopReason` — usage and latency are first-class so compare columns can show them.
-- **`AIMessage`** — a `Role` (`USER` / `ASSISTANT`) plus `String content` (text-only today).
+A prompt may be bound to one model or several (see New prompt). One question, one turn:
 
-### Async delivery
-```java
-public interface AICallback {
-    void onResponse(AIResponse response);
-    void onError(AIException error);
-}
-```
-
-### Fan-out
-The multimodel run is an orchestrator **above** the SPI, not a provider concern:
-```java
-public interface AIRunner {
-    AICallbackCollection send(AIRequest req, AIProvider... providers);
-}
-public interface AICallbackCollection {
-    int size();
-    int completed();
-    default boolean isComplete() { return completed() >= size(); }
-    List<AIResponse> responses();
-    List<AIException> errors();
-    void onComplete(Runnable action);
-}
-```
-Results are matched back to the request by `correlationID`; `AIResponse.getModel()` identifies which
-provider/model produced each column. One provider failing lands in `errors()`, not the whole run.
-
-### Model catalog
-```java
-public interface AIModelCatalog {
-    List<AIModel> models();               // cached
-    List<AIModel> refresh() throws AIException;   // the Refresh button
-    Instant lastSynced();
-}
-```
-Per-provider (obtained via `AIProvider.getModelCatalog()`), so it inherits the provider's key.
-
-### Errors
-`AIException extends APIException` and carries a `Kind`
-(`AUTH`, `RATE_LIMIT`, `CONTEXT_OVERFLOW`, `TIMEOUT`, `NETWORK`, `PROVIDER`) via `kind()`, so callers
-can react (retry a transient failure, surface an auth error) without parsing messages.
+- **One model** → the answer renders inline under the assistant avatar, with `latency · tokens`
+  beneath it.
+- **Several models** → do **not** cram side-by-side columns. Instead:
+  1. A small **comparison strip**: one compact card per model showing only `model name` and
+     `latency · tokens`. This is the at-a-glance comparison and it wraps cleanly for 2 or 6 models.
+  2. The **selected model's answer full width** below the strip. Clicking a strip card switches which
+     answer is shown.
+  - The visible answer carries `Mark best`, copy, and rerun. Marking best turns that model green
+    (strip card + answer) and propagates to the prompt header and the History row.
 
 ---
 
-## GUI — `AssistantPanel`
+## 3. Job queue page
 
-Constructed with an `AICredentialSource`. A toggle-button sidebar switches a `CardStack` between
-**Chat / History / Skills / Providers** (a job-queue card exists but isn't navigable yet).
+Everything feedable to a prompt: scans, files, images. Each row shows name, kind, source, size, state.
 
-- **Providers** — lists the keys from the source as `name — provider @ base_url`
-  (provider/base_url read from each key's `getProperties()`). It never renders the secret. Empty
-  state points the user at `Subject → Credentials` to add and flag a key.
-- **Chat / History / Skills** — placeholders today (see [Not built yet](#not-built-yet)).
-- `refresh()` (EDT-safe) rebuilds the provider list; `cleanup()` calls it too, so logout clears it.
-  The source returns an empty list when the host is signed out, so the host calls `refresh()` on
-  login and `cleanup()` on logout.
+States: `running` (a scan still finishing) → `ready` → `in prompt`, or `failed` with a reason
+(e.g. "Exceeds 5 MB limit") and a `Retry`.
 
----
+Feed modes:
+- **Manual** — `Add to prompt` on a ready row (row flips to `in prompt`, chip appears on the composer).
+- **Auto feed** — toolbar toggle. Every ready item, plus new arrivals, attaches to the next message
+  automatically. A banner explains it; the Prompt header shows the `Auto feed` chip.
 
-## Wiring a host
-
-A host mounts the panel in two steps:
-
-1. **Implement `AICredentialSource`** over its own key store. In NoSneak this is
-   `SessionAICredentialSource` (in `no-sneak-app`), which walks the signed-in subject's API-key
-   credentials, keeps the ones flagged for AI use (`Session.isAIKey`), and returns them as
-   `APIKey<String>` (the `provider` / `base_url` live in each key's properties).
-2. **Construct and refresh the panel:**
-   ```java
-   AssistantPanel panel = new AssistantPanel(new SessionAICredentialSource(session));
-   // on login:  panel.refresh();
-   // on logout: panel.cleanup();
-   ```
-
-NoSneak reaches the panel via **View → AI Chat**, and stores the extra per-key metadata
-(`provider`, `base_url`, `ai_provider`) from the *Add / Edit API key* form — see `no-sneak-app`.
+Every model in a multi-model run receives the **same** attachments, so the comparison stays fair.
 
 ---
 
-## Invariants
+## 4. History page
 
-1. No AI endpoint is reachable except through a host-supplied `APIKey<String>`.
-2. Model lists are **discovered**, never hardcoded.
-3. Every model in a run gets identical prompt text and skills.
-4. The API secret (`getAPIKey()`) is never displayed by the UI.
-5. Vendor JSON lives only in the provider adapters (delegating to `xlogistx-apis`); everything above
-   is vendor-neutral.
-6. Nothing leaves the machine that the subject didn't attach.
+Every past prompt: title, the models it ran against, an `N models` badge, the winning model if one was
+marked, date, message count. **Rename and delete live only here** (inline rename field; red confirm
+strip for delete) — not in the prompt header.
 
 ---
 
-## Not built yet (deliberately deferred)
+## 5. Skills page
 
-- **Provider implementations** — no class implements `AIProvider` yet. The plan: thin adapters that
-  delegate to `AnthropicAPI` / `AIAPI` from `xlogistx-apis`, built from the key via
-  `HTTPAuthScheme` + `HTTPAPIBuilder`.
-- **`AIRunner` / `AICallbackCollection` implementations** — fan-out on zoxweb's `TaskProcessor`.
-- **`AIModelCatalog` implementation** — refresh via the provider's MODELS endpoint + cache + `lastSynced`.
-- **Registrar population + UI resolution** — nothing registers providers or resolves one from a key yet.
-- **Chat / History / Skills pages and the job queue** — the Providers page is the only wired one today.
-- **Streaming** — intentionally dropped for now (sync `send` + async `asyncSend` only).
-- **`-core` / `-ui` module split** — for headless reuse without the Swing dependency.
+A skill is: `name`, `description`, `instructions`, `data access` scope. No global on/off flag.
+Its instructions are prepended to the system prompt for **every model in the run** when active.
 
-Reuse notes for when implementation starts (what to lean on instead of hand-rolling) are captured in
-the planning notes for this module.
+- List rows show name, description, and the data-access scope; each row has edit + delete.
+- The **editor** has only a back arrow in the header and a single `Save`/`Create` action — no delete,
+  no cancel inside it (back is cancel). Delete lives on the list rows.
+- Activation is decided in exactly two places: per prompt (New prompt form) and per message (`+` popup).
+
+Data-access options: `Scan data`, `Scan data and host inventory`, `Findings only`,
+`Queue items only`, `No app data`.
+
+---
+
+## 6. Providers page
+
+Lists the keys the subject has **added to the assistant** (a subset of what the source offers). Per row:
+name, provider badge (Anthropic / OpenAI / Ollama / …), the discovery endpoint
+(`baseUrl + /v1/models` or `/api/tags`), a status chip, the discovered models, and last sync.
+
+- `Refresh` (per row) re-runs model discovery. A rejected key shows `401, key rejected` and stays
+  visible.
+- The row's remove control is an **✕, not a trash can** — removing **unlinks** the key from the
+  assistant only. Confirm copy: "The key stays in your NoSneak credentials."
+
+Each key carries its own auth metadata from NoSneak — `provider`, `base-url`, a free-text **auth
+scheme** (`auth-type`, e.g. `Bearer`), and an optional **header name** (`header-name`, e.g.
+`x-api-key`) — read straight off the credential's property bag (via the `Session.APIKeyInfo` keys
+`provider` / `base-url` / `auth-type` / `header-name`), so the Providers page never re-asks for them.
+
+### Add key = pick, not type
+
+`Add key` opens a **picker** sub-page (back-arrow header) listing the credentials the source offers
+that aren't already added. There is **no form** — provider, name, base URL, and secret already live on
+the credential. Selecting a row adds it and runs discovery immediately. When everything is already
+added, the picker says so and points back to NoSneak credential management.
+
+Footer note on the list: keys come from NoSneak credentials; adding one here lets the assistant use it
+and discover its models; it is never stored separately.
+
+---
+
+## 7. New prompt
+
+Reached from `New prompt` (Prompt header or History toolbar). Fields:
+
+- **Name**
+- **Models** — a **multi-select** list of the *added* keys. Each selected key expands to a model
+  dropdown populated from **that key's discovered models** (never hardcoded). One key selected →
+  normal conversation; two or more → comparison. A count line reads "N models selected, answers
+  compared."
+- **Skills** — chips to toggle which skills start active for this prompt.
+
+**Key + model are locked for the life of the prompt.** Changing them means starting a new one, so a
+transcript always reflects exactly one model configuration per answer. A key that never synced or
+errored offers an inline `Query models` or a jump to Providers, and blocks `Start` until resolved.
+
+---
+
+## 8. Invariants
+
+1. The assistant owns no keys — it reads an `AICredentialSource` and stores only the chosen subset
+   (key GUIDs) plus per-key discovery state.
+2. Removing a key from the assistant never deletes the underlying credential.
+3. Model lists are **discovered**, never hardcoded.
+4. Key + model are immutable for a prompt's lifetime.
+5. Skills have no global default — activation is per prompt or per message.
+6. Every model in a run gets identical prompt text, skills, and attachments.
+7. Nothing leaves the machine that the subject didn't attach.
+8. Multi-model answers use the strip + full-width pattern, never N cramped columns.
+9. Icons come from the standardized NoSneak SVG set, stroked with the theme foreground so they adapt
+   to light/dark.
+
+---
+
+## 9. House style
+
+Console design tokens throughout: `--surface-*`, `--text-*`, `--border*`, `--bg-accent` /
+`--fill-accent`, `--bg-success` / `--border-success` / `--fill-success`, `--bg-danger` /
+`--fill-danger`, `--fill-control`, `--radius`, `--font-mono`. Dense lists are bordered rows with no
+card wrapper. One accent-filled button per view. Sentence case; no em dashes in UI strings. Mono for
+identifiers (key names, model IDs, endpoints, filenames).
+
+---
+
+## 10. Backend it binds to (`agent` package — interfaces only, no implementations yet)
+
+Value types live in the **`agent.model`** subpackage; the interfaces in **`agent`**.
+
+- `AIProvider` (per credential, `extends GetName, GetDescription`) — `send(AIRequest)`,
+  `asyncSend(AIRequest, AICallback)`, `getModelCatalog()`, plus `setAPIKey` / `getAPIKey` and
+  `setHTTPAPICaller` / `getHTTPAPICaller` (the request goes out through zoxweb's `HTTPAPICaller`).
+  Concrete providers are meant to register into `agent.model.AIProviderRegistrar`
+  (`RegistrarMapDefault<String, AIProvider>`, keyed by `AIProvider::getName`) — nothing registers yet.
+- `AIRunner.send(AIRequest, AIProvider...)` → returns an **`AICallbackCollection`** for the fan-out
+  (compare). The collection exposes `size()`, `completed()` / `isComplete()`, `responses()`,
+  `errors()`, and `onComplete(Runnable)` — one request across N providers, results aggregated per
+  provider.
+- `AICallback extends org.zoxweb.shared.task.ConsumerCallback<AIResponse>` — a single callback that
+  carries both the success (response) and the error path.
+- `AICredentialSource.APIKeys()` (returns `List<APIKey<String>>`) supplies the keys the Providers
+  picker lists. `no-sneak-app`'s `SessionAICredentialSource` implements it.
+- `AIModelCatalog` backs each key's discovered models (`models()`), `refresh()` (the Refresh button),
+  and `lastSynced()` (the "Last sync" line).
+- `agent.model` value types: `AIRequest` / `AIResponse` / `AIMessage` / `AIModel`.
+
+UI notes that affect these: the compare view needs each answer paired with its provider (so a
+per-provider result, not two flat lists) — `AICallbackCollection` already keeps responses/errors
+aligned to the run. `asyncSend` currently returns `void`; for the Stop button (and for aborting the
+other columns) it needs a cancel handle/identifier — flagged in the interface's own TODO. Attachments
+(job queue) imply `AIMessage` content must eventually carry non-text parts, or attachments get
+pre-extracted to text before the request is built.
+
+---
+
+## 11. Not built yet (deliberately deferred)
+
+- **Redaction preview** — a pre-send panel showing exactly what leaves the machine, with
+  hostname/IP pseudonymization toggles. Needs a per-message mapping table kept local so pseudonyms in
+  the reply can be expanded back for display.
+- **Cite the finding** — clickable finding IDs in answers that expand to the scanner finding and
+  offer `Open in Scanner` / `Apply fix in PQC Firewall`.
+
+Both were prototyped and pulled for now. Design the message and finding models so they can return
+without a rewrite.

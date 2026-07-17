@@ -24,15 +24,9 @@ public class SessionAICredentialSource implements AICredentialSource {
 
             SubjectAPIKey k = (SubjectAPIKey) ci;
 
-            if (!session.isAIKey(k)) continue;
             out.add(k);
         }
         return out;
-
-    }
-
-    @Override
-    public void addAPIKey(APIKey<String> key) {
 
     }
 }

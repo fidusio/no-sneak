@@ -32,6 +32,9 @@ public class AssistantPanel extends JPanel {
         JToggleButton chatButton = new JToggleButton("Chat");
         chatButton.addActionListener(_ -> cardStack.show("chat"));
 
+        JToggleButton jobQueueButton = new JToggleButton("Job Queue");
+        jobQueueButton.addActionListener(_ -> cardStack.show("queue"));
+
         JToggleButton historyButton = new JToggleButton("History");
         historyButton.addActionListener(_ -> cardStack.show("history"));
 
@@ -41,7 +44,7 @@ public class AssistantPanel extends JPanel {
         JToggleButton providersButton = new JToggleButton("Providers");
         providersButton.addActionListener(_ -> cardStack.show("providers"));
 
-        add(PanelBuilder.buildDefaultSplitPanel(cardStack.view(), chatButton, historyButton, skillsButton, providersButton));
+        add(PanelBuilder.buildDefaultSplitPanel(cardStack.view(), chatButton, jobQueueButton, historyButton, skillsButton, providersButton));
 
         refreshProviders();
     }
