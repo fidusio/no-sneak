@@ -3,6 +3,7 @@ package agent.model;
 import org.zoxweb.shared.util.NVGenericMap;
 
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Creates a request that can be sent to an AI that will send a response back.
@@ -20,7 +21,7 @@ public class AIRequest {
     public AIRequest() {
     }
 
-    public AIRequest(String model, String systemPrompt, List<AIMessage> messages, String correlationID, String topicID, int maxTokens, NVGenericMap options) {
+    public AIRequest(String model, String systemPrompt, List<AIMessage> messages, String topicID, int maxTokens, NVGenericMap options, String correlationID) {
         this.model = model;
         this.systemPrompt = systemPrompt;
         this.messages = messages;
@@ -28,61 +29,73 @@ public class AIRequest {
         this.topicID = topicID;
         this.maxTokens = maxTokens;
         this.options = options;
+    }
+
+    public AIRequest(String model, String systemPrompt, List<AIMessage> messages, String topicID, int maxTokens, NVGenericMap options) {
+        this(model, systemPrompt, messages, topicID, maxTokens, options, UUID.randomUUID().toString());
     }
 
     public String getModel() {
         return model;
     }
 
-    public void setModel(String model) {
+    // do this for all set functions
+    public AIRequest setModel(String model) {
         this.model = model;
+        return this;
     }
 
     public String getSystemPrompt() {
         return systemPrompt;
     }
 
-    public void setSystemPrompt(String systemPrompt) {
+    public AIRequest setSystemPrompt(String systemPrompt) {
         this.systemPrompt = systemPrompt;
+        return this;
     }
 
     public List<AIMessage> getMessages() {
         return messages;
     }
 
-    public void setMessages(List<AIMessage> messages) {
+    public AIRequest setMessages(List<AIMessage> messages) {
         this.messages = messages;
+        return this;
     }
 
     public String getCorrelationID() {
         return correlationID;
     }
 
-    public void setCorrelationID(String correlationID) {
+    public AIRequest setCorrelationID(String correlationID) {
         this.correlationID = correlationID;
+        return this;
     }
 
     public String getTopicID() {
         return topicID;
     }
 
-    public void setTopicID(String topicID) {
+    public AIRequest setTopicID(String topicID) {
         this.topicID = topicID;
+        return this;
     }
 
     public int getMaxTokens() {
         return maxTokens;
     }
 
-    public void setMaxTokens(int maxTokens) {
+    public AIRequest setMaxTokens(int maxTokens) {
         this.maxTokens = maxTokens;
+        return this;
     }
 
     public NVGenericMap getOptions() {
         return options;
     }
 
-    public void setOptions(NVGenericMap options) {
+    public AIRequest setOptions(NVGenericMap options) {
         this.options = options;
+        return this;
     }
 }

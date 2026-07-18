@@ -1,12 +1,18 @@
 package gui;
 
 import agent.AICredentialSource;
+import agent.model.AIChat;
+import agent.model.AISkill;
 import io.xlogistx.gui.CardStack;
+import io.xlogistx.gui.ListSection;
 import io.xlogistx.gui.PanelBuilder;
 import org.zoxweb.shared.security.APIKey;
+import org.zoxweb.shared.util.NVGenericMap;
 
 import javax.swing.*;
+import javax.swing.text.html.ListView;
 import java.awt.*;
+import java.util.ArrayList;
 import java.util.List;
 
 public class AssistantPanel extends JPanel {
@@ -16,6 +22,10 @@ public class AssistantPanel extends JPanel {
 
     // Repopulated by refresh() so the list tracks login/logout (credentials() is empty until login).
     private final JPanel providersList = new JPanel();
+
+    private ListSection skillsList;
+    private List<AISkill> skills = new ArrayList<>();
+
 
     public AssistantPanel(AICredentialSource credentials) {
         this.credentials = credentials;
@@ -58,11 +68,28 @@ public class AssistantPanel extends JPanel {
     }
 
     public JPanel buildHistoryPanel() {
-        return new JPanel();
+        JPanel out = new JPanel();
+        return out;
     }
 
     public JPanel buildSkillsPanel() {
-        return new JPanel();
+        skillsList = new ListSection("Skills", "+ Add skill", null, this::skillEntries);
+        return skillsList;
+    }
+
+
+    private List<ListSection.Entry> skillEntries() {
+        List<ListSection.Entry> out = new ArrayList<>();
+
+        for (AISkill skill : skills) {
+            out.add(new ListSection.Entry(skill.getName(), null, null));
+        }
+
+        return out;
+    }
+
+    private void onAddSkill() {
+
     }
 
     public JPanel buildProvidersPanel() {
@@ -71,7 +98,9 @@ public class AssistantPanel extends JPanel {
         return panel;
     }
 
-    /** Rebuilds the provider list from the current credentials. Never renders the secret. */
+    /**
+     * Rebuilds the provider list from the current credentials. Never renders the secret.
+     */
     private void refreshProviders() {
         providersList.removeAll();
 
