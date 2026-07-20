@@ -1,5 +1,6 @@
 package agent.model;
 
+import org.zoxweb.shared.data.PropertyDAO;
 import org.zoxweb.shared.data.SetNameDescriptionDAO;
 import org.zoxweb.shared.data.TimeStampDAO;
 import org.zoxweb.shared.util.*;
@@ -8,7 +9,7 @@ import org.zoxweb.shared.util.*;
 /**
  * Defines an AI model with name, description, and AI provider
  */
-public class AIModel extends TimeStampDAO {
+public class AIModel extends PropertyDAO {
 
     public enum Param implements GetNVConfig {
         PROVIDER(NVConfigManager.createNVConfig("provider", "the ai provider", "Provider", true, true, String.class));
@@ -27,7 +28,8 @@ public class AIModel extends TimeStampDAO {
     public static final NVConfigEntity NVC_AI_MODEL = new NVConfigEntityPortable(
             "ai_model", null, "AIModel", true, false, false, false,
             AIModel.class, SharedUtil.extractNVConfigs(Param.values()), null, false,
-            SetNameDescriptionDAO.NVC_NAME_DESCRIPTION_DAO);
+            PropertyDAO.NVC_PROPERTY_DAO
+    );
 
     public AIModel() {
         super(NVC_AI_MODEL);

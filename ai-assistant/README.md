@@ -8,11 +8,12 @@ external `AICredentialSource` (the NoSneak credential store) and keeps a list of
 has chosen to use.
 
 > **Implementation status.** This document is the UI design spec. Today the module ships only
-> `gui.AssistantPanel` (a minimal Providers list fed by `AICredentialSource.APIKeys()`) plus the
-> `agent` backend **interfaces** — everything below is the target, and the Prompt / Job queue /
-> History / Skills pages and every provider implementation are not built yet. `no-sneak-app` mounts
-> `AssistantPanel` on its `ASSISTANT` screen via a `SessionAICredentialSource`; the dependency is
-> one-way (`no-sneak-app → ai-assistant`).
+> `gui.AssistantPanel` (a minimal Providers list fed by `AICredentialSource.APIKeys()`), the `agent`
+> backend **interfaces**, and the **`agent.model` value DAOs** (`AIChat`, `AIMessage`, `AIRequest`,
+> `AIResponse`, `AISkill`, `AIModel`) with a JSON round-trip test. Everything else below is the
+> target: the Prompt / Job queue / History / Skills pages, every provider implementation, and the
+> persistence stores are not built yet. `no-sneak-app` mounts `AssistantPanel` on its `ASSISTANT`
+> screen via a `SessionAICredentialSource`; the dependency is one-way (`no-sneak-app → ai-assistant`).
 
 ---
 
@@ -177,9 +178,43 @@ identifiers (key names, model IDs, endpoints, filenames).
 
 ---
 
-## 10. Backend it binds to (`agent` package — interfaces only, no implementations yet)
+## 10. Backend it binds to (`agent` package)
 
-Value types live in the **`agent.model`** subpackage; the interfaces in **`agent`**.
+Value DAOs live in **`agent.model`** (concrete, JSON-serializable `PropertyDAO`s); the service
+interfaces live in **`agent`** (no provider/store implementations yet).
+
+### Conversation model (`agent.model`)
+
+The transcript is **pair-based**, not role-tagged:
+
+```
+AIChat  ──has many──▶  AIMessage  ──is──▶  { AIRequest, AIResponse }
+```
+
+- **`AIChat`** — one conversation. Holds an ordered list of `AIMessage`, a default `model`, a
+  `systemPrompt` (the assistant's persistent identity), and a `providerSessionID`. Its own identity is
+  the inherited `referenceID` (what `AIChatRepository` keys on) — **not** a hand-rolled id. Helpers:
+  `startTurn(userInput, maxTokens)` (appends a request-only message) and `toRequest(userInput, maxTokens)`.
+- **`AIMessage`** — one exchange = one provider round-trip: an `AIRequest` plus the `AIResponse` it
+  produced. **Roles are implicit in the pair** (request = user side, response = assistant side); there
+  is no role field. The response half is null until the provider replies. A multi-step/tool turn is
+  several `AIMessage`s in a row, and the "request" side is "model input this round" (user text *or* a
+  tool result), not strictly what a human typed.
+- **`AIRequest`** — a single outgoing turn: `model`, `skillsPrompt` (skills for *this* call),
+  `content`, `maxTokens`, `correlationID`, `providerSessionID`. Per-call tuning can ride the inherited
+  `properties` bag.
+- **`AIResponse`** — `model`, `content`, `correlationID`, `providerSessionID`, `tokens`, `latency`.
+- **`AISkill`** — `name` / `description` / `content` (the instruction text prepended for the run).
+- **`AIModel`** — `provider` + model id (`getName()`), cached by `AIModelCatalog`.
+
+Two ids, two scopes: **`correlationID`** joins one request to its response(s) (only meaningful once
+sends go async / fan out); **`providerSessionID`** is a *stateful provider's* resume handle — null for
+a fresh or stateless chat, minted by the provider on the first response, then saved on the chat and
+replayed by `toRequest`. Stateless providers ignore it and get the flattened history instead. System
+prompt (chat-scoped identity) and `skillsPrompt` (per-request) are composed by the provider adapter
+into the provider's system field, not concatenated in the model.
+
+### Service interfaces (`agent`)
 
 - `AIProvider` (per credential, `extends GetName, GetDescription`) — `send(AIRequest)`,
   `asyncSend(AIRequest, AICallback)`, `getModelCatalog()`, plus `setAPIKey` / `getAPIKey` and
@@ -188,22 +223,34 @@ Value types live in the **`agent.model`** subpackage; the interfaces in **`agent
   (`RegistrarMapDefault<String, AIProvider>`, keyed by `AIProvider::getName`) — nothing registers yet.
 - `AIRunner.send(AIRequest, AIProvider...)` → returns an **`AICallbackCollection`** for the fan-out
   (compare). The collection exposes `size()`, `completed()` / `isComplete()`, `responses()`,
-  `errors()`, and `onComplete(Runnable)` — one request across N providers, results aggregated per
-  provider.
+  `errors()`, and `onComplete(Runnable)`.
 - `AICallback extends org.zoxweb.shared.task.ConsumerCallback<AIResponse>` — a single callback that
   carries both the success (response) and the error path.
 - `AICredentialSource.APIKeys()` (returns `List<APIKey<String>>`) supplies the keys the Providers
   picker lists. `no-sneak-app`'s `SessionAICredentialSource` implements it.
 - `AIModelCatalog` backs each key's discovered models (`models()`), `refresh()` (the Refresh button),
   and `lastSynced()` (the "Last sync" line).
-- `agent.model` value types: `AIRequest` / `AIResponse` / `AIMessage` / `AIModel`.
+- `AIChatRepository` — persistence for chats (`save`, `getChat(refID)`, `getAllChats`, `delete(refID)`),
+  keyed by the chat's `referenceID`. No implementation yet.
+- `AISkillStore` — persistence for skills; **currently an empty placeholder** (needs the same CRUD shape).
+- `AIException` — checked, with a `Kind` (`AUTH`, `RATE_LIMIT`, `CONTEXT_OVERFLOW`, `TIMEOUT`,
+  `NETWORK`, `PROVIDER`).
 
-UI notes that affect these: the compare view needs each answer paired with its provider (so a
-per-provider result, not two flat lists) — `AICallbackCollection` already keeps responses/errors
-aligned to the run. `asyncSend` currently returns `void`; for the Stop button (and for aborting the
-other columns) it needs a cancel handle/identifier — flagged in the interface's own TODO. Attachments
-(job queue) imply `AIMessage` content must eventually carry non-text parts, or attachments get
-pre-extracted to text before the request is built.
+### Known gaps the UI will force (not yet resolved)
+
+- **Fan-out vs. a single `model`.** `AIRunner` sends one `AIRequest` (which carries one `model`) to N
+  providers, but each provider needs its own model id — the request-per-provider model still has to be
+  resolved (provider default, or a per-provider mapping).
+- **Compare needs per-provider results.** The compare view must pair each answer with the provider
+  that produced it, but `AICallbackCollection` currently exposes flat `responses()` / `errors()` lists
+  with no provider mapping — this needs an `agentID`/provider key or a `Map<AIProvider, …>` shape.
+- **No cancel handle.** `asyncSend` returns `void`; the Stop button (and aborting the other columns)
+  needs a cancel handle/identifier — flagged in the interface's own TODO.
+- **Skills pipeline is unwired.** Nothing yet selects which `AISkill`s a chat uses or assembles them
+  into `AIRequest.skillsPrompt`.
+- **Attachments imply rich content.** Job-queue attachments mean `AIRequest.content` (a plain `String`
+  today) must eventually carry non-text parts, or attachments get pre-extracted to text before the
+  request is built.
 
 ---
 

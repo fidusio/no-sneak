@@ -1,18 +1,14 @@
 package agent.model;
 
-import org.zoxweb.shared.data.TimeStampDAO;
+import org.zoxweb.shared.data.PropertyDAO;
 import org.zoxweb.shared.util.*;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.UUID;
-
-public class AIChat extends TimeStampDAO {
+public class AIChat extends PropertyDAO {
 
     public enum Param implements GetNVConfig {
-        TOPIC_ID(NVConfigManager.createNVConfig("topic_id", "stable conversation id", "TopicID", true, true, String.class)),
+        PROVIDER_SESSION_ID(NVConfigManager.createNVConfig("provider_session_id", "provider-issued handle to resume server-side context on a stateful api; null until a response supplies it", "ProviderSessionID", false, true, String.class)),
         MODEL(NVConfigManager.createNVConfig("model", "default model id", "Model", false, true, String.class)),
-        SYSTEM_PROMPT(NVConfigManager.createNVConfig("system_prompt", "system prompt", "SystemPrompt", false, true, String.class)),
+        SYSTEM_PROMPT(NVConfigManager.createNVConfig("system_prompt", "persistent assistant identity/instructions for the whole conversation", "SystemPrompt", false, true, String.class)),
         MESSAGES(NVConfigManager.createNVConfigEntity("messages", "the chat history", "Messages",
                 false, true, AIMessage[].class, NVConfigEntity.ArrayType.LIST));
 
@@ -30,7 +26,7 @@ public class AIChat extends TimeStampDAO {
     public static final NVConfigEntity NVC_AI_CHAT = new NVConfigEntityPortable(
             "ai_chat", null, "AIChat", true, false, false, false,
             AIChat.class, SharedUtil.extractNVConfigs(Param.values()), null, false,
-            TimeStampDAO.NVC_TIME_STAMP_DAO
+            PropertyDAO.NVC_PROPERTY_DAO
     );
 
     public AIChat() {
@@ -40,7 +36,6 @@ public class AIChat extends TimeStampDAO {
     public AIChat(String title) {
         this();
         setTitle(title);
-        setTopicID(UUID.randomUUID().toString());
         long now = System.currentTimeMillis();
         setCreationTime(now);
         setLastTimeUpdated(now);
@@ -54,12 +49,12 @@ public class AIChat extends TimeStampDAO {
         setName(title);
     }
 
-    public String getTopicID() {
-        return lookupValue(Param.TOPIC_ID);
+    public String getProviderSessionID() {
+        return lookupValue(Param.PROVIDER_SESSION_ID);
     }
 
-    public void setTopicID(String topicID) {
-        setValue(Param.TOPIC_ID, topicID);
+    public void setProviderSessionID(String sessionID) {
+        setValue(Param.PROVIDER_SESSION_ID, sessionID);
     }
 
     public String getModel() {
@@ -88,19 +83,18 @@ public class AIChat extends TimeStampDAO {
         return this;
     }
 
-    public AIChat addUser(String text) {
-        return addMessage(new AIMessage(AIMessage.Role.USER, text));
+    public AIRequest toRequest(String userInput, int maxTokens) {
+        AIRequest req = new AIRequest();
+        req.setModel(getModel());
+        req.setContent(userInput);
+        req.setProviderSessionID(getProviderSessionID());
+        req.setMaxTokens(maxTokens);
+        return req;
     }
 
-    public AIChat addAssistant(String text) {
-        return addMessage(new AIMessage(AIMessage.Role.ASSISTANT, text));
-    }
-
-    public AIRequest toRequest(int maxTokens, NVGenericMap options) {
-        List<AIMessage> history = new ArrayList<>();
-        for (NVEntity e : getMessages().values()) {
-            history.add((AIMessage) e);
-        }
-        return new AIRequest(getModel(), getSystemPrompt(), history, getTopicID(), maxTokens, options);
+    public AIMessage startTurn(String userInput, int maxTokens) {
+        AIMessage msg = new AIMessage(toRequest(userInput, maxTokens));
+        addMessage(msg);
+        return msg;
     }
 }

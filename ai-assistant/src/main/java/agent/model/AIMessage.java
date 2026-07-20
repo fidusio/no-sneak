@@ -1,21 +1,17 @@
 package agent.model;
 
 
-import org.zoxweb.shared.data.TimeStampDAO;
+import org.zoxweb.shared.data.PropertyDAO;
 import org.zoxweb.shared.util.*;
 
 /**
- * Creates a message to send to an AI provider
+ *
  */
-public class AIMessage extends TimeStampDAO {
-
-    public enum Role {
-        USER, ASSISTANT;
-    }
+public class AIMessage extends PropertyDAO {
 
     public enum Param implements GetNVConfig {
-        ROLE(NVConfigManager.createNVConfig("role", "USER or ASSISTANT", "Role", true, true, String.class)),
-        CONTENT(NVConfigManager.createNVConfig("content", "the message text", "Content", true, true, String.class));
+        AI_REQUEST(NVConfigManager.createNVConfigEntity("ai_request", "a request sent to an ai provider", "AIRequest", false, true, AIRequest.NVC_AI_REQUEST)),
+        AI_RESPONSE(NVConfigManager.createNVConfigEntity("ai_response", "a response sent from an an ai provider", "AIResponse", false, true, AIResponse.NVC_AI_RESPONSE));
 
         private final NVConfig nvc;
 
@@ -31,36 +27,31 @@ public class AIMessage extends TimeStampDAO {
     public static final NVConfigEntity NVC_AI_MESSAGE = new NVConfigEntityPortable(
             "ai_message", null, "AIMessage", true, false, false, false,
             AIMessage.class, SharedUtil.extractNVConfigs(Param.values()), null, false,
-            TimeStampDAO.NVC_TIME_STAMP_DAO
+            PropertyDAO.NVC_PROPERTY_DAO
     );
 
     public AIMessage() {
         super(NVC_AI_MESSAGE);
     }
 
-    public AIMessage(Role role, String content) {
+    public AIMessage(AIRequest request) {
         this();
-        setRole(role);
-        setContent(content);
-        setCreationTime(System.currentTimeMillis());
+        setAIRequest(request);
     }
 
-    public String getContent() {
-        return lookupValue(Param.CONTENT);
+    public AIRequest getAIRequest() {
+        return lookupValue(Param.AI_REQUEST);
     }
 
-    public void setContent(String content) {
-
-        setValue(Param.CONTENT, content);
+    public void setAIRequest(AIRequest request) {
+        setValue(Param.AI_REQUEST, request);
     }
 
-    public Role getRole() {
-        String v = lookupValue(Param.ROLE);
-        return v != null ? Role.valueOf(v) : null;
+    public AIResponse getAIResponse() {
+        return lookupValue(Param.AI_RESPONSE);
     }
 
-    public void setRole(Role role) {
-
-        setValue(Param.ROLE, role != null ? role.name() : null);
+    public void setAIResponse(AIResponse response) {
+        setValue(Param.AI_RESPONSE, response);
     }
 }

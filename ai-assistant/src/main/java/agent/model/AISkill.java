@@ -1,9 +1,9 @@
 package agent.model;
 
-import org.zoxweb.shared.data.TimeStampDAO;
+import org.zoxweb.shared.data.PropertyDAO;
 import org.zoxweb.shared.util.*;
 
-public class AISkill extends TimeStampDAO {
+public class AISkill extends PropertyDAO {
 
     public enum Param implements GetNVConfig {
         CONTENT(NVConfigManager.createNVConfig("content", "the skill text", "Content", true, true, String.class));
@@ -22,7 +22,7 @@ public class AISkill extends TimeStampDAO {
     public static final NVConfigEntity NVC_AI_SKILL = new NVConfigEntityPortable(
             "ai_skill", null, "AISkill", true, false, false, false,
             AISkill.class, SharedUtil.extractNVConfigs(Param.values()), null, false,
-            TimeStampDAO.NVC_TIME_STAMP_DAO
+            PropertyDAO.NVC_PROPERTY_DAO
     );
 
     public AISkill() {

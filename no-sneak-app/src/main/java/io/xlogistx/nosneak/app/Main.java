@@ -6,8 +6,10 @@ import com.formdev.flatlaf.fonts.roboto.FlatRobotoFont;
 import io.xlogistx.datastore.XlogistxMongoDSCreator;
 import io.xlogistx.datastore.XlogistxMongoDataStore;
 import io.xlogistx.nosneak.app.mock.AppShell;
+import io.xlogistx.nosneak.app.mock.DataStoreSetupPanel;
 import io.xlogistx.nosneak.app.mock.MenuBarFactory;
 import io.xlogistx.nosneak.app.mock.utility.AppContext;
+import io.xlogistx.nosneak.app.mock.utility.DataStoreConfig;
 import io.xlogistx.opsec.OPSecUtil;
 import org.zoxweb.server.security.DomainSecurityManagerDefault;
 import org.zoxweb.shared.api.APIConfigInfo;
@@ -25,7 +27,14 @@ public class Main {
         FlatLightLaf.setup();
         UIManager.put("defaultFont", new Font(FlatRobotoFont.FAMILY, Font.PLAIN, 13));
 
-        SwingUtilities.invokeLater(() -> new AppFrame().setVisible(true));
+        SwingUtilities.invokeLater(() -> {
+            if (DataStoreConfig.exists()) {
+                launchApp();
+            } else {
+                showSetup(Main::launchApp);
+            }
+
+        });
     }
 
     public static class AppFrame extends JFrame {
@@ -62,5 +71,22 @@ public class Main {
                     .addCredentialType(CIPassword.class)
                     .addCredentialType(SubjectAPIKey.class);
         }
+    }
+
+
+    public static void launchApp() {
+        new AppFrame().setVisible(true);
+    }
+
+    public static void showSetup(Runnable onComplete) {
+        JFrame f = new JFrame("NoSneak - Setup");
+        f.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
+        f.setSize(520, 460);
+        f.setLocationRelativeTo(null);
+        f.setContentPane(new DataStoreSetupPanel(() -> {
+            f.dispose();
+            onComplete.run();
+        }));
+        f.setVisible(true);
     }
 }
