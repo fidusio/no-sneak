@@ -1,6 +1,9 @@
 package gui;
 
 import agent.AICredentialSource;
+import agent.AIChatRepository;
+import agent.model.AIChat;
+import agent.model.AssistantContext;
 import com.formdev.flatlaf.FlatLaf;
 import com.formdev.flatlaf.FlatLightLaf;
 import com.formdev.flatlaf.fonts.roboto.FlatRobotoFont;
@@ -24,6 +27,27 @@ class AssistantPanelTest {
         }
     }
 
+    private static class chats implements AIChatRepository {
+        @Override
+        public AIChat save(AIChat chat) {
+            return chat;
+        }
+
+        @Override
+        public AIChat getChat(String refID) {
+            return null;
+        }
+
+        @Override
+        public List<AIChat> getAllChats() {
+            return List.of();
+        }
+
+        @Override
+        public void delete(String refID) {
+        }
+    }
+
     static void main(String[] args) {
         FlatRobotoFont.install();
         FlatLaf.registerCustomDefaultsSource("themes");
@@ -38,7 +62,7 @@ class AssistantPanelTest {
             frame.setLocationRelativeTo(null);
 
 
-            frame.setContentPane(new AssistantPanel(new credentials()));
+            frame.setContentPane(new AssistantPanel(new AssistantContext(new credentials(), new chats())));
             frame.setVisible(true);
         });
     }

@@ -7,13 +7,21 @@ The assistant owns **no** API keys and adds **no** AI connections of its own. It
 external `AICredentialSource` (the NoSneak credential store) and keeps a list of the ones the subject
 has chosen to use.
 
-> **Implementation status.** This document is the UI design spec. Today the module ships only
-> `gui.AssistantPanel` (a minimal Providers list fed by `AICredentialSource.APIKeys()`), the `agent`
-> backend **interfaces**, and the **`agent.model` value DAOs** (`AIChat`, `AIMessage`, `AIRequest`,
-> `AIResponse`, `AISkill`, `AIModel`) with a JSON round-trip test. Everything else below is the
-> target: the Prompt / Job queue / History / Skills pages, every provider implementation, and the
-> persistence stores are not built yet. `no-sneak-app` mounts `AssistantPanel` on its `ASSISTANT`
-> screen via a `SessionAICredentialSource`; the dependency is one-way (`no-sneak-app → ai-assistant`).
+> **Implementation status.** This document is the UI design spec. Today the module ships
+> `gui.AssistantPanel` with a working **Providers** list (fed by `AICredentialSource.APIKeys()`) and a
+> basic **Chat** page — a scrolling transcript of message bubbles plus a multiline composer (Enter to
+> send, Shift+Enter for a newline). The Chat page is **visual only**: Send appends a local bubble and
+> does not yet call a provider or write to the chat model. It also ships the `agent` backend
+> **interfaces** and the **`agent.model` value DAOs** (`AIChat`, `AIMessage`, `AIRequest`, `AIResponse`,
+> `AISkill`, `AIModel`) with a JSON round-trip test. Per-panel state lives in
+> **`agent.model.AssistantContext`** — a Swing-free holder for the credential source, the
+> `AIChatRepository`, an `AIProviderRegistrar`, and the current chat/credential/model, exposing
+> `newChat` / `openChat` and `PropertyChangeSupport` (`onChange`) so panels observe selection changes.
+> Everything else below is the target: the Job queue / History / Skills pages, every provider
+> implementation, and real persistence are not built yet. `no-sneak-app` builds an
+> `AssistantContext(SessionAICredentialSource, AssistantStorage)` and passes it to `AssistantPanel` on
+> its `ASSISTANT` screen (`AssistantStorage` is a no-op `AIChatRepository` stub for now). The dependency
+> is one-way (`no-sneak-app → ai-assistant`).
 
 ---
 
@@ -231,8 +239,20 @@ into the provider's system field, not concatenated in the model.
 - `AIModelCatalog` backs each key's discovered models (`models()`), `refresh()` (the Refresh button),
   and `lastSynced()` (the "Last sync" line).
 - `AIChatRepository` — persistence for chats (`save`, `getChat(refID)`, `getAllChats`, `delete(refID)`),
-  keyed by the chat's `referenceID`. No implementation yet.
-- `AISkillStore` — persistence for skills; **currently an empty placeholder** (needs the same CRUD shape).
+  keyed by the chat's `referenceID`. `no-sneak-app`'s `AssistantStorage` implements it as a **no-op stub**
+  today; a datastore-backed implementation (the chat DAOs are `PropertyDAO`s) is still to come.
+- Skills persistence (`AISkillStore`) has been **removed for now** — the `AISkill` DAO remains, but there is
+  no store interface. It returns when the Skills page is built.
+
+### State holder (`agent.model.AssistantContext`)
+
+Swing-free. Bundles the injected services (`AICredentialSource`, `AIChatRepository`) and an internally
+built `AIProviderRegistrar`, plus the current selection (`currentChat`, `currentCredential`,
+`currentModel`). `newChat()` / `openChat(refID)` mutate the current chat and fire a `"currentChat"`
+`PropertyChangeEvent`; panels subscribe via `onChange(prop, listener)` and re-render, so the Chat page
+never decides *which* chat to load — it renders whatever `currentChat()` is. The app supplies the
+concrete services (`SessionAICredentialSource`, `AssistantStorage`); the registrar has no providers
+registered yet.
 - `AIException` — checked, with a `Kind` (`AUTH`, `RATE_LIMIT`, `CONTEXT_OVERFLOW`, `TIMEOUT`,
   `NETWORK`, `PROVIDER`).
 

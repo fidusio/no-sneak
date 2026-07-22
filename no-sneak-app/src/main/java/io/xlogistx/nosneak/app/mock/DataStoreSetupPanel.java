@@ -1,55 +1,95 @@
 package io.xlogistx.nosneak.app.mock;
 
+import io.xlogistx.gui.BackgroundTask;
 import io.xlogistx.gui.PanelBuilder;
-import io.xlogistx.nosneak.app.mock.utility.DataStoreConfig;
+import org.zoxweb.shared.security.DomainSecurityManager;
 
 import javax.swing.*;
-import java.io.IOException;
-import java.util.Properties;
+import java.awt.*;
+import java.io.File;
+import java.util.function.Consumer;
 
 public class DataStoreSetupPanel extends JPanel {
-    private final JTextField fileSystemButton = PanelBuilder.textField("");
-    private final JTextField dbUserButton = PanelBuilder.textField("");
-    private final JTextField dbPasswordButton = PanelBuilder.textField("");
-    private final JTextField dbEncryptionPasswordButton = PanelBuilder.textField("");
-    private final JButton saveButton = new JButton("Save");
-    private final Runnable onComplete;
 
-    public DataStoreSetupPanel(Runnable onComplete) {
+    /**
+     * Builds (creates or opens) the data store from the collected setup fields and returns
+     * the resulting {@link DomainSecurityManager}. Runs off the EDT, so it may block and throw.
+     */
+    @FunctionalInterface
+    public interface DataStoreFactory {
+        DomainSecurityManager create(String location, String user, String password, String encPassword) throws Exception;
+    }
+
+    private String path;
+    private final JTextField dbUserText = PanelBuilder.textField("", 20);
+    private final JPasswordField dbPasswordText = new JPasswordField(20);
+    private final JPasswordField dbEncryptionPasswordText = new JPasswordField(20);
+    private final JButton createButton = new JButton("Create/Login");
+    private final DataStoreFactory factory;
+    private final Consumer<DomainSecurityManager> onComplete;
+
+    public DataStoreSetupPanel(DataStoreFactory factory, Consumer<DomainSecurityManager> onComplete) {
+        this.factory = factory;
         this.onComplete = onComplete;
 
+        setLayout(new BorderLayout());
+
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("Choose Location");
+        chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+        chooser.setCurrentDirectory(new File(System.getProperty("user.home")));
+
         JLabel title = PanelBuilder.title("Data Store Setup");
-        JLabel fileSystem = new JLabel("File System");
+        JLabel description = new JLabel("Configure your database location and credentials");
+        JButton pathButton = new JButton("Choose Database Location");
+        JTextField pathLabel = new JTextField();
+        pathLabel.setEditable(false);
         JLabel dbUser = new JLabel("Database Username");
         JLabel dbPassword = new JLabel("Database Password");
         JLabel dbEncryptionPassword = new JLabel("Encryption Password");
 
-        saveButton.addActionListener(e -> save());
+        createButton.addActionListener(_ -> onSave());
 
+        pathButton.addActionListener(_ -> {
+            int result = chooser.showSaveDialog(this);
+
+            if (result == JFileChooser.APPROVE_OPTION) {
+                File selected = chooser.getSelectedFile();
+                path = selected.getAbsolutePath();
+                pathLabel.setText(path);
+            }
+        });
 
         add(PanelBuilder.buildJPanelWithFields(
-                title,
-                fileSystem, fileSystemButton,
-                dbUser, dbUserButton,
-                dbPassword, dbPasswordButton,
-                dbEncryptionPassword, dbEncryptionPasswordButton,
-                saveButton
+                title, description,
+                pathLabel, pathButton,
+                dbUser, dbUserText,
+                dbPassword, PanelBuilder.passwordField(dbPasswordText),
+                dbEncryptionPassword, PanelBuilder.passwordField(dbEncryptionPasswordText),
+                createButton
         ));
     }
 
-    private void save() {
-        /*
-        Properties p = new Properties();
-        p.setProperty(DataStoreConfig.Key.PATH, fileSystemButton.getText().trim());
-        p.setProperty(DataStoreConfig.Key.USER, dbUserButton.getText().trim());
-        p.setProperty(DataStoreConfig.Key.PASSWORD, dbPasswordButton.getText().trim());
+    private void onSave() {
+        String user = dbUserText.getText().trim();
+        String password = new String(dbPasswordText.getPassword());
+        String encPassword = new String(dbEncryptionPasswordText.getPassword());
 
-        try {
-            DataStoreConfig.save(p);
-        } catch (IOException ex) {
-            JOptionPane.showMessageDialog(this, ex.getMessage());
+        if (path == null || path.isBlank()) {
+            error("Please choose a database location.");
+            return;
         }
-         */
-        onComplete.run();
+        if (user.isEmpty() || password.isEmpty() || encPassword.isEmpty()) {
+            error("Username, password, and encryption password are required.");
+            return;
+        }
+
+        BackgroundTask.run(this, createButton,
+                () -> factory.create(path, user, password, encPassword),
+                onComplete);
+    }
+
+    private void error(String message) {
+        JOptionPane.showMessageDialog(this, message, "Data Store Setup", JOptionPane.ERROR_MESSAGE);
     }
 }

@@ -472,8 +472,11 @@ public class SubjectPanel extends JPanel {
         JTextField inDescription = textField("What this key is for");
         JTextField inAppID = textField("e.g. nosneak");
         JTextField inDomainID = textField("e.g. xlogistx.io");
-        JTextField inKey = textField("Your API ley");
-        JTextField inProvider = textField("e.g. anthropic, openAI");
+        JPasswordField inKey = new JPasswordField(28);
+        inKey.putClientProperty("JTextField.placeholderText", "Your API key");
+        JComboBox<String> inProvider = new JComboBox<>(new String[]{"Claude", "OpenAI", "Gemini"});
+        inProvider.setEditable(true);
+        inProvider.setSelectedItem(null);
         JTextField inBaseURI = textField("e.g. https://api.anthropic.com");
         JTextField inAuthScheme = textField("e.g. Bearer Token");
         JTextField inHeaderName = textField("e.g. x-api-key");
@@ -485,7 +488,7 @@ public class SubjectPanel extends JPanel {
         addSection(inputCard, "Key");
         addRow(inputCard, "Label*", inLabel);
         addRow(inputCard, "Description*", inDescription);
-        addRow(inputCard, "API Key*", inKey);
+        addRow(inputCard, "API Key*", PanelBuilder.passwordField(inKey));
 
         addSection(inputCard, "Scope");
         addRow(inputCard, "App ID", inAppID);
@@ -494,26 +497,26 @@ public class SubjectPanel extends JPanel {
         addSection(inputCard, "Provider endpoint");
         addRow(inputCard, "Provider", inProvider);
         addRow(inputCard, "Base URL", inBaseURI);
-        addRow(inputCard, "API auth Type", inAuthScheme);
-        addRow(inputCard, "Header Name", inHeaderName);
+        //addRow(inputCard, "API auth Type", inAuthScheme);
+        //addRow(inputCard, "Header Name", inHeaderName);
 
 
         // --- selector + cards ---
         CardStack cards = new CardStack();
         cards.add(generateCard, "generate");
         cards.add(inputCard, "input");
-        cards.show("generate");
+        cards.show("input");
 
-        JToggleButton generateButton = new JToggleButton("Generate local key", true);
+        //JToggleButton generateButton = new JToggleButton("Generate local key", true);
         JToggleButton existingButton = new JToggleButton("Add third party key");
         ButtonGroup selector = new ButtonGroup();
-        selector.add(generateButton);
+        //selector.add(generateButton);
         selector.add(existingButton);
-        generateButton.addActionListener(_ -> cards.show("generate"));
+        //generateButton.addActionListener(_ -> cards.show("generate"));
         existingButton.addActionListener(_ -> cards.show("input"));
 
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.CENTER));
-        buttons.add(generateButton);
+        //buttons.add(generateButton);
         buttons.add(existingButton);
 
         JPanel dialog = PanelBuilder.buildJPanelWithFields(
@@ -525,13 +528,13 @@ public class SubjectPanel extends JPanel {
                 JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE, null, actions, actions[0]);
         if (result != 0) return;   // Cancel or dialog closed
 
-        boolean generating = generateButton.isSelected();
+        boolean generating = false; //generateButton.isSelected();
         String label = generating ? genLabel.getText() : inLabel.getText();
         String description = generating ? genDescription.getText() : inDescription.getText();
         String appId = generating ? "" : inAppID.getText().trim();
         String domainId = generating ? "" : inDomainID.getText().trim();
-        String key = generating ? genKey.getText() : inKey.getText().trim();
-        String provider = generating ? "" : inProvider.getText().trim();
+        String key = generating ? genKey.getText() : new String(inKey.getPassword()).trim();
+        String provider = generating ? "" : Objects.toString(inProvider.getSelectedItem(), "").trim();
         String baseURI = generating ? "" : inBaseURI.getText().trim();
         String authScheme = generating ? "" : inAuthScheme.getText().trim();
         String headerName = generating ? "" : inHeaderName.getText().trim();
@@ -657,12 +660,6 @@ public class SubjectPanel extends JPanel {
                     panel.add(new JLabel("Base URI"));
                     panel.add(keyURI);
 
-                    panel.add(new JLabel("API auth type"));
-                    panel.add(authScheme);
-
-                    panel.add(new JLabel("Header name"));
-                    panel.add(headerName);
-
                     panel.add(new JLabel("API Key"));
                     panel.add(keyView);
                 }
@@ -711,9 +708,26 @@ public class SubjectPanel extends JPanel {
     }
 
     private void onEditAPIDetails(JButton submit) {
+        String label = editKeyLabel.getText().trim();
+        String description = editKeyDescription.getText().trim();
+
+        if (label.isBlank() || description.isBlank()) {
+            JOptionPane.showMessageDialog(this,
+                    "Label and description are required.",
+                    "Missing information", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        String appID = keyAppID.getText().trim();
+        String domainID = keyDomainID.getText().trim();
+        String provider = keyProvider.getText();
+        String uri = keyURI.getText();
+        String scheme = authScheme.getText();
+        String header = headerName.getText();
+
         BackgroundTask.runCatching(this, submit,
-                () -> ctx.session().changeAPIDetails(selectedKey, editKeyLabel.getText(), editKeyDescription.getText(),
-                        keyProvider.getText(), keyURI.getText(), authScheme.getText(), headerName.getText()),
+                () -> ctx.session().changeAPIDetails(selectedKey, label, description, domainID, appID,
+                        provider, uri, scheme, header),
                 () -> {
                     JOptionPane.showMessageDialog(this, "API Key updated");
                     selectedKey = null;

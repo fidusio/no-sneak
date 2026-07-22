@@ -6,9 +6,10 @@ navigation, and a stubbed session/security layer. The mock exists to prove out t
 and screen flow ahead of binding the real PQC scanner and security backend.
 
 > **Status:** prototype. The session layer (`mock.utility.Session`) is backed by zoxweb's
-> **`DomainSecurityManagerDefault`** — a real `DomainSecurityManager` over a **MongoDB**
-> `XlogistxMongoDataStore` wired in `Main` (against a local `mongodb://localhost:27017`
-> instance). The store **persists across restarts** and is **not seeded**, so a fresh
+> **`DomainSecurityManagerDefault`** — a real `DomainSecurityManager` over an **encrypted H2**
+> `H2PDataStore` (`jdbc:h2:file:<dir>/no-sneak;MODE=PostgreSQL;CIPHER=AES`, built by `H2PDSCreator`).
+> `Main` opens the store from either `ds.*` launch parameters or the first-run **Data Store Setup**
+> screen (see *Main*). The store **persists across restarts** and is **not seeded**, so a fresh
 > database has no accounts — create one via the Register flow before you can log in.
 > Working end-to-end against it: username/password **register + login**, **change password**,
 > **add/remove identifiers**, **profile save/load** (name/DOB in the subject's property bag),
@@ -31,45 +32,55 @@ and screen flow ahead of binding the real PQC scanner and security backend.
 
 ```
 io.xlogistx.nosneak.app
-├── Main.java                      ← entry point + top-level JFrame
+├── Main.java                      ← entry point; opens the H2P store (ds.* params or setup screen) + JFrame
 └── mock/                          ← prototype UI (screens, menu, mock security)
     ├── AppShell.java              ← root content pane, CardLayout host (mounts ai-assistant's AssistantPanel)
     ├── LoginPanel.java            ← login/register screen (method + mode toggle)
+    ├── DataStoreSetupPanel.java   ← first-run screen: choose location + DB/encryption credentials
     ├── PQCRegistryPanel.java      ← PQC file-sharing registry view
     ├── SubjectPanel.java          ← subject account view (master–detail)
     ├── SubjectSecManagerPanel.java← security-manager admin view (master–detail)
     ├── ScanPanel.java             ← network scanner view (placeholder)
     ├── MenuBarFactory.java        ← builds the application menu bar
+    ├── assistant/                 ← app-side bindings for the ai-assistant module
+    │   ├── SessionAICredentialSource.java ← exposes the subject's API keys (implements AICredentialSource.APIKeys())
+    │   └── AssistantStorage.java  ← AIChatRepository impl (no-op stub; to be datastore-backed)
     └── utility/
         ├── AppContext.java        ← per-app service locator (Session + Navigator)
         ├── Session.java           ← auth + identifiers + credentials + profile + addresses (over DomainSecurityManager)
-        ├── SessionAICredentialSource.java ← exposes the subject's API keys to ai-assistant (implements AICredentialSource.APIKeys())
-        ├── Navigator.java         ← top-level screen switching over a CardLayout
-        ├── CardStack.java         ← reusable CardLayout wrapper (in-panel sections)
-        ├── PanelBuilder.java      ← shared Swing layout helpers
-        ├── ListSection.java       ← titled, refreshable list (rows + add/edit/remove)
-        └── BackgroundTask.java    ← SwingWorker helper: run work off the EDT, result back on it
+        └── Navigator.java         ← top-level screen switching over a CardLayout
+
+(The `CardStack` / `PanelBuilder` / `ListSection` / `BackgroundTask` helpers live in the shared
+`io.xlogistx.gui` toolkit — `xlogistx-gui-audio` — not in this module.)
 ```
 
 ## Entry point
 
 ### `Main`
-Bootstraps the app: installs the FlatLaf **FlatLightLaf** look-and-feel and shows
-`Main.AppFrame` on the Swing EDT. The nested `AppFrame` (a `JFrame`, 800×600,
-title "NoSneak") builds the security manager via `createDomainSecManager()` — which stands
-up a **MongoDB-backed** `XlogistxMongoDataStore` (config built by `XlogistxMongoDSCreator`
-from the `DB_URL` constant, `mongodb://localhost:27017/xlog_datastore_test?replicaSet=rs0`),
-initializes `OPSecUtil.singleton()`, and returns a `DomainSecurityManagerDefault` over that
-store with `CIPassword` and `SubjectAPIKey` registered as credential types. It then creates
-the single `AppContext` from it, builds the menu bar via `MenuBarFactory`, and installs
-`AppShell` as the content pane. The menu bar starts hidden and is toggled visible/invisible
-by subscribing to `session().onAuthChange(...)` — it only appears once the user is
-authenticated.
+Bootstraps the app. `main` first parses `ds.*` launch parameters (`ParamUtil.parse("=", args)`):
+`ds.user`, `ds.password`, `ds.enc-password`, `ds.location` (a directory). If **all four** are present it
+opens the encrypted **H2** store directly — `createDataStore(...)` builds the JDBC URL via
+`H2PUtil.defaultH2JdbcURL(location, "no-sneak")` (`jdbc:h2:file:…;MODE=PostgreSQL;CIPHER=AES`), creates
+the `H2PDataStore` through `H2PDSCreator`, connects, and wraps it in a `DomainSecurityManager`
+(`createDomainSecManager`: `OPSecUtil.singleton()` + a `DomainSecurityManagerDefault` with `CIPassword`
+and `SubjectAPIKey` registered). It then installs FlatLaf **FlatLightLaf** and launches on the EDT.
 
-> The store is **not seeded** — a fresh database has no login, so register an account first.
-> Construction also assumes the Mongo instance in `DB_URL` is reachable (and its replica set
-> initialized); if it isn't, `createDomainSecManager()` throws on the EDT during frame
-> construction and the app fails to start with no user-facing dialog.
+Two entry paths, chosen by whether a manager was built from the params:
+- **Params present** → `launchApp(dsm)` goes straight to the app.
+- **No params** → `showSetup(...)` displays `DataStoreSetupPanel` (choose location + DB username /
+  password / encryption password); on completion it builds the store the same way and then
+  `launchApp(dsm)`.
+
+`launchApp(DomainSecurityManager)` opens `Main.AppFrame` (a `JFrame`, 800×600, title "NoSneak"), which
+takes the manager, creates the single `AppContext` from it, builds the menu bar via `MenuBarFactory`,
+and installs `AppShell` as the content pane. The menu bar starts hidden and is toggled by
+`session().onAuthChange(...)` — it only appears once authenticated.
+
+> The store is **not seeded** — a fresh database has no login, so register an account first. Passing
+> secrets via `ds.*` on the command line exposes them (process list, shell history, run-config files),
+> so treat that path as a dev convenience and prefer the setup screen. Pointing the params at an
+> existing store with the **wrong encryption password** fails `connect()` (surfaced as the setup
+> panel's error dialog).
 
 ## `mock` — UI screens & wiring
 
@@ -81,8 +92,11 @@ and wires `session().onAuthChange(...)` so that a successful auth navigates to `
 and a logout navigates back to `LOGIN`. The footer (left: `session: … | subject: …`,
 right: status) also subscribes to auth changes. Starts on the `LOGIN` screen.
 
-The `ASSISTANT` card is the `ai-assistant` module's `gui.AssistantPanel`, constructed with a
-`new SessionAICredentialSource(ctx.session())` so it can list the subject's API keys. Because
+The `ASSISTANT` card is the `ai-assistant` module's `gui.AssistantPanel`, constructed with an
+`AssistantContext` — `new AssistantPanel(new AssistantContext(new SessionAICredentialSource(ctx.session()),
+new AssistantStorage()))`. The context (from `agent.model`) holds the credential source, the chat
+repository (`AssistantStorage`, a no-op stub for now), an internally built `AIProviderRegistrar`, and the
+current chat/credential/model selection (with `PropertyChangeSupport` for the panels to observe). Because
 the panel is built once (before login), `AppShell` calls `assistantPanel.refresh()` on login (the
 credential source is empty until then) and `assistantPanel.cleanup()` on logout (which re-runs the
 refresh, clearing the list). This is the **only** coupling point — the dependency runs
@@ -177,33 +191,28 @@ mirroring how the Credentials screen switches between its list and detail cards.
     `BackgroundTask`, off the EDT).
   - **API keys section** — one row per key showing its label (`"API key — " +
     SubjectAPIKey.getName()`); the row's **Edit** opens the `editAPI` card for that key. Its
-    **+ Add API Key** button opens the add dialog: a **Generate local / Add third party**
-    selector with Label + Description. *Generate* shows a freshly `Session.generateAPIKey()`'d
-    key in a read-only, copyable field with a **Refresh** button (regenerates the shown key)
-    and a **Copy** button; *Add third party* is a **sectioned form** (`Key` / `Scope` / `Provider
-    endpoint`, built with `PanelBuilder.addSection` + `addRow` over placeholder-hint `textField`s):
-    a pasted key plus App Id / Domain ID and the **AI-assistant fields** — **Provider** (e.g.
-    `anthropic`), **Base URL**, a free-text **API auth type** (e.g. `Bearer`), and an optional
-    **Header name** (e.g. `x-api-key`). The displayed generate field is the source of truth — copy
-    and **Create key** both read it, so a refreshed key is the one actually stored. On **Create key**
-    it stores via `Session.storeAPIKey(label, description, domainID, appID, rawKey, provider,
-    baseURI, authScheme, headerName, external)` (off the EDT), passing `external = !generating` so a
-    third-party key is flagged external while an internal one falls back to the default
-    `xlogistx.io/nosneak` AppID. The AppID filters validate the optional domain/app-id pair (an
-    invalid domain/app id now surfaces as a `SecurityException`, not a raw
-    `IllegalArgumentException`), and provider/baseURI/authScheme/headerName are written to the key's
-    property bag — then the list refreshes. (The *Generate local* path passes the metadata blank and
-    `external = false`, since a locally-minted login key is never an AI provider.)
+    **+ Add API Key** button opens the add dialog. The **Generate local** path is hidden for now, so the
+    dialog opens straight on the **Add third party key** form — a **sectioned form** (`Key` / `Scope` /
+    `Provider endpoint`, built with `PanelBuilder.addSection` + `addRow`): **Label**, **Description**, the
+    **API Key** in a masked `JPasswordField` (reveal button), App Id / Domain ID, a **Provider** editable
+    combo box (Claude / OpenAI / Gemini, or type your own), and a **Base URL**. (The former free-text *API
+    auth type* and *Header name* rows are commented out.) On **Create key** it stores via
+    `Session.storeAPIKey(label, description, domainID, appID, rawKey, provider, baseURI, authScheme,
+    headerName, external)` (off the EDT) with `external = true`, so the key is flagged external; the AppID
+    filters validate the optional domain/app-id pair (invalid → `SecurityException`), provider/baseURI are
+    written to the property bag, and the list refreshes. `storeAPIKey` enforces a non-blank key; broader
+    mandatory-field validation (label/description) on this dialog is still to come — and the dialog
+    currently closes on click even on error (a known rework).
   - The `editAPI` card is **fully wired**: the secret shows in a masked `JPasswordField`
     with a **Show/Hide** reveal toggle (`VisibleIcon` / `InvisibleIcon`, re-masked on every open) and a
-    **Copy** button (copies `getAPIKey()`); editable **Label**/**Description**, plus editable
-    **Provider** / **Base URI** / **API auth type** / **Header name** fields — all populated
-    from the key on open (`providerOf` / `baseUrlOf` / `authTypeOf` / `headerNameOf`) and saved
-    together via
-    `Session.changeAPIDetails(key, label, description, provider, baseURI, authScheme, headerName)`.
-    App ID / Domain ID show read-only. **Rotate** (`Session.rotateAPIKey`, disabled for external
-    keys) and **Delete** (`Session.deleteAPIKey`) each confirm first, run off the EDT, and refresh —
-    Rotate re-populates the card with the new secret, Delete navigates back to the list.
+    **Copy** button (copies `getAPIKey()`); editable **Label** / **Description**, **App ID** / **Domain
+    ID**, and **Provider** / **Base URI** fields — all populated from the key on open (`providerOf` /
+    `baseUrlOf`, etc.). **Label and Description are required** (a blank one blocks the save with a dialog).
+    Saved via `Session.changeAPIDetails(key, label, description, domainID, appID, provider, baseURI,
+    authScheme, headerName)` — **App ID / Domain ID now persist too** (when both non-blank, re-validated
+    through the AppID filters). **Rotate** (`Session.rotateAPIKey`, disabled for external keys) and
+    **Delete** (`Session.deleteAPIKey`) each confirm first, run off the EDT, and refresh — Rotate
+    re-populates the card with the new secret, Delete navigates back to the list.
 
 > **Icon buttons.** The credential/identifier/address actions render as `io.xlogistx.gui.IconUtil`
 > icons (jsvg-rendered `SVGIconWidget`s bundled with `xlogistx-gui-audio`) with tooltips rather
@@ -273,9 +282,9 @@ section of that screen*. They are separate `CardLayout`s (the in-panel ones wrap
 `CardStack`).
 
 ### Security backend — `DomainSecurityManagerDefault` (zoxweb)
-`Main.AppFrame.createDomainSecManager()` constructs zoxweb's
-`org.zoxweb.server.security.DomainSecurityManagerDefault` over a **MongoDB**
-`XlogistxMongoDataStore` (config from `XlogistxMongoDSCreator.toAPIConfigInfo(DB_URL)`),
+`Main.createDomainSecManager(dataStore)` constructs zoxweb's
+`org.zoxweb.server.security.DomainSecurityManagerDefault` over the **encrypted H2**
+`H2PDataStore` (built by `H2PDSCreator` from the `CIPHER=AES` JDBC URL),
 registers `CIPassword` and `SubjectAPIKey` as credential types, and passes it to
 `AppContext` → `Session`. It implements the full security model —
 subject/principal/credential CRUD, the permission/role/role-group catalog, and grants —
@@ -283,8 +292,8 @@ with the same keying the code relies on: `login(principalID, credential)` resolv
 principal to its subject and validates the `PASSWORD` `CIPassword` via
 `SecUtil.isPasswordValid` (throws `SecurityException` on mismatch); identifiers are keyed by
 **subjectGUID** and credentials by **principalID**. Two behaviours to know:
-- **Persistent, not seeded** — data lives in MongoDB and **survives restarts**, but nothing
-  is seeded, so a fresh database has no accounts; register one before you can log in.
+- **Persistent, not seeded** — data lives in the encrypted H2 file store and **survives restarts**, but
+  nothing is seeded, so a fresh database has no accounts; register one before you can log in.
 - **`createSubjectID` throws on a duplicate** principal (`"principal already exists"`).
   `registerUsernamePassword` catches this and rethrows `SecurityException("That username is
   already taken")`.
@@ -376,10 +385,12 @@ API-key lifecycle (failures throw `SecurityException`; the raw key is stored **p
   `auth-type` (`AUTH_SCHEME`), and `header-name` (`HEADER_NAME`), each only when non-blank. Guards
   (thrown): `"Not signed in"` / `"Key cannot be empty"`.
   *(No key-format validation today — a malformed paste is accepted and simply never matches at login.)*
-- `changeAPIDetails(key, label, description, provider, baseURI, authScheme, headerName)` — updates the
-  key in place via `updateCredential`. Unlike create it **sets** blanks, so passing empty clears them;
-  it also **rewrites** the `provider` / `base-url` / `auth-type` / `header-name` properties every save,
-  so clearing a field or changing the scheme actually sticks (create only ever *writes* them).
+- `changeAPIDetails(key, label, description, domainID, appID, provider, baseURI, authScheme, headerName)` —
+  updates the key in place via `updateCredential`. Unlike create it **sets** blanks, so passing empty
+  clears the label/description; it **rewrites** the `provider` / `base-url` / `auth-type` / `header-name`
+  properties every save (so clearing/changing them sticks); and when **both** `domainID`/`appID` are
+  non-blank it re-attaches an `AppIDDefault` (run through the AppID filters, an invalid pair → thrown
+  `SecurityException`), so App ID edits from the `editAPI` card persist.
 - `isExternalKey(key)` / `providerOf(key)` / `baseUrlOf(key)` / `authTypeOf(key)` / `headerNameOf(key)`
   — read the metadata back off the property bag (the `external` boolean, and the `provider` /
   `base-url` / `auth-type` / `header-name` strings via the `APIKeyInfo` enum).
@@ -392,10 +403,11 @@ API-key lifecycle (failures throw `SecurityException`; the raw key is stored **p
 
 Addresses (stored as an `NVGenericMapList("addresses")` inside the subject's property bag —
 each address its own `NVGenericMap` with keys `label`/`street`/`city`/`state`/`postal`/`country`;
-the profile map holds them as a nested list rather than flat fields. `NVGenericMapList` is used
-deliberately: it is the one list container the Mongo property-bag serializer round-trips — an
-`NVEntityReferenceList` of `AddressDAO` is silently dropped on write, so addresses aren't stored
-as entity references):
+the profile map holds them as a nested list rather than flat fields. `NVGenericMapList` was chosen
+deliberately: it was the one list container the property-bag serializer round-tripped — an
+`NVEntityReferenceList` of `AddressDAO` was silently dropped on write, so addresses aren't stored
+as entity references (a decision made against the former Mongo store; worth re-verifying the
+round-trip on the H2P datastore):
 - `getAllAddresses()` — the live `List<NVGenericMap>` (empty when signed out); returned maps are
   the stored instances, so mutating one and calling `changeAddressDetails` persists the edit.
 - `addAddress(NVGenericMap)` — creates the `addresses` list on first use, appends, and persists
@@ -436,7 +448,7 @@ State changes fire an `"authenticated"` property event; listeners subscribe via
 `onAuthChange(...)` — how `AppFrame` toggles the menu bar and `AppShell`/`SubjectPanel`
 react on login/logout.
 
-### `SessionAICredentialSource`
+### `SessionAICredentialSource` (in `mock.assistant`)
 The adapter that lets the `ai-assistant` module reach NoSneak's keys without depending on
 `no-sneak-app` — it implements the module's `agent.AICredentialSource` over a `Session`. Its
 `APIKeys()` walks `getAllCredentialForUserByType(CredentialInfo.Type.API_KEY)` and returns **every**
@@ -523,7 +535,7 @@ Main.AppFrame
         ├─ SubjectPanel         (SUBJECT)                               │  → nav to SUBJECT
         ├─ SubjectSecManagerPanel (MANAGER)                            │  + show menu bar
         ├─ ScanPanel            (SCAN)                                  │  (logout → LOGIN)
-        └─ AssistantPanel       (ASSISTANT) ← SessionAICredentialSource │  + assistant.refresh()
+        └─ AssistantPanel       (ASSISTANT) ← AssistantContext          │  + assistant.refresh()
                                                               Session ◄─┘
 ```
 
@@ -634,8 +646,8 @@ Tracked work items for the `mock` UI.
   Permissions / Roles / Role groups / Grants tables to the `DomainSecurityManager`
   catalog (`getPermissions()`, `getRoles()`, `getRoleGroups()`, the grant getters, etc.)
   and make the per-section search bars filter. The backend exists
-  (`DomainSecurityManagerDefault`); the panel just isn't wired to it yet, and the MongoDB
-  store has no seeded catalog data.
+  (`DomainSecurityManagerDefault`); the panel just isn't wired to it yet, and the H2 store has
+  no seeded catalog data.
 
 ### Security hardening
 From a security pass over the app's own code (issues fixable here, not in the zoxweb
@@ -673,10 +685,12 @@ dependency). Ordered by priority.
   supply-chain "phone home." Bundle a local icon or drop it.
 
 > Explicitly considered and **not** treated as issues here: menu items are unreachable while
-> signed out (the whole `JMenuBar` is hidden until auth — `Main` toggles it); profile /
-> identifier / AppID fields need no injection hardening (single-user local app, Mongo backend
-> so no SQL, values render in `JTextField`s with no HTML, and AppID/domain are already filter-
-> validated); the hardcoded `DB_URL` is a credential-less localhost test URL.
+> signed out (the whole `JMenuBar` is hidden until auth — `Main` toggles it); values render in
+> `JTextField`s with no HTML, and AppID/domain are already filter-validated. **Re-check for the H2
+> store:** unlike the former Mongo backend, the store is now **SQL** (H2), so injection safety rests on
+> `H2PDataStore` issuing parameterized JDBC rather than string-built SQL — confirm that assumption
+> before relying on it. The store location and credentials are no longer a hardcoded `DB_URL`; they come
+> from the `ds.*` params or the setup screen.
 
 > These are UI/UX gaps in the prototype. The username/password session path — plus
 > identifiers, change-password, profile save/load, the **address book**, and the **full

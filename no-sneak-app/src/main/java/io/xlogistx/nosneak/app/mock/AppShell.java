@@ -1,10 +1,12 @@
 package io.xlogistx.nosneak.app.mock;
 
 
+import agent.model.AssistantContext;
 import gui.AssistantPanel;
+import io.xlogistx.nosneak.app.mock.assistant.AssistantStorage;
 import io.xlogistx.nosneak.app.mock.utility.AppContext;
 import io.xlogistx.nosneak.app.mock.utility.Navigator;
-import io.xlogistx.nosneak.app.mock.utility.SessionAICredentialSource;
+import io.xlogistx.nosneak.app.mock.assistant.SessionAICredentialSource;
 
 import javax.swing.*;
 import java.awt.*;
@@ -21,7 +23,7 @@ public class AppShell extends JPanel {
         setLayout(new BorderLayout());
         this.ctx = ctx;
 
-        assistantPanel = new AssistantPanel(new SessionAICredentialSource(ctx.session()));
+        assistantPanel = new AssistantPanel(new AssistantContext(new SessionAICredentialSource(ctx.session()), new AssistantStorage()));
 
         content.add(new LoginPanel(ctx), Navigator.Screen.LOGIN.name());
         content.add(new PQCRegistryPanel(ctx), Navigator.Screen.MAIN.name());

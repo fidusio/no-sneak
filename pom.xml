@@ -126,6 +126,12 @@
                 <version>${xlogistx.datastore.version}</version>
             </dependency>
 
+            <dependency>
+                <groupId>org.zoxweb</groupId>
+                <artifactId>h2p-datastore</artifactId>
+                <version>${xlogistx.datastore.version}</version>
+            </dependency>
+
 
 
             <!--            <dependency>-->

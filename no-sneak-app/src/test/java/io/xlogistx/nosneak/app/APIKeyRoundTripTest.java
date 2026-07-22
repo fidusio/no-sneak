@@ -81,7 +81,7 @@ public class APIKeyRoundTripTest {
         SubjectAPIKey stored = firstApiKey(s);
         assertNotNull(stored, "the API key should exist before editing");
 
-        assertDoesNotThrow(() -> s.changeAPIDetails(stored, "new-label", "new desc", null, null, null, null), "changeAPIDetails should succeed");
+        assertDoesNotThrow(() -> s.changeAPIDetails(stored, "new-label", "new desc", null, null, null, null, null, null), "changeAPIDetails should succeed");
 
         // Re-read from the store to confirm the edit persisted, not just mutated in memory.
         SubjectAPIKey reloaded = firstApiKey(s);
@@ -101,7 +101,7 @@ public class APIKeyRoundTripTest {
 
         // Unlike storeAPIKey (which skips blank label/description), the edit path sets
         // whatever it's handed — so passing blanks clears the fields.
-        assertDoesNotThrow(() -> s.changeAPIDetails(stored, "", "", null, null, null, null), "clearing metadata should succeed");
+        assertDoesNotThrow(() -> s.changeAPIDetails(stored, "", "", null, null, null, null, null, null), "clearing metadata should succeed");
 
         SubjectAPIKey reloaded = firstApiKey(s);
         assertNotNull(reloaded);
@@ -112,10 +112,28 @@ public class APIKeyRoundTripTest {
     }
 
     @Test
+    public void changeApiDetailsUpdatesAppID() {
+        Session s = mockSession();
+        s.loginUsernamePassword("kailen", "Password1!".toCharArray());
+        assertDoesNotThrow(() -> s.storeAPIKey("label", "desc", null, null, s.generateAPIKey().getAPIKey(), null, null, null, null, false));
+
+        SubjectAPIKey stored = firstApiKey(s);
+        assertNotNull(stored);
+
+        assertDoesNotThrow(() -> s.changeAPIDetails(stored, "label", "desc", "example.com", "myapp123", null, null, null, null),
+                "changeAPIDetails should persist the app id");
+
+        SubjectAPIKey reloaded = firstApiKey(s);
+        assertNotNull(reloaded.getAppID(), "app id should be stored after edit");
+        assertEquals("example.com", reloaded.getAppID().getDomainID());
+        assertEquals("myapp123", reloaded.getAppID().getAppID());
+    }
+
+    @Test
     public void changeApiDetailsRejectedWhenSignedOut() {
         Session s = mockSession();
         SecurityException ex = assertThrows(SecurityException.class,
-                () -> s.changeAPIDetails(new SubjectAPIKey(), "label", "desc", null, null, null, null),
+                () -> s.changeAPIDetails(new SubjectAPIKey(), "label", "desc", null, null, null, null, null, null),
                 "editing metadata must be refused when no subject is signed in");
         assertEquals("Not Logged in", ex.getMessage());
     }

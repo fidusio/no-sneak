@@ -59,6 +59,10 @@
             <artifactId>xlogistx-datastore</artifactId>
         </dependency>
         <dependency>
+            <groupId>org.zoxweb</groupId>
+            <artifactId>h2p-datastore</artifactId>
+        </dependency>
+        <dependency>
             <groupId>io.xlogistx</groupId>
             <artifactId>ai-assistant</artifactId>
             <version>1.0.0</version>

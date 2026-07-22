@@ -11,7 +11,7 @@ public class AIRequest extends PropertyDAO {
     public enum Param implements GetNVConfig {
         MODEL(NVConfigManager.createNVConfig("model", "the ai model for the request", "Model", false, false, String.class)),
         SKILLS_PROMPT(NVConfigManager.createNVConfig("skills_prompt", "skills specific to the request", "SkillsPrompt", false, false, String.class)),
-        CONTENT(NVConfigManager.createNVConfig("content", "content to send to an api", "Content", false, false, String.class)),
+        CONTENT(NVConfigManager.createNVConfig("content", "content to send to an ai", "Content", false, false, String.class)),
         CORRELATION_ID(NVConfigManager.createNVConfig("correlation_id", "id to connect request with responses", "CorrelationID", false, false, String.class)),
         PROVIDER_SESSION_ID(NVConfigManager.createNVConfig("provider_session_id", "id to send to stateful ai for context", "ProviderSessionID", false, false, String.class)),
         MAX_TOKENS(NVConfigManager.createNVConfig("max_tokens", "the max number of tokens the request should use", "MaxTokens", false, false, Integer.class));

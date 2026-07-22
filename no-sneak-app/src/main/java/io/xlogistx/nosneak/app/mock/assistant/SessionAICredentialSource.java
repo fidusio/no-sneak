@@ -1,6 +1,7 @@
-package io.xlogistx.nosneak.app.mock.utility;
+package io.xlogistx.nosneak.app.mock.assistant;
 
 import agent.AICredentialSource;
+import io.xlogistx.nosneak.app.mock.utility.Session;
 import org.zoxweb.shared.security.APIKey;
 import org.zoxweb.shared.security.CredentialInfo;
 import org.zoxweb.shared.security.SubjectAPIKey;

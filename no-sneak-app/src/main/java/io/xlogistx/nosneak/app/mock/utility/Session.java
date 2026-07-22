@@ -414,6 +414,7 @@ public class Session {
      * and whether it appears in the AI assistant). Blanks clear the text fields.
      */
     public void changeAPIDetails(APIKey<String> apiKey, String label, String description,
+                                 String domainID, String appID,
                                  String provider, String baseURI, String authScheme, String headerName) throws SecurityException {
 
         if (principalID == null) throw new SecurityException("Not Logged in");
@@ -421,6 +422,14 @@ public class Session {
 
         if (label != null) apiKey.setName(label.trim());
         if (description != null) apiKey.setDescription(description.trim());
+
+        if (appID != null && !appID.isBlank() && domainID != null && !domainID.isBlank()) {
+            try {
+                apiKey.setAppID(new AppIDDefault(domainID.trim(), appID.trim()));
+            } catch (IllegalArgumentException e) {
+                throw new SecurityException("Invalid domain or app ID", e);
+            }
+        }
 
         apiKey.getProperties().build(APIKeyInfo.PROVIDER, provider == null ? "" : provider.trim());
         apiKey.getProperties().build(APIKeyInfo.BASE_URL, baseURI == null ? "" : baseURI.trim());

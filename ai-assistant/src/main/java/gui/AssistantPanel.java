@@ -1,24 +1,28 @@
 package gui;
 
-import agent.AICredentialSource;
-import agent.model.AIChat;
-import agent.model.AISkill;
+import agent.model.*;
 import io.xlogistx.gui.CardStack;
 import io.xlogistx.gui.ListSection;
 import io.xlogistx.gui.PanelBuilder;
 import org.zoxweb.shared.security.APIKey;
-import org.zoxweb.shared.util.NVGenericMap;
+
+import net.miginfocom.swing.MigLayout;
+import org.zoxweb.shared.util.NVEntity;
 
 import javax.swing.*;
-import javax.swing.text.html.ListView;
 import java.awt.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.InputEvent;
+import java.awt.event.KeyEvent;
 import java.util.ArrayList;
 import java.util.List;
+
+import static gui.Util.chatBubble;
 
 public class AssistantPanel extends JPanel {
 
     private final CardStack cardStack = new CardStack();
-    private final AICredentialSource credentials;
+    private final AssistantContext context;
 
     // Repopulated by refresh() so the list tracks login/logout (credentials() is empty until login).
     private final JPanel providersList = new JPanel();
@@ -26,14 +30,18 @@ public class AssistantPanel extends JPanel {
     private ListSection skillsList;
     private List<AISkill> skills = new ArrayList<>();
 
+    private JPanel transcript;
+    private JScrollPane transcriptScroll;
+    private JTextArea composer;
 
-    public AssistantPanel(AICredentialSource credentials) {
-        this.credentials = credentials;
+
+    public AssistantPanel(AssistantContext context) {
+        this.context = context;
         providersList.setLayout(new BoxLayout(providersList, BoxLayout.Y_AXIS));
 
         setLayout(new BorderLayout());
 
-        cardStack.add(new JScrollPane(buildPromptPanel()), "chat");
+        cardStack.add(buildPromptPanel(), "chat");
         cardStack.add(new JScrollPane(buildJobQueuePanel()), "queue");
         cardStack.add(new JScrollPane(buildHistoryPanel()), "history");
         cardStack.add(new JScrollPane(buildSkillsPanel()), "skills");
@@ -57,10 +65,99 @@ public class AssistantPanel extends JPanel {
         add(PanelBuilder.buildDefaultSplitPanel(cardStack.view(), chatButton, jobQueueButton, historyButton, skillsButton, providersButton));
 
         refreshProviders();
+
+        context.onChange("currentChat", e -> {
+
+        });
     }
 
     public JPanel buildPromptPanel() {
-        return new JPanel();
+        transcript = new JPanel(new MigLayout("wrap 1, insets 14, gapy 10", "[grow]"));
+
+        transcriptScroll = new JScrollPane(transcript,
+                JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        transcriptScroll.setBorder(BorderFactory.createEmptyBorder());
+        transcriptScroll.getVerticalScrollBar().setUnitIncrement(16);
+
+        composer = new JTextArea(1, 20);
+        composer.setLineWrap(true);
+        composer.setWrapStyleWord(true);
+        composer.setBorder(BorderFactory.createEmptyBorder(6, 8, 6, 8));
+
+        composer.getInputMap().put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "chat-send");
+        composer.getActionMap().put("chat-send", new AbstractAction() {
+            public void actionPerformed(ActionEvent e) {
+                onSend();
+            }
+        });
+        composer.getInputMap().put(
+                KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.SHIFT_DOWN_MASK), "insert-break");
+
+        JScrollPane composerScroll = new JScrollPane(composer,
+                JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        composerScroll.setPreferredSize(new Dimension(0, 44));
+
+        JButton send = new JButton("Send");
+        send.addActionListener(_ -> onSend());
+
+        JPanel composerBar = new JPanel(new BorderLayout(8, 0));
+        composerBar.setBorder(BorderFactory.createEmptyBorder(8, 14, 12, 14));
+        composerBar.add(composerScroll, BorderLayout.CENTER);
+        composerBar.add(send, BorderLayout.EAST);
+
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.add(transcriptScroll, BorderLayout.CENTER);
+        panel.add(composerBar, BorderLayout.SOUTH);
+        return panel;
+    }
+
+    private void refreshPrompt() {
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(this::refreshPrompt);
+            return;
+        }
+        transcript.removeAll();
+
+        AIChat chat = context.currentChat();
+        if (chat != null) {
+            for (NVEntity e : chat.getMessages().values()) {
+                AIMessage m = (AIMessage) e;
+                AIRequest req = m.getAIRequest();
+                if (req != null && req.getContent() != null) addMessage(req.getContent(), true);
+                AIResponse res = m.getAIResponse();
+                if (res != null && res.getContent() != null) addMessage(res.getContent(), false);
+            }
+        }
+
+        transcript.revalidate();
+        transcript.repaint();
+    }
+
+    private void onSend() {
+        String text = composer.getText().trim();
+        if (text.isEmpty()) return;
+        addMessage(text, true);
+        composer.setText("");
+        composer.requestFocusInWindow();
+        context.getCurrentChat().startTurn(composer.getText(), 100);
+    }
+
+    private void addMessage(String text, boolean user) {
+        JComponent bubble = chatBubble(text, user);
+        transcript.add(bubble, "wmax 78%, alignx " + (user ? "trailing" : "leading"));
+        transcript.revalidate();
+        transcript.repaint();
+
+        SwingUtilities.invokeLater(() -> {
+            JScrollBar v = transcriptScroll.getVerticalScrollBar();
+            v.setValue(v.getMaximum());
+        });
+    }
+
+    private void onResponse(String response) {
+        String text = response;
+        if (text.isEmpty()) return;
+        addMessage(text, false);
     }
 
     public JPanel buildJobQueuePanel() {
@@ -69,6 +166,7 @@ public class AssistantPanel extends JPanel {
 
     public JPanel buildHistoryPanel() {
         JPanel out = new JPanel();
+        //ListSection list = new ListSection();
         return out;
     }
 
@@ -104,7 +202,7 @@ public class AssistantPanel extends JPanel {
     private void refreshProviders() {
         providersList.removeAll();
 
-        List<APIKey<String>> creds = credentials.APIKeys();
+        List<APIKey<String>> creds = context.getCredentials().APIKeys();
         if (creds.isEmpty()) {
             providersList.add(new JLabel(
                     "No AI provider keys. Add one under Subject → Credentials and tick \"Use for AI assistant\"."));
