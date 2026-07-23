@@ -37,6 +37,7 @@
         <module>no-sneak-core</module>
         <module>no-sneak-app</module>
         <module>ai-assistant</module>
+        <module>ai-model</module>
 
     </modules>
 

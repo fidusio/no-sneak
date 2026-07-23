@@ -94,7 +94,7 @@ and wires `session().onAuthChange(...)` so that a successful auth navigates to `
 and a logout navigates back to `LOGIN`. The footer (left: `session: … | subject: …`,
 right: status) also subscribes to auth changes. Starts on the `LOGIN` screen.
 
-The `ASSISTANT` card is the `ai-assistant` module's `gui.AssistantPanel`, constructed with an
+The `ASSISTANT` card is the `ai-assistant` module's `io.xlogistx.nosneak.ai.assistant.AssistantPanel`, constructed with an
 `AssistantContext` — `new AssistantPanel(new AssistantContext(new SessionAICredentialSource(ctx.session()),
 new AssistantStorage(ctx.session().getDomainSecurityManager().getDataStore())))`. The context (from
 `agent.model`) holds the credential source, the chat repository (`AssistantStorage`, datastore-backed over
@@ -452,7 +452,7 @@ react on login/logout.
 
 ### `SessionAICredentialSource` (in `mock.assistant`)
 The adapter that lets the `ai-assistant` module reach NoSneak's keys without depending on
-`no-sneak-app` — it implements the module's `agent.AICredentialSource` over a `Session`. Its
+`no-sneak-app` — it implements the module's `io.xlogistx.nosneak.ai.AICredentialSource` over a `Session`. Its
 `APIKeys()` walks `getAllCredentialForUserByType(CredentialInfo.Type.API_KEY)` and returns **every**
 API key as a `List<APIKey<String>>` (the earlier AI-only filter and the per-credential `AICredential`
 adaptation are gone — the module now reads the metadata off each key's property bag itself, e.g.

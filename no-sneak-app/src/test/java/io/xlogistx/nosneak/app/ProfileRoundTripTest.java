@@ -1,6 +1,6 @@
 package io.xlogistx.nosneak.app;
 
-import io.xlogistx.nosneak.app.mock.utility.Session;
+import io.xlogistx.nosneak.app.ui.utility.Session;
 import org.junit.jupiter.api.Test;
 import org.zoxweb.server.security.DomainSecurityManagerDefault;
 import org.zoxweb.server.security.HashUtil;

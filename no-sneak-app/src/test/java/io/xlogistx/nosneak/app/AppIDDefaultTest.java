@@ -8,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * Directly exercises {@link AppIDDefault} and the filters wired into it — the same domain
  * (<code>FilterType.DOMAIN</code>) and app-id (<code>AppIDNameFilter</code>) validation
- * that {@link io.xlogistx.nosneak.app.mock.utility.Session#storeAPIKey} relies on when it
+ * that {@link io.xlogistx.nosneak.app.ui.utility.Session#storeAPIKey} relies on when it
  * attaches an AppID to a key. These tests pin the normalization and rejection behavior so
  * a change in the underlying zoxweb filters is caught here rather than surfacing as a
  * confusing failure in the API-key flow.

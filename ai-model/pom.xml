@@ -9,13 +9,14 @@
         <version>1.0.0</version>
     </parent>
 
-    <artifactId>ai-assistant</artifactId>
+    <artifactId>ai-model</artifactId>
 
     <properties>
         <maven.compiler.source>25</maven.compiler.source>
         <maven.compiler.target>25</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
+
     <dependencies>
         <dependency>
             <groupId>io.xlogistx</groupId>
@@ -24,12 +25,6 @@
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-api</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.xlogistx</groupId>
-            <artifactId>ai-model</artifactId>
-            <version>1.0.0</version>
-            <scope>compile</scope>
         </dependency>
     </dependencies>
 

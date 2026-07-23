@@ -8,7 +8,7 @@ external `AICredentialSource` (the NoSneak credential store) and keeps a list of
 has chosen to use.
 
 > **Implementation status.** This document is the UI design spec. Today the module ships
-> `gui.AssistantPanel` with `ListSection`-based **History**, **Skills**, and **Providers** lists (History
+> `io.xlogistx.nosneak.ai.assistant.AssistantPanel` with `ListSection`-based **History**, **Skills**, and **Providers** lists (History
 > over `AIChatRepository.getAllChats()` with new/open/delete wired, Providers over the
 > `AIProviderRegistrar`, Skills over `AssistantContext.getSkills()`) and a basic **Chat** page — a
 > scrolling transcript of message bubbles plus a multiline composer (Enter to send, Shift+Enter for a
@@ -16,7 +16,7 @@ has chosen to use.
 > appends a local bubble and does not yet call a provider or write to the chat model. It also ships the
 > `agent` backend **interfaces** and the **`agent.model` value DAOs** (`AIChat`, `AIMessage`, `AIRequest`,
 > `AIResponse`, `AISkill`, `AIModel`) with a JSON round-trip test. Per-panel state lives in
-> **`agent.model.AssistantContext`** — a Swing-free holder for the credential source, the
+> **`io.xlogistx.nosneak.ai.assistant.AssistantContext`** — a Swing-free holder for the credential source, the
 > `AIChatRepository`, an `AIProviderRegistrar`, and the current chat/credential/model, exposing
 > `newChat` / `openChat` / `deleteChat` and `PropertyChangeSupport` (`onChange`) so panels observe
 > selection changes. Chat persistence is now real: `AssistantStorage` is a datastore-backed
@@ -230,7 +230,7 @@ into the provider's system field, not concatenated in the model.
 - `AIProvider` (per credential, `extends GetName, GetDescription`) — `send(AIRequest)`,
   `asyncSend(AIRequest, AICallback)`, `getModelCatalog()`, plus `setAPIKey` / `getAPIKey` and
   `setHTTPAPICaller` / `getHTTPAPICaller` (the request goes out through zoxweb's `HTTPAPICaller`).
-  Concrete providers are meant to register into `agent.model.AIProviderRegistrar`
+  Concrete providers are meant to register into `model.io.xlogistx.nosneak.ai.AIProviderRegistrar`
   (`RegistrarMapDefault<String, AIProvider>`, keyed by `AIProvider::getName`). `AssistantContext.addProvider(APIKey)`
   is the intended registration hook (still an empty stub) and the Providers page now reads the registrar, so it
   stays empty until a concrete `AIProvider` exists and registers.
@@ -249,7 +249,7 @@ into the provider's system field, not concatenated in the model.
 - Skills persistence (`AISkillStore`) has been **removed for now** — the `AISkill` DAO remains, but there is
   no store interface. It returns when the Skills page is built.
 
-### State holder (`agent.model.AssistantContext`)
+### State holder (`io.xlogistx.nosneak.ai.assistant.AssistantContext`)
 
 Swing-free. Bundles the injected services (`AICredentialSource`, `AIChatRepository`) and an internally
 built `AIProviderRegistrar`, plus the current selection (`currentChat`, `currentCredential`,
