@@ -1,7 +1,11 @@
 package gui;
 
+import agent.AICredentialSource;
+import agent.AIException;
+import agent.AIProvider;
 import agent.model.*;
 import io.xlogistx.gui.CardStack;
+import io.xlogistx.gui.IconUtil;
 import io.xlogistx.gui.ListSection;
 import io.xlogistx.gui.PanelBuilder;
 import org.zoxweb.shared.security.APIKey;
@@ -27,8 +31,10 @@ public class AssistantPanel extends JPanel {
     // Repopulated by refresh() so the list tracks login/logout (credentials() is empty until login).
     private final JPanel providersList = new JPanel();
 
-    private ListSection skillsList;
-    private List<AISkill> skills = new ArrayList<>();
+    private ListSection<AISkill> skillsList;
+    private ListSection<AIChat> historyList;
+    private ListSection jobQueueList;
+    private ListSection<AIProvider> providerList;
 
     private JPanel transcript;
     private JScrollPane transcriptScroll;
@@ -37,7 +43,10 @@ public class AssistantPanel extends JPanel {
 
     public AssistantPanel(AssistantContext context) {
         this.context = context;
-        providersList.setLayout(new BoxLayout(providersList, BoxLayout.Y_AXIS));
+
+        for (APIKey<String> key : context.getCredentials().APIKeys()) {
+            context.addProvider(key);
+        }
 
         setLayout(new BorderLayout());
 
@@ -46,6 +55,7 @@ public class AssistantPanel extends JPanel {
         cardStack.add(new JScrollPane(buildHistoryPanel()), "history");
         cardStack.add(new JScrollPane(buildSkillsPanel()), "skills");
         cardStack.add(new JScrollPane(buildProvidersPanel()), "providers");
+        cardStack.add(new JScrollPane(buildScreenCapturePanel()), "capture");
 
         JToggleButton chatButton = new JToggleButton("Chat");
         chatButton.addActionListener(_ -> cardStack.show("chat"));
@@ -62,9 +72,10 @@ public class AssistantPanel extends JPanel {
         JToggleButton providersButton = new JToggleButton("Providers");
         providersButton.addActionListener(_ -> cardStack.show("providers"));
 
-        add(PanelBuilder.buildDefaultSplitPanel(cardStack.view(), chatButton, jobQueueButton, historyButton, skillsButton, providersButton));
+        JToggleButton captureButton = new JToggleButton("Capture");
+        captureButton.addActionListener(_ -> cardStack.show("capture"));
 
-        refreshProviders();
+        add(PanelBuilder.buildDefaultSplitPanel(cardStack.view(), chatButton, captureButton, jobQueueButton, historyButton, skillsButton, providersButton));
 
         context.onChange("currentChat", e -> {
 
@@ -73,6 +84,28 @@ public class AssistantPanel extends JPanel {
 
     public JPanel buildPromptPanel() {
         transcript = new JPanel(new MigLayout("wrap 1, insets 14, gapy 10", "[grow]"));
+
+        AIChat chat = context.currentChat();
+        String titleText = (chat != null && chat.getTitle() != null) ? chat.getTitle() : "Default chat";
+        JLabel title = PanelBuilder.title(titleText);
+
+        JComboBox<String> modelSelector = new JComboBox<>();
+        if (chat != null) {
+            AIProvider provider = context.getProviders().lookup(chat.getProvider());
+            if (provider != null) {
+                try {
+                    for (AIModel m : provider.getModelCatalog().models()) {
+                        modelSelector.addItem(m.getModelID());
+                    }
+                } catch (AIException e) {
+                }
+            }
+            modelSelector.setSelectedItem(chat.getModel());
+        }
+
+        JPanel titlePanel = new JPanel(new FlowLayout());
+        titlePanel.add(title);
+        titlePanel.add(modelSelector);
 
         transcriptScroll = new JScrollPane(transcript,
                 JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
@@ -106,9 +139,68 @@ public class AssistantPanel extends JPanel {
         composerBar.add(send, BorderLayout.EAST);
 
         JPanel panel = new JPanel(new BorderLayout());
+        panel.add(titlePanel, BorderLayout.NORTH);
         panel.add(transcriptScroll, BorderLayout.CENTER);
         panel.add(composerBar, BorderLayout.SOUTH);
         return panel;
+    }
+
+
+    public JPanel buildJobQueuePanel() {
+        //jobQueueList = ListSection.of().build();
+
+        return jobQueueList;
+    }
+
+    public JPanel buildHistoryPanel() {
+        historyList = ListSection.of(() -> context.getChats().getAllChats())
+                .title("History")
+                .addButton("+ New Prompt", context::newChat)
+                .label(AIChat::getTitle)
+                .onEdit(c -> () -> context.openChat(c.getReferenceID()))
+                .onRemove(c -> () -> context.deleteChat(c))
+                .emptyText("No chats yet")
+                .build();
+
+        return historyList;
+    }
+
+    public JPanel buildSkillsPanel() {
+        skillsList = ListSection.of(context::getSkills)
+                .title("Skills")
+                .addButton("+ New Skill", this::onAddSkill)
+                .label(AISkill::getName)
+                .onEdit(null)
+                .onRemove(null)
+                .emptyText("No Skills yet")
+                .build();
+
+        return skillsList;
+    }
+
+    public JPanel buildProvidersPanel() {
+        providerList = ListSection.of(
+                        () -> new ArrayList<>(context.getProviders().getCacheMap().values())
+                )
+                .title("Providers")
+                .label(AIProvider::getName)
+                .emptyText("No providers")
+                .action(new ListSection.RowAction<>(new IconUtil.RefreshIcon(16), "Refresh models",
+                        p -> () -> {
+                            try {
+                                p.getModelCatalog().refresh();
+                            } catch (AIException e) {
+                            }
+                        }))
+                .build();
+
+        return providerList;
+    }
+
+    public JPanel buildScreenCapturePanel() {
+        JPanel out = new JPanel();
+
+        return out;
     }
 
     private void refreshPrompt() {
@@ -139,7 +231,6 @@ public class AssistantPanel extends JPanel {
         addMessage(text, true);
         composer.setText("");
         composer.requestFocusInWindow();
-        context.getCurrentChat().startTurn(composer.getText(), 100);
     }
 
     private void addMessage(String text, boolean user) {
@@ -160,68 +251,7 @@ public class AssistantPanel extends JPanel {
         addMessage(text, false);
     }
 
-    public JPanel buildJobQueuePanel() {
-        return new JPanel();
-    }
-
-    public JPanel buildHistoryPanel() {
-        JPanel out = new JPanel();
-        //ListSection list = new ListSection();
-        return out;
-    }
-
-    public JPanel buildSkillsPanel() {
-        skillsList = new ListSection("Skills", "+ Add skill", null, this::skillEntries);
-        return skillsList;
-    }
-
-
-    private List<ListSection.Entry> skillEntries() {
-        List<ListSection.Entry> out = new ArrayList<>();
-
-        for (AISkill skill : skills) {
-            out.add(new ListSection.Entry(skill.getName(), null, null));
-        }
-
-        return out;
-    }
-
     private void onAddSkill() {
 
-    }
-
-    public JPanel buildProvidersPanel() {
-        JPanel panel = new JPanel(new BorderLayout());
-        panel.add(providersList, BorderLayout.NORTH);   // hug the top
-        return panel;
-    }
-
-    /**
-     * Rebuilds the provider list from the current credentials. Never renders the secret.
-     */
-    private void refreshProviders() {
-        providersList.removeAll();
-
-        List<APIKey<String>> creds = context.getCredentials().APIKeys();
-        if (creds.isEmpty()) {
-            providersList.add(new JLabel(
-                    "No AI provider keys. Add one under Subject → Credentials and tick \"Use for AI assistant\"."));
-        } else {
-            for (APIKey<String> c : creds) {
-                providersList.add(new JLabel(c.getName() + "  —  " + c.getProperties().getValue("provider") + "  @  " + c.getProperties().getValue("base_url")));
-            }
-        }
-
-        providersList.revalidate();
-        providersList.repaint();
-    }
-
-    public void refresh() {
-        if (SwingUtilities.isEventDispatchThread()) refreshProviders();
-        else SwingUtilities.invokeLater(this::refreshProviders);
-    }
-
-    public void cleanup() {
-        refresh();   // logged out → credentials() is empty → clears the list
     }
 }

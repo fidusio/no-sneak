@@ -5,6 +5,7 @@ import io.xlogistx.gui.IconUtil;
 import io.xlogistx.gui.*;
 import io.xlogistx.nosneak.app.mock.utility.*;
 import net.miginfocom.swing.MigLayout;
+import org.zoxweb.shared.crypto.CIPassword;
 import org.zoxweb.shared.data.DataConst;
 import org.zoxweb.shared.security.APIKey;
 import org.zoxweb.shared.security.CredentialInfo;
@@ -17,7 +18,6 @@ import javax.swing.*;
 import java.awt.*;
 import java.awt.datatransfer.StringSelection;
 import java.util.*;
-import java.util.List;
 
 import static io.xlogistx.gui.PanelBuilder.*;
 
@@ -73,10 +73,10 @@ public class SubjectPanel extends JPanel {
             A_STATE = "state", A_POSTAL = "postal", A_COUNTRY = "country";
 
     // ---- Data-driven sections (refreshed on auth) + detail card switching ----
-    private ListSection identifiers;
-    private ListSection addressSection;
-    private ListSection passwordSection;
-    private ListSection apiKeySection;
+    private ListSection<PrincipalIdentifier> identifiers;
+    private ListSection<NVGenericMap> addressSection;
+    private ListSection<CIPassword> passwordSection;
+    private ListSection<SubjectAPIKey> apiKeySection;
     private final CardStack profileCards = new CardStack();
     private final CardStack credentialCards = new CardStack();
 
@@ -148,10 +148,22 @@ public class SubjectPanel extends JPanel {
     }
 
     private JPanel buildProfile() {
-        identifiers = new ListSection("Identifiers", "+ Add identifier",
-                this::onAddIdentifier, this::identifierEntries);
-        addressSection = new ListSection("Addresses", "+ Add address",
-                this::onAddAddress, this::addressEntries);
+
+        identifiers = ListSection.of(() -> Arrays.asList(ctx.session().getAllPrincipalIDForLoggedInUser()))
+                .title("Identifiers")
+                .addButton("+ Add identifier", this::onAddIdentifier)
+                .label(PrincipalIdentifier::getPrincipalID)
+                .onRemove(p -> () -> onRemoveIdentifier(p))
+                .build();
+
+        addressSection = ListSection.of(() -> ctx.session().getAllAddresses())
+                .title("Addresses")
+                .addButton("+ Add address", this::onAddAddress)
+                .label(this::addressLabel)
+                .onEdit(p -> () -> onEditAddress(p))
+                .onRemove(p -> () -> onRemoveAddress(p))
+                .emptyText("No addresses yet")
+                .build();
 
         saveProfile.addActionListener(_ -> onSaveProfile());
 
@@ -188,14 +200,6 @@ public class SubjectPanel extends JPanel {
         dob.setText(p.get("dob"));
     }
 
-    private List<ListSection.Entry> identifierEntries() {
-        List<ListSection.Entry> out = new ArrayList<>();
-        for (PrincipalIdentifier p : ctx.session().getAllPrincipalIDForLoggedInUser()) {
-            out.add(new ListSection.Entry(p.getPrincipalID(), null, () -> onRemoveIdentifier(p)));
-        }
-        return out;
-    }
-
     private void onAddIdentifier() {
         String id = JOptionPane.showInputDialog(this, "New email / username / handle:");
         if (id == null || id.isBlank()) return;
@@ -214,16 +218,6 @@ public class SubjectPanel extends JPanel {
                 () -> identifiers.refresh());
     }
 
-    private List<ListSection.Entry> addressEntries() {
-        List<ListSection.Entry> out = new ArrayList<>();
-
-        for (NVGenericMap addr : ctx.session().getAllAddresses()) {
-            out.add(new ListSection.Entry(addressLabel(addr), () -> showEditAddress(addr), () -> onDeleteAddress(addr)));
-        }
-        if (out.isEmpty()) out.add(new ListSection.Entry("No Addresses", null, null));
-        return out;
-    }
-
     /**
      * Reads a string field from an address map, empty string when unset.
      */
@@ -235,7 +229,7 @@ public class SubjectPanel extends JPanel {
     /**
      * Row label: the address's own label, else a "street, city" summary, else "Address".
      */
-    private static String addressLabel(NVGenericMap a) {
+    private String addressLabel(NVGenericMap a) {
         String label = field(a, A_LABEL);
         if (!label.isBlank()) return label;
         String s = field(a, A_STREET).trim(), c = field(a, A_CITY).trim();
@@ -255,7 +249,7 @@ public class SubjectPanel extends JPanel {
 
     }
 
-    private void onDeleteAddress(NVGenericMap addr) {
+    private void onRemoveAddress(NVGenericMap addr) {
         int ok = JOptionPane.showConfirmDialog(this,
                 "Delete this address? This permanently removes it.",
                 "Delete address", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
@@ -297,7 +291,7 @@ public class SubjectPanel extends JPanel {
     /**
      * Opens the detail card populated from {@code address} (null = a blank, new address).
      */
-    private void showEditAddress(NVGenericMap address) {
+    private void onEditAddress(NVGenericMap address) {
         selectedAddress = address;
         addrLabel.setText(field(address, A_LABEL));
         addrStreet.setText(field(address, A_STREET));
@@ -359,8 +353,24 @@ public class SubjectPanel extends JPanel {
     }
 
     private JPanel buildCredentialList() {
-        passwordSection = new ListSection("Password", null, null, this::passwordEntries);
-        apiKeySection = new ListSection("API keys", "+ Add API Key", this::addCredentialPage, this::apiKeyEntries);
+
+        passwordSection = ListSection.of(() -> Arrays.stream(ctx.session().getAllCredentialForUserByType(CredentialInfo.Type.PASSWORD)).map(CIPassword.class::cast).toList())
+                .title("Password")
+                .label(_ -> "Password")
+                .onEdit(_ -> () -> credentialCards.show("changePassword"))
+                .build();
+
+        apiKeySection = ListSection.of(() -> Arrays.stream(ctx.session().getAllCredentialForUserByType(CredentialInfo.Type.API_KEY)).map(SubjectAPIKey.class::cast).toList())
+                .title("API keys")
+                .addButton("+ Add API Key", this::onAddAPIKey)
+                .label(p -> {
+                    String label = p.getName();
+                    return (label == null || label.isBlank()) ? "API key" : "API key — " + label;
+                })
+                .onEdit(p -> () -> onEditAPIKey(p))
+                .onRemove(p -> () -> onDeleteAPIKey(p))
+                .emptyText("No api keys yet")
+                .build();
 
         JLabel header = PanelBuilder.title("Credentials");
         JLabel desc = new JLabel("One password, plus any number of API keys.");
@@ -384,37 +394,9 @@ public class SubjectPanel extends JPanel {
         return p;
     }
 
-    private List<ListSection.Entry> passwordEntries() {
-        List<ListSection.Entry> out = new ArrayList<>();
-
-        for (CredentialInfo ci : ctx.session().getAllCredentialForLoggedInUser()) {
-            if (ci.getCredentialType() == CredentialInfo.Type.PASSWORD) {
-                out.add(new ListSection.Entry("Password",
-                        () -> credentialCards.show("changePassword"), null));
-            }
-        }
-        if (out.isEmpty()) out.add(new ListSection.Entry("No password set", null, null));
-        return out;
-    }
-
-    private List<ListSection.Entry> apiKeyEntries() {
-        List<ListSection.Entry> out = new ArrayList<>();
-
-        for (CredentialInfo ci : ctx.session().getAllCredentialForLoggedInUser()) {
-            if (ci.getCredentialType() != CredentialInfo.Type.PASSWORD) {
-                SubjectAPIKey key = (SubjectAPIKey) ci;
-                String label = key.getName();
-                String display = (label == null || label.isBlank()) ? "API key" : "API key — " + label;
-                out.add(new ListSection.Entry(display, () -> showEditAPIKey(key), () -> deleteAPIKey(key)));
-            }
-        }
-        if (out.isEmpty()) out.add(new ListSection.Entry("No API keys yet", null, null));
-        return out;
-    }
-
     // ============================ Add API key ============================
 
-    private void addCredentialPage() {
+    private void onAddAPIKey() {
 
         APIKey<String> generated;
         try {
@@ -666,7 +648,7 @@ public class SubjectPanel extends JPanel {
         );
     }
 
-    private void showEditAPIKey(SubjectAPIKey key) {
+    private void onEditAPIKey(SubjectAPIKey key) {
         selectedKey = key;
 
         // External (third-party) keys aren't issued by us, so they can't be rotated.
@@ -757,13 +739,13 @@ public class SubjectPanel extends JPanel {
                 () -> ctx.session().rotateAPIKey(selectedKey),
                 () -> {
                     // rotate mutates selectedKey in place; re-populate so the new secret shows.
-                    showEditAPIKey(selectedKey);
+                    onEditAPIKey(selectedKey);
                     apiKeySection.refresh();
                     JOptionPane.showMessageDialog(this, "Key rotated. Copy the new secret now.");
                 });
     }
 
-    private void deleteAPIKey(APIKey<String> key) {
+    private void onDeleteAPIKey(SubjectAPIKey key) {
         if (key == null) return;
         int ok = JOptionPane.showConfirmDialog(this,
                 "Delete this key? This permanently removes it.",

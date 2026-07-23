@@ -23,7 +23,7 @@ public class AppShell extends JPanel {
         setLayout(new BorderLayout());
         this.ctx = ctx;
 
-        assistantPanel = new AssistantPanel(new AssistantContext(new SessionAICredentialSource(ctx.session()), new AssistantStorage()));
+        assistantPanel = new AssistantPanel(new AssistantContext(new SessionAICredentialSource(ctx.session()), new AssistantStorage(ctx.session().getDomainSecurityManager().getDataStore())));
 
         content.add(new LoginPanel(ctx), Navigator.Screen.LOGIN.name());
         content.add(new PQCRegistryPanel(ctx), Navigator.Screen.MAIN.name());
@@ -39,14 +39,8 @@ public class AppShell extends JPanel {
         ctx.session().onAuthChange(e -> {
             if ((boolean) e.getNewValue()) {
                 ctx.nav().show(Navigator.Screen.SUBJECT);
-
-                // load this subject's AI provider keys into the assistant
-                assistantPanel.refresh();
             } else {
                 ctx.nav().show(Navigator.Screen.LOGIN);
-
-                // reset ai assistant panel
-                assistantPanel.cleanup();
             }
         });
 

@@ -48,6 +48,10 @@ public class Session {
     private String principalID;
     private SubjectIdentifier subjectIdentifier;
 
+    public DomainSecurityManager getDomainSecurityManager() {
+        return domainSecurityManager;
+    }
+
     public enum APIKeyInfo implements GetName {
         PROVIDER("provider"),
         BASE_URL("base-url"),

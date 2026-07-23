@@ -5,6 +5,10 @@ import org.zoxweb.shared.util.*;
 
 public class AIChat extends PropertyDAO {
 
+    public String getProvider() {
+        return "not implemented";
+    }
+
     public enum Param implements GetNVConfig {
         PROVIDER_SESSION_ID(NVConfigManager.createNVConfig("provider_session_id", "provider-issued handle to resume server-side context on a stateful api; null until a response supplies it", "ProviderSessionID", false, true, String.class)),
         MODEL(NVConfigManager.createNVConfig("model", "default model id", "Model", false, true, String.class)),

@@ -26,7 +26,9 @@ and screen flow ahead of binding the real PQC scanner and security backend.
 > `BackgroundTask.runCatching` (failures surface as a dialog from the thrown `SecurityException`).
 > Row actions render as **`IconUtil` SVG icons** (edit/delete/refresh/copy/visible/search/back). Still stubs:
 > **passkey** (login/register are empty `void` no-ops), the security-manager admin tables, the
-> scanner/file-sharing screens, and the AI assistant's Chat/History/Skills pages (only Providers is wired).
+> scanner/file-sharing screens, the AI assistant's Job-queue page, and the Chat send path (the History,
+> Skills, and Providers pages now render via `ListSection`, though Providers stays empty until a provider
+> registers and Skills has no store behind it).
 
 ## Layout
 
@@ -44,7 +46,7 @@ io.xlogistx.nosneak.app
     ├── MenuBarFactory.java        ← builds the application menu bar
     ├── assistant/                 ← app-side bindings for the ai-assistant module
     │   ├── SessionAICredentialSource.java ← exposes the subject's API keys (implements AICredentialSource.APIKeys())
-    │   └── AssistantStorage.java  ← AIChatRepository impl (no-op stub; to be datastore-backed)
+    │   └── AssistantStorage.java  ← AIChatRepository impl, datastore-backed (save/get/getAll/delete over the H2P APIDataStore)
     └── utility/
         ├── AppContext.java        ← per-app service locator (Session + Navigator)
         ├── Session.java           ← auth + identifiers + credentials + profile + addresses (over DomainSecurityManager)
@@ -94,13 +96,13 @@ right: status) also subscribes to auth changes. Starts on the `LOGIN` screen.
 
 The `ASSISTANT` card is the `ai-assistant` module's `gui.AssistantPanel`, constructed with an
 `AssistantContext` — `new AssistantPanel(new AssistantContext(new SessionAICredentialSource(ctx.session()),
-new AssistantStorage()))`. The context (from `agent.model`) holds the credential source, the chat
-repository (`AssistantStorage`, a no-op stub for now), an internally built `AIProviderRegistrar`, and the
-current chat/credential/model selection (with `PropertyChangeSupport` for the panels to observe). Because
-the panel is built once (before login), `AppShell` calls `assistantPanel.refresh()` on login (the
-credential source is empty until then) and `assistantPanel.cleanup()` on logout (which re-runs the
-refresh, clearing the list). This is the **only** coupling point — the dependency runs
-`no-sneak-app → ai-assistant`, never the reverse.
+new AssistantStorage(ctx.session().getDomainSecurityManager().getDataStore())))`. The context (from
+`agent.model`) holds the credential source, the chat repository (`AssistantStorage`, datastore-backed over
+the same H2P `APIDataStore` the security manager uses), an internally built `AIProviderRegistrar`, and the
+current chat/credential/model selection (with `PropertyChangeSupport` for the panels to observe). The panel
+is built once at construction; its `ListSection` pages (History/Skills/Providers) read from the context
+through suppliers, and the credential/chat getters return empty until login. This is the **only** coupling
+point — the dependency runs `no-sneak-app → ai-assistant`, never the reverse.
 
 ### `LoginPanel`
 The authentication screen, registered as the `LOGIN` card. Built on a `GridBagLayout`
@@ -454,9 +456,8 @@ The adapter that lets the `ai-assistant` module reach NoSneak's keys without dep
 `APIKeys()` walks `getAllCredentialForUserByType(CredentialInfo.Type.API_KEY)` and returns **every**
 API key as a `List<APIKey<String>>` (the earlier AI-only filter and the per-credential `AICredential`
 adaptation are gone — the module now reads the metadata off each key's property bag itself, e.g.
-`getProperties().getValue("provider")`). Returns an empty list when signed out, so
-`AssistantPanel.refresh()` (called by `AppShell` on login) shows the provider list only for the
-signed-in subject. This is the single point where the app meets the AI-assistant module; the
+`getProperties().getValue("provider")`). Returns an empty list when signed out, so the assistant only
+surfaces the signed-in subject's keys. This is the single point where the app meets the AI-assistant module; the
 dependency is one-way (`no-sneak-app → ai-assistant`).
 
 ### `Navigator`

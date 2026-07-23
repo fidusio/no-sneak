@@ -15,5 +15,5 @@ public interface AIChatRepository {
 
     List<AIChat> getAllChats();
 
-    void delete(String refID);
+    void delete(AIChat chat);
 }

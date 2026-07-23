@@ -44,7 +44,8 @@ class AssistantPanelTest {
         }
 
         @Override
-        public void delete(String refID) {
+        public void delete(AIChat chat) {
+
         }
     }
 

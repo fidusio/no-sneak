@@ -2,10 +2,12 @@ package agent.model;
 
 import agent.AIChatRepository;
 import agent.AICredentialSource;
+import agent.AIProvider;
 import org.zoxweb.shared.security.APIKey;
 
 import java.beans.PropertyChangeListener;
 import java.beans.PropertyChangeSupport;
+import java.util.List;
 
 public class AssistantContext {
     private final AICredentialSource credentials;
@@ -15,6 +17,7 @@ public class AssistantContext {
     private AIChat currentChat;
     private APIKey<String> currentCredential;
     private String currentModel;
+    private List<AISkill> skills;
 
     private final PropertyChangeSupport pcs = new PropertyChangeSupport(this);
 
@@ -30,8 +33,12 @@ public class AssistantContext {
     }
 
     public void newChat() {
-        currentChat = new AIChat("New chat");
+        currentChat = chats.save(new AIChat("New chat"));
         pcs.firePropertyChange("currentChat", null, currentChat);
+    }
+
+    public void deleteChat(AIChat chat) {
+        chats.delete(chat);
     }
 
     public AIChat currentChat() {
@@ -54,8 +61,8 @@ public class AssistantContext {
         return providers;
     }
 
-    public AIChat getCurrentChat() {
-        return currentChat;
+    public void addProvider(APIKey<String> key) {
+
     }
 
     public APIKey<String> getCurrentCredential() {
@@ -64,5 +71,25 @@ public class AssistantContext {
 
     public String getCurrentModel() {
         return currentModel;
+    }
+
+    public void setCurrentChat(AIChat currentChat) {
+        this.currentChat = currentChat;
+    }
+
+    public void setCurrentCredential(APIKey<String> currentCredential) {
+        this.currentCredential = currentCredential;
+    }
+
+    public void setCurrentModel(String currentModel) {
+        this.currentModel = currentModel;
+    }
+
+    public List<AISkill> getSkills() {
+        return skills;
+    }
+
+    public void setSkills(List<AISkill> skills) {
+        this.skills = skills;
     }
 }

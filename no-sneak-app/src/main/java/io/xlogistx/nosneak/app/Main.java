@@ -74,8 +74,6 @@ public class Main {
 
             setContentPane(new AppShell(ctx));
         }
-
-
     }
 
     public static DomainSecurityManager createDomainSecManager(APIDataStore<?, ?> dataStore) {
