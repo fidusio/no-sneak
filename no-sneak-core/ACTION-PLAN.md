@@ -278,6 +278,11 @@ priority order). `matchPorts(true)` (default, bundled/dispatcher path) runs only
 declared `ports` include the target port; `matchPorts(false)` runs **every** provided probe of
 the matching transport regardless of declared ports (for nonstandard ports).
 
+The async `check(...)` callback is a `CallableConsumer<ProbeResult>` (zoxweb) — `accept(result)`
+gets the identifying/best result, and `exception(t)` **captures** a probe-launch exception (the
+check still advances to the remaining probes). `checkBlocking(...)` wires this to a
+`CompletableFuture` via a `CallableConsumerTask`.
+
 CLI: `java … ProbeChecker <host> <port> [timeoutSec] [probe1.json probe2.json …]`. Integer args
 = timeout; other args = probe JSON **files** (filesystem). With files given it runs them ALL
 (`matchPorts=false`); with none it uses the bundled probes (port-matched). No rebuild needed to
