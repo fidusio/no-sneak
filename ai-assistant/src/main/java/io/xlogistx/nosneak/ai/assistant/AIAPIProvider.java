@@ -25,9 +25,7 @@ public class AIAPIProvider implements AIProvider {
         this.type = type;
 
         api = AIAPIBuilder.createAIAPI(type, null, key.getAPIKey());
-
         modelCatalog = new ModelCatalog();
-        modelCatalog.refresh();
     }
 
     @Override

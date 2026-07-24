@@ -21,7 +21,10 @@ scanner and file-sharing screens are still placeholders.
 > `BackgroundTask.runCatching` (failures surface as a dialog from the thrown `SecurityException`).
 >
 > **Still stubbed:** passkey (login/register are empty `void` no-ops), the security-manager admin
-> tables, the scanner/file-sharing screens, the AI assistant's Job-queue page and Chat send path.
+> tables, the scanner/file-sharing screens, and — in the AI assistant — the Job-queue, Skills, and
+> Screen-capture pages, chat message persistence, and the multi-model compare path. (The
+> assistant's provider discovery and single-provider chat send **are** wired now — see
+> `ai-assistant/CLAUDE.md`.)
 
 ## Layout
 

@@ -11,13 +11,15 @@ Two packages:
   conversation model), plus `AIProviderRegistrar`.
 - **`io.xlogistx.nosneak.ai`** — the service interfaces (no implementations) and `AIException`.
 
-> **Status.** Interfaces + DAOs only. A JSON round-trip test
+> **Status.** Interfaces + DAOs only in *this* module. A JSON round-trip test
 > (`io.xlogistx.nosneak.ai.model.AIChatRoundTripTest`) guards the DAO (de)serialization
-> invariants. There is **no** concrete `AIProvider`, `AIModelCatalog`, or `AIRunner` yet. The
-> one real implementation of any interface lives outside this module: `no-sneak-app`'s
-> `AssistantStorage` (an `AIChatRepository` over the app's H2P `APIDataStore`). Concrete
-> providers are expected to register into an `AIProviderRegistrar` keyed by
-> `AIProvider::getName`.
+> invariants. The concrete implementations all live **outside** this module: `ai-assistant`'s
+> **`AIAPIProvider`** (an `AIProvider` + inner `AIModelCatalog`, wrapping
+> `io.xlogistx.api.ai.AIAPI` built by `AIAPIBuilder`, resolving provider type from the key's
+> `provider` property) and `no-sneak-app`'s **`AssistantStorage`** (an `AIChatRepository` over
+> the app's H2P `APIDataStore`). There is still **no** `AIRunner` implementation (the compare
+> fan-out). Providers register into an `AIProviderRegistrar` keyed by `AIProvider::getName`
+> (which returns the credential's name).
 
 ---
 
@@ -29,10 +31,11 @@ The transcript is **pair-based**, not role-tagged:
 AIChat  ──has many──▶  AIMessage  ──is──▶  { AIRequest, AIResponse }
 ```
 
-- **`AIChat`** — one conversation. Holds an ordered list of `AIMessage`, a default `model`, a
-  `systemPrompt` (the assistant's persistent identity), and a `providerSessionID`. Its own
-  identity is the inherited `referenceID` (what `AIChatRepository` keys on) — **not** a
-  hand-rolled id. Helpers: `startTurn(userInput, maxTokens)` (appends a request-only message)
+- **`AIChat`** — one conversation. Holds an ordered list of `AIMessage`, a default `model`, the
+  bound `provider` (the provider/key name it is locked to), a `systemPrompt` (the assistant's
+  persistent identity), and a `providerSessionID`. Its own identity is the inherited
+  `referenceID` (what `AIChatRepository` keys on) — **not** a hand-rolled id. Helpers:
+  `startTurn(userInput, maxTokens)` (appends a request-only message), `addMessage(AIMessage)`,
   and `toRequest(userInput, maxTokens)`.
 - **`AIMessage`** — one exchange = one provider round-trip: an `AIRequest` plus the
   `AIResponse` it produced. **Roles are implicit in the pair** (request = user side, response =
@@ -65,9 +68,11 @@ drops the nested entity on JSON round-trip.
 
 - **`AIProvider`** (per credential, `extends GetName, GetDescription`) — `send(AIRequest)`,
   `asyncSend(AIRequest, AICallback)`, `getModelCatalog()`, plus `setAPIKey` / `getAPIKey` and
-  `setHTTPAPICaller` / `getHTTPAPICaller` (the request goes out through zoxweb's
-  `HTTPAPICaller`). Concrete providers register into `io.xlogistx.nosneak.ai.model.AIProviderRegistrar`
-  (`RegistrarMapDefault<String, AIProvider>`, keyed by `AIProvider::getName`).
+  `setHTTPAPICaller` / `getHTTPAPICaller` (the request goes out through
+  `io.xlogistx.api.ai.AIAPI`, built by `AIAPIBuilder`). Concrete providers register into
+  `io.xlogistx.nosneak.ai.model.AIProviderRegistrar` (`RegistrarMapDefault<String, AIProvider>`,
+  keyed by `AIProvider::getName`). The one implementation is `ai-assistant`'s `AIAPIProvider`;
+  `asyncSend` is still an empty stub there (only synchronous `send` is wired).
 - **`AIRunner`** — `send(AIRequest, AIProvider...)` → an `AICallbackCollection` for the
   fan-out (compare).
 - **`AICallbackCollection`** — aggregates a multi-provider run: `size()`, `completed()` /

@@ -7,25 +7,48 @@ The assistant owns **no** API keys and adds **no** AI connections of its own. It
 external `AICredentialSource` (the NoSneak credential store) and keeps a list of the ones the subject
 has chosen to use.
 
-> **Implementation status.** This document is the UI design spec. Today the module ships
-> `io.xlogistx.nosneak.ai.assistant.AssistantPanel` with `ListSection`-based **History**, **Skills**, and **Providers** lists (History
-> over `AIChatRepository.getAllChats()` with new/open/delete wired, Providers over the
-> `AIProviderRegistrar`, Skills over `AssistantContext.getSkills()`) and a basic **Chat** page — a
-> scrolling transcript of message bubbles plus a multiline composer (Enter to send, Shift+Enter for a
-> newline) with a title + model-selector header. The Chat page is still **visual only** on send: Send
-> appends a local bubble and does not yet call a provider or write to the chat model. The backend
-> **interfaces** (`io.xlogistx.nosneak.ai`) and the **value DAOs** (`io.xlogistx.nosneak.ai.model`:
-> `AIChat`, `AIMessage`, `AIRequest`, `AIResponse`, `AISkill`, `AIModel`) now live in the separate
-> **`ai-model`** module (this module depends on it) — see `ai-model/CLAUDE.md`. Per-panel state lives in
-> **`io.xlogistx.nosneak.ai.assistant.AssistantContext`** — a Swing-free holder for the credential source, the
-> `AIChatRepository`, an `AIProviderRegistrar`, and the current chat/credential/model, exposing
-> `newChat` / `openChat` / `deleteChat` and `PropertyChangeSupport` (`onChange`) so panels observe
-> selection changes. Chat persistence is now real: `AssistantStorage` is a datastore-backed
-> `AIChatRepository` over the app's H2P `APIDataStore`. Still target-only: the Job queue page, the Chat
-> send path, and every provider implementation — the Providers list stays empty until a provider registers
-> (`AssistantContext.addProvider` is a stub), and Skills has no store behind it. `no-sneak-app` builds an
-> `AssistantContext(SessionAICredentialSource, AssistantStorage(dataStore))` and passes it to
-> `AssistantPanel` on its `ASSISTANT` screen. The dependency is one-way (`no-sneak-app → ai-assistant`).
+> **Implementation status.** This document is the UI design spec; the sidebar labels have drifted
+> from it (`AssistantPanel` currently uses **Chat / Capture / Job Queue / History / Skills /
+> Providers** toggle buttons rather than the nav table in §1). What is wired today:
+>
+> - **Providers are real.** `AIAPIProvider` (this module) is a concrete `AIProvider` wrapping
+>   `io.xlogistx.api.ai.AIAPI` (built by `AIAPIBuilder`), resolving the provider type from the
+>   credential's `provider` property (`openai` / `gemini`+`google` / `anthropic`+`claude` /
+>   `grok`+`xai`). `AssistantContext.addProvider(APIKey)` builds one and registers it in the
+>   `AIProviderRegistrar` (keyed by the credential name). `AssistantPanel.reloadProviders()` runs
+>   on login (from `no-sneak-app`'s `onAuthChange`), off the EDT, adding a provider per key and
+>   then discovering each one's models via `AIModelCatalog.refresh()`. The Providers page lists
+>   the registered providers with a per-row **Refresh** (`onRefreshProvider`, wired).
+> - **Model discovery drives the pickers.** A provider→model helper pair (`fillProviders` /
+>   `fillModels` / `bindProviderModels`) populates provider combos from the registrar and model
+>   combos from the selected provider's cached catalog (`models()`, never hardcoded). Used by the
+>   Chat header and the History create/edit forms.
+> - **History has create / edit / delete.** `buildHistoryCards` is a nested `CardStack`
+>   (`list` / `editor` / `creator`). `+ New Prompt` opens a Create form (name + provider + model),
+>   a row's edit opens a pre-filled Edit form, and remove calls `deleteChat`. The list source is
+>   `AIChatRepository.getAllChats()`.
+> - **Chat send is wired for a single provider.** `onSend` builds an `AIRequest` (content, model
+>   from the header combo, maxTokens) and calls `AIProvider.send(...)` on a `BackgroundTask`,
+>   appending the reply bubble in `onResponse`. The `currentChat` `PropertyChangeEvent` drives
+>   `refreshPrompt()`, which resets the title, model combo, and transcript.
+>
+> **Still target-only / stubbed:** message persistence (send does **not** attach an `AIMessage`
+> to `currentChat` or save — the transcript is not stored, so switching chats loses it); the
+> creator/editor mutate the chat but do **not** persist (`AIChatRepository` has no `update`);
+> `asyncSend` and the multi-model **compare** path (no `AIRunner`); the **Skills** page
+> (`getSkills()` returns null, no store, add/edit/remove empty); the **Job queue** and
+> **Screen capture** pages (all handlers empty). `AICredentialSource` and `AIChatRepository`
+> come from `no-sneak-app` (`SessionAICredentialSource`, `AssistantStorage` over the H2P
+> `APIDataStore`); the DAOs and interfaces live in **`ai-model`** — see its CLAUDE.md.
+> `no-sneak-app` builds `AssistantContext(SessionAICredentialSource, AssistantStorage(dataStore))`
+> and passes it to `AssistantPanel` on its `ASSISTANT` screen. The dependency is one-way
+> (`no-sneak-app → ai-assistant → ai-model`).
+>
+> **Known rough edges** (see the code, not yet fixed): `onSend` echoes the user bubble and clears
+> the composer *before* validating chat/model/provider, so with no current chat the message is
+> lost silently; providers are not cleared on logout (the registrar keeps the previous subject's
+> keys); editing a chat with a null provider/model can NPE on `Objects.requireNonNull` of an
+> unselected combo.
 
 ---
 
@@ -206,24 +229,30 @@ send path. What follows is only how *this* module binds to those types.
 Swing-free. Bundles the injected services (`AICredentialSource`, `AIChatRepository`) and an internally
 built `AIProviderRegistrar`, plus the current selection (`currentChat`, `currentCredential`,
 `currentModel`). `newChat()` persists a fresh `AIChat` via `chats.save(...)`, `openChat(refID)` loads one,
-and `deleteChat(AIChat)` removes it; the chat mutators fire a `"currentChat"`
+`setCurrentChat(AIChat)` swaps the in-memory selection (no persistence), and `deleteChat(AIChat)`
+removes it; the chat mutators (`newChat` / `openChat` / `setCurrentChat`) all fire a `"currentChat"`
 `PropertyChangeEvent`; panels subscribe via `onChange(prop, listener)` and re-render, so the Chat page
 never decides *which* chat to load — it renders whatever `currentChat()` is. The app supplies the
-concrete services (`SessionAICredentialSource`, `AssistantStorage`); the registrar has no providers
-registered yet.
+concrete services (`SessionAICredentialSource`, `AssistantStorage`); the registrar is populated on
+login by `AssistantPanel.reloadProviders()`.
 
 ### Binding notes
 
-- **Providers.** `AssistantContext.addProvider(APIKey)` is the intended registration hook (still an
-  empty stub); the Providers page reads the `AIProviderRegistrar`, so it stays empty until a concrete
-  `AIProvider` exists and registers.
+- **Providers.** `AssistantContext.addProvider(APIKey)` builds an `AIAPIProvider` from the key
+  (returns null if the `provider` property doesn't resolve to a known type) and registers it in
+  the `AIProviderRegistrar`. `reloadProviders()` calls it per key on login, off the EDT, then
+  discovers models. The registrar is **not** cleared on logout yet (previous subject's keys
+  linger).
 - **Credentials.** `no-sneak-app`'s `SessionAICredentialSource` implements `AICredentialSource`; its
-  `APIKeys()` feeds the Providers picker.
+  `APIKeys()` feeds `reloadProviders` (every API key is auto-added — the "pick a subset" picker in
+  §6 is not built).
 - **Persistence.** `no-sneak-app`'s `AssistantStorage` implements `AIChatRepository` against the app's
-  H2P `APIDataStore` — so History and chat save/load are real.
-- **Send path (not wired).** The Chat composer's `onSend` is visual-only today — it does not build an
-  `AIRequest`, attach an `AIMessage` to `currentChat`, call `AIProvider.asyncSend`, or persist. See
-  the interface-shape gaps in `ai-model/CLAUDE.md` before wiring it.
+  H2P `APIDataStore`. `getAllChats` (the History list) and `delete` are used; **create/edit do not
+  persist** — the creator uses `setCurrentChat` (in-memory only) and the repository has no `update`.
+- **Send path (partial).** `onSend` builds an `AIRequest` and calls `AIProvider.send(...)` on a
+  `BackgroundTask` for the single bound provider (`getProviders().lookup(chat.getProvider())`). It
+  does **not** attach an `AIMessage` to `currentChat`, persist, or use `asyncSend`/the compare
+  fan-out. See the interface-shape gaps in `ai-model/CLAUDE.md` before extending it.
 
 ---
 

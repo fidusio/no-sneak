@@ -137,7 +137,7 @@ public class LoginPanel extends JPanel {
         c.gridy = 6;
         add(modeToggle, c);
 
-        domain.addItem("xlogistx.io-nosneak");
+        domain.addItem("local.nosneak-nosneak");
     }
 
     private JPanel buildSelectorPane() {

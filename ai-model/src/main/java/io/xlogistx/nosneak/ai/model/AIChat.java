@@ -5,13 +5,10 @@ import org.zoxweb.shared.util.*;
 
 public class AIChat extends PropertyDAO {
 
-    public String getProvider() {
-        return "";
-    }
-
     public enum Param implements GetNVConfig {
         PROVIDER_SESSION_ID(NVConfigManager.createNVConfig("provider_session_id", "provider-issued handle to resume server-side context on a stateful api; null until a response supplies it", "ProviderSessionID", false, true, String.class)),
         MODEL(NVConfigManager.createNVConfig("model", "default model id", "Model", false, true, String.class)),
+        PROVIDER(NVConfigManager.createNVConfig("provider", "bound provider", "Provider", false, true, String.class)),
         SYSTEM_PROMPT(NVConfigManager.createNVConfig("system_prompt", "persistent assistant identity/instructions for the whole conversation", "SystemPrompt", false, true, String.class)),
         MESSAGES(NVConfigManager.createNVConfigEntity("messages", "the chat history", "Messages",
                 false, true, AIMessage[].class, NVConfigEntity.ArrayType.LIST));
@@ -67,6 +64,14 @@ public class AIChat extends PropertyDAO {
 
     public void setModel(String model) {
         setValue(Param.MODEL, model);
+    }
+
+    public String getProvider() {
+        return lookupValue(Param.PROVIDER);
+    }
+
+    public void setProvider(String provider) {
+        setValue(Param.PROVIDER, provider);
     }
 
     public String getSystemPrompt() {

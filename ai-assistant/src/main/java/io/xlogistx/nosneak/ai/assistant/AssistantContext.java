@@ -42,6 +42,7 @@ public class AssistantContext {
 
     public void deleteChat(AIChat chat) {
         chats.delete(chat);
+        currentChat = null;
     }
 
     public AIChat currentChat() {
@@ -82,6 +83,7 @@ public class AssistantContext {
 
     public void setCurrentChat(AIChat currentChat) {
         this.currentChat = currentChat;
+        pcs.firePropertyChange("currentChat", null, currentChat);
     }
 
     public void setCurrentCredential(APIKey<String> currentCredential) {
@@ -98,5 +100,9 @@ public class AssistantContext {
 
     public void setSkills(List<AISkill> skills) {
         this.skills = skills;
+    }
+
+    public void clearProviders() {
+        providers.getCacheMap().clear();
     }
 }

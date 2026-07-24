@@ -549,12 +549,11 @@ public class SubjectPanel extends JPanel {
         return PanelBuilder.detail("Change password",
                 () -> credentialCards.show("list"),
                 panel -> {
-                    panel.add(new JLabel("Current password"));
-                    panel.add(PanelBuilder.passwordField(currentPwd));
-                    panel.add(new JLabel("New password"));
-                    panel.add(PanelBuilder.passwordField(newPwd));
-                    panel.add(new JLabel("Confirm new password"));
-                    panel.add(PanelBuilder.passwordField(confirmPwd));
+
+                    PanelBuilder.addRow(panel, "Current password", PanelBuilder.passwordField(currentPwd));
+                    PanelBuilder.addRow(panel, "New password", PanelBuilder.passwordField(newPwd));
+                    PanelBuilder.addRow(panel, "Confirm new password", PanelBuilder.passwordField(confirmPwd));
+
                     panel.add(submit);
                 });
     }
@@ -586,7 +585,7 @@ public class SubjectPanel extends JPanel {
     private JPanel buildEditAPIKey() {
 
         // save api key button
-        JButton submit = GUIUtil.iconButton(new IconUtil.SaveIcon(16));
+        JButton submit = new JButton("Save", new IconUtil.SaveIcon(16));
         submit.setToolTipText("Save");
 
         rotateKey.setToolTipText("Rotate");
@@ -615,36 +614,29 @@ public class SubjectPanel extends JPanel {
         JPanel keyView = new JPanel(new FlowLayout(FlowLayout.LEFT));
 
         keyView.add(editKeySecret);
-        keyView.add(rotateKey);
+        //keyView.add(rotateKey);
         keyView.add(copyKey);
         keyView.add(showKey);
-        keyView.add(submit);
+        //keyView.add(submit);
 
         return PanelBuilder.detail("Edit API key",
                 () -> credentialCards.show("list"),
                 panel -> {
 
+                    PanelBuilder.addSection(panel, "KEY");
+                    PanelBuilder.addRow(panel, "Label*", editKeyLabel);
+                    PanelBuilder.addRow(panel, "Description*", editKeyDescription);
+                    PanelBuilder.addRow(panel, "API KEY*", keyView);
 
-                    panel.add(new JLabel("Label"));
-                    panel.add(editKeyLabel);
+                    PanelBuilder.addSection(panel, "SCOPE");
+                    PanelBuilder.addRow(panel, "App ID", keyAppID);
+                    PanelBuilder.addRow(panel, "Domain ID", keyDomainID);
 
-                    panel.add(new JLabel("Description"));
-                    panel.add(editKeyDescription);
+                    PanelBuilder.addSection(panel, "PROVIDER ENDPOINT");
+                    PanelBuilder.addRow(panel, "Provider", keyProvider);
+                    PanelBuilder.addRow(panel, "Base URL", keyURI);
 
-                    panel.add(new JLabel("App ID"));
-                    panel.add(keyAppID);
-
-                    panel.add(new JLabel("Domain ID"));
-                    panel.add(keyDomainID);
-
-                    panel.add(new JLabel("Provider"));
-                    panel.add(keyProvider);
-
-                    panel.add(new JLabel("Base URI"));
-                    panel.add(keyURI);
-
-                    panel.add(new JLabel("API Key"));
-                    panel.add(keyView);
+                    PanelBuilder.addRow(panel, "", submit);
                 }
         );
     }

@@ -25,7 +25,6 @@ public class AssistantPanel extends JPanel {
     private final AssistantContext context;
 
     // Repopulated by refresh() so the list tracks login/logout (credentials() is empty until login).
-    private final JPanel providersList = new JPanel();
 
     private ListSection<AISkill> skillsList;
     private ListSection<AIChat> historyList;
@@ -36,6 +35,23 @@ public class AssistantPanel extends JPanel {
     private JPanel transcript;
     private JScrollPane transcriptScroll;
     private JTextArea composer;
+
+    private final CardStack skillsCards = new CardStack();
+    private final JTextField skillName = new JTextField(20);
+    private final JTextArea skillInstructions = new JTextArea(6, 20);
+    private AISkill selectedSkill;
+
+    private final CardStack historyCards = new CardStack();
+    private final JTextField editPromptName = new JTextField();
+    private final JComboBox<String> editProviderSelector = new JComboBox<>();
+    private final JComboBox<String> editModelSelector = new JComboBox<>();
+
+    private final JTextField createPromptName = new JTextField();
+    private final JComboBox<String> createProviderSelector = new JComboBox<>();
+    private final JComboBox<String> createModelSelector = new JComboBox<>();
+    private AIChat selectedChat;
+
+    private JLabel chatTitle;
 
     private JButton sendButton;
 
@@ -50,7 +66,7 @@ public class AssistantPanel extends JPanel {
 
         cardStack.add(buildPromptPanel(), "chat");
         cardStack.add(new JScrollPane(buildJobQueuePanel()), "queue");
-        cardStack.add(new JScrollPane(buildHistoryPanel()), "history");
+        cardStack.add(new JScrollPane(buildHistoryCards()), "history");
         cardStack.add(new JScrollPane(buildSkillsPanel()), "skills");
         cardStack.add(new JScrollPane(buildProvidersPanel()), "providers");
         cardStack.add(new JScrollPane(buildScreenCapturePanel()), "capture");
@@ -73,11 +89,18 @@ public class AssistantPanel extends JPanel {
         JToggleButton captureButton = new JToggleButton("Capture");
         captureButton.addActionListener(_ -> cardStack.show("capture"));
 
+        ButtonGroup group = new ButtonGroup();
+        group.add(chatButton);
+        group.add(jobQueueButton);
+        group.add(historyButton);
+        group.add(skillsButton);
+        group.add(providersButton);
+        group.add(captureButton);
+        chatButton.setSelected(true);
+
         add(PanelBuilder.buildDefaultSplitPanel(cardStack.view(), chatButton, captureButton, jobQueueButton, historyButton, skillsButton, providersButton));
 
-        context.onChange("currentChat", e -> {
-
-        });
+        context.onChange("currentChat", e -> refreshPrompt());
     }
 
     public JPanel buildPromptPanel() {
@@ -85,28 +108,14 @@ public class AssistantPanel extends JPanel {
 
         AIChat chat = context.currentChat();
         String titleText = (chat != null && chat.getTitle() != null) ? chat.getTitle() : "Default chat";
-        JLabel title = PanelBuilder.title(titleText);
+        chatTitle = PanelBuilder.title(titleText);
 
         modelSelector = new JComboBox<>();
         modelSelector.setEditable(true);
 
-        if (chat != null) {
-            AIProvider provider = context.getProviders().lookup(chat.getProvider());
-            if (provider != null) {
-                try {
-                    for (String m : provider.getModelCatalog().models()) {
-                        modelSelector.addItem(m);
-                    }
-                } catch (AIException _) {
-                }
-            }
-            modelSelector.setSelectedItem(chat.getModel());
-        }
-
         JPanel titlePanel = new JPanel(new FlowLayout());
-        titlePanel.add(title);
+        titlePanel.add(chatTitle);
         titlePanel.add(modelSelector);
-        populateModels();
 
         transcriptScroll = new JScrollPane(transcript,
                 JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
@@ -159,6 +168,20 @@ public class AssistantPanel extends JPanel {
         return jobQueueList;
     }
 
+    public JPanel buildJobEditor() {
+        return new JPanel();
+    }
+
+    private JPanel buildHistoryCards() {
+        historyCards.add(buildHistoryPanel(), "list");
+        historyCards.add(buildChatEditor(), "editor");
+        historyCards.add(buildChatCreator(), "creator");
+        historyCards.show("list");
+        JPanel p = new JPanel(new BorderLayout());
+        p.add(historyCards.view(), BorderLayout.CENTER);
+        return p;
+    }
+
     public JPanel buildHistoryPanel() {
         historyList = ListSection.of(() -> context.getChats().getAllChats())
                 .title("History")
@@ -172,6 +195,48 @@ public class AssistantPanel extends JPanel {
         return historyList;
     }
 
+    public JPanel buildChatEditor() {
+        JButton save = new JButton("Save", new IconUtil.SaveIcon(16));
+        bindProviderModels(editProviderSelector, editModelSelector);
+
+        save.addActionListener(e -> {
+            selectedChat.setTitle(editPromptName.getText());
+            selectedChat.setModel(Objects.requireNonNull(editModelSelector.getSelectedItem()).toString());
+            selectedChat.setProvider(Objects.requireNonNull(editProviderSelector.getSelectedItem()).toString());
+            historyCards.show("list");
+            historyList.refresh();
+        });
+
+        return PanelBuilder.detail("Edit Chat", () -> historyCards.show("list"), panel -> {
+            PanelBuilder.addRow(panel, "Name", editPromptName);
+            PanelBuilder.addRow(panel, "Provider", editProviderSelector);
+            PanelBuilder.addRow(panel, "Model", editModelSelector);
+            PanelBuilder.addRow(panel, "", save);
+        });
+    }
+
+    public JPanel buildChatCreator() {
+        JButton save = new JButton("Create", new IconUtil.PlusIcon(16));
+        bindProviderModels(createProviderSelector, createModelSelector);
+
+        save.addActionListener(e -> {
+            AIChat temp = new AIChat(createPromptName.getText());
+            temp.setModel(Objects.requireNonNull(createModelSelector.getSelectedItem()).toString());
+
+            temp.setProvider(Objects.requireNonNull(createProviderSelector.getSelectedItem()).toString());
+            context.setCurrentChat(temp);
+
+            cardStack.show("chat");
+        });
+
+        return PanelBuilder.detail("Create Chat", () -> historyCards.show("list"), panel -> {
+            PanelBuilder.addRow(panel, "Name", createPromptName);
+            PanelBuilder.addRow(panel, "Provider", createProviderSelector);
+            PanelBuilder.addRow(panel, "Model", createModelSelector);
+            PanelBuilder.addRow(panel, "", save);
+        });
+    }
+
     public JPanel buildSkillsPanel() {
         skillsList = ListSection.of(context::getSkills)
                 .title("Skills")
@@ -183,6 +248,10 @@ public class AssistantPanel extends JPanel {
                 .build();
 
         return skillsList;
+    }
+
+    public JPanel buildSkillEditor() {
+        return new JPanel();
     }
 
     public JPanel buildProvidersPanel() {
@@ -236,10 +305,14 @@ public class AssistantPanel extends JPanel {
             SwingUtilities.invokeLater(this::refreshPrompt);
             return;
         }
-        transcript.removeAll();
 
         AIChat chat = context.currentChat();
+        chatTitle.setText(chat != null && chat.getTitle() != null ? chat.getTitle() : "Default chat");
+        fillModels(modelSelector, chat != null ? chat.getProvider() : null);
+
+        transcript.removeAll();
         if (chat != null) {
+            modelSelector.setSelectedItem(chat.getModel());
             for (NVEntity e : chat.getMessages().values()) {
                 AIMessage m = (AIMessage) e;
                 AIRequest req = m.getAIRequest();
@@ -248,7 +321,6 @@ public class AssistantPanel extends JPanel {
                 if (res != null && res.getContent() != null) addMessage(res.getContent(), false);
             }
         }
-
         transcript.revalidate();
         transcript.repaint();
     }
@@ -259,23 +331,32 @@ public class AssistantPanel extends JPanel {
 
         String text = composer.getText().trim();
         if (text.isEmpty()) return;
-        addMessage(text, true);
-        composer.setText("");
-        composer.requestFocusInWindow();
 
         AIRequest request = new AIRequest();
         request.setContent(text);
         request.setMaxTokens(1024);
-        request.setModel(Objects.requireNonNull(modelSelector.getSelectedItem()).toString());
 
-        AIProvider p = context.getProviders().get("openai");
+
+        AIChat chat = context.currentChat();
+        if (chat == null) return;
+        Object sel = modelSelector.getSelectedItem();
+        if (sel == null) return;
+        request.setModel(sel.toString());
+
+        AIProvider p = context.getProviders().lookup(chat.getProvider());
         if (p == null) return;
+        addMessage(text, true);
+        composer.setText("");
+        composer.requestFocusInWindow();
         BackgroundTask.run(this, sendButton, () -> p.send(request), this::onResponse);
     }
 
     private void addMessage(String text, boolean user) {
         JComponent bubble = chatBubble(text, user);
-        transcript.add(bubble, "wmax 78%, alignx " + (user ? "trailing" : "leading"));
+        String cons = user
+                ? "growx, wmax 78%, alignx trailing"
+                : "growx, wmax 92%, alignx leading";
+        transcript.add(bubble, cons);
         transcript.revalidate();
         transcript.repaint();
 
@@ -304,15 +385,26 @@ public class AssistantPanel extends JPanel {
     }
 
     private void onAddPrompt() {
+        createPromptName.setText("");
+        fillProviders(createProviderSelector);
 
+        historyCards.show("creator");
     }
 
     private void onEditPrompt(AIChat chat) {
+        this.selectedChat = chat;
+        fillProviders(editProviderSelector);
+        editPromptName.setText(chat.getTitle());
+        editProviderSelector.setSelectedItem(chat.getProvider());
+        editModelSelector.setSelectedItem(chat.getModel());
+        historyCards.show("editor");
 
     }
 
     private void onRemovePrompt(AIChat chat) {
-
+        context.deleteChat(chat);
+        selectedChat = null;
+        historyList.refresh();
     }
 
     private void onAddSkill() {
@@ -328,7 +420,14 @@ public class AssistantPanel extends JPanel {
     }
 
     private void onRefreshProvider(AIProvider provider) {
-
+        BackgroundTask.run(this, null,
+                () -> {
+                    provider.getModelCatalog().refresh();
+                    return null;
+                },
+                r -> {
+                    if (providerList != null) providerList.refresh();
+                });
     }
 
     private void onRemoveProvider(AIProvider provider) {
@@ -356,38 +455,52 @@ public class AssistantPanel extends JPanel {
     }
 
     public void reloadProviders() {
-        for (APIKey<String> key : context.getCredentials().APIKeys()) {
-            context.addProvider(key);
-        }
-
-        SwingUtilities.invokeLater(() -> {
-            if (providerList != null) {
-                providerList.refresh();
+        BackgroundTask.run(this, null, () -> {
+            for (APIKey<String> key : context.getCredentials().APIKeys()) {
+                try {
+                    context.addProvider(key);
+                } catch (Exception ignore) {
+                }
             }
-            populateModels();
+            for (AIProvider p : context.getProviders().getCacheMap().values()) {
+                try {
+                    p.getModelCatalog().refresh();
+                } catch (Exception ignore) {
+                }
+            }
+            return null;
+        }, r -> {
+            if (providerList != null) providerList.refresh();
         });
     }
 
-    private void populateModels() {
-        if (modelSelector == null) return;
-        modelSelector.removeAllItems();
-
-        AIProvider p = context.getProviders().getCacheMap().values().stream().findFirst().orElse(null);
-        if (p == null) return;
-
-        try {
-            String[] models = p.getModelCatalog().models();
-            if(models != null) {
-                for(String m : models) {
-                    modelSelector.addItem(m);
-                }
-            }
-        } catch (AIException ignored) {}
-
-        AIChat chat = context.currentChat();
-        if(chat != null && chat.getModel() != null) {
-            modelSelector.setSelectedItem(chat.getModel());
-        }
+    public void clearProviders() {
+        context.clearProviders();
+        fillProviders(createProviderSelector);
+        fillProviders(editProviderSelector);
+        if (providerList != null) providerList.refresh();
+        if (modelSelector != null) modelSelector.removeAllItems();
 
     }
+
+    private void fillProviders(JComboBox<String> box) {
+        box.removeAllItems();
+        for (String name : context.getProviders().getCacheMap().keySet()) box.addItem(name);
+    }
+
+    private void fillModels(JComboBox<String> box, String providerName) {
+        box.removeAllItems();
+        AIProvider p = context.getProviders().lookup(providerName);
+        if (p == null) return;
+        try {
+            String[] models = p.getModelCatalog().models();
+            if (models != null) for (String m : models) box.addItem(m);
+        } catch (AIException _) {
+        }
+    }
+
+    private void bindProviderModels(JComboBox<String> providerBox, JComboBox<String> modelBox) {
+        providerBox.addActionListener(_ -> fillModels(modelBox, (String) providerBox.getSelectedItem()));
+    }
+
 }

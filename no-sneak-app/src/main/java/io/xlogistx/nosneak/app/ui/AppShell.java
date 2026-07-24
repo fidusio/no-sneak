@@ -40,6 +40,7 @@ public class AppShell extends JPanel {
             if ((boolean) e.getNewValue()) {
                 ctx.nav().show(Navigator.Screen.SUBJECT);
                 assistantPanel.reloadProviders();
+                assistantPanel.clearProviders();
             } else {
                 ctx.nav().show(Navigator.Screen.LOGIN);
             }
