@@ -17,10 +17,7 @@ import javax.crypto.SecretKey;
 import java.beans.PropertyChangeListener;
 import java.beans.PropertyChangeSupport;
 import java.security.NoSuchAlgorithmException;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 
 /**
@@ -142,7 +139,6 @@ public class Session {
     /**
      * Mock passkey login; not implemented yet. @return {@code false}.
      */
-    //@TODO
     public void loginPasskey() {
 
     }
@@ -298,12 +294,10 @@ public class Session {
     /**
      * Mock passkey registration; not implemented yet. @return {@code false}.
      */
-    //@TODO
     public void registerPasskey() {
         //loginPasskey();
 
     }
-
 
     /**
      * Signs the subject out and fires the {@code "authenticated"} change event. @return {@code true}.
@@ -317,29 +311,29 @@ public class Session {
     }
 
     /**
-     * @return the signed-in subject's identifiers, or an empty array when signed out.
+     * @return the signed-in subject's identifiers, or an empty list when signed out.
      */
-    public PrincipalIdentifier[] getAllPrincipalIDForLoggedInUser() {
-        if (subjectIdentifier == null) return new PrincipalIdentifier[0];
-        return domainSecurityManager.lookupAllPrincipalIdentifiers(subjectIdentifier.getGUID());
+    public List<PrincipalIdentifier> getAllPrincipalIDForLoggedInUser() {
+        if (subjectIdentifier == null) return List.of();
+        return Arrays.asList(domainSecurityManager.lookupAllPrincipalIdentifiers(subjectIdentifier.getGUID()));
     }
 
     /**
-     * @return the signed-in subject's credentials, or an empty array when signed out.
+     * @return the signed-in subject's credentials, or an empty list when signed out.
      */
-    public CredentialInfo[] getAllCredentialForLoggedInUser() {
-        if (principalID == null) return new CredentialInfo[0];
-        return domainSecurityManager.lookupAllPrincipalCredentials(principalID);
+    public List<CredentialInfo> getAllCredentialForLoggedInUser() {
+        if (principalID == null) return List.of();
+        return Arrays.asList(domainSecurityManager.lookupAllPrincipalCredentials(principalID));
     }
 
     /**
-     * @return the signed-in subject's credentials of the given type, or an empty array when signed out or {@code type} is null.
+     * @return the signed-in subject's credentials of the given type, or an empty list when signed out or {@code type} is null.
      */
-    public CredentialInfo[] getAllCredentialForUserByType(CredentialInfo.Type type) {
-        if (subjectIdentifier == null) return new CredentialInfo[0];
-        if (type == null) return new CredentialInfo[0];
+    public List<CredentialInfo> getAllCredentialForUserByType(CredentialInfo.Type type) {
+        if (subjectIdentifier == null) return List.of();
+        if (type == null) return List.of();
 
-        return domainSecurityManager.lookupCredentialsBySubjectGUID(subjectIdentifier.getSubjectGUID(), type);
+        return Arrays.asList(domainSecurityManager.lookupCredentialsBySubjectGUID(subjectIdentifier.getSubjectGUID(), type));
     }
 
     /**
@@ -369,9 +363,9 @@ public class Session {
         }
 
         if (principal.getPrincipalID().equals(principalID)) {
-            PrincipalIdentifier[] remaining = getAllPrincipalIDForLoggedInUser();
-            if (remaining.length > 0) {
-                principalID = remaining[0].getPrincipalID();
+            List<PrincipalIdentifier> remaining = getAllPrincipalIDForLoggedInUser();
+            if (!remaining.isEmpty()) {
+                principalID = remaining.getFirst().getPrincipalID();
             }
         }
     }

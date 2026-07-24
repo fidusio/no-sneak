@@ -6,7 +6,7 @@ import org.zoxweb.shared.util.*;
 public class AIChat extends PropertyDAO {
 
     public String getProvider() {
-        return "not implemented";
+        return "";
     }
 
     public enum Param implements GetNVConfig {

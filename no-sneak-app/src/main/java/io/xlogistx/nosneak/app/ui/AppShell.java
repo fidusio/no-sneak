@@ -39,6 +39,7 @@ public class AppShell extends JPanel {
         ctx.session().onAuthChange(e -> {
             if ((boolean) e.getNewValue()) {
                 ctx.nav().show(Navigator.Screen.SUBJECT);
+                assistantPanel.reloadProviders();
             } else {
                 ctx.nav().show(Navigator.Screen.LOGIN);
             }
