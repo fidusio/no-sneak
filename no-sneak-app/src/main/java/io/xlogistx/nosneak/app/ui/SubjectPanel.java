@@ -1,5 +1,6 @@
 package io.xlogistx.nosneak.app.ui;
 
+import io.xlogistx.api.ai.AIAPIBuilder;
 import io.xlogistx.gui.GUIUtil;
 import io.xlogistx.gui.IconUtil;
 import io.xlogistx.gui.*;
@@ -149,7 +150,7 @@ public class SubjectPanel extends JPanel {
 
     private JPanel buildProfile() {
 
-        identifiers = ListSection.of(() -> Arrays.asList(ctx.session().getAllPrincipalIDForLoggedInUser()))
+        identifiers = ListSection.of(() -> ctx.session().getAllPrincipalIDForLoggedInUser())
                 .title("Identifiers")
                 .addButton("+ Add identifier", this::onAddIdentifier)
                 .label(PrincipalIdentifier::getPrincipalID)
@@ -354,13 +355,13 @@ public class SubjectPanel extends JPanel {
 
     private JPanel buildCredentialList() {
 
-        passwordSection = ListSection.of(() -> Arrays.stream(ctx.session().getAllCredentialForUserByType(CredentialInfo.Type.PASSWORD)).map(CIPassword.class::cast).toList())
+        passwordSection = ListSection.of(() -> ctx.session().getAllCredentialForUserByType(CredentialInfo.Type.PASSWORD).stream().map(CIPassword.class::cast).toList())
                 .title("Password")
                 .label(_ -> "Password")
                 .onEdit(_ -> () -> credentialCards.show("changePassword"))
                 .build();
 
-        apiKeySection = ListSection.of(() -> Arrays.stream(ctx.session().getAllCredentialForUserByType(CredentialInfo.Type.API_KEY)).map(SubjectAPIKey.class::cast).toList())
+        apiKeySection = ListSection.of(() -> ctx.session().getAllCredentialForUserByType(CredentialInfo.Type.API_KEY).stream().map(SubjectAPIKey.class::cast).toList())
                 .title("API keys")
                 .addButton("+ Add API Key", this::onAddAPIKey)
                 .label(p -> {
@@ -456,7 +457,7 @@ public class SubjectPanel extends JPanel {
         JTextField inDomainID = textField("e.g. xlogistx.io");
         JPasswordField inKey = new JPasswordField(28);
         inKey.putClientProperty("JTextField.placeholderText", "Your API key");
-        JComboBox<String> inProvider = new JComboBox<>(new String[]{"Claude", "OpenAI", "Gemini"});
+        JComboBox<AIAPIBuilder.AIAPIType> inProvider = new JComboBox<>(AIAPIBuilder.AIAPIType.values());
         inProvider.setEditable(true);
         inProvider.setSelectedItem(null);
         JTextField inBaseURI = textField("e.g. https://api.anthropic.com");

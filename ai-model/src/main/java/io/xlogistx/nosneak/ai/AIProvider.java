@@ -1,8 +1,8 @@
 package io.xlogistx.nosneak.ai;
 
+import io.xlogistx.api.ai.AIAPI;
 import io.xlogistx.nosneak.ai.model.AIRequest;
 import io.xlogistx.nosneak.ai.model.AIResponse;
-import org.zoxweb.server.http.HTTPAPICaller;
 import org.zoxweb.shared.security.APIKey;
 import org.zoxweb.shared.util.GetDescription;
 import org.zoxweb.shared.util.GetName;
@@ -23,9 +23,9 @@ public interface AIProvider extends GetName, GetDescription {
 
     APIKey<String> getAPIKey();
 
-    void setHTTPAPICaller(HTTPAPICaller APICaller);
+    void setHTTPAPICaller(AIAPI APICaller);
 
-    HTTPAPICaller getHTTPAPICaller();
+    AIAPI getHTTPAPICaller();
 
     AIResponse send(AIRequest req) throws AIException;
 

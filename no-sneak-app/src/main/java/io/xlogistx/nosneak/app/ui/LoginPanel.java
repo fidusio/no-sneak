@@ -76,7 +76,7 @@ public class LoginPanel extends JPanel {
         });
         apiKeyAction.addActionListener(_ -> {
             if (login) {
-                BackgroundTask.runCatching(this, passwordAction,
+                BackgroundTask.runCatching(this, apiKeyAction,
                         () -> ctx.session().loginAPIKey(apiKey.getPassword()),
                         () -> {
                         });

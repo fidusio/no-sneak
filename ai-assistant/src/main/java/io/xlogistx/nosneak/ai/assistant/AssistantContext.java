@@ -2,6 +2,7 @@ package io.xlogistx.nosneak.ai.assistant;
 
 import io.xlogistx.nosneak.ai.AIChatRepository;
 import io.xlogistx.nosneak.ai.AICredentialSource;
+import io.xlogistx.nosneak.ai.AIProvider;
 import io.xlogistx.nosneak.ai.model.AIChat;
 import io.xlogistx.nosneak.ai.model.AIProviderRegistrar;
 import io.xlogistx.nosneak.ai.model.AISkill;
@@ -64,6 +65,10 @@ public class AssistantContext {
     }
 
     public void addProvider(APIKey<String> key) {
+        AIAPIProvider temp = AIAPIProvider.create(key);
+        if (temp != null) {
+            providers.put(temp.getName(), temp);
+        }
 
     }
 

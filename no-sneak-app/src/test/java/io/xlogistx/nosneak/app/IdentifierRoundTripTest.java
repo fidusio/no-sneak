@@ -43,7 +43,7 @@ public class IdentifierRoundTripTest {
         Session s = loggedInSession();
         assertDoesNotThrow(() -> s.addIdentifier("kailen@example.com"), "adding a fresh identifier should succeed");
 
-        assertEquals(2, s.getAllPrincipalIDForLoggedInUser().length);
+        assertEquals(2, s.getAllPrincipalIDForLoggedInUser().size());
         assertNotNull(find(s, "kailen"));
         assertNotNull(find(s, "kailen@example.com"));
     }
@@ -53,7 +53,7 @@ public class IdentifierRoundTripTest {
         Session s = loggedInSession();
         assertEquals("Principal ID can't be empty",
                 assertThrows(SecurityException.class, () -> s.addIdentifier("   ")).getMessage());
-        assertEquals(1, s.getAllPrincipalIDForLoggedInUser().length, "no identifier should have been added");
+        assertEquals(1, s.getAllPrincipalIDForLoggedInUser().size(), "no identifier should have been added");
     }
 
     @Test
@@ -62,7 +62,7 @@ public class IdentifierRoundTripTest {
         PrincipalIdentifier only = find(s, "kailen");
         assertEquals("Could not remove identifier",
                 assertThrows(SecurityException.class, () -> s.removeIdentifier(only)).getMessage());
-        assertEquals(1, s.getAllPrincipalIDForLoggedInUser().length);
+        assertEquals(1, s.getAllPrincipalIDForLoggedInUser().size());
     }
 
     @Test
@@ -72,7 +72,7 @@ public class IdentifierRoundTripTest {
 
         assertEquals("Identifier cannot be empty",
                 assertThrows(SecurityException.class, () -> s.removeIdentifier(null)).getMessage());
-        assertEquals(2, s.getAllPrincipalIDForLoggedInUser().length, "nothing should have been removed");
+        assertEquals(2, s.getAllPrincipalIDForLoggedInUser().size(), "nothing should have been removed");
     }
 
     @Test
@@ -85,7 +85,7 @@ public class IdentifierRoundTripTest {
         assertDoesNotThrow(() -> s.removeIdentifier(alt));
         assertEquals("kailen", s.getPrincipalID(),
                 "removing a non-active identifier must not repoint the subject");
-        assertEquals(1, s.getAllPrincipalIDForLoggedInUser().length);
+        assertEquals(1, s.getAllPrincipalIDForLoggedInUser().size());
     }
 
     @Test
@@ -100,7 +100,7 @@ public class IdentifierRoundTripTest {
                 "removing the active identifier must repoint the subject to a survivor");
 
         // credential lookups (keyed off the subject) must keep working after the repoint
-        assertEquals(1, s.getAllCredentialForLoggedInUser().length,
+        assertEquals(1, s.getAllCredentialForLoggedInUser().size(),
                 "the password credential should still be reachable via the new subject");
     }
 }

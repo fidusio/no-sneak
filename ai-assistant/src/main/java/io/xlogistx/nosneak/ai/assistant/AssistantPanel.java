@@ -1,12 +1,9 @@
 package io.xlogistx.nosneak.ai.assistant;
 
+import io.xlogistx.gui.*;
+import io.xlogistx.nosneak.ai.model.*;
 import io.xlogistx.nosneak.ai.AIException;
 import io.xlogistx.nosneak.ai.AIProvider;
-import io.xlogistx.gui.CardStack;
-import io.xlogistx.gui.IconUtil;
-import io.xlogistx.gui.ListSection;
-import io.xlogistx.gui.PanelBuilder;
-import io.xlogistx.nosneak.ai.model.*;
 import org.zoxweb.shared.security.APIKey;
 
 import net.miginfocom.swing.MigLayout;
@@ -18,6 +15,7 @@ import java.awt.event.ActionEvent;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.util.ArrayList;
+import java.util.Objects;
 
 import static io.xlogistx.nosneak.ai.assistant.AssistantUtil.chatBubble;
 
@@ -33,18 +31,20 @@ public class AssistantPanel extends JPanel {
     private ListSection<AIChat> historyList;
     private ListSection jobQueueList;
     private ListSection<AIProvider> providerList;
+    private ListSection captureList;
 
     private JPanel transcript;
     private JScrollPane transcriptScroll;
     private JTextArea composer;
 
+    private JButton sendButton;
+
+    private JComboBox<String> modelSelector;
 
     public AssistantPanel(AssistantContext context) {
         this.context = context;
 
-        for (APIKey<String> key : context.getCredentials().APIKeys()) {
-            context.addProvider(key);
-        }
+        reloadProviders();
 
         setLayout(new BorderLayout());
 
@@ -87,15 +87,17 @@ public class AssistantPanel extends JPanel {
         String titleText = (chat != null && chat.getTitle() != null) ? chat.getTitle() : "Default chat";
         JLabel title = PanelBuilder.title(titleText);
 
-        JComboBox<String> modelSelector = new JComboBox<>();
+        modelSelector = new JComboBox<>();
+        modelSelector.setEditable(true);
+
         if (chat != null) {
             AIProvider provider = context.getProviders().lookup(chat.getProvider());
             if (provider != null) {
                 try {
-                    for (AIModel m : provider.getModelCatalog().models()) {
-                        modelSelector.addItem(m.getModelID());
+                    for (String m : provider.getModelCatalog().models()) {
+                        modelSelector.addItem(m);
                     }
-                } catch (AIException e) {
+                } catch (AIException _) {
                 }
             }
             modelSelector.setSelectedItem(chat.getModel());
@@ -104,6 +106,7 @@ public class AssistantPanel extends JPanel {
         JPanel titlePanel = new JPanel(new FlowLayout());
         titlePanel.add(title);
         titlePanel.add(modelSelector);
+        populateModels();
 
         transcriptScroll = new JScrollPane(transcript,
                 JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
@@ -128,13 +131,13 @@ public class AssistantPanel extends JPanel {
                 JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
         composerScroll.setPreferredSize(new Dimension(0, 44));
 
-        JButton send = new JButton("Send");
-        send.addActionListener(_ -> onSend());
+        sendButton = new JButton("Send");
+        sendButton.addActionListener(_ -> onSend());
 
         JPanel composerBar = new JPanel(new BorderLayout(8, 0));
         composerBar.setBorder(BorderFactory.createEmptyBorder(8, 14, 12, 14));
         composerBar.add(composerScroll, BorderLayout.CENTER);
-        composerBar.add(send, BorderLayout.EAST);
+        composerBar.add(sendButton, BorderLayout.EAST);
 
         JPanel panel = new JPanel(new BorderLayout());
         panel.add(titlePanel, BorderLayout.NORTH);
@@ -145,7 +148,13 @@ public class AssistantPanel extends JPanel {
 
 
     public JPanel buildJobQueuePanel() {
-        //jobQueueList = ListSection.of().build();
+        jobQueueList = ListSection.of(ArrayList::new)
+                .title("Job Queue")
+                .addButton("+ Add Job", this::onAddJob)
+                .label(_ -> "")
+                .onEdit(c -> this::onEditJob)
+                .onRemove(c -> this::onRemoveJob)
+                .build();
 
         return jobQueueList;
     }
@@ -153,10 +162,10 @@ public class AssistantPanel extends JPanel {
     public JPanel buildHistoryPanel() {
         historyList = ListSection.of(() -> context.getChats().getAllChats())
                 .title("History")
-                .addButton("+ New Prompt", context::newChat)
+                .addButton("+ New Prompt", this::onAddPrompt)
                 .label(AIChat::getTitle)
-                .onEdit(c -> () -> context.openChat(c.getReferenceID()))
-                .onRemove(c -> () -> context.deleteChat(c))
+                .onEdit(c -> () -> onEditPrompt(c))
+                .onRemove(c -> () -> onRemovePrompt(c))
                 .emptyText("No chats yet")
                 .build();
 
@@ -168,8 +177,8 @@ public class AssistantPanel extends JPanel {
                 .title("Skills")
                 .addButton("+ New Skill", this::onAddSkill)
                 .label(AISkill::getName)
-                .onEdit(null)
-                .onRemove(null)
+                .onEdit(c -> () -> onEditSkill(c))
+                .onRemove(c -> () -> onRemoveSkill(c))
                 .emptyText("No Skills yet")
                 .build();
 
@@ -184,21 +193,42 @@ public class AssistantPanel extends JPanel {
                 .label(AIProvider::getName)
                 .emptyText("No providers")
                 .action(new ListSection.RowAction<>(new IconUtil.RefreshIcon(16), "Refresh models",
-                        p -> () -> {
-                            try {
-                                p.getModelCatalog().refresh();
-                            } catch (AIException e) {
-                            }
-                        }))
+                        p -> () -> onRefreshProvider(p)))
+                .onRemove(p -> () -> onRemoveProvider(p))
                 .build();
 
         return providerList;
     }
 
     public JPanel buildScreenCapturePanel() {
-        JPanel out = new JPanel();
+        JButton selectAreaButton = new JButton("Select Area", new IconUtil.AreaIcon(16));
+        selectAreaButton.addActionListener(_ -> onSelectArea());
 
-        return out;
+        JButton captureButton = new JButton("Capture", new IconUtil.CameraIcon(16));
+        captureButton.addActionListener(_ -> onAddCapture());
+
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        buttons.add(selectAreaButton);
+        buttons.add(captureButton);
+
+        JPanel header = new JPanel(new BorderLayout());
+        header.setBorder(BorderFactory.createEmptyBorder(8, 14, 8, 14));
+        header.add(PanelBuilder.title("Capture"), BorderLayout.WEST);
+        header.add(buttons, BorderLayout.EAST);
+
+        captureList = ListSection.of(ArrayList::new)
+                .title("")
+                .label(_ -> "")
+                .onEdit(p -> this::onEditCaptureDetails)
+                .onRemove(p -> this::onRemoveCapture)
+                .action(new ListSection.RowAction<>(new IconUtil.AreaIcon(16), "Edit Capture Location", p -> this::onEditCaptureLocation))
+                .emptyText("No Captures yet")
+                .build();
+
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.add(header, BorderLayout.NORTH);
+        panel.add(captureList, BorderLayout.CENTER);
+        return panel;
     }
 
     private void refreshPrompt() {
@@ -224,11 +254,23 @@ public class AssistantPanel extends JPanel {
     }
 
     private void onSend() {
+
+        if (sendButton == null || !sendButton.isEnabled()) return;
+
         String text = composer.getText().trim();
         if (text.isEmpty()) return;
         addMessage(text, true);
         composer.setText("");
         composer.requestFocusInWindow();
+
+        AIRequest request = new AIRequest();
+        request.setContent(text);
+        request.setMaxTokens(1024);
+        request.setModel(Objects.requireNonNull(modelSelector.getSelectedItem()).toString());
+
+        AIProvider p = context.getProviders().get("openai");
+        if (p == null) return;
+        BackgroundTask.run(this, sendButton, () -> p.send(request), this::onResponse);
     }
 
     private void addMessage(String text, boolean user) {
@@ -243,13 +285,109 @@ public class AssistantPanel extends JPanel {
         });
     }
 
-    private void onResponse(String response) {
-        String text = response;
-        if (text.isEmpty()) return;
+    private void onResponse(AIResponse response) {
+        String text = response.getContent();
+        if (text == null || text.isEmpty()) return;
         addMessage(text, false);
     }
 
+    private void onAddJob() {
+
+    }
+
+    private void onEditJob() {
+
+    }
+
+    private void onRemoveJob() {
+
+    }
+
+    private void onAddPrompt() {
+
+    }
+
+    private void onEditPrompt(AIChat chat) {
+
+    }
+
+    private void onRemovePrompt(AIChat chat) {
+
+    }
+
     private void onAddSkill() {
+
+    }
+
+    private void onEditSkill(AISkill skill) {
+
+    }
+
+    private void onRemoveSkill(AISkill skill) {
+
+    }
+
+    private void onRefreshProvider(AIProvider provider) {
+
+    }
+
+    private void onRemoveProvider(AIProvider provider) {
+
+    }
+
+    private void onAddCapture() {
+
+    }
+
+    private void onSelectArea() {
+
+    }
+
+    private void onEditCaptureLocation() {
+
+    }
+
+    private void onEditCaptureDetails() {
+
+    }
+
+    private void onRemoveCapture() {
+
+    }
+
+    public void reloadProviders() {
+        for (APIKey<String> key : context.getCredentials().APIKeys()) {
+            context.addProvider(key);
+        }
+
+        SwingUtilities.invokeLater(() -> {
+            if (providerList != null) {
+                providerList.refresh();
+            }
+            populateModels();
+        });
+    }
+
+    private void populateModels() {
+        if (modelSelector == null) return;
+        modelSelector.removeAllItems();
+
+        AIProvider p = context.getProviders().getCacheMap().values().stream().findFirst().orElse(null);
+        if (p == null) return;
+
+        try {
+            String[] models = p.getModelCatalog().models();
+            if(models != null) {
+                for(String m : models) {
+                    modelSelector.addItem(m);
+                }
+            }
+        } catch (AIException ignored) {}
+
+        AIChat chat = context.currentChat();
+        if(chat != null && chat.getModel() != null) {
+            modelSelector.setSelectedItem(chat.getModel());
+        }
 
     }
 }
