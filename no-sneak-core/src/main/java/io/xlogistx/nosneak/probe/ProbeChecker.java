@@ -144,12 +144,16 @@ public class ProbeChecker {
 
     // ==================== CLI ====================
 
+    public static void usage()
+    {
+        System.out.println("Usage: ProbeChecker <host> <port> [timeoutSec] [probe1.json probe2.json ...]");
+        System.out.println("  Identifies the protocol on host:port.");
+        System.out.println("  With no probe files it uses the bundled JSON probes; if one or more");
+        System.out.println("  *.json files are given, those are loaded/validated and used instead.");
+    }
     public static void main(String... args) {
         if (args.length < 2) {
-            System.out.println("Usage: ProbeChecker <host> <port> [timeoutSec] [probe1.json probe2.json ...]");
-            System.out.println("  Identifies the protocol on host:port.");
-            System.out.println("  With no probe files it uses the bundled JSON probes; if one or more");
-            System.out.println("  *.json files are given, those are loaded/validated and used instead.");
+            usage();
             return;
         }
         String host = args[0];
@@ -194,6 +198,7 @@ public class ProbeChecker {
             System.err.println("Error: " + e.getMessage());
             e.printStackTrace();
         } finally {
+            usage();
             SharedIOUtil.close(nioSocket);
             TaskUtil.waitIfBusyThenClose(100);
         }
