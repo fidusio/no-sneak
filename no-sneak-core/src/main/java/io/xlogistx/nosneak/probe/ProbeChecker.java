@@ -10,12 +10,13 @@ import org.zoxweb.server.task.TaskUtil;
 import org.zoxweb.server.util.GSONUtil;
 import org.zoxweb.shared.io.SharedIOUtil;
 import org.zoxweb.shared.net.IPAddress;
+import org.zoxweb.shared.task.CallableConsumer;
+import org.zoxweb.shared.task.CallableConsumerTask;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Consumer;
 
 /**
  * Identifies what protocol is behind a {@code host:port} by running a list of
@@ -31,7 +32,9 @@ import java.util.function.Consumer;
  * <pre>{@code
  * NIOSocket nio = new NIOSocket(TaskUtil.defaultTaskProcessor(), TaskUtil.defaultTaskScheduler());
  * ProbeChecker checker = ProbeChecker.withBundled(nio).timeoutInSec(10);
- * checker.check("mail.example.com", 993, r -> System.out.println(r));   // async
+ * checker.check("mail.example.com", 993, new CallableConsumerTask<ProbeResult>()
+ *         .setConsumer(System.out::println)                  // async result
+ *         .setExceptionCallback(Throwable::printStackTrace)); // captured exception
  * }</pre>
  *
  * <p>Usage (CLI): {@code java ... ProbeChecker <host> <port> [timeoutSec]}.
@@ -74,13 +77,17 @@ public class ProbeChecker {
         return this;
     }
 
-    /** Async TCP check: {@code callback} receives the identifying (or best/unknown) result. */
-    public void check(String host, int port, Consumer<ProbeResult> callback) {
+    /**
+     * Async TCP check. {@code callback.accept(result)} receives the identifying (or
+     * best/unknown) result; {@code callback.exception(t)} captures any probe-launch
+     * exception (the check still advances to the next probe).
+     */
+    public void check(String host, int port, CallableConsumer<ProbeResult> callback) {
         check(host, port, "tcp", callback);
     }
 
     /** Async check over {@code transport}. */
-    public void check(String host, int port, String transport, Consumer<ProbeResult> callback) {
+    public void check(String host, int port, String transport, CallableConsumer<ProbeResult> callback) {
         List<ProbeDefinition> matching = new ArrayList<>();
         for (ProbeDefinition def : probes) {
             boolean applicable = matchPorts
@@ -99,7 +106,7 @@ public class ProbeChecker {
 
     /** Run matching[idx]; on a completed result deliver it, else advance to the next. */
     private void runFrom(String host, int port, String transport, List<ProbeDefinition> matching,
-                         int idx, ProbeResult last, Consumer<ProbeResult> callback) {
+                         int idx, ProbeResult last, CallableConsumer<ProbeResult> callback) {
         if (idx >= matching.size()) {
             callback.accept(last != null ? last : unknown(host, port, transport, "no-match"));
             return;
@@ -116,7 +123,9 @@ public class ProbeChecker {
             });
             session.start();
         } catch (Exception e) {
+            // Capture the launch exception, then keep going with the remaining probes.
             if (log.isEnabled()) log.getLogger().info("probe launch error: " + e.getMessage());
+            callback.exception(e);
             runFrom(host, port, transport, matching, idx + 1, last, callback);
         }
     }
@@ -124,7 +133,11 @@ public class ProbeChecker {
     /** Blocking convenience for CLI/tests: waits up to {@code maxWaitMs} for a result. */
     public ProbeResult checkBlocking(String host, int port, String transport, long maxWaitMs) {
         CompletableFuture<ProbeResult> future = new CompletableFuture<>();
-        check(host, port, transport, future::complete);
+        check(host, port, transport, new CallableConsumerTask<ProbeResult>()
+                .setConsumer(future::complete)
+                .setExceptionCallback(t -> {
+                    if (log.isEnabled()) log.getLogger().info("probe exception: " + t);
+                }));
         try {
             return future.get(maxWaitMs, TimeUnit.MILLISECONDS);
         } catch (Exception e) {
@@ -196,9 +209,12 @@ public class ProbeChecker {
             System.out.println(GSONUtil.toJSONDefault(result.toNVGenericMap(), true));
         } catch (Exception e) {
             System.err.println("Error: " + e.getMessage());
+            System.out.println("Usage: ProbeChecker <host> <port> [timeoutSec] [probe1.json probe2.json ...]");
+            System.out.println("  Identifies the protocol on host:port.");
+            System.out.println("  With no probe files it uses the bundled JSON probes; if one or more");
+            System.out.println("  *.json files are given, those are loaded/validated and used instead.");
             e.printStackTrace();
         } finally {
-            usage();
             SharedIOUtil.close(nioSocket);
             TaskUtil.waitIfBusyThenClose(100);
         }
