@@ -1,0 +1,25 @@
+{
+  "name": "smtp-starttls-pqc",
+  "service": "smtp",
+  "transport": "tcp",
+  "ports": [25, 587],
+  "priority": 60,
+  "start": "connect",
+  "states": {
+    "connect":     { "action": "connect", "on": { "connected": "banner", "error": "fail", "timeout": "fail" } },
+    "banner":      { "action": "expect", "patterns": [{ "regex": "^220[ -]", "outcome": "ok" }],
+                                          "on": { "ok": "ehlo", "nomatch": "fail", "timeout": "fail", "error": "fail" } },
+    "ehlo":        { "action": "send", "payload": "EHLO {probe.hostname}\r\n", "on": { "sent": "ehloResp", "error": "fail" } },
+    "ehloResp":    { "action": "expect", "patterns": [{ "regex": "STARTTLS", "outcome": "cap" }],
+                                          "on": { "cap": "starttls", "nomatch": "recordPlain", "timeout": "recordPlain", "error": "recordPlain" } },
+    "starttls":    { "action": "starttls", "command": "STARTTLS\r\n", "ready": "^220",
+                                          "on": { "ready": "tls", "timeout": "fail", "nomatch": "fail", "error": "fail" } },
+    "tls":         { "action": "tls-handshake", "mode": "pqc", "on": { "handshaked": "pqc", "error": "recordNoTls", "timeout": "recordNoTls" } },
+    "pqc":         { "action": "pqc-check", "on": { "done": "record" } },
+    "record":      { "action": "record", "on": { "done": "done" } },
+    "recordPlain": { "action": "record", "note": "no-starttls", "on": { "done": "done" } },
+    "recordNoTls": { "action": "record", "note": "starttls-advertised-handshake-failed", "on": { "done": "done" } },
+    "done":        { "action": "done" },
+    "fail":        { "action": "fail" }
+  }
+}

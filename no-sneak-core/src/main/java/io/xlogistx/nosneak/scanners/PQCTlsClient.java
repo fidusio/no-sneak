@@ -32,13 +32,25 @@ public class PQCTlsClient extends DefaultTlsClient {
     // free - no separate OCSP/CRL network call needed.
     private volatile byte[] stapledOCSPResponse;
     private final InetSocketAddress ipAddress;
+    // When true the ClientHello advertises ONLY classical named groups (no ML-KEM
+    // hybrids) — a fully classical handshake. Default false (PQC hybrids offered).
+    private final boolean classicalOnly;
 
     /**
      * Create a PQC-capable TLS client
      * @param ipAddress the server hostname for SNI
      */
     public PQCTlsClient(InetSocketAddress ipAddress) {
-        this(createCrypto(), ipAddress);
+        this(createCrypto(), ipAddress, false);
+    }
+
+    /**
+     * Create a TLS client, optionally restricted to a fully classical handshake.
+     * @param ipAddress the server hostname for SNI
+     * @param classicalOnly if true, advertise only classical groups (no PQC hybrids)
+     */
+    public PQCTlsClient(InetSocketAddress ipAddress, boolean classicalOnly) {
+        this(createCrypto(), ipAddress, classicalOnly);
     }
 
     /**
@@ -47,10 +59,19 @@ public class PQCTlsClient extends DefaultTlsClient {
      * @param ipAddress the server hostname for SNI
      */
     public PQCTlsClient(TlsCrypto crypto, InetSocketAddress ipAddress) {
+        this(crypto, ipAddress, false);
+    }
+
+    /**
+     * Create a TLS client with custom crypto, optionally fully classical.
+     * @param crypto the TLS crypto instance
+     * @param ipAddress the server hostname for SNI
+     * @param classicalOnly if true, advertise only classical groups (no PQC hybrids)
+     */
+    public PQCTlsClient(TlsCrypto crypto, InetSocketAddress ipAddress, boolean classicalOnly) {
         super(crypto);
-
-
         this.ipAddress = ipAddress;
+        this.classicalOnly = classicalOnly;
     }
 
     private static TlsCrypto createCrypto() {
@@ -101,10 +122,12 @@ public class PQCTlsClient extends DefaultTlsClient {
 
         // Always add groups regardless of role (we want to discover PQC support)
 
-        // PQC Hybrid key exchanges (TLS 1.3 only)
-        supportedGroups.add(Integers.valueOf(NamedGroup.X25519MLKEM768));      // X25519 + ML-KEM-768 hybrid
-        supportedGroups.add(Integers.valueOf(NamedGroup.SecP256r1MLKEM768));   // P-256 + ML-KEM-768 hybrid
-        supportedGroups.add(Integers.valueOf(NamedGroup.SecP384r1MLKEM1024));  // P-384 + ML-KEM-1024 hybrid
+        // PQC Hybrid key exchanges (TLS 1.3 only) — skipped for a fully classical handshake.
+        if (!classicalOnly) {
+            supportedGroups.add(Integers.valueOf(NamedGroup.X25519MLKEM768));      // X25519 + ML-KEM-768 hybrid
+            supportedGroups.add(Integers.valueOf(NamedGroup.SecP256r1MLKEM768));   // P-256 + ML-KEM-768 hybrid
+            supportedGroups.add(Integers.valueOf(NamedGroup.SecP384r1MLKEM1024));  // P-384 + ML-KEM-1024 hybrid
+        }
 
         // Classical ECDHE (fallback for TLS 1.2 and servers without PQC)
         supportedGroups.add(Integers.valueOf(NamedGroup.x25519));

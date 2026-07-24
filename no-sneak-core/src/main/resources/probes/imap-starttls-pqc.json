@@ -1,0 +1,26 @@
+{
+  "name": "imap-starttls-pqc",
+  "service": "imap",
+  "transport": "tcp",
+  "ports": [143],
+  "priority": 60,
+  "start": "connect",
+  "states": {
+    "connect":     { "action": "connect", "on": { "connected": "banner", "error": "fail", "timeout": "fail" } },
+    "banner":      { "action": "expect", "patterns": [{ "regex": "^\\* OK", "outcome": "ok" }],
+                     "on": { "ok": "cap", "nomatch": "fail", "timeout": "fail", "error": "fail" } },
+    "cap":         { "action": "send", "payload": "a1 CAPABILITY\r\n", "on": { "sent": "capResp", "error": "fail" } },
+    "capResp":     { "action": "expect", "patterns": [{ "regex": "STARTTLS", "outcome": "has" }],
+                     "on": { "has": "starttls", "nomatch": "recordPlain", "timeout": "recordPlain", "error": "recordPlain" } },
+    "starttls":    { "action": "starttls", "command": "a2 STARTTLS\r\n", "ready": "^a2 OK",
+                     "on": { "ready": "tls", "nomatch": "recordPlain", "timeout": "recordPlain", "error": "fail" } },
+    "tls":         { "action": "tls-handshake", "mode": "pqc",
+                     "on": { "handshaked": "pqc", "error": "recordNoTls", "timeout": "recordNoTls" } },
+    "pqc":         { "action": "pqc-check", "on": { "done": "record" } },
+    "record":      { "action": "record", "note": "imap", "on": { "done": "done" } },
+    "recordPlain": { "action": "record", "note": "imap-no-starttls", "on": { "done": "done" } },
+    "recordNoTls": { "action": "record", "note": "imap-starttls-handshake-failed", "on": { "done": "done" } },
+    "done":        { "action": "done" },
+    "fail":        { "action": "fail" }
+  }
+}

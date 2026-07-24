@@ -1,0 +1,17 @@
+{
+  "name": "https-pqc",
+  "service": "https",
+  "transport": "tcp",
+  "ports": [443, 8443],
+  "priority": 70,
+  "start": "connect",
+  "states": {
+    "connect":     { "action": "connect",      "on": { "connected": "tls", "error": "fail", "timeout": "fail" } },
+    "tls":         { "action": "tls-handshake", "mode": "pqc", "on": { "handshaked": "pqc", "error": "recordNoTls", "timeout": "recordNoTls" } },
+    "pqc":         { "action": "pqc-check",     "on": { "done": "record" } },
+    "record":      { "action": "record",        "on": { "done": "done" } },
+    "recordNoTls": { "action": "record", "note": "tls-handshake-failed", "on": { "done": "done" } },
+    "done":        { "action": "done" },
+    "fail":        { "action": "fail" }
+  }
+}

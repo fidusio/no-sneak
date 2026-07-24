@@ -1,0 +1,16 @@
+{
+  "name": "imaps-pqc",
+  "service": "imaps",
+  "transport": "tcp",
+  "ports": [993],
+  "priority": 65,
+  "start": "connect",
+  "states": {
+    "connect": { "action": "connect", "on": { "connected": "tls", "error": "fail", "timeout": "fail" } },
+    "tls":     { "action": "tls-handshake", "mode": "pqc", "on": { "handshaked": "pqc", "error": "fail", "timeout": "fail" } },
+    "pqc":     { "action": "pqc-check", "on": { "done": "record" } },
+    "record":  { "action": "record", "note": "imaps", "on": { "done": "done" } },
+    "done":    { "action": "done" },
+    "fail":    { "action": "fail" }
+  }
+}

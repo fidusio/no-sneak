@@ -1,7 +1,329 @@
 # NoSneak SSL/TLS & PQC Scanner - Action Plan
 
-> Last Updated: 2026-05-16
+> Last Updated: 2026-07-23
 > Status: **Phase 3 Complete** - Pure NIO Callback Architecture (No CompletableFuture/ForkJoinPool)
+
+---
+
+## Code Analysis — Known Issues & Findings (2026-07-23)
+
+Full-module review of `no-sneak-core` (~13.2k LOC). Findings are grouped by
+subsystem and ordered **most severe first** within each group. File:line refs
+are as of this date. Nothing below has been fixed yet — these are recorded so
+work can resume across sessions. Checkboxes track remediation.
+
+### A. PQC/TLS scanner (`scanners/`, `services/QDZChecker`)
+
+**Correctness / concurrency (high):**
+- [ ] **A1 — Data race on shared `resultBuilder`.** `PQCScanCallback.onHandshakeComplete`
+  (`PQCScanCallback.java:178`) is **not** synchronized, yet Phase-2 callbacks mutate
+  the same `PQCScanResult.Builder` from three different threads: revocation
+  (HTTP/scheduler thread, `onRevocationComplete` ~`:340`), cipher/version probes
+  (selector thread), and the watchdog (scheduler thread, `onScanTimeout` ~`:151`).
+  The `resultBuilder` reference is `volatile` but its internal fields are plain →
+  visibility/ordering race. Fix: guard all builder mutations with the same monitor
+  used for `deliverResult`/`onError`.
+- [ ] **A2 — Watchdog delivers ERROR instead of the promised partial result.**
+  `onScanTimeout` calls `resultBuilder.errorMessage(...)` (`PQCScanCallback.java:153`),
+  but `Builder.errorMessage` sets `success=false, secure=false, overallStatus=ERROR`
+  (`PQCScanResult.java:740-746`), and `build()` then forces `overallStatus=ERROR` for
+  any `!success` (`:1020`). So a scan that completed the handshake but stalled in one
+  Phase-2 probe is reported as a total failure, discarding good data. Fix: deliver a
+  partial result that keeps the handshake status and only annotates the stalled stage.
+- [ ] **A3 — `onCipherEnumerationDone` is not idempotent.** Guard only returns when
+  *not* both TLS1.3+TLS1.2 phases are done (`PQCScanCallback.java:447`); once both are
+  done, a second invocation falls through and calls `checkCompletion()` again →
+  can over-decrement `pendingCount` and deliver early. Many call sites
+  (`:378,382,409,413,437,441` + preference path). Fix: `AtomicBoolean` one-shot guard
+  like `TLSProbeCallback.complete()`.
+
+**Dead / legacy code (medium):**
+- [ ] **A4 — `CipherSuiteEnumerator` and `ProtocolVersionTester` are blocking
+  `java.net.Socket` reimplementations** (`CipherSuiteEnumerator.java:163-315`,
+  `ProtocolVersionTester.java:120-232`), contradicting the pure-NIO mandate, and used
+  only by `FeatureIntegrationTest`. The live path reimplements enumeration in
+  `PQCScanCallback` + `CipherProbeCallback`/`VersionProbeCallback`. Only the nested
+  `CipherInfo` class and static `getVersionName`/`getCipherSuiteName` helpers are used.
+  Fix: extract the helpers, delete the dead blocking logic.
+- [ ] **A5 — Redundant PQC key-group capture.** `PQCTlsClientProtocol` intercepts
+  `process13ServerHello` and exposes `negotiatedNamedGroup`/`isPQCHybridKeyExchange()`
+  (`PQCTlsClientProtocol.java:44-100`) that nothing reads — the orchestrator uses
+  `tlsClient.getNegotiatedKeyExchangeName()` instead. Pick one mechanism.
+- [ ] **A6 — Deprecated/superseded members.** `PQCNIOScanner.verifyCertificateChain`
+  is a `@Deprecated` unused shim (`:243-255`); `Builder.certChainValid` superseded by
+  `certChainTrust` (`PQCScanResult.java:865`); `revocationMethod/Error/Date/Reason`
+  single setters superseded by `revocationResult` (`:887-923`);
+  `NIORevocationChecker.DEFAULT_TIMEOUT_MS`/`shutdown()` vestigial (`shutdown` is no-op).
+
+**Minor:**
+- [ ] **A7 — `parseOCSPResponse` blind-casts** to `HTTPResponseData`
+  (`NIORevocationChecker.java:251`) → `ClassCastException` risk (surfaces as UNKNOWN).
+- [ ] **A8 — `keyExchangeKeySize` never populated** (always 0), even for PQC groups
+  (`PQCScanResult.java:534`).
+- [ ] **A9 — Swallow-but-print `catch` blocks** (`PQCNIOScanner.java:62`,
+  `PQCSessionConfig.java:62`).
+- [ ] **A10 — `PQCScanOptions.defaults()` enables `testTLS10`/`testTLS11`** (`:42-43`),
+  so deprecated versions get probed whenever `testProtocolVersions` is on.
+
+**Missing features (ACTION-PLAN Sprint 4/5, all unimplemented):**
+- [ ] **A11 — No vulnerability scanning at all** (POODLE/BEAST/Heartbleed/ROBOT/DROWN/
+  SWEET32, renegotiation RFC 5746, downgrade/`TLS_FALLBACK_SCSV`, CRIME, session
+  resumption). See "Pending Issues → item 1" checklist.
+- [ ] **A12 — No server-side cipher/named-group enumeration** — scanner only advertises
+  its own groups (`PQCTlsClient.java:98`), never enumerates the server's accepted set.
+- [ ] **A13 — No HTTP security-header analysis and no grading engine.**
+
+### B. nmap scanner (`nmap/`)
+
+**Correctness (high):**
+- [ ] **B1 — `-sS` throws instead of scanning.** `-sS` sets `ScanType.SYN`, but
+  `NMap.main` only registers TCP_CONNECT/UDP engines (`NMap.java:102-107`), so
+  `engines.get(SYN)` is null and `scanStreaming` throws
+  `IllegalStateException: No engine registered for scan type: SYN`
+  (`NMapScanner.java:201-209`). The `!isAvailable()` fallback (`:211`) never fires
+  because it needs a non-null engine. Fix: register a fallback or map SYN→TCP_CONNECT.
+- [ ] **B2 — All raw/stealth engines are fake and mislabeled.** `SYNScanEngine`,
+  `FINScanEngine`, `ACKScanEngine`, `XmasScanEngine`, `NullScanEngine`,
+  `WindowScanEngine` are empty subclasses of `RawScanEngine`, which just does a TCP
+  connect (Java NIO can't do raw sockets, `RawScanEngine.java:21-27`). Subclass Javadoc
+  falsely claims "delegates to nmap -sS / requires root." `isAvailable()` always true
+  while `requiresPrivileges()` reports true — contradictory. Fix: either implement via
+  JNI/pcap, or remove these types and stop advertising them.
+- [ ] **B3 — `service/` and `os/` packages are entirely dead code.** `ServiceDetector`
+  + 6 probes (`HTTP/SSH/FTP/SMTP/TLS/GenericBanner`) and `OSDetector`/`OSFingerprint`
+  are never instantiated by the scan pipeline. `-sV` only captures a raw banner string
+  (`TCPPortScanCallback.java:90-105`) that never becomes a parsed `service` and only
+  shows in JSON/CSV; `PortResult.hasService()` is always false so Normal/Grepable/XML
+  SERVICE/VERSION columns are always blank. `osDetection` config flag does nothing.
+
+**Correctness (medium):**
+- [ ] **B4 — `ICMPPing` latency bug.** On `ConnectException` fallback, latency is set to
+  `System.currentTimeMillis()` (epoch millis, not elapsed) → absurd values
+  (`ICMPPing.java:107`).
+- [ ] **B5 — TCP-only port spec scans nothing.** `getPortsForEngine` returns
+  `getTcpPortList()` for TCP engines; a spec of only `U:` ports yields an empty TCP list
+  and a `-sT` scan silently scans zero ports (`NMapScanner.java:345-361`).
+- [ ] **B6 — Banner-grab stall risk.** With `grabBanner` true and a silent server,
+  `connectedFinished()` returns without completing and relies on an externally-invoked
+  `timeout()` (`TCPPortScanCallback.java:155`); if not called, that port future never
+  completes.
+
+**Design / consistency (low):**
+- [ ] **B7 — `ARPPing` shells out** to `arp -a`/`arp -n` via `ProcessBuilder`
+  (`ARPPing.java:143-201`), contradicting `NMapScanner`'s "no external commands" Javadoc
+  (`NMapScanner.java:31`).
+- [ ] **B8 — Blocking on async threads** — every engine does `Thread.sleep(probeDelayMs)`
+  on the calling thread (`RawScanEngine.java:137`, `TCPConnectScanEngine.java:162`,
+  `UDPScanEngine.java:184`); discovery uses blocking `java.net.Socket`.
+- [ ] **B9 — `-oA` omits CSV** (`NMap.java:206-216`); unguarded `Integer.parseInt` on
+  `--top-ports`/parallelism → uncaught `NumberFormatException`; `--top-ports` >100
+  silently truncates (`PortSpecification.java:186-192`).
+- [ ] **B10 — Declared-but-unimplemented scan types** — `MAIMON`, `IP_PROTOCOL`,
+  `SCTP_INIT`, `SCTP_COOKIE` in `ScanType` with no engines/flags.
+- [ ] **B11 — XML vs JSON confidence mismatch** — XML emits `conf=confidence/10`,
+  JSON emits raw 0–100 (`XMLFormatter.java:186` vs `JSONFormatter.java:203`); moot while
+  service is never set.
+- [ ] **B12 — Dead members** — commented-out `NMapScanner.executor`
+  (`:39,53`), `HostDiscovery.executor`, `UDPScanEngine.nioSocket`, unused
+  `ScanEngine.asyncScan*`, unused `startTime` local (`NMap.java:110`).
+
+### C. `tools/` (admin utilities, unrelated to scanning)
+
+- [ ] **C1 — `DMTool` hardcodes a MongoDB default URL**
+  (`mongodb://localhost:27017/...`, `DMTool.java:38`) though recent git history moved the
+  datastore to local H2 — likely stale.
+- [ ] **C2 — `NoSneakUtil.createDomainSecManager` latent NPE-return.** If `DATA_STORE`
+  is cached but `DOMAIN_MANAGER` is not, `dsm` stays null and null is returned
+  (`NoSneakUtil.java:36-57`) — the creation branch only runs when the datastore is also
+  absent.
+
+### D. Cross-cutting
+
+- [ ] **D1 — README top line is wrong** — says the module is an empty placeholder; it is
+  ~13.2k LOC across two working subsystems.
+- [ ] **D2 — Documentation drift** — this ACTION-PLAN and class Javadoc still reference
+  non-existent names (`PQCCallback`/`ScannerMotherCallback`; actual class is
+  `PQCScanCallback`), a `PQCConnectionHelper.java`, and a `/check-qdz/{domain}/{port}/{timeout}`
+  URI (actual is `/check-qdz/{domain}/{detailed}`, `QDZChecker.java:39`).
+- [ ] **D3 — "Pure NIO / non-blocking" holds in the scan core but not at boundaries** —
+  `NMapScanner.scan()` joins, `RawScanEngine` sleeps, `QDZChecker` calls
+  `future.join()` (`QDZChecker.java:76`).
+
+---
+
+## Probe Framework — JSON-declared FSM protocol prober (2026-07-23)
+
+A JSON-declared, state-machine **protocol-probe framework** in package
+`io.xlogistx.nosneak.probe`. It drives multi-step, possibly multi-connection interrogations of
+an open `ip:port` over the existing zoxweb NIO primitives and emits a **facts-only**
+`ProbeResult` (for a future rules/record layer). Behavior is **data-driven** (JSON picks
+states / transitions / payloads / patterns) but every executable primitive is a **fixed,
+trusted Java class** — JSON never executes arbitrary code. Built, compiled, and **verified
+live** against real servers (see "Verification").
+
+### Package layout
+
+```
+io.xlogistx.nosneak.probe
+├── ProbeChecker.java          identify a port by running probes; library API + CLI main()
+├── ProbeDispatcher.java       nmap seam: open ip:port → select ProbeDefinition → run ProbeSession
+├── ProbeResult.java           facts-only output (+ toNVGenericMap())
+├── model/
+│   ├── ProbeDefinition.java   GSON: name/service/transport/ports/priority/start/states
+│   ├── ProbeState.java        GSON: action + on{} + config (payload/data/patterns/command/ready/mode/note/port)
+│   ├── PatternRule.java       GSON: {regex, outcome} (lazy-compiled Pattern)
+│   └── ProbeDefinitionLoader.java  load classpath /probes/*.json OR filesystem files + graph validation
+├── runtime/
+│   ├── ProbeStateMachine.java builds a zoxweb org.zoxweb.server.fsm.StateMachine from the JSON
+│   ├── ProbeSession.java      execution context: NIO ingress, mode switch, result builder, watchdog
+│   ├── ProbeTCPCallback.java  extends TCPSessionCallback; NIO events → session ingress
+│   └── ProbeUDPCallback.java  deferred UDP seam (stub)
+├── action/
+│   ├── Action.java            interface (name + execute(session, state))
+│   ├── ActionRegistry.java    name → singleton Action
+│   ├── ProbeActionConsumer.java  TriggerConsumer bridge: one per state, runs the Action
+│   ├── ConnectAction · SendAction · ExpectAction · StartTLSAction
+│   ├── TLSHandshakeAction · PQCCheckAction · TLSFactsAction · RecordAction · ReconnectAction
+│   └── TerminalAction         done / fail
+└── discovery/
+    └── HardenedHostDiscovery.java  parallel ICMP + NIO TCP-connect (RST = up)
+
+src/main/resources/probes/
+├── https-pqc.json          443/8443 direct-TLS, PQC classification
+├── https-classical.json    443/8443 direct-TLS, fully classical handshake (mode:"jsse")
+├── smtp-starttls-pqc.json  25/587 STARTTLS → PQC
+├── smtp-starttls.json      25/587 STARTTLS, TLS facts only (no PQC)
+├── imap-starttls-pqc.json  143 STARTTLS → PQC
+├── imaps-pqc.json          993 implicit TLS → PQC
+└── mongodb.json            27017-9 binary isMaster OP_QUERY handshake
+   (BUNDLED = https-pqc, smtp-starttls-pqc, mongodb, imaps-pqc, imap-starttls-pqc;
+    https-classical + smtp-starttls are standalone files, run via an explicit path.)
+```
+
+### Architecture / control flow
+
+```
+ProbeChecker / ProbeDispatcher ─▶ ProbeSession (live channel, ProbeResult.Builder, watchdog)
+                                       ▼ builds + drives
+                                 ProbeStateMachine  →  org.zoxweb.server.fsm.StateMachine
+                                       │  each JSON state = a State (canonical id = state id)
+                                       │  carrying a ProbeActionConsumer (TriggerConsumer)
+                                       ▼  entering a state = publishSync(state, id, session)
+                                 Action library (fixed Java)
+                                 connect·send·expect·starttls·tls-handshake·pqc-check·tls-facts·record·reconnect·done·fail
+                                       ▲  NIO events via ProbeTCPCallback → session.fire(outcome)
+                                       │  tls-handshake/pqc-check reuse PQCSessionConfig·PQCSSLStateMachine·PQCTlsClient·OPSecUtil
+                                       ▼
+                                 ProbeResult (facts-only; toNVGenericMap())
+```
+
+An action reports an **outcome label** — synchronously (`send`, `record`, `pqc-check`,
+`tls-facts`) or later from a NIO/scheduler event (`connect`, `expect`, `tls-handshake`) — via
+`ProbeSession.fire(label)`. `ProbeStateMachine.fire` resolves the current state's `on{}` map and
+`publishSync`es the next state's trigger. One `ProbeSession` outlives individual connections, so
+`reconnect` swaps in a fresh `ProbeTCPCallback` while the machine + accumulated `ProbeResult`
+persist — that is what makes multi-connection probes work.
+
+**Mode switch on one channel:** `ProbeSession` tracks a `Mode` (`CONNECTING`/`EXPECT`/`TLS`).
+Inbound bytes go to the plaintext `expect` matcher or into the reused BC handshake pump. The
+STARTTLS upgrade works because `tls-handshake` starts the BC handshake on the **current
+already-open channel** (`PQCSessionConfig.channel = currentCallback.getChannel()`).
+
+**Concurrency:** all transitions run on the NIO selector or task-scheduler thread, serialised
+through `fire()`/`deliver()`/ingress (all `synchronized`). Each async wait is guarded by an
+`armed` CAS **plus an `armGen` epoch** so a stale timeout from a previous wait window can't
+resolve a later one. Terminal delivery is exactly-once (`terminated` CAS + overall watchdog).
+
+### JSON model & outcome labels
+
+```jsonc
+{ "name": "smtp-starttls-pqc", "service": "smtp", "transport": "tcp",
+  "ports": [25, 587], "priority": 60, "start": "connect",
+  "states": {
+    "connect": { "action": "connect", "on": { "connected": "banner", "error": "fail", "timeout": "fail" } },
+    "banner":  { "action": "expect", "patterns": [{ "regex": "^220[ -]", "outcome": "ok" }],
+                 "on": { "ok": "ehlo", "nomatch": "fail", "timeout": "fail", "error": "fail" } },
+    "done": { "action": "done" }, "fail": { "action": "fail" } } }
+```
+
+Outcome labels (map in `on{}`): `connect`/`reconnect` → `connected`·`error`·`timeout`;
+`send` → `sent`·`error`; `expect` → any pattern `outcome`·`nomatch`·`error`·`timeout`;
+`starttls` → `ready`·`nomatch`·`error`·`timeout`; `tls-handshake` → `handshaked`·`error`·`timeout`;
+`pqc-check`/`tls-facts`/`record` → `done`.
+
+Validation (`ProbeDefinitionLoader.validate`): start state exists, every `on` target resolves,
+every action is known, ≥1 terminal (`done`/`fail`) reachable from start. Unknown JSON fields are
+ignored (forward-compatible).
+
+### Capabilities
+
+- **Binary protocols** — `send` accepts a codec-prefixed **`data`** field: `hex:…`
+  (`SharedStringUtil.hexToBytes`), `base64:…` (`SharedBase64.decode`), or `text:…`/unprefixed
+  (templated UTF-8). `data` beats the legacy `payload` when both present. `expect` decodes the
+  buffer as **ISO-8859-1** (lossless 0–255) so regexes on ASCII markers match inside binary
+  responses (e.g. BSON `ismaster`/`maxWireVersion` in a Mongo reply).
+- **TLS/PQC** — `tls-handshake` `mode:"pqc"` (default) advertises ML-KEM hybrids
+  (X25519MLKEM768, …) + classical; `mode:"jsse"`/`"classical"` advertises **only classical**
+  groups (fully classical handshake), via a `classicalOnly` flag through `PQCTlsClient` →
+  `PQCSessionConfig`. `pqc-check` records TLS facts + classifies PQC/CLASSICAL/UNKNOWN;
+  `tls-facts` records the same TLS facts **without** any PQC classification.
+- **STARTTLS** — mid-session plaintext→TLS upgrade on the same channel (SMTP/IMAP/POP3/FTP-style).
+- **Hardened host detection** — `HardenedHostDiscovery`: parallel ICMP + NIO TCP-connect on
+  443/80/22, first positive wins, RST (connection refused) counts as up.
+
+### ProbeChecker
+
+Identifies the protocol on `host:port` by running probes (first to reach a clean `done` wins,
+priority order). `matchPorts(true)` (default, bundled/dispatcher path) runs only probes whose
+declared `ports` include the target port; `matchPorts(false)` runs **every** provided probe of
+the matching transport regardless of declared ports (for nonstandard ports).
+
+CLI: `java … ProbeChecker <host> <port> [timeoutSec] [probe1.json probe2.json …]`. Integer args
+= timeout; other args = probe JSON **files** (filesystem). With files given it runs them ALL
+(`matchPorts=false`); with none it uses the bundled probes (port-matched). No rebuild needed to
+try a new probe definition.
+
+### Verification (live)
+
+- `mvn -pl no-sneak-core -am compile` / `test-compile` → BUILD SUCCESS.
+- `ProbeChecker google.com 443` → `https / DIRECT_TLS / PQC`, X25519MLKEM768, TLSv1.3.
+- `ProbeChecker … https-classical.json` (mode jsse) → `x25519` / `pqc-status:CLASSICAL`
+  (proves the classical handshake vs the PQC one on the same host).
+- `ProbeChecker smtp.gmail.com 587 … smtp-starttls.json` → `smtp / STARTTLS_UPGRADED`, TLS facts,
+  `pqc:UNKNOWN` (no PQC assessment, as designed).
+- Loading all bundled probes validates the five graphs; `ProbeDefinitionLoaderTest` (pure,
+  no-network) asserts graph validity + rejects malformed graphs + tests pattern matching.
+  (Executing that JUnit test in this environment is blocked only by a missing offline Surefire
+  provider — not a code issue.)
+
+### Design decision & constraint on record
+
+- **Outer FSM on `org.zoxweb.server.fsm.StateMachine`** (trigger-based). The JSON *builds* the
+  machine: each state → a `State` (canonical id = state id) + a `ProbeActionConsumer`
+  (`TriggerConsumer`) bridging to the trusted `Action`. An **inline executor** keeps transitions
+  on the calling thread (no new threading). Migrating to a different engine touches only
+  `ProbeStateMachine` + `ProbeSession.fire`.
+- **NO `MonoStateMachine` anywhere in this project** (decision 2026-07-23). The outer FSM is
+  compliant. Remaining violation (tech debt): the inner TLS/PQC handshake reuses
+  `scanners/PQCSSLStateMachine`, which `extends MonoStateMachine` — kept so the framework works
+  end-to-end, marked `TODO(no-monostatemachine)` in `ProbeSession`, slated for replacement by a
+  direct BC pump (`offerInput`/`readOutput` over `PQCSessionConfig`) or the trigger-based
+  `StateMachine`. No new code may extend/instantiate `MonoStateMachine`.
+
+### Deferred (probe framework)
+
+- **UDP QUIC/DTLS actions** — `ProbeUDPCallback` seam exists; datagram actions + per-remote-address
+  state keying not built.
+- **PQC-READY via `reconnect`** — `pqc-check` reports PQC vs CLASSICAL; a reconnect-based
+  re-offer-hybrids readiness test (→ `PQC_READY`) is a future JSON definition (`reconnect` supports it).
+- **Wire the seam** — call `ProbeDispatcher`/`ProbeChecker` from `NMapScanner`'s service-detection
+  path and/or a REST endpoint; retire the blocking `nmap/service/ServiceDetector`.
+- **Real JSSE `SSLEngine` handshake** — `mode:"jsse"` today is a classical BC handshake; a literal
+  JDK `SSLEngine` pump is optional future work if exact stock-Java behavior must be tested.
+- **App-data over an established TLS session** — `send`/`expect` operate on the raw socket, not
+  through the TLS layer (fine for detection; blocks post-handshake application probing).
+- **No-network FSM test** — an injection seam to drive `ProbeSession` with scripted callbacks and
+  assert traversal paths per branch.
 
 ---
 

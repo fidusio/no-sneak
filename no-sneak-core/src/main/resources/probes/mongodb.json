@@ -1,0 +1,20 @@
+{
+  "name": "mongodb",
+  "service": "mongodb",
+  "transport": "tcp",
+  "ports": [27017, 27018, 27019],
+  "priority": 55,
+  "start": "connect",
+  "states": {
+    "connect": { "action": "connect", "on": { "connected": "hello", "error": "fail", "timeout": "fail" } },
+    "hello": { "action": "send",
+               "data": "hex:3a0000000000000000000000d40700000000000061646d696e2e24636d640000000000ffffffff130000001069734d6173746572000100000000",
+               "on": { "sent": "reply", "error": "fail" } },
+    "reply": { "action": "expect",
+               "patterns": [{ "regex": "ismaster|maxWireVersion|topologyVersion|maxBsonObjectSize|helloOk", "outcome": "mongo" }],
+               "on": { "mongo": "record", "nomatch": "fail", "timeout": "fail", "error": "fail" } },
+    "record": { "action": "record", "note": "mongodb", "on": { "done": "done" } },
+    "done": { "action": "done" },
+    "fail": { "action": "fail" }
+  }
+}

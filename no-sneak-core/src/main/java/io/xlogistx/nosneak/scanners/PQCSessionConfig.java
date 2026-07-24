@@ -47,9 +47,16 @@ public class PQCSessionConfig implements CloseableType {
 
     // Hostname for SNI
     private final InetSocketAddress hostname;
+    // When true, initProtocol() builds a fully-classical TLS client (no PQC hybrids).
+    private final boolean classicalOnly;
 
     public PQCSessionConfig(InetSocketAddress hostname) {
+        this(hostname, false);
+    }
+
+    public PQCSessionConfig(InetSocketAddress hostname, boolean classicalOnly) {
         this.hostname = hostname;
+        this.classicalOnly = classicalOnly;
         // Allocate buffers - 16KB is standard TLS record size
         this.inNetData = ByteBufferUtil.allocateByteBuffer(SharedIOUtil.K_16);
         this.outNetData = ByteBufferUtil.allocateByteBuffer(SharedIOUtil.K_16);
@@ -84,7 +91,7 @@ public class PQCSessionConfig implements CloseableType {
         }
         // Non-blocking constructor
         tlsProtocol = new PQCTlsClientProtocol();
-        tlsClient = new PQCTlsClient(hostname);
+        tlsClient = new PQCTlsClient(hostname, classicalOnly);
     }
 
     /**
