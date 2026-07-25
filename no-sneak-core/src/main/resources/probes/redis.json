@@ -1,0 +1,22 @@
+{
+  "name": "redis",
+  "service": "redis",
+  "transport": "tcp",
+  "ports": [6379],
+  "priority": 55,
+  "start": "connect",
+  "states": {
+    "connect": { "action": "connect", "on": { "connected": "info", "error": "fail", "timeout": "fail" } },
+    "info":    { "action": "send", "data": "text:INFO server\r\n", "on": { "sent": "reply", "error": "fail" } },
+    "reply":   { "action": "expect",
+                 "patterns": [
+                   { "regex": "redis_version:([^\\r\\n]+)", "outcome": "ver", "capture": "version" },
+                   { "regex": "-NOAUTH|-WRONGPASS|-DENIED|-ERR", "outcome": "nover" }
+                 ],
+                 "on": { "ver": "record", "nover": "recordAuth", "nomatch": "fail", "timeout": "fail", "error": "fail" } },
+    "record":     { "action": "record", "note": "redis", "on": { "done": "done" } },
+    "recordAuth": { "action": "record", "note": "redis-auth-required", "on": { "done": "done" } },
+    "done":       { "action": "done" },
+    "fail":       { "action": "fail" }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "pop3",
+  "service": "pop3",
+  "transport": "tcp",
+  "ports": [110],
+  "priority": 60,
+  "start": "connect",
+  "states": {
+    "connect": { "action": "connect", "on": { "connected": "banner", "error": "fail", "timeout": "fail" } },
+    "banner":  { "action": "expect",
+                 "patterns": [{ "regex": "^\\+OK ?([^\\r\\n]*)", "outcome": "ok", "capture": "banner" }],
+                 "on": { "ok": "record", "nomatch": "fail", "timeout": "fail", "error": "fail" } },
+    "record":  { "action": "record", "note": "pop3", "on": { "done": "done" } },
+    "done":    { "action": "done" },
+    "fail":    { "action": "fail" }
+  }
+}

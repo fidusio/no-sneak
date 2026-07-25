@@ -7,7 +7,7 @@
   "start": "connect",
   "states": {
     "connect":     { "action": "connect", "on": { "connected": "banner", "error": "fail", "timeout": "fail" } },
-    "banner":      { "action": "expect", "patterns": [{ "regex": "^\\* OK", "outcome": "ok" }],
+    "banner":      { "action": "expect", "patterns": [{ "regex": "^\\* OK ?([^\\r\\n]*)", "outcome": "ok", "capture": "banner" }],
                      "on": { "ok": "cap", "nomatch": "fail", "timeout": "fail", "error": "fail" } },
     "cap":         { "action": "send", "payload": "a1 CAPABILITY\r\n", "on": { "sent": "capResp", "error": "fail" } },
     "capResp":     { "action": "expect", "patterns": [{ "regex": "STARTTLS", "outcome": "has" }],

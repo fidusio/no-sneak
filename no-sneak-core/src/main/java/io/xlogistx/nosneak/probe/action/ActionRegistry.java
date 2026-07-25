@@ -17,6 +17,7 @@ public final class ActionRegistry {
         register(new SendAction());
         register(new ExpectAction());
         register(new StartTLSAction());
+        register(new TLSConnectAction());
         register(new TLSHandshakeAction());
         register(new PQCCheckAction());
         register(new TLSFactsAction());

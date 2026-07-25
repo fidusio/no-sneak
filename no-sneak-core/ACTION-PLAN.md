@@ -176,28 +176,40 @@ io.xlogistx.nosneak.probe
 ├── runtime/
 │   ├── ProbeStateMachine.java builds a zoxweb org.zoxweb.server.fsm.StateMachine from the JSON
 │   ├── ProbeSession.java      execution context: NIO ingress, mode switch, result builder, watchdog
-│   ├── ProbeTCPCallback.java  extends TCPSessionCallback; NIO events → session ingress
+│   ├── ProbeTCPCallback.java  extends TCPSessionCallback; raw NIO events → session ingress
+│   ├── ProbeSecureCallback.java  extends TCPSessionCallback; JSSE-TLS (tls-connect), decrypted app-data → ingress
 │   └── ProbeUDPCallback.java  deferred UDP seam (stub)
 ├── action/
 │   ├── Action.java            interface (name + execute(session, state))
 │   ├── ActionRegistry.java    name → singleton Action
 │   ├── ProbeActionConsumer.java  TriggerConsumer bridge: one per state, runs the Action
-│   ├── ConnectAction · SendAction · ExpectAction · StartTLSAction
+│   ├── ConnectAction · SendAction · ExpectAction · StartTLSAction · TLSConnectAction
 │   ├── TLSHandshakeAction · PQCCheckAction · TLSFactsAction · RecordAction · ReconnectAction
 │   └── TerminalAction         done / fail
 └── discovery/
     └── HardenedHostDiscovery.java  parallel ICMP + NIO TCP-connect (RST = up)
 
 src/main/resources/probes/
-├── https-pqc.json          443/8443 direct-TLS, PQC classification
+├── https-pqc.json          443/8443 direct-TLS, PQC classification (BC)
+├── https-version.json      443/8443 tls-connect (JSSE) → GET → Server-header version capture
 ├── https-classical.json    443/8443 direct-TLS, fully classical handshake (mode:"jsse")
-├── smtp-starttls-pqc.json  25/587 STARTTLS → PQC
+├── smtp-starttls-pqc.json  25/587 STARTTLS → PQC (+ banner capture)
 ├── smtp-starttls.json      25/587 STARTTLS, TLS facts only (no PQC)
-├── imap-starttls-pqc.json  143 STARTTLS → PQC
+├── imap-starttls-pqc.json  143 STARTTLS → PQC (+ banner capture)
 ├── imaps-pqc.json          993 implicit TLS → PQC
-└── mongodb.json            27017-9 binary isMaster OP_QUERY handshake
-   (BUNDLED = https-pqc, smtp-starttls-pqc, mongodb, imaps-pqc, imap-starttls-pqc;
-    https-classical + smtp-starttls are standalone files, run via an explicit path.)
+├── mongodb.json            27017-9 isMaster OP_QUERY detect → buildInfo OP_MSG → version capture
+├── ssh.json                22/2222 banner grab → service-version capture
+├── ftp.json                21 banner → version;   pop3.json 110 banner → banner
+├── redis.json              6379 INFO server → redis_version;   mysql.json 3306 handshake pkt → version
+├── http.json               80/8080 GET → Server-header version
+├── postgres-db.json        5432 SSLRequest→'S'→TLS (standard Postgres-with-SSL, gated) prio 66
+├── postgres-version.json   5432 plaintext StartupMessage → server_version (best-effort, trust-auth)
+└── postgres-tls.json       5432 tls-connect → StartupMessage over TLS (implicit-TLS Postgres) prio 54
+   (BUNDLED = https-pqc, smtp-starttls-pqc, mongodb, imaps-pqc, imap-starttls-pqc, ssh, ftp, pop3,
+    redis, mysql, http, postgres-db, postgres-version, postgres-tls, https-version; https-classical
+    + smtp-starttls are standalone files, run via an explicit path.)
+   (portScoped=true → declared-ports-only, excluded from the fallback tier: https-pqc, imaps-pqc,
+    https-classical — ungated any-TLS probes that must not claim an unrelated port.)
 ```
 
 ### Architecture / control flow
@@ -267,26 +279,67 @@ ignored (forward-compatible).
   groups (fully classical handshake), via a `classicalOnly` flag through `PQCTlsClient` →
   `PQCSessionConfig`. `pqc-check` records TLS facts + classifies PQC/CLASSICAL/UNKNOWN;
   `tls-facts` records the same TLS facts **without** any PQC classification.
-- **STARTTLS** — mid-session plaintext→TLS upgrade on the same channel (SMTP/IMAP/POP3/FTP-style).
+- **Service-version detection** — an `expect` pattern rule may carry a `capture` (fact name) +
+  optional `group` (default 1). On match, the engine extracts that regex group and records it on
+  `ProbeResult` as a service fact: `capture:"version"` → headline `service-version`
+  (`getServiceVersion()`), any other name → `service-<name>` (e.g. `service-banner`,
+  `service-product`); all also in `getServiceFacts()`. Best-effort (never fails the probe),
+  CR/LF-collapsed, 256-char-capped. Verified live: `ssh.json` on scanme.nmap.org →
+  `OpenSSH_6.6.1p1 Ubuntu-2ubuntu2.13`; `smtp-starttls-pqc` on gmail → banner + STARTTLS/PQC intact.
+  Bundled version probes: ssh, ftp, pop3, redis (`INFO server`→`redis_version`), mysql (binary
+  handshake pkt), http (`Server:` header), mongodb (detect via isMaster, then a `buildInfo` OP_MSG
+  → `version`; best-effort — needs buildInfo readable pre-auth on a 3.6+ server), postgres-version
+  (StartupMessage→`server_version`, best-effort trust-auth), plus https-version over TLS (below).
+  **Auth-gated version limits (protocol reality, not a tool gap):** PostgreSQL with SSL + SCRAM
+  (e.g. lax-2.xlogistx.io:5432) returns an `AuthenticationSASL` challenge, NOT `server_version`,
+  until authenticated — so its version is unobtainable without credentials (verified live);
+  `postgres-db` still identifies it. MongoDB with access control may reject `buildInfo` pre-auth →
+  identified without version.
+- **Secure app-data over TLS (`tls-connect`)** — a JSSE-backed secure channel
+  (`ProbeSecureCallback` extends `TCPSessionCallback`; trust-all `SSLContextInfo`, **RSA-capable**,
+  any/untrusted cert). `tls-connect` opens a fresh direct-TLS connection; on `connected` the session
+  is in **secure mode** so the ordinary `send`/`expect`/`capture` ride *through* the TLS session
+  (encrypt via `getOutputStream().write`, decrypt via `accept(ByteBuffer)`). Enables reading e.g. an
+  HTTPS `Server:` header — the app-data-over-TLS the BC path can't do. The BC/PQC path is untouched
+  (distinct callback; a `secure` latch only ever set by `tls-connect`). Handshake time is bounded by
+  the existing `arm()` wait (`connectedFinished` fires only post-handshake). Verified live:
+  `https-version` on github.com → `service-version: github.com`; on an RSA-only local TLS 1.3 server
+  → handshake + detection OK.
+- **STARTTLS** — mid-session plaintext→TLS upgrade on the same channel (SMTP/IMAP/POP3/FTP-style),
+  BC handshake for PQC facts (app-data through a *mid-session* upgrade is still deferred — see below).
 - **Hardened host detection** — `HardenedHostDiscovery`: parallel ICMP + NIO TCP-connect on
   443/80/22, first positive wins, RST (connection refused) counts as up.
 
 ### ProbeChecker
 
-Identifies the protocol on `host:port` by running probes (first to reach a clean `done` wins,
-priority order). `matchPorts(true)` (default, bundled/dispatcher path) runs only probes whose
-declared `ports` include the target port; `matchPorts(false)` runs **every** provided probe of
-the matching transport regardless of declared ports (for nonstandard ports).
+Identifies the protocol on `host:port` and its service version. Candidates are ordered in **two
+tiers** (`orderedCandidates`): tier 1 = probes whose declared `ports` include the target (priority
+desc), tier 2 = the remaining transport-compatible probes as a **fallback** (priority desc, but
+`portScoped` probes are **excluded** from tier 2). So a
+known port tries its declared probes first, then falls back to the rest until a match — which is how
+HTTPS on a **nonstandard port** (4443/8123/…) is detected (no tier-1 match → tier-2 runs the TLS
+probes). `matchPorts(false)` (explicit CLI files) flattens to a single priority-ordered tier.
 
-The async `check(...)` callback is a `CallableConsumer<ProbeResult>` (zoxweb) — `accept(result)`
-gets the identifying/best result, and `exception(t)` **captures** a probe-launch exception (the
-check still advances to the remaining probes). `checkBlocking(...)` wires this to a
-`CompletableFuture` via a `CallableConsumerTask`.
+Two modes:
+- **match-first** (`check`, default): deliver the first probe that reaches a clean `done`.
+- **match-all** (`checkAll`): run every candidate and return *all* completed results (e.g. HTTPS on
+  443 → both `https-pqc` PQC posture **and** `https-version` Server-header version). Ungated
+  any-TLS probes (`https-pqc`, `imaps-pqc`) are `portScoped`, so they only appear on their declared
+  ports — they no longer mislabel an unrelated TLS service (e.g. Postgres-over-TLS on 5432 was being
+  reported as `https`; fixed).
 
-CLI: `java … ProbeChecker <host> <port> [timeoutSec] [probe1.json probe2.json …]`. Integer args
-= timeout; other args = probe JSON **files** (filesystem). With files given it runs them ALL
-(`matchPorts=false`); with none it uses the bundled probes (port-matched). No rebuild needed to
-try a new probe definition.
+When **no** probe identifies the port, both modes deliver a clear `complete=false`
+**`no-probe-identified`** result (via `noneIdentified(...)`) whose note lists every probe tried
+(also the `probes-tried` service fact) — never the last probe's misleading partial result. The CLI
+`--all` header reads "No probe identified host:port" when nothing matched.
+
+The async `check`/`checkAll` callbacks are `CallableConsumer`s (zoxweb) — `accept(...)` gets the
+result(s), `exception(t)` **captures** a probe-launch exception (the check still advances).
+`checkBlocking`/`checkBlockingAll` wire these to a `CompletableFuture`.
+
+CLI: `java … ProbeChecker <host> <port> [timeoutSec] [--all|--first] [probe1.json …]`. Integer arg
+= timeout; `--all` = match-all; other non-flag args = probe JSON **files** (filesystem, run ALL);
+with none it uses the bundled probes (tier-1-first). No rebuild needed to try a new probe definition.
 
 ### Verification (live)
 
@@ -323,10 +376,17 @@ try a new probe definition.
   re-offer-hybrids readiness test (→ `PQC_READY`) is a future JSON definition (`reconnect` supports it).
 - **Wire the seam** — call `ProbeDispatcher`/`ProbeChecker` from `NMapScanner`'s service-detection
   path and/or a REST endpoint; retire the blocking `nmap/service/ServiceDetector`.
-- **Real JSSE `SSLEngine` handshake** — `mode:"jsse"` today is a classical BC handshake; a literal
-  JDK `SSLEngine` pump is optional future work if exact stock-Java behavior must be tested.
-- **App-data over an established TLS session** — `send`/`expect` operate on the raw socket, not
-  through the TLS layer (fine for detection; blocks post-handshake application probing).
+- **Real JSSE `SSLEngine` handshake** — `mode:"jsse"` (BC `classicalOnly`) is still a BC handshake;
+  the `tls-connect` path DOES use a literal JDK `SSLEngine` (via `TCPSessionCallback`) but only for
+  the secure app-data flow, not as a `tls-handshake` mode.
+- **App-data over an established TLS session** — DONE for **direct/implicit TLS** via `tls-connect`
+  (`send`/`expect`/`capture` ride the JSSE TLS session; e.g. `https-version`). Still deferred: a
+  **mid-session STARTTLS upgrade followed by application data** (would need a mid-session JSSE
+  upgrade on `TCPSessionCallback`) — so Postgres-over-**SSL** `server_version` and app-data after
+  SMTP/IMAP STARTTLS are not yet reachable (plaintext/trust-auth Postgres is, via `postgres-version`).
+- **Gate `imaps-pqc` (and ungated direct-TLS probes)** — they identify any TLS server, so they can
+  false-positive in match-all on non-declared ports; `tls-connect` now makes a banner-gated IMAPS
+  version probe feasible (deferred; only HTTPS secure app-data shipped this pass).
 - **No-network FSM test** — an injection seam to drive `ProbeSession` with scripted callbacks and
   assert traversal paths per branch.
 

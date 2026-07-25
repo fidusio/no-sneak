@@ -4,6 +4,7 @@
   "transport": "tcp",
   "ports": [443, 8443],
   "priority": 50,
+  "portScoped": true,
   "start": "connect",
   "states": {
     "connect": { "action": "connect", "on": { "connected": "tls", "error": "fail", "timeout": "fail" } },

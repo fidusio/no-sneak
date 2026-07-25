@@ -27,6 +27,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.util.List;
+import java.util.regex.Matcher;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -57,7 +58,7 @@ public class ProbeSession {
     public static final LogWrapper log = new LogWrapper(ProbeSession.class).setEnabled(false);
 
     /** How inbound bytes on the current channel are interpreted. */
-    enum Mode { CONNECTING, EXPECT, TLS, IDLE }
+    enum Mode { CONNECTING, EXPECT, TLS, IDLE, SECURE_CONNECTING }
 
     private final NIOSocket nioSocket;
     private final IPAddress target;
@@ -82,6 +83,10 @@ public class ProbeSession {
 
     // Live connection state
     private volatile ProbeTCPCallback currentCallback;
+    // Secure (JSSE) connection state — set only by openSecureConnection (tls-connect).
+    // The raw/BC path never sees secure==true, so it stays byte-for-byte unchanged.
+    private volatile ProbeSecureCallback currentSecureCallback;
+    private volatile boolean secure = false;
     private volatile Mode mode = Mode.IDLE;
     private int connectionIndex = 0;
     private int currentPort;
@@ -204,11 +209,13 @@ public class ProbeSession {
 
     // ==================== Action primitives ====================
 
-    /** connect (and reconnect): open a fresh channel to {@code port}. */
+    /** connect (and reconnect): open a fresh raw channel to {@code port}. */
     public void openConnection(int port) {
         connectionIndex++;
         currentPort = port;
         mode = Mode.CONNECTING;
+        secure = false;
+        currentSecureCallback = null;
         receivedData = false;
         accumulator.reset();
         pqcConfig = null;
@@ -220,6 +227,37 @@ public class ProbeSession {
             nioSocket.addClientSocket(cb, timeoutSec);
         } catch (Exception e) {
             if (log.isEnabled()) log.getLogger().info("connect error: " + e.getMessage());
+            fireArmed("error");
+        }
+    }
+
+    /**
+     * tls-connect: open a fresh channel to {@code port} and perform a JSSE TLS
+     * handshake (RSA-capable, trust-all) via {@link ProbeSecureCallback}. On success
+     * the session is in secure mode, so the ordinary {@code send}/{@code expect}
+     * actions exchange application data <em>through</em> the TLS session. Fires
+     * {@code connected} only after the handshake completes; {@code error}/{@code timeout}
+     * otherwise (the single {@link #arm()} window spans TCP-connect + handshake because
+     * {@code connectedFinished} is deferred until after the handshake).
+     */
+    public void openSecureConnection(int port) {
+        connectionIndex++;
+        currentPort = port;
+        mode = Mode.SECURE_CONNECTING;
+        secure = true;
+        receivedData = false;
+        accumulator.reset();
+        pqcConfig = null;
+        pqcSM = null;
+        arm();
+        try {
+            ProbeSecureCallback cb = new ProbeSecureCallback(
+                    this, new IPAddress(target.getInetAddress(), port), connectionIndex, false);
+            currentSecureCallback = cb;
+            currentCallback = null; // raw ingress identity checks now reject stray events
+            nioSocket.addClientSocket(cb, timeoutSec);
+        } catch (Exception e) {
+            if (log.isEnabled()) log.getLogger().info("secure connect error: " + e);
             fireArmed("error");
         }
     }
@@ -278,6 +316,11 @@ public class ProbeSession {
     }
 
     private boolean writeBytes(byte[] data) {
+        if (secure) {
+            // Encrypt-and-send through the established TLS session.
+            ProbeSecureCallback cb = currentSecureCallback;
+            return cb != null && cb.writeApp(data);
+        }
         ProbeTCPCallback cb = currentCallback;
         if (cb == null || cb.getChannel() == null || data == null) {
             return false;
@@ -458,6 +501,36 @@ public class ProbeSession {
         }
     }
 
+    // ==================== Secure (JSSE) NIO ingress (from ProbeSecureCallback) ====================
+
+    /** TLS handshake completed on the secure channel. */
+    synchronized void onSecureConnected(ProbeSecureCallback cb) {
+        if (cb != currentSecureCallback) return;
+        fireArmed("connected");
+    }
+
+    /** Decrypted application data from the secure channel — same accumulate + match path as plaintext. */
+    synchronized void onSecureInbound(ProbeSecureCallback cb, byte[] bytes) {
+        if (cb != currentSecureCallback || bytes == null || bytes.length == 0) return;
+        receivedData = true;
+        accumulator.write(bytes, 0, bytes.length);
+        if (mode == Mode.EXPECT) {
+            matchExpect();
+        }
+    }
+
+    synchronized void onSecureException(ProbeSecureCallback cb, Throwable t) {
+        if (cb != currentSecureCallback) return;
+        if (log.isEnabled()) log.getLogger().info("secure connection exception: " + t);
+        switch (mode) {
+            case EXPECT:
+                fireArmed(receivedData ? "nomatch" : "error");
+                break;
+            default:
+                fireArmed("error");
+        }
+    }
+
     private void matchExpect() {
         List<PatternRule> patterns = expectPatterns;
         if (patterns == null) return;
@@ -467,13 +540,42 @@ public class ProbeSession {
         // unaffected (ASCII is a subset).
         String data = accumulator.toString(StandardCharsets.ISO_8859_1);
         for (PatternRule rule : patterns) {
-            if (rule.pattern().matcher(data).find()) {
+            Matcher m = rule.pattern().matcher(data);
+            if (m.find()) {
+                captureFact(rule, m);
                 accumulator.reset();
                 fireArmed(rule.getOutcome());
                 return;
             }
         }
         // no match yet: keep waiting for more bytes / timeout / close
+    }
+
+    /**
+     * If the matched rule declares a {@code capture}, extract its capture group and
+     * record it as a service fact (e.g. a banner-derived version string). Any
+     * extraction failure is swallowed — version detection is best-effort and must
+     * never derail the probe.
+     */
+    private void captureFact(PatternRule rule, Matcher m) {
+        String name = rule.getCapture();
+        if (name == null || name.isEmpty()) return;
+        int g = rule.getCaptureGroup();
+        if (g < 0 || g > m.groupCount()) return;
+        try {
+            String v = m.group(g);
+            if (v != null) {
+                result.fact(name, cleanFact(v));
+            }
+        } catch (Exception ignored) {
+            // malformed group ref / no match content: skip this fact
+        }
+    }
+
+    /** Normalize a captured fact: drop CR/LF, trim, and bound the length. */
+    private static String cleanFact(String v) {
+        String s = v.replace('\r', ' ').replace('\n', ' ').trim();
+        return s.length() > 256 ? s.substring(0, 256) : s;
     }
 
     // ==================== Helpers ====================
@@ -506,6 +608,11 @@ public class ProbeSession {
         ProbeTCPCallback cb = currentCallback;
         if (cb != null) {
             SharedIOUtil.close(cb);
+        }
+        ProbeSecureCallback scb = currentSecureCallback;
+        if (scb != null) {
+            SharedIOUtil.close(scb); // base delegate closes channel + SSL config (close-notify)
+            currentSecureCallback = null;
         }
     }
 }

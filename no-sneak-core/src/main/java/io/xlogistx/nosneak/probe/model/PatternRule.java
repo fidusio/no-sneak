@@ -15,6 +15,13 @@ public class PatternRule {
     private String regex;
     private String outcome;
 
+    // Optional service-fact extraction: when this rule matches, the regex capture
+    // group `group` (default 1; 0 = whole match) is recorded on the ProbeResult
+    // under the fact name `capture` (e.g. "version", "product", "banner"),
+    // serialized as "service-<capture>". Absent `capture` ⇒ no extraction.
+    private String capture;
+    private Integer group;
+
     // Lazily-compiled, cached pattern (transient: not part of the JSON model).
     private transient Pattern compiled;
 
@@ -32,6 +39,16 @@ public class PatternRule {
 
     public String getOutcome() {
         return outcome;
+    }
+
+    /** The service-fact name to record on a match, or {@code null} to extract nothing. */
+    public String getCapture() {
+        return capture;
+    }
+
+    /** The regex capture-group index for {@link #getCapture()} (default 1; 0 = whole match). */
+    public int getCaptureGroup() {
+        return group == null ? 1 : group;
     }
 
     /**

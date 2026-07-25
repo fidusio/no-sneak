@@ -27,7 +27,7 @@ public final class ProbeDefinitionLoader {
 
     /** The action names recognised by the fixed action library. */
     public static final Set<String> KNOWN_ACTIONS = new HashSet<>(Arrays.asList(
-            "connect", "send", "expect", "starttls", "tls-handshake",
+            "connect", "send", "expect", "starttls", "tls-connect", "tls-handshake",
             "pqc-check", "tls-facts", "record", "reconnect", "done", "fail"));
 
     /** Actions that terminate the state machine (no outgoing transitions required). */
@@ -39,7 +39,17 @@ public final class ProbeDefinitionLoader {
             "/probes/smtp-starttls-pqc.json",
             "/probes/mongodb.json",
             "/probes/imaps-pqc.json",
-            "/probes/imap-starttls-pqc.json"
+            "/probes/imap-starttls-pqc.json",
+            "/probes/ssh.json",
+            "/probes/ftp.json",
+            "/probes/pop3.json",
+            "/probes/redis.json",
+            "/probes/mysql.json",
+            "/probes/http.json",
+            "/probes/postgres-db.json",
+            "/probes/postgres-version.json",
+            "/probes/postgres-tls.json",
+            "/probes/https-version.json"
     };
 
     private ProbeDefinitionLoader() {

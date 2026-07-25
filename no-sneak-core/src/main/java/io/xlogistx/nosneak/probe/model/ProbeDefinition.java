@@ -20,6 +20,10 @@ public class ProbeDefinition {
     private String transport;   // "tcp" | "udp"
     private int[] ports;
     private int priority = 50;  // higher = preferred when several definitions match a port
+    // When true, this probe only runs on its declared ports and is NOT tried as a generic
+    // fallback on other ports. Set it on ungated "any-TLS" catch-alls (e.g. https-pqc,
+    // imaps-pqc) so they can't mislabel an arbitrary TLS service (Postgres-over-TLS, etc.).
+    private boolean portScoped = false;
     private String start;       // id of the initial state
     private Map<String, ProbeState> states;
 
@@ -41,6 +45,14 @@ public class ProbeDefinition {
 
     public int getPriority() {
         return priority;
+    }
+
+    /**
+     * If true, this probe runs only on its declared {@code ports} and is excluded from the generic
+     * fallback tier (so an ungated any-TLS probe cannot claim an unrelated port).
+     */
+    public boolean isPortScoped() {
+        return portScoped;
     }
 
     public String getStart() {

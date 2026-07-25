@@ -1,0 +1,24 @@
+{
+  "name": "postgres-version",
+  "service": "postgresql",
+  "transport": "tcp",
+  "ports": [5432],
+  "priority": 55,
+  "start": "connect",
+  "states": {
+    "connect": { "action": "connect", "on": { "connected": "startup", "error": "fail", "timeout": "fail" } },
+    "startup": { "action": "send",
+                 "data": "hex:00000029000300007573657200706f73746772657300646174616261736500706f7374677265730000",
+                 "on": { "sent": "reply", "error": "fail" } },
+    "reply":   { "action": "expect",
+                 "patterns": [
+                   { "regex": "server_version\\x00([0-9][^\\x00]*)\\x00", "outcome": "ver", "capture": "version" },
+                   { "regex": "(?i)^E[\\s\\S]{0,400}?(FATAL|password|pg_hba|does not exist|no encryption|SSL)", "outcome": "pgerr" }
+                 ],
+                 "on": { "ver": "record", "pgerr": "recordNoVer", "nomatch": "fail", "timeout": "fail", "error": "fail" } },
+    "record":      { "action": "record", "note": "postgresql", "on": { "done": "done" } },
+    "recordNoVer": { "action": "record", "note": "postgresql-auth-required", "on": { "done": "done" } },
+    "done":        { "action": "done" },
+    "fail":        { "action": "fail" }
+  }
+}

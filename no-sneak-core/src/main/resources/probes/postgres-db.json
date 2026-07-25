@@ -1,0 +1,88 @@
+{
+  "name": "postgresql",
+  "service": "postgresql",
+  "transport": "tcp",
+  "ports": [5432],
+  "priority": 66,
+  "start": "connect",
+  "states": {
+    "connect": {
+      "action": "connect",
+      "on": {
+        "connected": "sslRequest",
+        "error": "fail",
+        "timeout": "fail"
+      }
+    },
+    "sslRequest": {
+      "action": "send",
+      "data": "hex:0000000804d2162f",
+      "on": {
+        "sent": "sslResponse",
+        "error": "fail"
+      }
+    },
+    "sslResponse": {
+      "action": "expect",
+      "patterns": [
+        {
+          "regex": "^S",
+          "outcome": "ssl"
+        },
+        {
+          "regex": "^N",
+          "outcome": "postgres"
+        }
+      ],
+      "on": {
+        "ssl": "tls",
+        "postgres": "recordPlain",
+        "nomatch": "fail",
+        "error": "fail",
+        "timeout": "fail"
+      }
+    },
+    "tls": {
+      "action": "tls-handshake",
+      "mode": "pqc",
+      "on": {
+        "handshaked": "pqc",
+        "error": "recordTlsFailed",
+        "timeout": "recordTlsFailed"
+      }
+    },
+    "pqc": {
+      "action": "pqc-check",
+      "on": {
+        "done": "recordTls"
+      }
+    },
+    "recordTls": {
+      "action": "record",
+      "note": "postgresql-tls",
+      "on": {
+        "done": "done"
+      }
+    },
+    "recordPlain": {
+      "action": "record",
+      "note": "postgresql-no-tls",
+      "on": {
+        "done": "done"
+      }
+    },
+    "recordTlsFailed": {
+      "action": "record",
+      "note": "postgresql-tls-handshake-failed",
+      "on": {
+        "done": "done"
+      }
+    },
+    "done": {
+      "action": "done"
+    },
+    "fail": {
+      "action": "fail"
+    }
+  }
+}

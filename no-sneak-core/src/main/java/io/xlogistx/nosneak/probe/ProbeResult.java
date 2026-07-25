@@ -7,7 +7,9 @@ import org.zoxweb.shared.util.NVInt;
 import org.zoxweb.shared.util.NVLong;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * The structured, <em>facts-only</em> output of one probe run. It records what
@@ -65,6 +67,9 @@ public class ProbeResult {
     private final long observedAtMs;     // capture time of the observation
     private final long durationMs;
     private final List<ConnectionTrace> connections;
+    // Captured service facts (banner-derived), keyed by author-chosen name
+    // (e.g. "version", "product", "banner"); serialized as "service-<name>".
+    private final Map<String, String> serviceFacts;
 
     private ProbeResult(Builder b) {
         this.host = b.host;
@@ -85,6 +90,7 @@ public class ProbeResult {
         this.observedAtMs = b.observedAtMs;
         this.durationMs = b.durationMs;
         this.connections = b.connections;
+        this.serviceFacts = b.serviceFacts;
     }
 
     public String getHost() { return host; }
@@ -102,6 +108,15 @@ public class ProbeResult {
     public long getObservedAtMs() { return observedAtMs; }
     public List<ConnectionTrace> getConnections() { return connections; }
 
+    /** All captured service facts (banner-derived), or an empty map if none. */
+    public Map<String, String> getServiceFacts() { return serviceFacts; }
+
+    /** The detected service version string (the {@code "version"} fact), or {@code null}. */
+    public String getServiceVersion() { return serviceFacts.get("version"); }
+
+    /** A captured service fact by name (e.g. {@code "product"}, {@code "banner"}), or {@code null}. */
+    public String getServiceFact(String name) { return serviceFacts.get(name); }
+
     /**
      * Render as an {@link NVGenericMap} in the same house style as
      * {@code PQCScanResult.toNVGenericMap}, for the future record layer / JSON.
@@ -113,6 +128,11 @@ public class ProbeResult {
         nvgm.add("transport", transport);
         if (probeName != null) nvgm.add("probe", probeName);
         if (service != null) nvgm.add("service", service);
+        if (serviceFacts != null) {
+            for (Map.Entry<String, String> e : serviceFacts.entrySet()) {
+                nvgm.add("service-" + e.getKey(), e.getValue());
+            }
+        }
         nvgm.add("tls-state", tlsState.name());
         nvgm.add("pqc-status", pqcStatus.name());
         if (tlsVersion != null) nvgm.add("tls-version", tlsVersion);
@@ -141,8 +161,10 @@ public class ProbeResult {
 
     @Override
     public String toString() {
+        String version = serviceFacts.get("version");
         return "ProbeResult{" + host + ":" + port + "/" + transport
-                + " service=" + service + " tls=" + tlsState + " pqc=" + pqcStatus
+                + " service=" + service + (version != null ? " version=" + version : "")
+                + " tls=" + tlsState + " pqc=" + pqcStatus
                 + " complete=" + complete + (note != null ? " note=" + note : "") + "}";
     }
 
@@ -173,6 +195,7 @@ public class ProbeResult {
         private long observedAtMs = System.currentTimeMillis();
         private long durationMs;
         private final List<ConnectionTrace> connections = new ArrayList<>();
+        private final Map<String, String> serviceFacts = new LinkedHashMap<>();
 
         private Builder(String host, int port, String transport) {
             this.host = host;
@@ -203,6 +226,18 @@ public class ProbeResult {
 
         public Builder addConnection(int index, int port, String outcome) {
             this.connections.add(new ConnectionTrace(index, port, outcome));
+            return this;
+        }
+
+        /**
+         * Record a captured service fact (e.g. {@code version}, {@code product},
+         * {@code banner}) extracted from a matched {@code expect} pattern. Blank
+         * names/values are ignored; a later capture of the same name overwrites.
+         */
+        public Builder fact(String name, String value) {
+            if (name != null && !name.isEmpty() && value != null && !value.isEmpty()) {
+                this.serviceFacts.put(name, value);
+            }
             return this;
         }
 

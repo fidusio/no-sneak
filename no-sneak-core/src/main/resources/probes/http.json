@@ -1,0 +1,24 @@
+{
+  "name": "http",
+  "service": "http",
+  "transport": "tcp",
+  "ports": [80, 8080],
+  "priority": 55,
+  "start": "connect",
+  "states": {
+    "connect": { "action": "connect", "on": { "connected": "get", "error": "fail", "timeout": "fail" } },
+    "get":     { "action": "send",
+                 "data": "text:GET / HTTP/1.0\r\nHost: {probe.hostname}\r\nUser-Agent: no-sneak\r\nConnection: close\r\nAccept: */*\r\n\r\n",
+                 "on": { "sent": "resp", "error": "fail" } },
+    "resp":    { "action": "expect",
+                 "patterns": [
+                   { "regex": "(?i)Server:\\s*([^\\r\\n]+)", "outcome": "server", "capture": "version" },
+                   { "regex": "^HTTP/.*?\\r\\n\\r\\n", "outcome": "noserver" }
+                 ],
+                 "on": { "server": "record", "noserver": "recordNoServer", "nomatch": "fail", "timeout": "fail", "error": "fail" } },
+    "record":         { "action": "record", "note": "http", "on": { "done": "done" } },
+    "recordNoServer": { "action": "record", "note": "http-no-server-header", "on": { "done": "done" } },
+    "done":           { "action": "done" },
+    "fail":           { "action": "fail" }
+  }
+}

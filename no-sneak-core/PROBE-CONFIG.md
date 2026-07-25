@@ -36,6 +36,7 @@ The document is a JSON object with these keys:
 | `transport` | string | no (default `"tcp"`) | `"tcp"` or `"udp"`. **Use `"tcp"`** — UDP actions are not implemented yet. |
 | `ports` | array of int | yes | Ports this probe is associated with, e.g. `[143]`. Used to auto-select the probe per port (a checker may also run it regardless of ports). |
 | `priority` | int | no (default `50`) | Higher = preferred when several probes match a port. Specific protocols high, generic TLS catch-alls low. |
+| `portScoped` | bool | no (default `false`) | If `true`, the probe runs **only on its declared `ports`**, never as a generic fallback on other ports. Set it on ungated "any-TLS" catch-alls (e.g. `https-pqc`, `imaps-pqc`) that would otherwise mislabel an unrelated TLS service (Postgres-over-TLS, etc.). |
 | `start` | string | yes | The state id where execution begins. |
 | `states` | object | yes | Map of **state id → state object** (see §3). Keys are arbitrary strings you choose. |
 
@@ -59,7 +60,7 @@ Each value in `states` is an object:
 | `ready` | string | `starttls` | Regex that signals the server is ready to upgrade, e.g. `"^220"`. Default `"^220"`. |
 | `mode` | string | `tls-handshake` | `"pqc"` (default) or `"jsse"`/`"classical"` (see §4 `tls-handshake`). |
 | `note` | string | `record` | Free-text annotation merged into the result's `note`. |
-| `port` | int | `connect`, `reconnect` | Connect to this port instead of the target port. |
+| `port` | int | `connect`, `reconnect`, `tls-connect` | Connect to this port instead of the target port. |
 
 Only the fields relevant to a state's action are read; others are ignored.
 
@@ -86,7 +87,11 @@ present, else `payload` (templated text). A failed/absent channel or bad payload
 Accumulates inbound bytes and tests them against `patterns` in order. On the first regex that
 matches, fires that rule's `outcome` and clears the buffer. Matching is done over an **ISO-8859-1**
 decode of the raw bytes (see §7), using `find()` (substring; anchor with `^` if needed).
-- **Config:** `patterns`: array of `{ "regex": "<java-regex>", "outcome": "<label>" }`.
+- **Config:** `patterns`: array of `{ "regex": "<java-regex>", "outcome": "<label>",
+  "capture": "<fact-name>" (optional), "group": <int> (optional) }`.
+- **Service-version / banner capture (optional):** a rule may add `capture` to record a fact
+  extracted from the match — see §7.5. Use `capture:"version"` to populate the result's headline
+  `service-version`, or any other name (`product`, `banner`, …) for an additional `service-<name>`.
 - **Outcomes:** each rule's `outcome` · `nomatch` (peer closed after sending data, no rule matched)
   · `error` (peer closed before any data) · `timeout` (deadline reached, still no match).
 
@@ -95,6 +100,18 @@ Sends `command` (templated text), then waits for the `ready` regex on the reply.
 as a STARTTLS upgrade, so a following `tls-handshake` records `STARTTLS_UPGRADED`.
 - **Config:** `command` (the upgrade command), `ready` (regex, default `"^220"`).
 - **Outcomes:** `ready` · `nomatch` · `error` · `timeout`.
+
+### `tls-connect`
+Opens a **new** connection to `port` (the state's `port`, else the target port) and performs a
+**JSSE TLS handshake** on it (RSA-capable, trust-all — any/untrusted cert is accepted, since this
+is detection not validation). On success the session is in **secure mode**, so the subsequent
+`send`/`expect` actions exchange **application data through the established TLS session** — this is
+how you read an HTTPS `Server:` header or any implicit-TLS banner. Distinct from `tls-handshake`,
+which drives a Bouncy-Castle handshake on an already-open channel for PQC classification; use
+`tls-connect` when you need to *talk* through TLS, `tls-handshake`/`pqc-check` when you only need
+PQC/cipher facts. `connected` fires only after the handshake completes.
+- **Config:** `port` (optional).
+- **Outcomes:** `connected` · `error` · `timeout`.
 
 ### `tls-handshake`
 Performs a TLS handshake on the **current already-open channel** (a mid-session upgrade if reached
@@ -189,13 +206,46 @@ Templating does **not** apply to `hex:`/`base64:` data.
 
 ---
 
+## 7.5. Capturing service facts (version detection)
+
+A probe can extract the **running service version** (or any banner-derived fact) by adding a
+`capture` to a matched `expect` pattern rule. When that rule matches, the engine pulls a regex
+capture group out of the match and records it on the result as a **service fact**.
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `capture` | string | The fact name to record, e.g. `"version"`, `"product"`, `"banner"`. Omit ⇒ no extraction. |
+| `group` | int | The capture-group index to extract (default `1`; `0` = the whole match). |
+
+Rules:
+- The value is taken from `matcher.group(group)`, **trimmed**, has CR/LF collapsed to spaces, and is
+  **capped at 256 chars**. Extraction is best-effort — a missing group or out-of-range index simply
+  records nothing and never fails the probe.
+- The reserved name **`version`** becomes the result's headline `service-version` (also exposed via
+  `ProbeResult.getServiceVersion()`). **Any other name** is emitted as `service-<name>` (e.g.
+  `capture:"product"` → `service-product`). All captured facts also appear in
+  `getServiceFacts()`.
+- Put **one** capture group per fact in the regex and point `group` at it. To record several facts,
+  either use several rules across chained `expect` states, or a single regex with multiple groups
+  plus one `capture` per rule (first-match-wins still applies to the branch `outcome`).
+- Because a matched `expect` **clears the accumulation buffer**, a second `expect` on the *same*
+  response starts empty and waits for more bytes. Capture the fact you need in the rule that first
+  matches the banner.
+
+Typical version sources: SSH server-id line (`SSH-2.0-OpenSSH_9.6p1 …`), SMTP/IMAP/POP3/FTP
+greetings, an HTTP `Server:` response header (send a request first, then capture), Redis `INFO`
+`redis_version:`. Implicit-TLS banners (e.g. IMAPS on 993) arrive *inside* TLS, so they cannot be
+captured by a plaintext `expect` — capture the pre-`STARTTLS` greeting instead where one exists.
+
+---
+
 ## 8. Validation rules (the probe must pass all)
 
 A probe is rejected at load time unless:
 1. `start` names a state that exists.
 2. Every value in every `on{}` map names a state that exists (no dangling transitions).
-3. Every `action` is one of: `connect`, `send`, `expect`, `starttls`, `tls-handshake`,
-   `pqc-check`, `tls-facts`, `record`, `reconnect`, `done`, `fail`.
+3. Every `action` is one of: `connect`, `send`, `expect`, `starttls`, `tls-connect`,
+   `tls-handshake`, `pqc-check`, `tls-facts`, `record`, `reconnect`, `done`, `fail`.
 4. At least one terminal state (`done` or `fail`) is **reachable** from `start`.
 
 **JSON must be strict:** no comments, no trailing commas, all strings double-quoted. Do **not** add
@@ -231,6 +281,13 @@ comment keys inside `states` (the map is typed — a stray key breaks parsing).
 **Fully classical TLS (no PQC):** same, but `tls-handshake` `mode:"jsse"` (and optionally
 `tls-facts` instead of `pqc-check`).
 
+**Secure app-data / version over TLS (e.g. HTTPS `Server:` header, implicit-TLS banners):**
+`tls-connect → send(app request) → expect(marker, capture:"version") → record → done`;
+`tls-connect.error/timeout → fail`. `tls-connect` runs a JSSE handshake (RSA-capable, trust-all)
+and puts the session in secure mode, so `send`/`expect`/`capture` operate *through* TLS. Gate on a
+protocol marker (e.g. an HTTP status line) so a non-HTTP TLS service routes to `fail` rather than a
+false positive.
+
 **STARTTLS (e.g. 25 SMTP, 143 IMAP, 110 POP3, 21 FTP):**
 `connect → expect(banner) → send(greeting cmd) → expect(capability marker) → starttls(command,ready)
 → tls-handshake → pqc-check → record → done`, with graceful branches: no banner → `fail`; no
@@ -239,10 +296,18 @@ STARTTLS capability → `record(note:"…-no-starttls") → done`; handshake fai
 
 **Banner / text request-response (e.g. Redis, SSH, plain SMTP id):**
 `connect → [expect(banner) | send(cmd) → expect(reply marker)] → record → done`; no match → `fail`.
+Add `capture` to the banner rule to record the running version (see §7.5), e.g. SSH:
+`expect(regex:"^SSH-\\d+\\.\\d+-([^\\r\\n]*)", capture:"version") → record → done`.
 
 **Binary request-response (e.g. MongoDB):**
 `connect → send(data:"hex:…") → expect(regex on ASCII markers) → record → done`; no match/closed →
-`fail`.
+`fail`. To also grab a **version** from a binary reply, chain a second request whose response
+carries it and `capture` on a field marker — e.g. MongoDB: detect via `isMaster`, then
+`send(buildInfo OP_MSG) → expect("\\x02version\\x00[\\s\\S]{4}([0-9][^\\x00]*?)\\x00",
+capture:"version")`, routing `nomatch`/`timeout`/`error` back to a plain `record` so the service is
+still reported when the version is unavailable (e.g. auth-gated). Many DB versions are only
+disclosed post-authentication (PostgreSQL `server_version` after SCRAM; MongoDB `buildInfo` when
+access control is on) — capture best-effort and never hang the probe.
 
 **Multi-connection:** insert a `reconnect` between phases (it re-enters a `connect`-style state
 while keeping the result).
@@ -325,6 +390,61 @@ while keeping the result).
 }
 ```
 
+### 11.3a HTTPS `Server:` header over TLS (secure app-data) — port 443
+```json
+{
+  "name": "https-version",
+  "service": "https",
+  "transport": "tcp",
+  "ports": [443, 8443],
+  "priority": 45,
+  "start": "connect",
+  "states": {
+    "connect": { "action": "tls-connect", "on": { "connected": "get", "error": "fail", "timeout": "fail" } },
+    "get":     { "action": "send",
+                 "data": "text:GET / HTTP/1.0\r\nHost: {probe.hostname}\r\nUser-Agent: no-sneak\r\nConnection: close\r\n\r\n",
+                 "on": { "sent": "resp", "error": "fail" } },
+    "resp":    { "action": "expect",
+                 "patterns": [
+                   { "regex": "(?i)Server:\\s*([^\\r\\n]+)", "outcome": "server", "capture": "version" },
+                   { "regex": "^HTTP/.*?\\r\\n\\r\\n", "outcome": "noserver" }
+                 ],
+                 "on": { "server": "record", "noserver": "recordNoServer", "nomatch": "fail", "timeout": "fail", "error": "fail" } },
+    "record":         { "action": "record", "note": "https-server-header", "on": { "done": "done" } },
+    "recordNoServer": { "action": "record", "note": "https-no-server-header", "on": { "done": "done" } },
+    "done":           { "action": "done" },
+    "fail":           { "action": "fail" }
+  }
+}
+```
+`tls-connect` performs the JSSE handshake (RSA-capable); the `GET` and its response then ride
+through TLS. The `Server:` rule captures the version; the `^HTTP/.*?\r\n\r\n` rule (end of headers)
+is the graceful no-`Server` branch and also gates identification to genuine HTTP (a non-HTTP TLS
+service produces neither and routes to `fail`). Verified live: github.com → `service-version:
+github.com`.
+
+### 11.4a SSH (banner grab + version capture) — port 22
+```json
+{
+  "name": "ssh",
+  "service": "ssh",
+  "transport": "tcp",
+  "ports": [22, 2222],
+  "priority": 65,
+  "start": "connect",
+  "states": {
+    "connect": { "action": "connect", "on": { "connected": "banner", "error": "fail", "timeout": "fail" } },
+    "banner":  { "action": "expect",
+                 "patterns": [{ "regex": "^SSH-\\d+\\.\\d+-([^\\r\\n]*)", "outcome": "ssh", "capture": "version" }],
+                 "on": { "ssh": "record", "nomatch": "fail", "timeout": "fail", "error": "fail" } },
+    "record":  { "action": "record", "note": "ssh", "on": { "done": "done" } },
+    "done":    { "action": "done" },
+    "fail":    { "action": "fail" }
+  }
+}
+```
+Against a stock server this yields `service-version: "OpenSSH_9.6p1 Ubuntu-3ubuntu13"` (etc.).
+
 ### 11.4 Redis (text request-response) — port 6379
 ```json
 {
@@ -360,6 +480,8 @@ while keeping the result).
 - [ ] Identification is gated behind a protocol-specific check (banner/expect/handshake); wrong input → `fail`.
 - [ ] Regex backslashes are doubled (`\\*`, `\\d`); CR/LF in text is `\r\n`.
 - [ ] Any `data:"hex:…"` is even-length, continuous, no spaces; byte count verified.
+- [ ] If capturing a version/banner, the `capture` rule's regex has a group at `group` (default 1),
+      and `capture:"version"` is used for the headline `service-version` (see §7.5).
 - [ ] Chose `pqc-check` vs `tls-facts` and `mode` (`pqc` vs `jsse`) deliberately.
 
 ---
@@ -368,7 +490,9 @@ while keeping the result).
 
 When asked to create a probe, respond with **only the JSON object** (optionally in a single fenced
 ```json block), nothing else — no prose, no comments inside the JSON. The result must load and pass
-the validation in §8 as-is. If the protocol needs a capability not covered by the actions in §4
-(e.g. UDP/QUIC/DTLS, application data sent *through* an established TLS session, or a response whose
-bytes must be computed from earlier server bytes), state that limitation briefly **outside** the
-JSON instead of inventing a field or action.
+the validation in §8 as-is. Application data *through* an established TLS session **is** supported
+for **implicit/direct TLS** via `tls-connect` (then `send`/`expect`/`capture` ride the TLS session).
+If the protocol needs a capability still not covered by the actions in §4 (e.g. UDP/QUIC/DTLS, a
+**mid-session STARTTLS upgrade followed by application data** — `tls-connect` only does a fresh
+direct handshake — or a response whose bytes must be computed from earlier server bytes), state that
+limitation briefly **outside** the JSON instead of inventing a field or action.

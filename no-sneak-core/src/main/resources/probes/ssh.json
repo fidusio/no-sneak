@@ -1,0 +1,17 @@
+{
+  "name": "ssh",
+  "service": "ssh",
+  "transport": "tcp",
+  "ports": [22, 2222],
+  "priority": 65,
+  "start": "connect",
+  "states": {
+    "connect": { "action": "connect", "on": { "connected": "banner", "error": "fail", "timeout": "fail" } },
+    "banner":  { "action": "expect",
+                 "patterns": [{ "regex": "^SSH-\\d+\\.\\d+-([^\\r\\n]*)", "outcome": "ssh", "capture": "version" }],
+                 "on": { "ssh": "record", "nomatch": "fail", "timeout": "fail", "error": "fail" } },
+    "record":  { "action": "record", "note": "ssh", "on": { "done": "done" } },
+    "done":    { "action": "done" },
+    "fail":    { "action": "fail" }
+  }
+}
