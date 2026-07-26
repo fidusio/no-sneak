@@ -2,6 +2,7 @@ package io.xlogistx.nosneak.v2.service;
 
 import io.xlogistx.http.NIOHTTPServer;
 import io.xlogistx.nosneak.v2.ProbeChecker;
+import io.xlogistx.nosneak.v2.grade.Grade;
 import io.xlogistx.nosneak.v2.model.ProbeDefinition;
 import io.xlogistx.nosneak.v2.model.ProbeDefinitionLoader;
 import io.xlogistx.nosneak.v2.result.ProbeResult;
@@ -52,7 +53,13 @@ public class Checker {
 
         long maxWaitMs = (timeoutSec * 8L + 20L) * 1000L; // bounded (not an unbounded join)
         ProbeResult result = checker.checkBlocking(ip.getInetAddress(), ip.getPort(), "tcp", maxWaitMs);
-        return result.toNVGenericMap();
+        NVGenericMap out = result.toNVGenericMap();
+        if (result.getTlsState() != ProbeResult.TlsState.NONE) {
+            // Merge the derived verdict (grade / pqc-readiness / trust-verdict / trust-reason)
+            // so a consumer reads one authoritative trust answer instead of re-deriving it.
+            out.add(Grade.of(result).toNVGenericMap());
+        }
+        return out;
     }
 
     private org.zoxweb.server.http.HTTPNIOSocket httpNIOSocket() {

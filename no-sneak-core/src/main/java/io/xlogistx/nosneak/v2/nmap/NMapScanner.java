@@ -204,7 +204,7 @@ public final class NMapScanner {
             onDone.run();
             return;
         }
-        final ProbeChecker checker = buildChecker(nio, cfg, to);
+        final ProbeChecker checker = buildChecker(nio, cfg, to, report);
         final ParallelJoin j = new ParallelJoin(openPorts.size(), onDone);
         for (int i = 0; i < openPorts.size(); i++) {
             final String host = hostsOf.get(i).host;
@@ -229,17 +229,29 @@ public final class NMapScanner {
         }
     }
 
-    private static ProbeChecker buildChecker(NIOSocket nio, NMapConfig cfg, int to) {
+    private static ProbeChecker buildChecker(NIOSocket nio, NMapConfig cfg, int to, ScanReport report) {
         if (cfg.probeNames == null || cfg.probeNames.isEmpty()) {
             return ProbeChecker.withBundled(nio).timeoutInSec(to);
         }
+        List<ProbeDefinition> bundled = ProbeDefinitionLoader.loadBundled();
         List<ProbeDefinition> subset = new ArrayList<>();
-        for (ProbeDefinition d : ProbeDefinitionLoader.loadBundled()) {
+        Set<String> matched = new LinkedHashSet<>();
+        for (ProbeDefinition d : bundled) {
             if (cfg.probeNames.contains(d.getName())) {
                 subset.add(d);
+                matched.add(d.getName());
             }
         }
-        if (subset.isEmpty()) { // no name matched → fall back to bundled
+        // A requested name that matches nothing is almost always a typo. Report it rather than
+        // silently scanning with a probe set the caller did not ask for.
+        for (String requested : cfg.probeNames) {
+            if (!matched.contains(requested)) {
+                report.warnings.add("unknown probe '" + requested + "' (ignored)");
+            }
+        }
+        if (subset.isEmpty()) {
+            report.warnings.add("no requested probe matched; falling back to all "
+                    + bundled.size() + " bundled probes");
             return ProbeChecker.withBundled(nio).timeoutInSec(to);
         }
         return new ProbeChecker(nio, subset).timeoutInSec(to);

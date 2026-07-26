@@ -1,7 +1,11 @@
 package io.xlogistx.nosneak.v2.grade;
 
 import io.xlogistx.nosneak.v2.result.ProbeResult;
+import org.zoxweb.shared.util.NVGenericMap;
+import org.zoxweb.shared.util.NVStringList;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -18,12 +22,33 @@ public final class Grade {
 
     public enum Pqc { PQC_READY, PQC_CAPABLE, CLASSICAL_ONLY, UNKNOWN }
 
+    /**
+     * The single authoritative certificate-trust verdict, so a consumer reads one value instead
+     * of re-deriving trust from {@code cert-validity}, {@code cert-chain-trust},
+     * {@code cert-chain-time-valid} and {@code revocation-status} separately.
+     */
+    public enum TrustVerdict {
+        TRUSTED,
+        EXPIRED,
+        NOT_YET_VALID,
+        UNTRUSTED_CHAIN,
+        CHAIN_TIME_INVALID,
+        REVOKED,
+        UNKNOWN
+    }
+
     private final String letter;   // null = not a TLS service
     private final Pqc pqc;
+    private final TrustVerdict verdict;
+    private final String reason;
+    private final List<String> advisories;
 
-    private Grade(String letter, Pqc pqc) {
+    private Grade(String letter, Pqc pqc, TrustVerdict verdict, String reason, List<String> advisories) {
         this.letter = letter;
         this.pqc = pqc;
+        this.verdict = verdict;
+        this.reason = reason;
+        this.advisories = advisories == null ? Collections.emptyList() : advisories;
     }
 
     /** @return the letter grade (A/B/C/F/T), or {@code null} for a non-TLS service. */
@@ -35,23 +60,48 @@ public final class Grade {
         return pqc;
     }
 
+    /** The certificate-trust verdict; {@link TrustVerdict#UNKNOWN} when trust was not established. */
+    public TrustVerdict verdict() {
+        return verdict;
+    }
+
+    /** Human-readable explanation of {@link #verdict()}. */
+    public String reason() {
+        return reason;
+    }
+
+    /** Report-only findings (e.g. hostname mismatch) that do not change the verdict. */
+    public List<String> advisories() {
+        return advisories;
+    }
+
     @Override
     public String toString() {
-        return "grade=" + (letter != null ? letter : "N/A") + " pqc=" + pqc;
+        return "grade=" + (letter != null ? letter : "N/A") + " pqc=" + pqc + " trust=" + verdict;
+    }
+
+    /** Render the derived verdict for an API response, alongside the recorded facts. */
+    public NVGenericMap toNVGenericMap() {
+        NVGenericMap nvgm = new NVGenericMap("Grade");
+        if (letter != null) nvgm.add("grade", letter);
+        nvgm.add("pqc-readiness", pqc.name());
+        nvgm.add("trust-verdict", verdict.name());
+        if (reason != null) nvgm.add("trust-reason", reason);
+        if (!advisories.isEmpty()) nvgm.add(new NVStringList("advisories", advisories));
+        return nvgm;
     }
 
     public static Grade of(ProbeResult r) {
         Pqc pqc = pqcReadiness(r);
+        List<String> advisories = advisoriesOf(r);
         if (r.getTlsState() == ProbeResult.TlsState.NONE) {
-            return new Grade(null, pqc); // not a TLS service
+            // Not a TLS service: no letter and no trust judgement to make.
+            return new Grade(null, pqc, TrustVerdict.UNKNOWN, null, advisories);
         }
-        // Trust and revocation dominate.
-        if ("REVOKED".equalsIgnoreCase(r.getRevocationStatus())) {
-            return new Grade("F", pqc);
-        }
-        String trust = r.getCertChainTrust();
-        if (trust != null && !"TRUSTED".equalsIgnoreCase(trust) && !"UNKNOWN".equalsIgnoreCase(trust)) {
-            return new Grade("T", pqc); // trust anchor / chain problem
+
+        Grade trust = trustOf(r, pqc, advisories);
+        if (trust != null) {
+            return trust; // a trust failure outranks protocol/cipher posture
         }
 
         List<String> versions = r.getSupportedProtocolVersions();
@@ -68,7 +118,65 @@ public final class Grade {
         if (hasWeakCipher(r.getSupportedCipherSuites())) {
             letter = worseOf(letter, "B");
         }
-        return new Grade(letter, pqc);
+        boolean anchored = "TRUSTED".equalsIgnoreCase(r.getCertChainTrust());
+        return new Grade(letter, pqc,
+                anchored ? TrustVerdict.TRUSTED : TrustVerdict.UNKNOWN,
+                anchored
+                        ? "Certificate chain anchors to a trusted Root CA [" + r.getCertChainTrust() + "]"
+                        : "Certificate trust could not be established"
+                          + (r.getCertChainTrust() != null ? " [" + r.getCertChainTrust() + "]" : ""),
+                advisories);
+    }
+
+    /**
+     * The trust failures that outrank everything else, in v1's precedence order: an expired or
+     * not-yet-valid leaf, a chain that does not anchor to a trusted Root CA, an expired
+     * intermediate/root, or a confirmed revocation. Hostname mismatch is deliberately absent —
+     * it is report-only. Returns {@code null} when no failure applies.
+     */
+    private static Grade trustOf(ProbeResult r, Pqc pqc, List<String> advisories) {
+        String validity = r.getCertValidity();
+        if ("EXPIRED".equalsIgnoreCase(validity)) {
+            return new Grade("T", pqc, TrustVerdict.EXPIRED,
+                    "Certificate is EXPIRED (notAfter " + r.getCertNotAfter() + ") - renew immediately",
+                    advisories);
+        }
+        if ("NOT_YET_VALID".equalsIgnoreCase(validity)) {
+            return new Grade("T", pqc, TrustVerdict.NOT_YET_VALID,
+                    "Certificate is NOT YET VALID (notBefore " + r.getCertNotBefore()
+                            + ") - check server clock / issuance",
+                    advisories);
+        }
+        String trust = r.getCertChainTrust();
+        if (trust != null && !"TRUSTED".equalsIgnoreCase(trust) && !"UNKNOWN".equalsIgnoreCase(trust)) {
+            return new Grade("T", pqc, TrustVerdict.UNTRUSTED_CHAIN,
+                    "Certificate chain does not anchor to a trusted Root CA [" + trust + "]"
+                            + (r.getCertChainTrustMessage() != null ? ": " + r.getCertChainTrustMessage() : ""),
+                    advisories);
+        }
+        if (Boolean.FALSE.equals(r.getCertChainTimeValid())) {
+            return new Grade("T", pqc, TrustVerdict.CHAIN_TIME_INVALID,
+                    "An intermediate/root certificate in the chain is expired or not yet valid",
+                    advisories);
+        }
+        if ("REVOKED".equalsIgnoreCase(r.getRevocationStatus())) {
+            return new Grade("F", pqc, TrustVerdict.REVOKED, "Certificate is REVOKED", advisories);
+        }
+        return null;
+    }
+
+    /** Report-only findings: recorded and surfaced, but never a trust failure on their own. */
+    private static List<String> advisoriesOf(ProbeResult r) {
+        List<String> out = new ArrayList<>();
+        if (Boolean.FALSE.equals(r.getCertHostnameValid())) {
+            out.add("Certificate does not match the scanned hostname"
+                    + (r.getCertHostnameMessage() != null ? ": " + r.getCertHostnameMessage() : ""));
+        }
+        if (Boolean.FALSE.equals(r.getCertPqcReady()) && r.getPqcStatus() == ProbeResult.PqcStatus.PQC) {
+            out.add("Key exchange is PQC-hybrid but the certificate signature is classical "
+                    + "- consider an ML-DSA certificate for full quantum resistance");
+        }
+        return out;
     }
 
     private static Pqc pqcReadiness(ProbeResult r) {

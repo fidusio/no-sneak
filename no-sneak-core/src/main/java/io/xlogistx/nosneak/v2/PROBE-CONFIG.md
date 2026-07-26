@@ -82,9 +82,9 @@ no reachable terminal (`done`/`fail`) is rejected at load time.
 | `starttls` | send `command`, wait for `ready` regex, mark the session as a STARTTLS upgrade → `ready` / `timeout` / `nomatch` / `error` |
 | `tls-connect` | open a JSSE (RSA-capable, trust-all) TLS session so `send`/`expect` run over TLS → `connected` / `error` / `timeout`; records `tls-version` / `cipher-suite` / `DIRECT_TLS` |
 | `tls-handshake` | Bouncy-Castle non-blocking handshake on the current channel (`mode:"pqc"`) → `handshaked` / `error` / `timeout` |
-| `pqc-check` | record TLS facts **and** classify key exchange → `pqc-status` = `PQC` / `CLASSICAL` / `UNKNOWN`; also records cert facts + validity |
-| `tls-facts` | record TLS facts without PQC classification |
-| `cert-chain-validate` | PKIX chain validation → `cert-chain-trust` = `TRUSTED` / `UNTRUSTED_ROOT` / … |
+| `pqc-check` | record TLS facts **and** classify key exchange → `pqc-status` = `PQC` / `CLASSICAL` / `UNKNOWN`; also records cert facts + validity + leaf key/signature analysis + RFC 6125 hostname match |
+| `tls-facts` | record TLS facts without PQC classification (same cert facts) |
+| `cert-chain-validate` | PKIX chain validation → `cert-chain-trust` = `TRUSTED` / `UNTRUSTED_ROOT` / …, plus `cert-chain-trust-message`, the per-certificate `cert-chain[]` breakdown (trusted root appended), and `cert-chain-time-validity` |
 | `revocation-check` | stapled-OCSP (RFC 6066) → `revocation-status` / `revocation-method` |
 | `enumerate-versions` | probe TLSv1.3/1.2/1.1/1.0 **and SSLv3**, each a single-version handshake → `supported-protocol-versions` |
 | `enumerate-ciphers` | probe cipher suites per version → `supported-cipher-suites` |
@@ -103,7 +103,7 @@ no reachable terminal (`done`/`fail`) is rejected at load time.
 | `smtp-starttls-pqc` | smtp | 25,587 | 60 | — | SMTP STARTTLS → PQC |
 | `imap-starttls-pqc` | imap | 143 | 60 | — | IMAP STARTTLS → PQC |
 | `postgres-tls` | postgresql | 5432 | — | — | PostgreSQL SSLRequest → TLS/PQC posture |
-| `postgres-db` | postgresql | 5432 | — | — | PostgreSQL SSL/PQC posture |
+| `postgres-db` | postgresql | 5432 | 66 | — | PostgreSQL SSL/PQC posture (probe **name** matches the filename, as `--probes` selects by name) |
 | `postgres-version` | postgresql | 5432 | — | — | PostgreSQL plaintext StartupMessage version (trust-auth) |
 | `ssh` | ssh | 22 | — | — | SSH banner (`SSH-2.0-…`) |
 | `ftp` | ftp | 21 | — | — | FTP `220` banner |
@@ -124,10 +124,41 @@ no reachable terminal (`done`/`fail`) is rejected at load time.
 (`NONE`/`DIRECT_TLS`/`STARTTLS_UPGRADED`), `pqc-status` (`PQC`/`CLASSICAL`/`UNKNOWN`),
 `tls-version`, `cipher-suite`, `key-exchange-group`, `key-exchange-algorithm`,
 `cert-subject`, `cert-issuer`, `cert-not-before`, `cert-not-after`,
-`cert-validity` (`VALID`/`EXPIRED`/`NOT_YET_VALID`), `cert-chain-trust`,
+`cert-validity` (`VALID`/`EXPIRED`/`NOT_YET_VALID`),
+`cert-signature-type`, `cert-signature-algorithm`, `cert-public-key-type`,
+`cert-public-key-size`, `cert-signature-pqc` (`PQC`/`CLASSICAL`),
+`cert-hostname-match` (`MATCH`/`MISMATCH`) + `cert-hostname-message`,
+`cert-chain-trust` + `cert-chain-trust-message`, `cert-chain-time-validity` (`VALID`/`INVALID`),
+`cert-chain[]` (per-certificate: `index`, `subject`, `issuer`, `not-before`, `not-after`,
+`time-valid`, `validity-state`, `self-signed`, `is-ca`, `role` = leaf/intermediate/root),
 `revocation-status`, `revocation-method`, `supported-protocol-versions`,
 `supported-cipher-suites`, `complete`, `note`, `duration-ms`, `connections[]`.
-For TLS results the CLI also prints a `grade` (letter + PQC readiness) via `grade.Grade`.
+
+### Certificate trust (ported from the v1 scanner)
+
+`ProbeResult` stays **facts-only**; the verdict is derived by the rules layer `grade.Grade`,
+which exposes `letter()` (A/B/C/F/**T** for a trust failure), `pqc()`, and:
+
+- **`verdict()`** — one authoritative `TrustVerdict`: `TRUSTED` / `EXPIRED` / `NOT_YET_VALID` /
+  `UNTRUSTED_CHAIN` / `CHAIN_TIME_INVALID` / `REVOKED` / `UNKNOWN`, in that precedence (so a
+  consumer reads one value instead of re-deriving trust from four facts). A trust failure
+  outranks protocol/cipher posture and grades **T** (`REVOKED` grades **F**).
+- **`reason()`** — the human-readable explanation.
+- **`advisories()`** — report-only findings that never change the verdict: a **hostname
+  mismatch** (per the recorded design decision) and a PQC-hybrid key exchange under a classical
+  certificate signature.
+
+`Grade.toNVGenericMap()` renders `grade` / `pqc-readiness` / `trust-verdict` / `trust-reason` /
+`advisories`; the CLI prints it for TLS results and the REST `Checker` merges it into the
+response, so `/check-qdz` returns one authoritative trust answer.
+
+> **Tri-state facts are strings, not booleans, on purpose.** The framework's JSON serializer
+> omits default values, so an `NVBoolean(false)` silently disappears and is indistinguishable
+> from "not checked" — precisely the distinction these facts carry. Hence
+> `cert-chain-time-validity`, `cert-hostname-match` and `cert-signature-pqc` are explicit
+> strings. For the same reason the CLI renders via `GSONUtil.toJSONGenericMap(m, true, true,
+> false)` (include-defaults) rather than `toJSONDefault`, which would drop `complete:false` and
+> a connection's `index:0`.
 
 ## CLI
 
@@ -183,6 +214,29 @@ subsystems and `raw/` SYN/FIN/… engines were dead/stub code. v2 decisions:
   getHardwareAddress()` is local-NIC only. The only paths are the OS `arp` command (external
   process, platform-specific) or native raw ARP. Decided NOT to ship the `arp`-command shell-out;
   discovery stays pure-NIO (TCP-ping ± ICMP, no MAC) until the FFM ARP work.
+
+## Tests
+
+79 pure, no-network tests under `src/test/java/io/xlogistx/nosneak/v2/` — `model/
+ProbeDefinitionLoaderTest`, `grade/GradeTest`, `result/ProbeResultTest`, `runtime/FanoutTest`,
+`nmap/NMapScannerTest`.
+
+```
+MAVEN_OPTS="-Djavax.net.ssl.trustStore=<store>.jks -Djavax.net.ssl.trustStorePassword=changeit" \
+  mvn -pl no-sneak-core test -DskipTests=false -Dtest='io.xlogistx.nosneak.v2.**'
+```
+
+Two environment gotchas, neither a code problem:
+- the **parent pom** (`xlogistx-mvn`) sets `<skipTests>true</skipTests>` globally, so
+  `-DskipTests=false` is required or surefire reports "Tests are skipped";
+- if a **TLS-intercepting proxy** is active locally (Avast here), Maven cannot reach central
+  (`PKIX path building failed`) and scans report `cert-chain-trust: UNTRUSTED_ROOT` for every
+  public host. Fix both by importing the proxy's root into a copy of the JDK `cacerts` and
+  pointing `javax.net.ssl.trustStore` at it (`MAVEN_OPTS` for Maven, `-D` for the CLI).
+
+**Not covered yet:** the FSM traversal itself. `ProbeContext` needs an injection seam to drive it
+with scripted callbacks (no sockets) so each branch — banner match, `nomatch`, `timeout`,
+STARTTLS upgrade, reconnect — can be asserted without a live server.
 
 ## Known deferrals
 

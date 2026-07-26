@@ -1,5 +1,25 @@
 # Probe Definition Authoring Guide (`probe.json`)
 
+> **Scope note (2026-07-26).** This guide is written against **v1** (`io.xlogistx.nosneak.probe`),
+> which is frozen and deleted at merge. The probe **DSL itself is unchanged in v2**, so this
+> remains the authoritative tutorial for *authoring* a probe — the schema, actions, templating,
+> regex/capture rules, recipes and self-check below all still apply. Three things differ in
+> `io.xlogistx.nosneak.v2`:
+>
+> 1. **More actions.** v2 adds `cert-chain-validate`, `revocation-check`, `enumerate-versions`
+>    and `enumerate-ciphers` (all valid in `states[].action`, all firing `done`). The deep
+>    `https-scan` / `tls-scan` probes chain them:
+>    `tls-handshake → pqc-check → cert-chain-validate → revocation-check → enumerate-versions →
+>    enumerate-ciphers → record → done`.
+> 2. **Bundled resources live under `/v2/probes/`**, not `/probes/` (this changes back to
+>    `/probes/` at merge).
+> 3. **More recorded facts** — certificate key/signature analysis, RFC 6125 hostname match, the
+>    per-certificate chain breakdown, chain-trust, revocation, and the enumerated version/cipher
+>    sets, plus a derived grade and trust verdict.
+>
+> For the v2 action reference, candidate selection, bundled-probe table and result fields, see
+> `src/main/java/io/xlogistx/nosneak/v2/PROBE-CONFIG.md`.
+
 > **Purpose / how to use this file.** This is a complete specification for authoring a NoSneak
 > **protocol probe** as a single JSON document. Give this file to an AI as a skill, then ask it:
 > *"Write a probe.json that detects &lt;protocol&gt; on port &lt;N&gt;."* The AI must output **one valid

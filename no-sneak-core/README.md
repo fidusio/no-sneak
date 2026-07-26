@@ -1,29 +1,74 @@
-# xlogistx-no-sneak
+# no-sneak-core
 
-Placeholder module for future development.
+The scanning engine behind NoSneak: a **TLS/PQC posture scanner** and a **network scanner**,
+both built on one JSON-declared, non-blocking state machine. Roughly 20k lines across two
+generations of the code — see *Status* below.
 
 ## Status
 
-This module is currently under development and contains no implementation yet.
+**v2 (`io.xlogistx.nosneak.v2`) is the module going forward.** It is a from-scratch rebuild on a
+single non-blocking core (zoxweb `NIOSocket` + trigger `StateMachine`, no `MonoStateMachine`,
+nothing that blocks a thread on I/O). At merge the maintainer deletes the v1 packages
+(`nmap`, `probe`, `scanners`, `services`, `tools`) and v2's package path collapses to
+`io.xlogistx.nosneak` — which is why no v2 class carries a `v2` suffix. **v1 is frozen**: it
+still works, but it takes no new features and its remaining defects are catalogued in
+`ACTION-PLAN.md` only as a checklist of behaviour v2 must reproduce before v1 disappears.
+
+| Doc | Covers |
+|---|---|
+| `src/main/java/io/xlogistx/nosneak/v2/PLAN.md` | v2 migration status, architecture decisions, verification log |
+| `src/main/java/io/xlogistx/nosneak/v2/PROBE-CONFIG.md` | v2 probe DSL, action library, bundled probes, result fields, tests |
+| `PROBE-CONFIG.md` (this directory) | probe-authoring guide — written for v1, still the best DSL tutorial |
+| `ACTION-PLAN.md` (this directory) | v1 history + the open-defect checklist v2 inherits |
+| this file | module overview + the full scanner requirements document (below) |
+
+## What it does today
+
+- **TLS/PQC assessment** — Bouncy Castle handshake with ML-KEM hybrid groups, PQC
+  classification, PKIX chain-to-root validation, certificate validity and hostname checks,
+  stapled-OCSP revocation, protocol-version and cipher-suite enumeration, and an SSL-Labs-style
+  letter grade with a post-quantum readiness rating.
+- **Service identification** — JSON-declared protocol probes (18 bundled: ssh, ftp, http,
+  https, imap/imaps, smtp, pop3, redis, mysql, mongodb, postgres, dns/udp, …) that capture the
+  running service version. JSON selects and configures behaviour; it never executes code.
+- **Network scanning** — staged host discovery → port scan → probe scan, rate-limited and fully
+  event-driven, rendered in five nmap-compatible output formats.
+
+Not yet implemented: the vulnerability-scanning framework (SSL-Labs parity checklist), HTTP
+security-header analysis, and CNSA 2.0 compliance rules. See `ACTION-PLAN.md`.
+
+## Entry points
+
+```bash
+# identify the service/TLS posture on a host:port
+java io.xlogistx.nosneak.v2.ProbeChecker <host> <port> [timeoutSec] [--all] [--udp] [probe.json …]
+
+# staged network scan (host discovery -> ports -> service/version/TLS)
+java io.xlogistx.nosneak.v2.nmap.NMap <target…> [-p 22,80,443] [-sV] [-Pn] [-oA base]
+```
+
+Embed with `NMapScanner.scan(nioSocket, config, callback)` or `ProbeChecker.check(...)`; the REST
+endpoint is `v2/service/Checker` (`/check-qdz/{domain}/{detailed}`).
 
 ## Dependencies
 
-- xlogistx-common
-- xlogistx-core
-- xlogistx-shiro
-- xlogistx-opsec
+`xlogistx-common`, `xlogistx-core`, `xlogistx-shiro`, `xlogistx-http`, `xlogistx-opsec`,
+`xlogistx-datastore`, plus zoxweb (`org.zoxweb.*`) and Bouncy Castle. **Bouncy Castle is the only
+cryptographic library** and all reusable crypto helpers belong in `opsec/OPSecUtil` — see
+*Architectural Decisions* in `ACTION-PLAN.md`.
 
-## Package
-
-```
-io.xlogistx.nosneak
-```
-
-## Building
+## Building and testing
 
 ```bash
-mvn clean install -pl no-sneak -am
+mvn clean install -pl no-sneak-core -am
+
+# tests are skipped by the parent pom; override to run them
+mvn -pl no-sneak-core test -DskipTests=false -Dtest='io.xlogistx.nosneak.v2.**'
 ```
+
+If a TLS-intercepting proxy is active locally, Maven cannot reach central and every scanned
+certificate reads `UNTRUSTED_ROOT`; import the proxy's root into a copy of the JDK `cacerts` and
+point `javax.net.ssl.trustStore` at it. Details in the v2 `PROBE-CONFIG.md` → *Tests*.
 
 ---
 

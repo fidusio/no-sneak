@@ -6,6 +6,83 @@
 > throughout. Remaining items are polish/deferrals noted per phase (active OCSP, nmap
 > formatters/discovery, REST/tools runtime testing). Detail below.
 >
+> **v2 test suite added (2026-07-26) — 79 tests, no network, all green.** Previously v2 had
+> **zero** tests while the only four test classes in the module targeted v1, so the merge would
+> have taken coverage to nothing. New pure suites under `src/test/java/io/xlogistx/nosneak/v2/`:
+> - `model/ProbeDefinitionLoaderTest` (16) — every bundled probe loads/validates, priority sort,
+>   **filename ↔ probe-name** agreement, `KNOWN_ACTIONS` ↔ `ActionRegistry` drift check (an action
+>   the validator accepts but the registry can't build would fail mid-scan, not at load),
+>   portScoped invariants, `tls-scan`/`https-scan` priority contracts, five validator rejections,
+>   pattern/capture model incl. ISO-8859-1 matching inside a binary payload.
+> - `grade/GradeTest` (21) — trust-verdict precedence, T/F letters, hostname mismatch stays
+>   report-only, soft `UNKNOWN` chain is not a failure, protocol/cipher posture, serialization.
+> - `result/ProbeResultTest` (12) — note merging, fact dedupe, chain breakdown, and the
+>   negative-fact serialization trap below.
+> - `runtime/FanoutTest` (11) — join fires exactly once (incl. 64-thread contention and double
+>   `childDone()`), fires at zero children, survives a throwing handler, and children genuinely
+>   run **concurrently on distinct pool threads** (a serialised fan-out fails the test).
+> - `nmap/NMapScannerTest` (19) — CIDR/range expansion (/30 usable-only, /31, /32, cross-octet,
+>   reversed, dedupe, malformed-stays-literal), port specs, top-ports clamping, port-state
+>   semantics.
+>
+> **Running them:** tests were believed "env-blocked"; they are not. Two real causes, both
+> solvable: (1) the **parent pom** (`xlogistx-mvn`) sets `<skipTests>true</skipTests>` globally →
+> pass `-DskipTests=false`; (2) Maven cannot reach central because the local **Avast TLS
+> interception** breaks PKIX → point Maven at a trust store containing that root:
+> `MAVEN_OPTS="-Djavax.net.ssl.trustStore=<cacerts+avast>.jks -Djavax.net.ssl.trustStorePassword=changeit"`.
+> With those: `mvn -pl no-sneak-core test -DskipTests=false -Dtest='io.xlogistx.nosneak.v2.**'` →
+> 79/79. (v1's `ProbeDefinitionLoaderTest.bundledDefinitionsLoadAndValidate` fails on a stale
+> BUNDLED assertion — left alone, v1 is being deleted.)
+>
+> **Two defects the suite caught:** (1) `postgres-db.json` declared `"name": "postgresql"` while
+> every other probe's name matches its filename — and since `--probes` selects **by name**,
+> `--probes postgres-db` matched nothing; renamed to `postgres-db`. (2) `NMapScanner.buildChecker`
+> **silently fell back to all bundled probes** when no requested name matched, so a typo'd
+> `--probes` scanned with everything instead of failing loudly; it now records an
+> `unknown probe '<name>' (ignored)` warning per name plus a fallback warning on `ScanReport`.
+>
+> **Certificate-trust hardening ported from v1 (2026-07-26) — closes a merge regression.** The
+> v1 cert-trust sprint (W1–W5c) lived only in `scanners/PQCScanResult` and would have been
+> **deleted with v1**: v2 recorded just subject/issuer/not-before/not-after/validity/chain-trust.
+> Now ported, keeping v2's facts-vs-rules split — facts on `ProbeResult`, verdict in
+> `grade.Grade`:
+> - `ProbeContext.recordCertFacts` → leaf key/signature analysis via
+>   `OPSecUtil.analyzeCertificatePQC` (`cert-signature-type/-algorithm`, `cert-public-key-type/
+>   -size`, `cert-signature-pqc`) **and** the RFC 6125 hostname check via
+>   `OPSecUtil.matchesHostname` (`cert-hostname-match` + message). Both run on every cert-bearing
+>   path (`pqc-check` *and* `tls-facts`), so even shallow `https-pqc` detection reports them —
+>   v1 only produced them on a full scan.
+> - `ProbeContext.validateCertChain` → `cert-chain-trust-message`, chain-wide
+>   `cert-chain-time-validity`, and the per-certificate `cert-chain[]` breakdown with the
+>   **PKIX-matched Root CA appended** (W5c: servers don't send it; skipped when the server already
+>   terminated with a self-signed root).
+> - `grade.Grade` → `TrustVerdict` (TRUSTED/EXPIRED/NOT_YET_VALID/UNTRUSTED_CHAIN/
+>   CHAIN_TIME_INVALID/REVOKED/UNKNOWN) in v1's precedence + `reason()` + report-only
+>   `advisories()`; a trust failure grades **T**, revocation **F**. Hostname mismatch stays
+>   report-only per the v1 decision. `Grade.toNVGenericMap()` is merged into the REST `Checker`
+>   response, so `/check-qdz` keeps v1's `trust-verdict`/`trust-reason` surface.
+>
+> Verified live against badssl: `expired` → `T/EXPIRED`, `self-signed` → `T/UNTRUSTED_CHAIN`,
+> `wrong.host` → `cert-hostname-match: MISMATCH` with presented names (report-only, verdict
+> unchanged), plus leaf key/signature facts on all. NOTE: this environment runs an **Avast
+> TLS-intercepting proxy**, so every public chain re-signs to `CN=Avast Web/Mail Shield Root` and
+> reads `UNTRUSTED_ROOT`. The positive path was therefore verified by pointing
+> `javax.net.ssl.trustStore` at a JKS holding that root: example.com:443 → `trust=TRUSTED`,
+> `cert-chain-time-validity: VALID`, and a 2-entry `cert-chain[]` whose appended
+> `role:"root"` entry is the self-signed CA the server never sent — proving the W5c append.
+>
+> **Serialization defect found and fixed while verifying.** `GSONUtil.toJSONDefault` **omits
+> default values**, so every `false` boolean and `0` int vanished from the JSON — including
+> `cert-chain-time-valid:false` (the flag that reports an expired intermediate),
+> `cert-hostname-valid:false`, `complete:false`, and a connection's `index:0`. Isolated with a
+> minimal repro. Two-part fix: (1) the CLI now renders with
+> `GSONUtil.toJSONGenericMap(m, true, true, false)` (include-defaults); (2) tri-state cert facts
+> are emitted as explicit **strings** (`cert-chain-time-validity`, `cert-hostname-match`,
+> `cert-signature-pqc`) so absence unambiguously means "not checked" even under a serializer we
+> don't control — the REST path returns an `NVGenericMap` the HTTP framework serializes with its
+> own settings, so strings are the only robust answer there. (v1 had the identical defect; it is
+> not carried forward.)
+>
 > **Fix (HTTPS on nonstandard ports):** a plaintext HTTPS port (e.g. xlogistx.io:6443) was
 > mis-identified as `http` because the plaintext `http` probe matched the server's "requires TLS"
 > HTTP-400 error. Fixed two ways: (1) `https-version` priority 45→68 so the TLS probe is tried

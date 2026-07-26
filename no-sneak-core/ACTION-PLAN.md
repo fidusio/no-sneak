@@ -1,7 +1,47 @@
 # NoSneak SSL/TLS & PQC Scanner - Action Plan
 
-> Last Updated: 2026-07-23
-> Status: **Phase 3 Complete** - Pure NIO Callback Architecture (No CompletableFuture/ForkJoinPool)
+> Last Updated: 2026-07-26
+> Status: **superseded by v2** — `io.xlogistx.nosneak.v2` is the module going forward; the code
+> this plan describes (`nmap`, `probe`, `scanners`, `services`, `tools`) is **frozen and deleted
+> at merge**. Live status lives in `src/main/java/io/xlogistx/nosneak/v2/PLAN.md`.
+
+## How to read this document (2026-07-26)
+
+v1 is not being repaired. Because it is deleted rather than refactored, **every v1 finding below
+is either (a) already reproduced in v2, (b) something v2 must reproduce before the merge, or
+(c) moot because v2 never had the defect.** The unchecked boxes are therefore a *coverage
+checklist against v2*, not a work queue against v1 — do not "fix" v1 code.
+
+| Section | Disposition under v2 |
+|---|---|
+| **A1–A3** (races on the shared builder, watchdog, non-idempotent enumeration) | **Moot.** v2 has no `PQCScanCallback`; one `ProbeContext` per probe serialises every transition, and `ParallelJoin` is a one-shot barrier (covered by `runtime/FanoutTest`). |
+| **A4–A6, A9–A10** (dead blocking enumerators, redundant capture, deprecated members) | **Moot** — not carried over. v2 enumerates via `analysis/{Cipher,Version}ProbeCallback` on NIO. |
+| **A7–A8** (blind cast, unpopulated key size) | **Moot / superseded**; v2 records `cert-public-key-size` from `OPSecUtil.analyzeCertificatePQC`. |
+| **A11** (no vulnerability scanning) | **Still open in v2** — the largest remaining gap. See *Pending Issues → item 1*, unchanged and still authoritative. |
+| **A12** (no server-side group enumeration) | **Partly open** — v2 enumerates versions and cipher suites; named-group enumeration is still missing. |
+| **A13** (no header analysis / no grading) | **Half done** — grading shipped as `v2/grade/Grade` (letter + PQC readiness + trust verdict); HTTP security headers still missing. |
+| **B1–B12** (nmap: fake raw engines, dead service/os packages, blocking sleeps, …) | **Moot** — v2's `nmap` is NIO-native and defers service detection to the probe engine. Raw scans are a deliberate deferral to a future Panama-FFM layer; remaining parity items are listed in the v2 `PROBE-CONFIG.md`. |
+| **C2** (latent NPE-return) | **Fixed in v2** — `v2/tools/NoSneakUtil` always builds the domain manager from the cached-or-new datastore. |
+| **C1** (stale hardcoded Mongo URL) | **Still open in v2** — `v2/tools/DMTool:38` keeps `mongodb://localhost:27017/…` as `DB_URL`. Overridable at the command line, so it is a stale default rather than a bug; revisit if the datastore really moved to H2. |
+| **D1** (README wrong) | **Fixed 2026-07-26.** |
+| **D2** (documentation drift) | **Fixed** for v2; v1 names in this file are left as historical record. |
+| **D3** (blocking at the boundaries) | **Fixed in v2** — the REST `Checker` uses a bounded wait; only the CLI/test convenience wrappers block, by design. |
+
+### Certificate-trust work — ported to v2 on 2026-07-26
+
+The 2026-05-16 sprint below (**W1–W5c**) lived only in `scanners/PQCScanResult` and would have
+been **lost** when v1 is deleted: v2 recorded only subject/issuer/validity/chain-trust. It is now
+ported, keeping v2's facts-vs-rules split — facts on `ProbeResult`, verdict in `v2/grade/Grade`
+(`TrustVerdict` + reason + report-only advisories). Hostname mismatch remains report-only, per the
+original decision. Verified live against the badssl expired / self-signed / wrong-host cases and,
+for the positive path, against a trust store holding the local intercepting proxy's root.
+
+One defect surfaced while verifying and is worth carrying forward: **`GSONUtil.toJSONDefault`
+omits default values**, so `NVBoolean(false)` and `NVInt(0)` vanish from JSON — v1 emitted
+`cert-hostname-valid` and `cert-chain-time-valid` this way, meaning a mismatch or an expired
+intermediate was *never observable* in a v1 API response. v2 renders with
+`toJSONGenericMap(..., includeDefaults=true, ...)` and models tri-state certificate facts as
+explicit strings.
 
 ---
 

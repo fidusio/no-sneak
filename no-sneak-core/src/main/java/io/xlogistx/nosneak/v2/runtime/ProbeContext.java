@@ -517,10 +517,51 @@ public class ProbeContext {
                         validity = "NOT_YET_VALID";
                     }
                     result.certValidity(validity);
+                    recordLeafKeyFacts(leaf);
+                    recordHostnameMatch(leaf);
                 }
             }
         } catch (Exception e) {
             if (log.isEnabled()) log.getLogger().info("cert facts skipped: " + e.getMessage());
+        }
+    }
+
+    /** Leaf signature/public-key classification, including PQC (ML-DSA) signature detection. */
+    private void recordLeafKeyFacts(X509Certificate leaf) {
+        try {
+            // [signatureType, signatureAlgorithm, publicKeyType, publicKeySize]
+            String[] a = OPSecUtil.singleton().analyzeCertificatePQC(leaf);
+            if (a != null && a.length >= 4) {
+                int keySize;
+                try {
+                    keySize = Integer.parseInt(a[3]);
+                } catch (Exception e) {
+                    keySize = 0;
+                }
+                result.certKeyAnalysis(a[0], a[1], a[2], keySize, "PQC_SIGNATURE".equals(a[0]));
+            }
+        } catch (Exception e) {
+            if (log.isEnabled()) log.getLogger().info("cert key analysis skipped: " + e.getMessage());
+        }
+    }
+
+    /**
+     * RFC 6125 hostname match of the leaf against the scanned host. <b>Report-only</b> by
+     * design: a mismatch is recorded and surfaced as a recommendation, but never on its own
+     * downgrades the trust verdict (the grading layer treats it as advisory).
+     */
+    private void recordHostnameMatch(X509Certificate leaf) {
+        try {
+            OPSecUtil.HostnameResult hn = OPSecUtil.singleton().matchesHostname(leaf, hostname());
+            if (hn != null) {
+                String detail = hn.getMessage();
+                if (!hn.isMatched() && hn.getPresentedNames() != null && !hn.getPresentedNames().isEmpty()) {
+                    detail = (detail != null ? detail + " " : "") + "presented=" + hn.getPresentedNames();
+                }
+                result.certHostname(hn.isMatched(), detail);
+            }
+        } catch (Exception e) {
+            if (log.isEnabled()) log.getLogger().info("hostname check skipped: " + e.getMessage());
         }
     }
 
@@ -550,11 +591,58 @@ public class ProbeContext {
             }
             OPSecUtil.ChainTrustResult ctr = OPSecUtil.singleton().validateChain(chain);
             if (ctr != null && ctr.getTrust() != null) {
-                result.certChainTrust(ctr.getTrust().name());
+                result.certChainTrust(ctr.getTrust().name(), ctr.getMessage());
             }
+            recordChainBreakdown(chain, ctr);
         } catch (Exception e) {
             if (log.isEnabled()) log.getLogger().info("cert-chain validate skipped: " + e.getMessage());
         }
+    }
+
+    /**
+     * Record the per-certificate breakdown and the chain-wide time validity.
+     * <p>
+     * Servers do not send the Root CA (the client is expected to have it), so on a
+     * {@code TRUSTED} result the PKIX-matched trust anchor from the local store is appended as
+     * the final {@code role:"root"} entry — skipped when the server already terminated the
+     * chain with a self-signed root.
+     */
+    private void recordChainBreakdown(X509Certificate[] chain, OPSecUtil.ChainTrustResult ctr) {
+        X509Certificate[] display = chain;
+        X509Certificate anchor = ctr != null ? ctr.getTrustAnchor() : null;
+        if (anchor != null && chain.length > 0) {
+            X509Certificate last = chain[chain.length - 1];
+            boolean selfSignedLast = last.getSubjectX500Principal().equals(last.getIssuerX500Principal());
+            if (!selfSignedLast) {
+                display = java.util.Arrays.copyOf(chain, chain.length + 1);
+                display[chain.length] = anchor;
+            }
+        }
+        long now = System.currentTimeMillis();
+        boolean chainTimeValid = true;
+        result.clearCertChain();
+        for (int i = 0; i < display.length; i++) {
+            X509Certificate c = display[i];
+            long nb = c.getNotBefore().getTime();
+            long na = c.getNotAfter().getTime();
+            boolean timeValid = now >= nb && now <= na;
+            if (!timeValid) {
+                chainTimeValid = false;
+            }
+            boolean selfSigned = c.getSubjectX500Principal().equals(c.getIssuerX500Principal());
+            result.addCert(new ProbeResult.CertInfo(
+                    i,
+                    c.getSubjectX500Principal().getName(),
+                    c.getIssuerX500Principal().getName(),
+                    c.getNotBefore().toInstant().toString(),
+                    c.getNotAfter().toInstant().toString(),
+                    timeValid,
+                    timeValid ? "VALID" : (now < nb ? "NOT_YET_VALID" : "EXPIRED"),
+                    selfSigned,
+                    c.getBasicConstraints() != -1,
+                    i == 0 ? "leaf" : (selfSigned ? "root" : "intermediate")));
+        }
+        result.certChainTimeValid(chainTimeValid);
     }
 
     /**

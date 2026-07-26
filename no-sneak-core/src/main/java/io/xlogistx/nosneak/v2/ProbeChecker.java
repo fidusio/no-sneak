@@ -358,6 +358,19 @@ public class ProbeChecker {
 
     // ==================== CLI ====================
 
+    /**
+     * Render a fact map as pretty JSON <b>including default values</b>. {@code toJSONDefault}
+     * omits them, which would silently drop every {@code false} boolean and {@code 0} int
+     * (e.g. {@code complete:false}, a connection's {@code index:0}) from the output.
+     */
+    private static String toJSON(org.zoxweb.shared.util.NVGenericMap nvgm) {
+        try {
+            return GSONUtil.toJSONGenericMap(nvgm, true, true, false);
+        } catch (Exception e) {
+            return GSONUtil.toJSONDefault(nvgm, true);
+        }
+    }
+
     public static void usage() {
         System.out.println("Usage: ProbeChecker <host> <port> [timeoutSec] [--all|--first] [probe1.json ...]");
         System.out.println("  Identifies the protocol/version on host:port (v2 engine).");
@@ -422,7 +435,7 @@ public class ProbeChecker {
                     if (r.getTlsState() != ProbeResult.TlsState.NONE) {
                         System.out.println("  " + io.xlogistx.nosneak.v2.grade.Grade.of(r));
                     }
-                    System.out.println(GSONUtil.toJSONDefault(r.toNVGenericMap(), true));
+                    System.out.println(toJSON(r.toNVGenericMap()));
                 }
             } else {
                 // Match-first sweeps candidates sequentially, each bounded by ~timeoutSec, so the
@@ -435,7 +448,7 @@ public class ProbeChecker {
                 if (result.getTlsState() != ProbeResult.TlsState.NONE) {
                     System.out.println("  " + io.xlogistx.nosneak.v2.grade.Grade.of(result));
                 }
-                System.out.println(GSONUtil.toJSONDefault(result.toNVGenericMap(), true));
+                System.out.println(toJSON(result.toNVGenericMap()));
             }
         } catch (Exception e) {
             System.err.println("Error: " + e.getMessage());
