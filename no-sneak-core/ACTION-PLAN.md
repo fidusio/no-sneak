@@ -201,7 +201,7 @@ src/main/resources/probes/
 ├── ssh.json                22/2222 banner grab → service-version capture
 ├── ftp.json                21 banner → version;   pop3.json 110 banner → banner
 ├── redis.json              6379 INFO server → redis_version;   mysql.json 3306 handshake pkt → version
-├── http.json               80/8080 GET → Server-header version
+├── http.json               80/8080/8000/8888 HTTP/1.1 GET → Server-header version (else http-1.1)
 ├── postgres-db.json        5432 SSLRequest→'S'→TLS (standard Postgres-with-SSL, gated) prio 66
 ├── postgres-version.json   5432 plaintext StartupMessage → server_version (best-effort, trust-auth)
 └── postgres-tls.json       5432 tls-connect → StartupMessage over TLS (implicit-TLS Postgres) prio 54

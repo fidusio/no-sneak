@@ -1,0 +1,21 @@
+{
+  "name": "tls-scan",
+  "service": "tls",
+  "transport": "tcp",
+  "ports": [],
+  "priority": 71,
+  "portScoped": false,
+  "start": "connect",
+  "states": {
+    "connect":    { "action": "connect", "on": { "connected": "tls", "error": "fail", "timeout": "fail" } },
+    "tls":        { "action": "tls-handshake", "mode": "pqc", "on": { "handshaked": "pqc", "error": "fail", "timeout": "fail" } },
+    "pqc":        { "action": "pqc-check", "on": { "done": "certchain" } },
+    "certchain":  { "action": "cert-chain-validate", "on": { "done": "revocation" } },
+    "revocation": { "action": "revocation-check", "on": { "done": "versions" } },
+    "versions":   { "action": "enumerate-versions", "on": { "done": "ciphers" } },
+    "ciphers":    { "action": "enumerate-ciphers", "on": { "done": "record" } },
+    "record":     { "action": "record", "note": "tls-scan", "on": { "done": "done" } },
+    "done":       { "action": "done" },
+    "fail":       { "action": "fail" }
+  }
+}

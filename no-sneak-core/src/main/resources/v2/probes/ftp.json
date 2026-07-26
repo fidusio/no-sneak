@@ -1,0 +1,17 @@
+{
+  "name": "ftp",
+  "service": "ftp",
+  "transport": "tcp",
+  "ports": [21],
+  "priority": 60,
+  "start": "connect",
+  "states": {
+    "connect": { "action": "connect", "on": { "connected": "banner", "error": "fail", "timeout": "fail" } },
+    "banner":  { "action": "expect",
+                 "patterns": [{ "regex": "^220[ -]([^\\r\\n]*)", "outcome": "ok", "capture": "version" }],
+                 "on": { "ok": "record", "nomatch": "fail", "timeout": "fail", "error": "fail" } },
+    "record":  { "action": "record", "note": "ftp", "on": { "done": "done" } },
+    "done":    { "action": "done" },
+    "fail":    { "action": "fail" }
+  }
+}

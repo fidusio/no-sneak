@@ -1,0 +1,20 @@
+{
+  "name": "dns",
+  "service": "dns",
+  "transport": "udp",
+  "ports": [53],
+  "priority": 60,
+  "start": "connect",
+  "states": {
+    "connect": { "action": "connect", "on": { "connected": "query", "error": "fail", "timeout": "fail" } },
+    "query":   { "action": "send",
+                 "data": "hex:123401000001000000000000076578616d706c6503636f6d0000010001",
+                 "on": { "sent": "resp", "error": "fail" } },
+    "resp":    { "action": "expect",
+                 "patterns": [{ "regex": "^\\x12\\x34[\\x80-\\xff]", "outcome": "dns" }],
+                 "on": { "dns": "record", "nomatch": "fail", "timeout": "fail", "error": "fail" } },
+    "record":  { "action": "record", "note": "dns", "on": { "done": "done" } },
+    "done":    { "action": "done" },
+    "fail":    { "action": "fail" }
+  }
+}

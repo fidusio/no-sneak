@@ -1,0 +1,24 @@
+{
+  "name": "https-version",
+  "service": "https",
+  "transport": "tcp",
+  "ports": [443, 8443],
+  "priority": 68,
+  "start": "connect",
+  "states": {
+    "connect": { "action": "tls-connect", "on": { "connected": "get", "error": "fail", "timeout": "fail" } },
+    "get":     { "action": "send",
+                 "data": "text:GET / HTTP/1.0\r\nHost: {probe.hostname}\r\nUser-Agent: no-sneak\r\nConnection: close\r\nAccept: */*\r\n\r\n",
+                 "on": { "sent": "resp", "error": "fail" } },
+    "resp":    { "action": "expect",
+                 "patterns": [
+                   { "regex": "(?i)Server:\\s*([^\\r\\n]+)", "outcome": "server", "capture": "version" },
+                   { "regex": "^HTTP/.*?\\r\\n\\r\\n", "outcome": "noserver" }
+                 ],
+                 "on": { "server": "record", "noserver": "recordNoServer", "nomatch": "fail", "timeout": "fail", "error": "fail" } },
+    "record":         { "action": "record", "note": "https-server-header", "on": { "done": "done" } },
+    "recordNoServer": { "action": "record", "note": "https-no-server-header", "on": { "done": "done" } },
+    "done":           { "action": "done" },
+    "fail":           { "action": "fail" }
+  }
+}

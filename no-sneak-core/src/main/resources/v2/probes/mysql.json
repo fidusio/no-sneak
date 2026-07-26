@@ -1,0 +1,21 @@
+{
+  "name": "mysql",
+  "service": "mysql",
+  "transport": "tcp",
+  "ports": [3306],
+  "priority": 60,
+  "start": "connect",
+  "states": {
+    "connect": { "action": "connect", "on": { "connected": "handshake", "error": "fail", "timeout": "fail" } },
+    "handshake": { "action": "expect",
+                 "patterns": [
+                   { "regex": "\\x0a([0-9][\\x20-\\x7e]*?)\\x00", "outcome": "ver", "capture": "version" },
+                   { "regex": "(?i)(is not allowed to connect|blocked because of many connection errors|MariaDB|mysql)", "outcome": "nover" }
+                 ],
+                 "on": { "ver": "record", "nover": "recordErr", "nomatch": "fail", "timeout": "fail", "error": "fail" } },
+    "record":    { "action": "record", "note": "mysql", "on": { "done": "done" } },
+    "recordErr": { "action": "record", "note": "mysql-handshake-error", "on": { "done": "done" } },
+    "done":      { "action": "done" },
+    "fail":      { "action": "fail" }
+  }
+}

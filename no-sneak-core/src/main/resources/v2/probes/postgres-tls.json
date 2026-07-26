@@ -1,0 +1,25 @@
+{
+  "name": "postgres-tls",
+  "service": "postgresql",
+  "transport": "tcp",
+  "ports": [5432],
+  "priority": 54,
+  "start": "connect",
+  "states": {
+    "connect": { "action": "tls-connect", "on": { "connected": "startup", "error": "fail", "timeout": "fail" } },
+    "startup": { "action": "send",
+                 "data": "hex:00000029000300007573657200706f73746772657300646174616261736500706f7374677265730000",
+                 "on": { "sent": "reply", "error": "fail" } },
+    "reply":   { "action": "expect",
+                 "patterns": [
+                   { "regex": "server_version\\x00([0-9][^\\x00]*)\\x00", "outcome": "ver", "capture": "version" },
+                   { "regex": "^R\\x00\\x00\\x00[\\x08\\x0a\\x0c\\x17]", "outcome": "pg" },
+                   { "regex": "(?i)^E[\\s\\S]{0,400}?(?:FATAL|password|pg_hba|no encryption|SSL|database)", "outcome": "pg" }
+                 ],
+                 "on": { "ver": "record", "pg": "recordNoVer", "nomatch": "fail", "timeout": "fail", "error": "fail" } },
+    "record":      { "action": "record", "note": "postgresql-tls", "on": { "done": "done" } },
+    "recordNoVer": { "action": "record", "note": "postgresql-tls-auth-required", "on": { "done": "done" } },
+    "done":        { "action": "done" },
+    "fail":        { "action": "fail" }
+  }
+}

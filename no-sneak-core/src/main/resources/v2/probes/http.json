@@ -12,10 +12,11 @@
       "on": { "sent": "response", "error": "fail" } },
     "response": { "action": "expect",
       "patterns": [
+        { "regex": "(?i)(plain HTTP.{0,40}HTTPS|plain HTTP to an SSL|speaking plain HTTP|sent to (?:an? )?HTTPS port|requires TLS|requires SSL|requires (?:a )?secure)", "outcome": "istls" },
         { "regex": "(?is)^HTTP/1\\.[01]\\s+\\d{3}[^\\r\\n]*\\r\\n[\\s\\S]*?Server:\\s*([^\\r\\n]+)", "outcome": "http-version", "capture": "version", "group": 1 },
         { "regex": "(?is)^HTTP/1\\.[01]\\s+\\d{3}[\\s\\S]*?\\r\\n\\r\\n", "outcome": "http" }
       ],
-      "on": { "http-version": "recordVersion", "http": "record", "nomatch": "fail", "error": "fail", "timeout": "fail" } },
+      "on": { "istls": "fail", "http-version": "recordVersion", "http": "record", "nomatch": "fail", "error": "fail", "timeout": "fail" } },
     "recordVersion": { "action": "record", "note": "http-1.1-server-header", "on": { "done": "done" } },
     "record": { "action": "record", "note": "http-1.1", "on": { "done": "done" } },
     "done": { "action": "done" },
