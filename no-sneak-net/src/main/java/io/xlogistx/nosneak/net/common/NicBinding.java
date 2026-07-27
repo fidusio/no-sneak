@@ -163,6 +163,21 @@ public record NicBinding(
     }
 
     /**
+     * True when {@code target} is one of this interface's OWN addresses.
+     * <p>
+     * Distinct from {@link #isOnLink(InetAddress)}, which is true for the whole
+     * subnet including us. Resolution must special-case this: an ARP request for our
+     * own address is answered by nobody, since the only host that owns it is the one
+     * asking.
+     */
+    public boolean isLocalAddress(InetAddress target) {
+        if (target == null) {
+            return false;
+        }
+        return familyOf(target).stream().anyMatch(a -> a.address().equals(target));
+    }
+
+    /**
      * True when {@code target} is the network or directed-broadcast address of one
      * of THIS interface's own subnets.
      * <p>

@@ -86,4 +86,30 @@ public class NicBindingTest {
         NicBinding b = binding(local("10.0.0.61", 24));
         assertFalse(b.isNetworkOrBroadcast(ip("192.168.1.255")));
     }
+
+    /**
+     * Our own address is a resolve special case: nothing on the segment answers an ARP
+     * request for it, because the only host that owns it is the one asking. Without
+     * this test the distinction from {@link NicBinding#isOnLink} is easy to lose, and
+     * losing it costs a full timeout on every self-resolve.
+     */
+    @Test
+    public void ownAddressIsLocalButNeighboursAreNot() {
+        NicBinding b = binding(local("10.0.0.61", 24));
+        assertTrue(b.isLocalAddress(ip("10.0.0.61")));
+        assertFalse(b.isLocalAddress(ip("10.0.0.108")), "an on-link neighbour is not us");
+        assertTrue(b.isOnLink(ip("10.0.0.108")), "and it is still on-link");
+        assertFalse(b.isLocalAddress(ip("192.168.1.61")));
+        assertFalse(b.isLocalAddress(null));
+    }
+
+    @Test
+    public void localAddressDoesNotMatchAcrossFamilies() {
+        NicBinding b = new NicBinding("eth0", "eth0", 1, MacAddress.parse("aa:bb:cc:dd:ee:ff"),
+                                      List.of(local("10.0.0.61", 24)),
+                                      List.of(local("fe80::1", 64)), 1500);
+        assertTrue(b.isLocalAddress(ip("fe80::1")));
+        assertFalse(b.isLocalAddress(ip("fe80::2")));
+        assertTrue(b.isLocalAddress(ip("10.0.0.61")));
+    }
 }

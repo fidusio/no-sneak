@@ -202,6 +202,14 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
                     target, cached.get().mac(), ResolveSource.CACHE_HIT,
                     Duration.between(started, Instant.now())));
         }
+        // Our own address: no host on the segment answers an ARP request for it, since
+        // the only owner is the one asking. Without this the call burns the whole
+        // timeout for a MAC held since construction.
+        if (binding.isLocalAddress(target) && binding.supportsLayer2()) {
+            return CompletableFuture.completedFuture(ResolveResult.resolved(
+                    target, binding.hardwareAddress(), ResolveSource.LOCAL_INTERFACE,
+                    Duration.between(started, Instant.now())));
+        }
         if (!capabilities().activeArp()) {
             return CompletableFuture.completedFuture(ResolveResult.notResolved(
                     target, ResolveOutcome.UNSUPPORTED, Duration.between(started, Instant.now())));
@@ -216,8 +224,7 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
         // emitting a second solicitation (spec section 9.2).
         PendingResolve pending = pendingResolves.computeIfAbsent(target,
                 k -> new PendingResolve(target, started));
-        CompletableFuture<ResolveResult> future = new CompletableFuture<>();
-        pending.waiters.add(future);
+        CompletableFuture<ResolveResult> future = pending.await();
 
         if (pending.started.compareAndSet(false, true)) {
             cache.markIncomplete(target);
@@ -758,22 +765,37 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
         }
     }
 
-    /** Waiters on one in-flight solicitation, so a duplicate resolve joins rather than re-sends. */
+    /**
+     * Waiters on one in-flight solicitation, so a duplicate resolve joins rather than
+     * re-sends.
+     * <p>
+     * They share ONE {@link CompletableFuture}. A per-caller list leaves a window
+     * between the reader thread's {@code completeAll} — which completes the futures it
+     * can see, then clears the list — and a concurrent {@code resolve()} that has
+     * already taken this entry and is about to add its own future to it. That late
+     * future is completed by nobody, because the timeout task removes by key and finds
+     * the entry gone. In {@code sweep()} it feeds {@code allOf}, so the sweep hangs
+     * instead of failing. One shared future closes the window: {@code complete} is
+     * idempotent, and a caller arriving after completion observes the finished result.
+     */
     private static final class PendingResolve {
         final InetAddress target;
         final Instant startedAt;
         final AtomicBoolean started = new AtomicBoolean();
-        final CopyOnWriteArrayList<CompletableFuture<ResolveResult>> waiters =
-                new CopyOnWriteArrayList<>();
+        private final CompletableFuture<ResolveResult> result = new CompletableFuture<>();
 
         PendingResolve(InetAddress target, Instant startedAt) {
             this.target = target;
             this.startedAt = startedAt;
         }
 
-        void completeAll(ResolveResult result) {
-            waiters.forEach(w -> w.complete(result));
-            waiters.clear();
+        /** A copy, so a caller cannot complete the shared future for everyone else. */
+        CompletableFuture<ResolveResult> await() {
+            return result.copy();
+        }
+
+        void completeAll(ResolveResult outcome) {
+            result.complete(outcome);
         }
     }
 

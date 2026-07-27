@@ -103,6 +103,7 @@ public final class LinuxHostDiscovery implements HostDiscovery {
     private volatile ICMPPing pinger;
     private volatile boolean promiscuous;
 
+
     private LinuxHostDiscovery(NicBinding binding, int arpSocket, int ndpSocket,
                                ScheduledExecutorService scheduler, ExecutorService dispatcher) {
         this.binding = binding;
@@ -236,6 +237,15 @@ public final class LinuxHostDiscovery implements HostDiscovery {
                     target, cached.get().mac(), ResolveSource.CACHE_HIT,
                     Duration.between(started, Instant.now())));
         }
+        // Our own address: nothing on the segment will answer an ARP request for it,
+        // because the only host that owns it is the one asking. Without this the call
+        // burns the whole timeout and reports TIMEOUT for a MAC we have held since
+        // construction.
+        if (binding.isLocalAddress(target) && binding.supportsLayer2()) {
+            return CompletableFuture.completedFuture(ResolveResult.resolved(
+                    target, binding.hardwareAddress(), ResolveSource.LOCAL_INTERFACE,
+                    Duration.between(started, Instant.now())));
+        }
         if (!binding.isOnLink(target)) {
             // Nothing off-link answers ARP or NDP; that is not a failure to report
             // as a timeout after waiting.
@@ -244,12 +254,11 @@ public final class LinuxHostDiscovery implements HostDiscovery {
         }
 
         PendingResolve entry = pending.computeIfAbsent(target, k -> new PendingResolve(target));
-        CompletableFuture<ResolveResult> future = new CompletableFuture<>();
-        entry.waiters.add(future);
+        CompletableFuture<ResolveResult> future = entry.await();
 
         if (entry.started.compareAndSet(false, true)) {
             cache.markIncomplete(target);
-            solicit(target);
+            solicit(target, 0);
             scheduleRetries(target, timeout);
         }
         return future;
@@ -263,39 +272,115 @@ public final class LinuxHostDiscovery implements HostDiscovery {
             if (at >= budget) {
                 break;
             }
+            int retry = attempt;
             scheduler.schedule(() -> {
                 if (pending.containsKey(target)) {
-                    solicit(target);
+                    solicit(target, retry);
                 }
             }, at, TimeUnit.MILLISECONDS);
         }
         scheduler.schedule(() -> {
             PendingResolve dropped = pending.remove(target);
             if (dropped != null) {
-                dropped.completeAll(ResolveResult.notResolved(target, ResolveOutcome.TIMEOUT,
+                // A send that the kernel rejected is an ERROR, not a TIMEOUT: nothing
+                // ever went out, so "nobody answered" would misreport the cause. The
+                // flag is per-resolve, so one transient failure cannot make every
+                // later timeout claim to be that error.
+                ResolveOutcome outcome = dropped.sendError == null
+                        ? ResolveOutcome.TIMEOUT
+                        : ResolveOutcome.ERROR;
+                dropped.completeAll(ResolveResult.notResolved(target, outcome,
                         Duration.between(dropped.startedAt, Instant.now())));
             }
         }, budget, TimeUnit.MILLISECONDS);
     }
 
-    private void solicit(InetAddress target) {
-        if (target instanceof Inet4Address) {
-            sendArp(target);
-        } else {
-            sendNeighborSolicitation(target);
+    /**
+     * Sends one solicitation and records a native send failure against the in-flight
+     * entry, so the resolve can report ERROR rather than a TIMEOUT that never
+     * transmitted.
+     */
+    private void solicit(InetAddress target, int attempt) {
+        boolean sent = target instanceof Inet4Address
+                ? sendArp(target, attempt)
+                : sendNeighborSolicitation(target);
+        if (!sent) {
+            PendingResolve entry = pending.get(target);
+            if (entry != null) {
+                entry.sendError = lastSendError;
+            }
         }
     }
 
-    private void sendArp(InetAddress target) {
+    /**
+     * Sends one ARP request, BROADCAST on the first attempt and UNICAST on later ones
+     * whenever a MAC hint is available.
+     * <p>
+     * Broadcast alone is not sufficient in practice. Wi-Fi access points buffer
+     * broadcast and multicast against the DTIM interval and commonly suppress or
+     * proxy it, so a station can be fully reachable by unicast while never seeing a
+     * broadcast ARP at all. Measured on this segment: a host answered 0 of 3
+     * broadcast requests and 3 of 3 unicast requests to the same MAC, in the same
+     * second, while answering ICMP throughout. The kernel does not hit this because
+     * it revalidates a known neighbour with unicast probes rather than broadcast.
+     * <p>
+     * Both frames go out on attempt 0 when a hint exists, because neither alone is
+     * safe: unicast to a stale MAC reaches a host that has moved, and broadcast alone
+     * is the case that fails here. Later attempts are unicast only, the hint having
+     * already been shown to be the useful one. Note {@code sweep()} with the default
+     * one-second per-host budget gets ONLY attempt 0, so covering both paths there is
+     * what makes a swept host resolvable at all.
+     * <p>
+     * A hint is only ever a hint. Resolution still requires a genuine reply on our own
+     * socket, so the reported {@link ResolveSource} remains {@code ACTIVE_ARP} and a
+     * wrong hint costs one wasted frame rather than a wrong answer.
+     */
+    private boolean sendArp(InetAddress target, int attempt) {
         Optional<NicBinding.LocalAddress> source = binding.sourceFor(target);
         if (source.isEmpty()) {
-            return;
+            lastSendError = "no local IPv4 address on " + binding.javaName()
+                    + " to use as the ARP sender address";
+            return false;
         }
         byte[] payload = ArpPacket.request(binding.hardwareAddress(),
                                            source.get().address().getAddress(),
                                            target.getAddress());
-        sendPacket(arpSocket, arpSendLock, Libc.ETH_P_ARP,
-                   MacAddress.BROADCAST.bytes(), payload);
+        Optional<MacAddress> hint = unicastHint(target);
+        // Either frame reaching the wire is enough for the solicitation to count as
+        // sent — the point of sending both is that they fail independently.
+        boolean sent = hint.isPresent()
+                && sendPacket(arpSocket, arpSendLock, Libc.ETH_P_ARP, hint.get().bytes(), payload);
+        if (hint.isEmpty() || attempt == 0) {
+            sent |= sendPacket(arpSocket, arpSendLock, Libc.ETH_P_ARP,
+                               MacAddress.BROADCAST.bytes(), payload);
+        }
+        return sent;
+    }
+
+    /**
+     * A MAC to aim a unicast ARP request at — our own cache first, then the kernel's
+     * IPv4 neighbour table.
+     * <p>
+     * The cache is preferred because it is our own evidence. It cannot bootstrap the
+     * broadcast-suppressed case on its own, though: the first ever resolve of such a
+     * host has nothing cached, which is exactly when the hint is needed. See
+     * {@link KernelNeighbors} for why consulting the kernel here does not contradict
+     * §4.6.
+     * <p>
+     * A {@code STALE} cache entry is accepted deliberately — staleness is precisely
+     * the state in which a neighbour wants revalidating, and it still carries the only
+     * MAC that makes a unicast probe possible. {@code INCOMPLETE} entries carry none
+     * and are skipped, which also stops {@code resolve()} reading back the placeholder
+     * it just wrote via {@code markIncomplete}.
+     */
+    private Optional<MacAddress> unicastHint(InetAddress target) {
+        Optional<MacAddress> cached = cache.get(target)
+                .filter(IpMacCache.Entry::hasMac)
+                .map(IpMacCache.Entry::mac)
+                .filter(mac -> !mac.isBroadcast() && !mac.isMulticast() && !mac.isZero());
+        return cached.isPresent()
+                ? cached
+                : KernelNeighbors.lookup(target, binding.javaName());
     }
 
     /**
@@ -306,10 +391,12 @@ public final class LinuxHostDiscovery implements HostDiscovery {
      * The hop limit MUST be 255 (RFC 4861 §7.1.1); the builder pins it so it
      * cannot be got wrong.
      */
-    private void sendNeighborSolicitation(InetAddress target) {
+    private boolean sendNeighborSolicitation(InetAddress target) {
         Optional<NicBinding.LocalAddress> source = binding.sourceFor(target);
         if (source.isEmpty()) {
-            return;
+            lastSendError = "no local IPv6 address on " + binding.javaName()
+                    + " to source a Neighbor Solicitation from";
+            return false;
         }
         byte[] src = source.get().address().getAddress();
         byte[] targetRaw = target.getAddress();
@@ -321,8 +408,8 @@ public final class LinuxHostDiscovery implements HostDiscovery {
         System.arraycopy(header, 0, payload, 0, header.length);
         System.arraycopy(ns, 0, payload, header.length, ns.length);
 
-        sendPacket(ndpSocket, ndpSendLock, Libc.ETH_P_IPV6,
-                   Icmp6.solicitedNodeMac(targetRaw).bytes(), payload);
+        return sendPacket(ndpSocket, ndpSendLock, Libc.ETH_P_IPV6,
+                          Icmp6.solicitedNodeMac(targetRaw).bytes(), payload);
     }
 
     /**
@@ -330,20 +417,39 @@ public final class LinuxHostDiscovery implements HostDiscovery {
      * point. If global pacing is ever needed, a writer thread replaces the body
      * here and nothing else changes.
      */
-    private void sendPacket(int fd, Object lock, int ethertype, byte[] destMac, byte[] payload) {
+    /** @return true when the frame was handed to the kernel; false leaves errno reported. */
+    private boolean sendPacket(int fd, Object lock, int ethertype, byte[] destMac, byte[] payload) {
         try (Arena scratch = Arena.ofConfined()) {
             MemorySegment buf = scratch.allocateFrom(JAVA_BYTE, payload);
             MemorySegment dest = scratch.allocate(Libc.SOCKADDR_LL);
             Libc.fillSockaddrLl(dest, binding.ifIndex(), ethertype, destMac);
+            long sent;
+            int errno;
             synchronized (lock) {
-                long ignored = (long) Libc.Handles.SENDTO.invokeExact(state, fd, buf,
+                sent = (long) Libc.Handles.SENDTO.invokeExact(state, fd, buf,
                         (long) payload.length, 0, dest, (int) Libc.SOCKADDR_LL.byteSize());
+                errno = sent < 0 ? Libc.errno(state) : 0;
             }
-        } catch (Throwable ignored) {
-            // A failed solicitation surfaces as a resolve timeout, which is the
-            // caller-visible outcome either way.
+            if (sent >= 0) {
+                return true;
+            }
+            lastSendError = "sendto(ethertype=0x" + Integer.toHexString(ethertype)
+                    + ") failed: " + Libc.errnoName(errno);
+            return false;
+        } catch (Throwable t) {
+            lastSendError = "sendto downcall failed: " + t;
+            return false;
         }
     }
+
+    /**
+     * The reason the last send failed, valid only immediately after a {@code false}
+     * from {@link #sendPacket}. Read into the owning {@link PendingResolve} straight
+     * away rather than consulted later: this module has no logger, so the caller's
+     * result is the only place a native error can surface, and a field that outlives
+     * one solicitation would make every subsequent timeout claim to be that error.
+     */
+    private volatile String lastSendError;
 
     @Override
     public Subscription observe(Consumer<ObservedNeighbor> onNeighbor) {
@@ -379,7 +485,12 @@ public final class LinuxHostDiscovery implements HostDiscovery {
         // bounds how fast they leave. They are different constraints (spec 3.5).
         io.xlogistx.nosneak.net.util.RateLimiter pacer =
                 io.xlogistx.nosneak.net.util.RateLimiter.perSecond(options.maxPacketsPerSecond());
-        int packetsPerHost = 1 + (options.doIcmp() ? options.pingCount() : 0);
+        // Two ARP frames per host, not one: a hinted target gets both a unicast and a
+        // broadcast solicitation on the first attempt (see sendArp). Reserving the
+        // worst case keeps the emitted rate at or UNDER maxPacketsPerSecond, which is
+        // the only direction a safety cap may err in.
+        int packetsPerHost = (options.doMac() ? 2 : 0)
+                + (options.doIcmp() ? options.pingCount() : 0);
 
         List<CompletableFuture<Void>> all = new ArrayList<>(targets.size());
         for (InetAddress target : targets) {
@@ -519,7 +630,19 @@ public final class LinuxHostDiscovery implements HostDiscovery {
                     return;
                 }
                 if (n < 0) {
-                    continue;   // EAGAIN tick from SO_RCVTIMEO
+                    // EAGAIN is the SO_RCVTIMEO tick that makes shutdown possible and
+                    // is expected several times a second. Anything else is a real
+                    // error, and spinning on it would burn a core silently, so back
+                    // off to the same cadence rather than retrying flat out.
+                    if (!Libc.isTimeout(Libc.errno(localState))) {
+                        try {
+                            Thread.sleep(Libc.RECV_TIMEOUT_USEC / 1000);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            return;
+                        }
+                    }
+                    continue;
                 }
                 // The ethertype is NOT in the buffer - the kernel stripped the
                 // Ethernet header. It is here, in the sockaddr recvfrom filled in.
@@ -672,20 +795,42 @@ public final class LinuxHostDiscovery implements HostDiscovery {
         }
     }
 
+    /**
+     * One in-flight solicitation, and every caller waiting on it.
+     * <p>
+     * The waiters share ONE {@link CompletableFuture} rather than each holding their
+     * own. With a per-caller list there is a window between the reader thread's
+     * {@code completeAll} — which completes the futures it can see and then clears
+     * the list — and a concurrent {@code resolve()} that has already taken this entry
+     * and is about to add its future to it. That late future would be completed by
+     * nobody: the timeout task removes by key and finds the entry already gone, so it
+     * never fires. In {@code sweep()} such a future feeds {@code allOf}, which would
+     * then never complete and hang the whole sweep rather than fail it.
+     * <p>
+     * One shared future closes the window, because {@code complete} is idempotent and
+     * a caller arriving after completion simply observes the finished result.
+     */
     private static final class PendingResolve {
         final InetAddress target;
         final Instant startedAt = Instant.now();
         final AtomicBoolean started = new AtomicBoolean();
-        final CopyOnWriteArrayList<CompletableFuture<ResolveResult>> waiters =
-                new CopyOnWriteArrayList<>();
+
+        /** Set when a solicitation for THIS target could not be transmitted at all. */
+        volatile String sendError;
+
+        private final CompletableFuture<ResolveResult> result = new CompletableFuture<>();
 
         PendingResolve(InetAddress target) {
             this.target = target;
         }
 
-        void completeAll(ResolveResult result) {
-            waiters.forEach(w -> w.complete(result));
-            waiters.clear();
+        /** A copy, so a caller cannot complete the shared future out from under the rest. */
+        CompletableFuture<ResolveResult> await() {
+            return result.copy();
+        }
+
+        void completeAll(ResolveResult outcome) {
+            result.complete(outcome);
         }
     }
 }

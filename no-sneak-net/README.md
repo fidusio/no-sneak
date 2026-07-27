@@ -33,12 +33,14 @@ whole pinger when the IPv6 socket was refused, taking working IPv4 ICMP with it.
 `ping`/`list` fall back to `openIcmpOnly()`, and the two ICMP families now open independently — but
 **the fix has not itself been run on a Mac.** See `CLAUDE.md` §13.10.1.
 
-Two gates remain, both requiring hardware:
+**The Linux backend now runs on real hardware.** The §13.1 spike was superseded by the thing it
+existed to de-risk: `HostScan` sweeps and resolves live on a Linux/x86-64 box, so `AF_PACKET` ARP,
+`SOCK_RAW` ICMP with TTL, and the `ALL-UNNAMED` native-access form are all confirmed against the
+wire rather than against a checklist. `LinuxSpike` has been deleted. The **aarch64 appliance** run is
+still owed — every layout is architecture-independent by §2.3, but that is an argument, not a
+measurement.
 
-1. **The appliance spike** — `io.xlogistx.nosneak.net.spike.LinuxSpike` must report `GATE PASSED`
-   on the Linux appliance before the Linux backend is trusted. It is scaffolding; delete it once it
-   has served its purpose.
-2. **The macOS ABI probe** — see below.
+One gate remains: **the macOS ABI probe** — see below.
 
 ## Design in one paragraph
 

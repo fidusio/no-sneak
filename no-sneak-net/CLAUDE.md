@@ -13,7 +13,6 @@ named subpackage:
 | `…net.platform.darwin` | libc via FFM (§7) | **no** |
 | `…net.platform.windows` | Npcap `wpcap.dll` + `iphlpapi` via FFM (§8) | **no** |
 | `…net.tools` | `HostScan`, the CLI front end (§14) | yes |
-| `…net.spike` | `LinuxSpike`, the §13.1 gate. Scaffolding — delete once it has passed | — |
 
 Matches the house layout — `io-xlogistx` uses the same `common` convention. This spec was
 originally written against `io.xlogistx.mgw.netdiscovery`; that name is superseded and must
@@ -481,9 +480,12 @@ public enum ResolveSource {
     ACTIVE_NDP,     // we sent an NS and got an NA
     PASSIVE,        // observed on the segment, unsolicited
     KERNEL_TABLE,   // read out of the OS neighbor table (macOS backend)
-    CACHE_HIT       // served from IpMacCache without touching the wire
+    CACHE_HIT,      // served from IpMacCache without touching the wire
+    LOCAL_INTERFACE // the target IS one of the binding's own addresses (§13.12)
 }
 ```
+
+> `LOCAL_INTERFACE` exists because nothing on the segment answers an ARP request for our own address — the only host that owns it is the one asking — so without it `resolve(ownAddress)` burns the full timeout and reports `TIMEOUT` for a MAC held since construction. It is not a wire observation and must not be read as one.
 
 ```java
 package io.xlogistx.nosneak.net.common;
@@ -953,6 +955,8 @@ Two consequences the implementation must handle:
 | Windows | **yes** | The backend does its own ARP and owns the `IpMacCache`, so it knows precisely whether the destination MAC was cached or had to be solicited (§8.6). |
 
 > Do not fake it on Linux by consulting `IpMacCache` — that cache reflects **our** ARP, not the kernel's neighbor table, and the two are independent. A false positive here silently drops a valid probe from the RTT statistics.
+
+> **NARROWED, 2026-07-27.** "Linux does not read the kernel neighbor table" is a rule about **this flag**, and it still holds: `neighborResolutionPending` is always `false` on Linux and must not be inferred. It is *not* a blanket ban on ever reading `/proc/net/arp`. `platform.linux.KernelNeighbors` now reads it for one purpose — a destination MAC to aim a unicast ARP request at when broadcast has failed (§13.12). That is a hint, never an answer: resolution still requires a reply on our own `AF_PACKET` socket, the reported `ResolveSource` stays `ACTIVE_ARP`, and a stale hint costs one wasted frame rather than a wrong result. The distinction that matters is **evidence versus aim**: the flag would have been reported as fact, the hint only decides where to send a probe whose answer we still verify ourselves.
 
 ### 4.7 errno mapping
 
@@ -1673,7 +1677,7 @@ The appliance (Linux/aarch64) is the gate. macOS and Windows are dev-parity.
 
 8. **JPMS or classpath — NEW, needs a call (§10.1).**
    The spec assumed a `module-info.java`. Two facts found since: `zoxweb-core` ships **no** `module-info` and **no** `Automatic-Module-Name`, so `requires` would bind to a jar-filename-derived module name; and **no other no-sneak module uses JPMS at all**. Declaring a module here buys compile-time encapsulation of the `platform.*` packages and costs a brittle `requires` plus a launcher flag that must match the actual load mode.
-   **RESOLVED: no `module-info.java`.** `platform.*` stays internal by convention, and the flag is `--enable-native-access=ALL-UNNAMED` everywhere — launcher and Surefire `argLine` (§10.3). Confirmed empirically: `LinuxSpike` reports `module = UNNAMED (classpath)` when run with a plain `-cp`, so the named form would silently fail to grant access and produce the very warning it was meant to suppress.
+   **RESOLVED: no `module-info.java`.** `platform.*` stays internal by convention, and the flag is `--enable-native-access=ALL-UNNAMED` everywhere — launcher and Surefire `argLine` (§10.3). Confirmed empirically, and then re-confirmed the way that counts: the subsystem runs correctly under **jar-loader** with `--enable-native-access=ALL-UNNAMED` (§13.12), which is the production load path the earlier plain-`-cp` evidence could not reach. The named form would silently fail to grant access and produce the very warning it was meant to suppress.
    The one residual risk is that jar-loader might load this module as *named* in production, which would flip the correct flag. The spike prints which form applies on every run, so the appliance run re-checks it for free. Revisit only if the rest of no-sneak adopts JPMS.
 
 ---
@@ -1688,9 +1692,9 @@ The appliance (Linux/aarch64) is the gate. macOS and Windows are dev-parity.
 2. ~~Shared codecs (§5) + full unit tests (§11.1) — entirely host-independent, highest confidence per unit of effort.~~ — **DONE.** Six classes in `io.xlogistx.nosneak.net.codecs`, **94 codec tests** (the suite is larger now). `InternetChecksum`, `ArpPacket`, `Icmp4Echo`, `Icmp6`, `TtlDistance` as specced, plus `Ipv6Header` (see §13.3). Run with `mvn -o -pl no-sneak-net test -DskipTests=false`.
 3. ~~`IpMacCache` (§9) + tests (§11.3).~~ — **DONE.** In `io.xlogistx.nosneak.net.util`, **26 tests**, suite now 120 green. Aging driven by an injected `Clock` so transitions are exact rather than sleep-based. See §13.4.
 4. ~~`PingResult.of` aggregation + tests (§11.4) — still no native.~~ — **DONE.** 18 tests, suite now 138 green. **This is the last step before the §13.1 gate.** See §13.5 for the one case §3.3 did not cover.
-5. **aarch64 appliance spike (§13.1).** Gate: do not proceed past this point. — **SPIKE WRITTEN, NOT YET RUN.** `io.xlogistx.nosneak.net.spike.LinuxSpike` implements all three checks and self-reports pass/fail with a non-zero exit on failure. **It requires the Linux appliance and root; it cannot be run on a dev laptop.** Until someone runs it there and it reports `GATE PASSED`, step 6 has NOT been unblocked. See §13.6.
-6. ~~**Linux `ICMPPing`** — raw ICMP/ICMPv6 (§6.5), process-wide identifier allocation (§4.2), `SO_RCVTIMEO` shutdown (§4.4).~~ — **WRITTEN, NOT RUN.** Compiles; needs the appliance. See §13.9.
-7. ~~**Linux `HostDiscovery`** — `AF_PACKET` ARP (§6.4, bound to ifindex) → NDP → passive observe.~~ — **WRITTEN, NOT RUN.** Compiles; needs the appliance. See §13.9.
+5. ~~**aarch64 appliance spike (§13.1).** Gate: do not proceed past this point.~~ — **SUPERSEDED AND DELETED.** The spike existed to answer three questions before the backend was written; all three have since been answered by the backend itself running on real Linux hardware (§13.12): libc downcalls and `captureCallState("errno")` work, `AF_PACKET`/`SOCK_DGRAM` ARP round-trips with the ethertype read from `sll_protocol`, and `SOCK_RAW` delivers the full IPv4 header with a usable TTL. `LinuxSpike` is gone. **What is still owed is the aarch64 run**, not the spike — §2.3 argues every layout is architecture-independent, and that argument wants one measurement on the appliance.
+6. ~~**Linux `ICMPPing`** — raw ICMP/ICMPv6 (§6.5), process-wide identifier allocation (§4.2), `SO_RCVTIMEO` shutdown (§4.4).~~ — **DONE and VERIFIED on live Linux hardware.** IPv4 echo returns real RTT and TTL; hop counts derive correctly. See §13.9 and §13.12.
+7. ~~**Linux `HostDiscovery`** — `AF_PACKET` ARP (§6.4, bound to ifindex) → NDP → passive observe.~~ — **DONE and VERIFIED on live Linux hardware.** A `/24` sweep resolves every live host. The first run exposed four defects, one of them a property of real segments rather than of the code — see §13.12. IPv6/NDP is still unexercised: this segment has no v6 neighbours.
 8. ~~`HostDiscoveryFactory`: the §3.8 wiring order, set-once injection, capability reporting, the `os.arch` precondition, and `Discovery.close()` ownership.~~ — **DONE and verified on live hardware** (Windows path; Linux/macOS raise a clear "not built yet" error naming the step). See §13.8.
 9. ~~`sweep()` fan-out with bounded in-flight window and pps pacing, **including the no-pinger degraded path**; `discoverIpv6Segment()`.~~ — **DONE** in both backends; Windows verified live (a /27 finds 11 hosts in ~1 s). **`maxPacketsPerSecond` was validated but NOT enforced until a doc audit caught it** — the API accepted a rate cap and silently ignored it, which is worse than not offering one. Now enforced by `util.RateLimiter`; see §13.11.
 10. Shutdown tests (§11.6) — verify before declaring the Linux backend done.
@@ -1789,34 +1793,27 @@ Two related boundaries, also tested:
 
 Arithmetic runs in nanoseconds throughout, so sub-millisecond RTTs on a local segment survive the averaging rather than rounding to zero.
 
-### 13.6 Running the step-5 gate
+### 13.6 What the step-5 gate proved, and why it is gone
 
-The spike is `io.xlogistx.nosneak.net.spike.LinuxSpike` — diagnostic scaffolding, not part of the subsystem. **Delete it once the gate has passed and the real Linux backend exists.**
+`LinuxSpike` was diagnostic scaffolding for three questions that had to be answered before anyone
+wrote the Linux backend. It was written, never run, and then overtaken: the backend itself now runs
+against live hardware (§13.12), which answers all three more convincingly than a spike could.
 
-```bash
-mvn -o -pl no-sneak-net compile
-sudo java --enable-native-access=ALL-UNNAMED \
-     -cp no-sneak-net/target/classes \
-     io.xlogistx.nosneak.net.spike.LinuxSpike eth0 <onLinkIp> [pingTargetIp]
-```
-
-Exit code 0 means `GATE PASSED`; 1 means a check failed; 2 means it was run on the wrong platform. Pick an `<onLinkIp>` that is on the same segment and known up — the default gateway is usually the safest choice. Run it **on the appliance**, not on a laptop: `AF_PACKET` exists only on Linux and `SOCK_RAW` needs `CAP_NET_RAW`.
-
-What it proves, mapped to §13.1:
-
-| Check | Proves |
+| Original check | How it is now answered |
 |---|---|
-| 1 | `defaultLookup()` resolves libc, and `captureCallState("errno")` returns a readable errno on a deliberate `socket(-1,-1,-1)`. Also makes a call that must SUCCEED, so a handle that always fails cannot pass |
-| 2 | `AF_PACKET`+`SOCK_DGRAM` ARP round-trips; the ethertype is read from `sll_protocol` in the `recvfrom` sockaddr and explicitly compared against `0x0806`, and the source MAC from `sll_addr` is compared against the payload SHA — a mismatch is reported as spoofing evidence rather than ignored |
-| 3 | `SOCK_RAW` delivers the FULL IPv4 header; the header is dumped as hex, the TTL at offset 8 is range-checked, and `TtlDistance` is run over it. Replies are filtered on our identifier, which is exactly why §4.2 makes that mandatory |
-| §12.8 | Prints whether the class loaded named or unnamed, and therefore which `--enable-native-access` form to pin |
+| 1 — `defaultLookup()` resolves libc and `captureCallState("errno")` returns a readable errno | Every `Libc` call path is exercised by `HostScan`; a deliberate `socket()` failure without root reports `EPERM` by name |
+| 2 — `AF_PACKET`+`SOCK_DGRAM` ARP round-trips, ethertype from `sll_protocol`, source MAC from `sll_addr` | A `/24` sweep resolves every live host; captured `sockaddr_ll` reads `11 00 08 06 02 00 …`, ethertype `0x0806` off `sll_protocol` at offset 2 |
+| 3 — `SOCK_RAW` delivers the FULL IPv4 header with a plausible TTL | `hostscan ping` reports TTL and hop counts; sweep populates `hopCount` |
+| §12.8 — which `--enable-native-access` form applies | `ALL-UNNAMED`, confirmed under **jar-loader**, which is the case that actually matters and the one the spike could not reach |
 
-**Two results are already in, from running it on a Windows dev box** (where it correctly aborts before any libc call):
+Two results from the earlier Windows-box run still stand and were re-confirmed: layout sizes
+(`sockaddr_in`=16, `sockaddr_ll`=20, `timeval`=16) are pinned by `LinuxLayoutTest`, and `ALL-UNNAMED`
+is the right flag.
 
-- **Layout sizes compute correctly**: `sockaddr_in`=16, `sockaddr_ll`=20, `timeval`=16, matching §6.3, §6.4 and §4.4. That is the §11.2 arithmetic; the appliance run confirms it against the real C structs.
-- **`ALL-UNNAMED` is the form needed** when loaded from a plain classpath, which is the §12.8 recommendation. The appliance run must re-confirm it under jar-loader, which is the case that actually matters.
-
-The spike binds its `AF_PACKET` socket to the ifindex (§6.4) and sets `SO_RCVTIMEO` (§4.4), so it exercises those two rules rather than merely assuming them, and cannot hang.
+**Still owed: the aarch64 appliance run.** §2.3 argues every layout and constant is identical on
+x86-64 and aarch64, and the evidence above is all from x86-64. That is an argument, not a
+measurement. Run `hostscan list`, `resolve`, `ping` and a small `sweep` on the appliance and record
+the result here.
 
 ### 13.7 Step 13 — the Windows backend, and what running it taught us
 
@@ -1867,7 +1864,7 @@ Fixed with `NicBinding.isNetworkOrBroadcast`, backed by `LocalAddress.networkAdd
 
 ### 13.9 Steps 6 and 7 — the Linux backend
 
-> **WRITTEN AND COMPILING, NOT YET RUN.** Nothing here has touched a wire. `AF_PACKET` and `SOCK_RAW` exist only on Linux and need root, so this was developed on a Windows box and must be exercised on the appliance. Treat every claim below as "implemented per spec", not "verified". The §13.1 spike is still the gate.
+> **RUN AND VERIFIED ON LIVE HARDWARE, 2026-07-27** (Linux x86-64, under jar-loader, as root). A `/24` sweep finds every live host with its MAC, hop count and RTT; `resolve` and `ping` both work. What that run exposed is in §13.12 — the code was structurally right and still failed on real hosts for a reason no amount of re-reading would have found. **The aarch64 appliance run is still owed** (§13.6).
 
 | Class | Role |
 |---|---|
@@ -2021,6 +2018,90 @@ Four things it does that are worth preserving if it is ever rewritten:
 > wildcard classpath rather than reading one into a variable. The classpath is ~3 KB and `cmd`'s
 > `set /p` silently truncates a line at about 1 KB, which surfaces as `NoClassDefFoundError` on a
 > dependency that is demonstrably present.
+
+---
+
+### 13.12 First live Linux run — broadcast ARP is not universally delivered
+
+The Linux backend's first real outing found four defects. Three were ordinary. The fourth is the
+interesting one, because the code was **correct** and still did not work.
+
+#### The symptom
+
+`hostscan resolve 10.0.0.108` returned `TIMEOUT` after the full 3008 ms, while `ping 10.0.0.108`
+answered in 2.2 ms and the kernel held a complete ARP entry for it. A `/24` sweep found 19 live
+hosts but MACs for only 17. Reading the code proved nothing: the ARP payload, the `sockaddr_ll`
+offsets, the ethertype byte order, the bind-to-ifindex and the reply demux were all right, and 17
+other hosts resolved through that exact path.
+
+#### What the wire showed
+
+Instrumenting the send and capturing with `tcpdump` split the question in one run. Our requests were
+leaving, correctly formed:
+
+```
+15:43:46.079  b0:7b:25:82:64:45 > ff:ff:ff:ff:ff:ff  Request who-has 10.0.0.108 tell 10.0.0.61
+15:43:50.119  15:43:51.120  15:43:52.121   (the retries)
+```
+
+Nothing ever answered. Then, sending the **identical payload** to the host's known MAC instead of the
+broadcast address:
+
+```
+BROADCAST ARP x3  ->  0 replies
+UNICAST   ARP x3  ->  3 replies    oper=2 sha=94:e6:ba:4d:66:1b spa=10.0.0.108
+```
+
+**The host answers unicast ARP reliably and ignores broadcast ARP completely.** Access points buffer
+broadcast and multicast against the DTIM interval and commonly suppress or proxy it, so a station can
+be fully reachable by unicast while never seeing a broadcast frame. The same capture showed the
+kernel sidestepping this by revalidating a known neighbour with a *unicast* probe
+(`b0:7b:… > 42:25:47:35:03:ec Request who-has 10.0.0.1`) — which is why `arp` and `ping` worked
+throughout and only our broadcast-only solicitation failed.
+
+#### The fix, and why it needs a hint source
+
+`sendArp` now sends unicast whenever a MAC hint exists, and broadcast on attempt 0 as well so a
+*stale* hint cannot blind us to a host that has moved. Both frames on the first attempt matters more
+than it looks: `sweep()`'s default one-second per-host budget allows **only** attempt 0, so a swept
+host gets exactly one round to answer.
+
+The hint comes from `IpMacCache` first and then `platform.linux.KernelNeighbors`. The cache alone
+cannot bootstrap the case — the first ever resolve of a broadcast-suppressed host has nothing cached,
+which is precisely when the hint is needed — so `/proc/net/arp` is read as a fallback. See the
+narrowing note under §4.6 for why that does not contradict the "Linux does not read the kernel
+neighbor table" rule: this is **aim, not evidence**. A hint only decides where to send a probe whose
+answer we still verify on our own socket, and `ResolveSource` stays `ACTIVE_ARP`.
+
+Result on the same segment: `resolve 10.0.0.108` went from `TIMEOUT` at 3008 ms to `RESOLVED` at
+11 ms, and the sweep from 17-of-19 MACs to **19 of 19**, at the same wall time.
+
+#### The other three
+
+- **Resolving our own address timed out.** Nothing answers an ARP request for an address whose only
+  owner is the host asking, so `10.0.0.61` burned the full budget every time. `NicBinding.
+  isLocalAddress` plus a short-circuit returning `ResolveSource.LOCAL_INTERFACE` fixes it. Note this
+  is distinct from `isOnLink`, which is true for the whole subnet including us.
+- **A latent sweep hang.** `PendingResolve` gave each caller its own future and `completeAll`
+  cleared the list after the reader had already removed the entry from `pending`. A `resolve()` that
+  took the entry and added its future in that window was completed by nobody — the timeout task
+  removes by key and finds nothing. In `sweep()` that future feeds `allOf`, so the sweep would hang
+  forever rather than fail. Both backends now share ONE future per entry; `complete` is idempotent,
+  so a late caller simply observes the finished result. **Windows had the identical bug** and got the
+  identical fix.
+- **Every send error was discarded.** `sendPacket` named the `sendto` result `ignored` and caught
+  `Throwable` empty, and `readLoop` treated every negative `recvfrom` as an `EAGAIN` tick without
+  checking errno. A rejected send, a dead reader and a silent host were therefore indistinguishable —
+  all three produced a bare `TIMEOUT` at exactly the caller's budget, which is why this took a packet
+  capture to diagnose at all. A failed send is now recorded and reported as `ResolveOutcome.ERROR`
+  rather than `TIMEOUT`, and a non-`EAGAIN` receive error backs off instead of spinning a core.
+
+> Two things generalise. First, **the honest-degradation rule has a diagnosability twin**: a failure
+> that cannot be distinguished from a different failure is not honestly reported, however accurate
+> the enum is. Second, and the reason the §13.1 gate mattered even though it was never run: this
+> subsystem's assumptions are about *other people's networks*, and no amount of reading the code
+> tests those. A `/24` sweep on a real segment found in one run what a careful reading had missed
+> twice.
 
 ---
 
