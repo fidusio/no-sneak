@@ -24,7 +24,7 @@
         <dependency>
             <groupId>io.xlogistx</groupId>
             <artifactId>no-sneak-core</artifactId>
-            <version>1.0.0</version>
+            <version>${no-sneak.version}</version>
         </dependency>
 
         <dependency>
