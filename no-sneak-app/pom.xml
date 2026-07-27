@@ -64,8 +64,8 @@
         </dependency>
         <dependency>
             <groupId>io.xlogistx</groupId>
-            <artifactId>ai-assistant</artifactId>
-            <version>1.0.0</version>
+            <artifactId>no-sneak-ai-assistant</artifactId>
+            <version>${no-sneak.version}</version>
             <scope>compile</scope>
         </dependency>
 

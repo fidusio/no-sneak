@@ -9,7 +9,7 @@
         <version>1.0.0</version>
     </parent>
 
-    <artifactId>ai-assistant</artifactId>
+    <artifactId>no-sneak-ai-assistant</artifactId>
 
     <properties>
     </properties>

@@ -23,6 +23,7 @@
         <jdk.version>25</jdk.version>
         <xlogistx.version>1.0.0</xlogistx.version>
         <xlogistx.datastore.version>1.0.0</xlogistx.datastore.version>
+        <no-sneak.version>1.0.0</no-sneak.version>
     </properties>
 
     <scm>
