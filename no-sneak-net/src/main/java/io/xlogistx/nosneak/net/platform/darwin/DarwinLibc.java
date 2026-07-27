@@ -56,6 +56,8 @@ final class DarwinLibc {
     static final int EACCES = 13;
     static final int EINVAL = 22;
     static final int EAGAIN = 35;            // 11 on Linux
+    static final int EPROTONOSUPPORT = 43;   // 93 on Linux
+    static final int EAFNOSUPPORT = 47;      // 97 on Linux
     static final int ENETDOWN = 50;          // 100 on Linux
     static final int ENETUNREACH = 51;       // 101 on Linux
     static final int EHOSTUNREACH = 65;      // 113 on Linux
@@ -157,6 +159,8 @@ final class DarwinLibc {
             case EACCES -> "EACCES";
             case EINVAL -> "EINVAL";
             case EAGAIN -> "EAGAIN";
+            case EPROTONOSUPPORT -> "EPROTONOSUPPORT";
+            case EAFNOSUPPORT -> "EAFNOSUPPORT";
             case ENETDOWN -> "ENETDOWN";
             case ENETUNREACH -> "ENETUNREACH";
             case EHOSTUNREACH -> "EHOSTUNREACH";
@@ -168,19 +172,21 @@ final class DarwinLibc {
         return errno == EAGAIN;
     }
 
-    static int socket(MemorySegment state, int domain, int type, int protocol)
-            throws DiscoveryException {
+    /**
+     * Like {@link #socket} but returns {@code -1} instead of throwing, leaving
+     * errno readable in {@code state}.
+     * <p>
+     * Exists because an ICMP family the kernel will not give us is a DEGRADED
+     * CAPABILITY, not a fatal error. Darwin hands out {@code SOCK_DGRAM}/
+     * {@code IPPROTO_ICMP} to any user, but the ICMPv6 equivalent is not
+     * dependably unprivileged, and failing the whole pinger over it would take
+     * working IPv4 ICMP down with it.
+     */
+    static int trySocket(MemorySegment state, int domain, int type, int protocol) {
         try {
-            int fd = (int) Handles.SOCKET.invokeExact(state, domain, type, protocol);
-            if (fd < 0) {
-                throw new DiscoveryException("socket(" + domain + "," + type + "," + protocol
-                        + ") failed: " + errnoName(errno(state)));
-            }
-            return fd;
-        } catch (DiscoveryException e) {
-            throw e;
+            return (int) Handles.SOCKET.invokeExact(state, domain, type, protocol);
         } catch (Throwable t) {
-            throw new DiscoveryException("socket() downcall failed", t);
+            return -1;
         }
     }
 

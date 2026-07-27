@@ -60,8 +60,15 @@ public final class DarwinIcmpPing implements ICMPPing {
     private final Arena arena = Arena.ofShared();
     private final MemorySegment state = arena.allocate(DarwinLibc.CAPTURE);
 
+    /** {@code -1} when the kernel refused this family — see {@link #open}. */
     private final int v4Socket;
     private final int v6Socket;
+
+    /** Why a family is unavailable, or null when it opened. Reported by ping(). */
+    private final PingError v4Unavailable;
+    private final PingError v6Unavailable;
+
+    private final DiscoveryCapabilities capabilities;
 
     /**
      * ONE allocator for both families. The kernel rewrites the identifier, so the
@@ -80,48 +87,18 @@ public final class DarwinIcmpPing implements ICMPPing {
     private final Object v4SendLock = new Object();
     private final Object v6SendLock = new Object();
 
-    private DarwinIcmpPing(int v4Socket, int v6Socket,
+    private DarwinIcmpPing(int v4Socket, PingError v4Unavailable,
+                           int v6Socket, PingError v6Unavailable,
                            ScheduledExecutorService scheduler, ExecutorService dispatcher) {
         this.v4Socket = v4Socket;
         this.v6Socket = v6Socket;
+        this.v4Unavailable = v4Unavailable;
+        this.v6Unavailable = v6Unavailable;
         this.scheduler = scheduler;
         this.dispatcher = dispatcher;
-    }
-
-    /** Opens both datagram sockets. No privilege required. */
-    public static DarwinIcmpPing open(ScheduledExecutorService scheduler,
-                                      ExecutorService dispatcher) throws DiscoveryException {
-        DarwinIcmpPing ping = null;
-        try (Arena bootstrapArena = Arena.ofConfined()) {
-            MemorySegment bootstrap = bootstrapArena.allocate(DarwinLibc.CAPTURE);
-            int v4 = DarwinLibc.socket(bootstrap, DarwinLibc.AF_INET,
-                                       DarwinLibc.SOCK_DGRAM, DarwinLibc.IPPROTO_ICMP);
-            int v6;
-            try {
-                v6 = DarwinLibc.socket(bootstrap, DarwinLibc.AF_INET6,
-                                       DarwinLibc.SOCK_DGRAM, DarwinLibc.IPPROTO_ICMPV6);
-            } catch (DiscoveryException e) {
-                DarwinLibc.closeQuietly(bootstrap, v4);
-                throw e;
-            }
-            ping = new DarwinIcmpPing(v4, v6, scheduler, dispatcher);
-            DarwinLibc.setReceiveTimeout(ping.arena, ping.state, v4);
-            DarwinLibc.setReceiveTimeout(ping.arena, ping.state, v6);
-            ping.startReaders();
-            return ping;
-        } catch (DiscoveryException | RuntimeException e) {
-            if (ping != null) {
-                ping.close();
-            }
-            throw e;
-        }
-    }
-
-    @Override
-    public DiscoveryCapabilities capabilities() {
-        return new DiscoveryCapabilities(
-                true,    // icmpV4
-                true,    // icmpV6
+        this.capabilities = new DiscoveryCapabilities(
+                v4Socket >= 0,   // icmpV4 - what the kernel ACTUALLY gave us
+                v6Socket >= 0,   // icmpV6 - likewise; not a literal true
                 false,   // activeArp  - the neighbor table belongs to the HostDiscovery half
                 false,   // activeNdp
                 false,   // passiveObservation - Darwin cannot, at all
@@ -129,6 +106,76 @@ public final class DarwinIcmpPing implements ICMPPing {
                 false,   // ttlAvailable - likewise; -1 must never read as a distance
                 true,    // offLinkIcmp - the kernel routes
                 DiscoveryCapabilities.Backend.MACOS_NATIVE);
+    }
+
+    /**
+     * Opens the two datagram sockets INDEPENDENTLY, and succeeds when EITHER one
+     * does. No privilege is required for IPv4.
+     * <p>
+     * The families are deliberately not all-or-nothing. Darwin hands
+     * {@code SOCK_DGRAM}/{@code IPPROTO_ICMP} to any user — that is why
+     * {@code /sbin/ping} no longer needs setuid — but the ICMPv6 equivalent is
+     * not dependably unprivileged, and an earlier version aborted the whole
+     * pinger when it was refused, taking perfectly good IPv4 ICMP down with a
+     * v6-only problem. A family the kernel withholds is now reported through
+     * {@link #capabilities()} and returned as a failed {@link PingResult} by
+     * {@link #ping}, per the honest-degradation rule.
+     *
+     * @throws DiscoveryException only when NEITHER family is available, with both
+     *                            errnos named so the cause is diagnosable
+     */
+    public static DarwinIcmpPing open(ScheduledExecutorService scheduler,
+                                      ExecutorService dispatcher) throws DiscoveryException {
+        int v4;
+        int v6;
+        int v4Errno = 0;
+        int v6Errno = 0;
+        try (Arena bootstrapArena = Arena.ofConfined()) {
+            MemorySegment bootstrap = bootstrapArena.allocate(DarwinLibc.CAPTURE);
+
+            v4 = DarwinLibc.trySocket(bootstrap, DarwinLibc.AF_INET,
+                                      DarwinLibc.SOCK_DGRAM, DarwinLibc.IPPROTO_ICMP);
+            if (v4 < 0) {
+                v4Errno = DarwinLibc.errno(bootstrap);
+            }
+            v6 = DarwinLibc.trySocket(bootstrap, DarwinLibc.AF_INET6,
+                                      DarwinLibc.SOCK_DGRAM, DarwinLibc.IPPROTO_ICMPV6);
+            if (v6 < 0) {
+                v6Errno = DarwinLibc.errno(bootstrap);
+            }
+
+            if (v4 < 0 && v6 < 0) {
+                throw new DiscoveryException(
+                        "No ICMP socket could be opened on macOS: "
+                        + "socket(AF_INET,SOCK_DGRAM,IPPROTO_ICMP) failed with "
+                        + DarwinLibc.errnoName(v4Errno)
+                        + " and socket(AF_INET6,SOCK_DGRAM,IPPROTO_ICMPV6) failed with "
+                        + DarwinLibc.errnoName(v6Errno) + ".");
+            }
+        }
+
+        DarwinIcmpPing ping = new DarwinIcmpPing(
+                v4, v4 < 0 ? DarwinLibc.toPingError(v4Errno) : null,
+                v6, v6 < 0 ? DarwinLibc.toPingError(v6Errno) : null,
+                scheduler, dispatcher);
+        try {
+            if (v4 >= 0) {
+                DarwinLibc.setReceiveTimeout(ping.arena, ping.state, v4);
+            }
+            if (v6 >= 0) {
+                DarwinLibc.setReceiveTimeout(ping.arena, ping.state, v6);
+            }
+            ping.startReaders();
+            return ping;
+        } catch (DiscoveryException | RuntimeException e) {
+            ping.close();
+            throw e;
+        }
+    }
+
+    @Override
+    public DiscoveryCapabilities capabilities() {
+        return capabilities;
     }
 
     @Override
@@ -140,6 +187,14 @@ public final class DarwinIcmpPing implements ICMPPing {
             return CompletableFuture.completedFuture(allFailed(target, count, PingError.IO));
         }
         boolean v4 = target instanceof Inet4Address;
+        // A family the kernel refused at open() is a reduced result, not a hang:
+        // sending on fd -1 would otherwise leave every probe to time out.
+        if (v4 && v4Socket < 0) {
+            return CompletableFuture.completedFuture(allFailed(target, count, v4Unavailable));
+        }
+        if (!v4 && v6Socket < 0) {
+            return CompletableFuture.completedFuture(allFailed(target, count, v6Unavailable));
+        }
         if (!v4 && target.isLinkLocalAddress()
                 && (!(target instanceof Inet6Address v6) || v6.getScopeId() == 0)) {
             return CompletableFuture.completedFuture(
@@ -204,9 +259,14 @@ public final class DarwinIcmpPing implements ICMPPing {
         }
     }
 
+    /** One reader per socket that actually opened — never one blocked on fd -1. */
     private void startReaders() {
-        readers.add(startReader("nosneak-darwin-icmp4", () -> readLoop(v4Socket, true)));
-        readers.add(startReader("nosneak-darwin-icmp6", () -> readLoop(v6Socket, false)));
+        if (v4Socket >= 0) {
+            readers.add(startReader("nosneak-darwin-icmp4", () -> readLoop(v4Socket, true)));
+        }
+        if (v6Socket >= 0) {
+            readers.add(startReader("nosneak-darwin-icmp6", () -> readLoop(v6Socket, false)));
+        }
     }
 
     private Thread startReader(String name, Runnable body) {

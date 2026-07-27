@@ -1915,6 +1915,47 @@ The v4 reader **tolerates both receive shapes**: §7.5 says Darwin strips the IP
 
 `DarwinLayoutTest` pins the shapes that differ from Linux despite matching in size — the leading `sin_len` byte putting the family at **offset 1**, the padded 32-bit `tv_usec`, `AF_INET6` = 30, `SOL_SOCKET` = 0xFFFF, `SO_RCVTIMEO` = 0x1006 — plus the BSD errno numbers, with an explicit assertion that a *Linux* `EHOSTUNREACH` (113) does **not** map to `HOST_UNREACHABLE` here.
 
+#### 13.10.1 First macOS run — it threw before it ever sent a packet
+
+**2026-07-27, first execution on real macOS hardware: it failed at startup.** Two independent
+all-or-nothing assumptions were in the way, both of which turned a *partially* available platform
+into a *totally* unavailable one. Neither could have been caught on the Windows dev box, and neither
+was a bug in the ICMP logic itself — which is precisely why they survived review.
+
+**1. `HostScan` demanded the full wiring for every command.** `ping`, like `list`, opened
+`HostDiscoveryFactory.open(usableInterfaces())`, which calls `Platform.MACOS.openBackend` — and that
+throws the §7.3 gate exception by design. So the CLI died on macOS *deterministically, on every
+command*, including the one command the platform fully supports. `openIcmpOnly()` worked the whole
+time; nothing reachable from the CLI called it.
+**Fixed:** `ping` and `list` now catch `DiscoveryException` from `open()` and fall back to
+`openIcmpOnly()`, printing the reason. `resolve` and `sweep` still fail, correctly — they genuinely
+need L2. The ownership rule is preserved on both paths: a `Discovery` closes the pinger it owns, a
+standalone pinger closes itself.
+
+**2. `DarwinIcmpPing.open` was all-or-nothing across the two ICMP families.** It opened the IPv4
+socket, then the IPv6 socket, and *closed the working IPv4 socket and rethrew* if the second failed.
+That is the wrong trade on this platform specifically: Darwin hands `SOCK_DGRAM`/`IPPROTO_ICMP` to
+any user — that is why `/sbin/ping` no longer needs setuid — but the ICMPv6 equivalent is **not**
+dependably unprivileged, and `ping6` has historically wanted root. One refused family took the whole
+pinger down.
+**Fixed:** the families open independently via a new non-throwing `DarwinLibc.trySocket`, and `open`
+succeeds when **either** does. It throws only when *neither* is available, and then names **both**
+errnos so the cause is diagnosable rather than guessed at. `EPROTONOSUPPORT` (43) and `EAFNOSUPPORT`
+(47) were added to the BSD errno table for exactly this message.
+
+> **`capabilities()` was returning literal `true` for both ICMP families**, which meant it could not
+> express this state at all. It is now computed from the sockets that actually opened, and `ping()`
+> on a family the kernel refused returns a failed `PingResult` carrying the mapped errno instead of
+> sending on fd `-1` and letting every probe time out. This is the §2.1 honest-degradation rule; the
+> record existed to say exactly this and was hardcoded past it.
+
+The generalisable lesson, and it is the same one §13.11 drew about `maxPacketsPerSecond`: **a
+capability record that is written as a literal cannot degrade.** If a field of
+`DiscoveryCapabilities` is knowable only at runtime, it must be *computed* at construction, or the
+honest-degradation contract is decoration.
+
+`DarwinLibc.socket` was deleted in the process — `trySocket` replaces it and it had no other caller.
+
 ---
 
 ### 13.11 Sweep pacing — a parameter that was accepted and ignored

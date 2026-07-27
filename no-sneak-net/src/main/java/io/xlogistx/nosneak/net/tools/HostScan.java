@@ -2,8 +2,11 @@ package io.xlogistx.nosneak.net.tools;
 
 import io.xlogistx.nosneak.net.common.CidrRange;
 import io.xlogistx.nosneak.net.common.DiscoveryCapabilities;
+import io.xlogistx.nosneak.net.common.DiscoveryException;
 import io.xlogistx.nosneak.net.common.HostDiscovery;
 import io.xlogistx.nosneak.net.common.HostDiscoveryFactory;
+import io.xlogistx.nosneak.net.common.ICMPPing;
+import io.xlogistx.nosneak.net.common.MacAddress;
 import io.xlogistx.nosneak.net.common.HostRecord;
 import io.xlogistx.nosneak.net.common.PingProbe;
 import io.xlogistx.nosneak.net.common.PingResult;
@@ -32,6 +35,12 @@ import java.util.concurrent.TimeUnit;
  * Linux (untested). Every command opens the full wiring through
  * {@link HostDiscoveryFactory} and closes it again, so it exercises the same path
  * an embedding application would.
+ * <p>
+ * EXCEPT that {@code ping} and {@code list} fall back to
+ * {@link HostDiscoveryFactory#openIcmpOnly()} when the layer-2 backend will not
+ * open. ICMP does not need L2 on a platform where the kernel routes, and on macOS
+ * the L2 half is gated behind the §7.3 ABI probe — so demanding the full wiring
+ * made every command fail on a platform where ping works perfectly.
  */
 public final class HostScan {
 
@@ -91,7 +100,17 @@ public final class HostScan {
             System.out.println("No usable interfaces (up, addressed, non-loopback).");
             return;
         }
-        try (var discovery = HostDiscoveryFactory.open(nics)) {
+        HostDiscoveryFactory.Discovery opened;
+        try {
+            opened = HostDiscoveryFactory.open(nics);
+        } catch (DiscoveryException e) {
+            System.out.println("Layer-2 backend unavailable on this platform:");
+            System.out.println("  " + e.getMessage());
+            System.out.println();
+            listIcmpOnly(nics);
+            return;
+        }
+        try (var discovery = opened) {
             System.out.printf("%-16s %-10s %-19s %s%n",
                               "INTERFACE", "IFINDEX", "MAC", "CAPABILITIES");
             for (HostDiscovery h : discovery.perInterface()) {
@@ -110,6 +129,28 @@ public final class HostScan {
             System.out.println("\npinger: " + discovery.ping().getClass().getSimpleName()
                     + (discovery.perInterface().contains(discovery.ping())
                             ? " (same object as a backend - normal on Windows)" : ""));
+        }
+    }
+
+    /**
+     * What {@code list} can still say when only ICMP is available: the interfaces
+     * as java.net sees them, and the pinger's real capabilities. Everything here
+     * comes from {@code NetworkInterface}, so it needs no backend at all.
+     */
+    private static void listIcmpOnly(List<NetworkInterface> nics) throws Exception {
+        System.out.printf("%-16s %-10s %s%n", "INTERFACE", "IFINDEX", "MAC");
+        for (NetworkInterface nif : nics) {
+            byte[] mac = nif.getHardwareAddress();
+            System.out.printf("%-16s %-10d %s%n", nif.getName(), nif.getIndex(),
+                              mac == null ? "-" : new MacAddress(mac).toString());
+            for (var a : nif.getInterfaceAddresses()) {
+                System.out.println("    " + a.getAddress().getHostAddress()
+                                   + "/" + a.getNetworkPrefixLength());
+            }
+        }
+        try (ICMPPing p = HostDiscoveryFactory.openIcmpOnly()) {
+            System.out.println("\npinger: " + p.getClass().getSimpleName());
+            System.out.println("    " + summarise(p.capabilities()));
         }
     }
 
@@ -141,10 +182,22 @@ public final class HostScan {
         if (!ip.getHostAddress().equals(target)) {
             System.out.println(target + " resolved to " + ip.getHostAddress());
         }
-        try (var discovery = HostDiscoveryFactory.open(HostDiscoveryFactory.usableInterfaces())) {
+        HostDiscoveryFactory.Discovery discovery = null;
+        ICMPPing pinger;
+        try {
+            discovery = HostDiscoveryFactory.open(HostDiscoveryFactory.usableInterfaces());
+            pinger = discovery.ping();
             warnIfOffLinkUnsupported(discovery, ip);
-            PingResult p = discovery.ping().ping(ip, count, Duration.ofSeconds(2))
-                                    .get(30, TimeUnit.SECONDS);
+        } catch (DiscoveryException e) {
+            // The L2 backend is unavailable, but ICMP does not depend on it
+            // wherever the kernel routes. This is the macOS path until §7.3.
+            System.out.println("note: layer-2 backend unavailable, pinging ICMP-only");
+            System.out.println("      " + e.getMessage());
+            pinger = HostDiscoveryFactory.openIcmpOnly();
+        }
+        try {
+            PingResult p = pinger.ping(ip, count, Duration.ofSeconds(2))
+                                 .get(30, TimeUnit.SECONDS);
             System.out.println("PING " + target + "  " + count + " probes, pipelined");
             for (PingProbe probe : p.probes()) {
                 System.out.printf("  seq=%-6d %s%n", probe.sequence(),
@@ -159,6 +212,14 @@ public final class HostScan {
                 System.out.printf("rtt min/avg/max/stddev = %.3f/%.3f/%.3f/%.3f ms%n",
                         p.minRtt().toNanos() / 1e6, p.avgRtt().toNanos() / 1e6,
                         p.maxRtt().toNanos() / 1e6, p.stdDevRtt().toNanos() / 1e6);
+            }
+        } finally {
+            // Closing the Discovery closes the pinger it owns; a standalone
+            // pinger owns itself.
+            if (discovery != null) {
+                discovery.close();
+            } else {
+                pinger.close();
             }
         }
     }

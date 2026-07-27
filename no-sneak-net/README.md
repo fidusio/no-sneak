@@ -20,11 +20,18 @@ Tier-1 probe engine. This module answers the question that comes before them.
 | Windows off-link routing (`iphlpapi`) | **done and verified against a live internet path** |
 | Factory wiring + `HostScan` CLI | **done and verified on live hardware** |
 | Linux (libc/FFM) backend | **written, never run** — needs the appliance |
-| macOS ICMP | **written, never run** |
+| macOS ICMP | **run once, threw at startup; two all-or-nothing bugs fixed — needs re-test** |
 | macOS ARP/NDP | **deliberately not written** — see *The macOS gate* below |
 
 Everything was developed on a Windows box, which is why Windows is the only backend with runtime
 evidence behind it. **Treat "written" as "implemented per spec", not "works".**
+
+The first macOS run (2026-07-27) threw before sending a packet, for two reasons that were both
+about *all-or-nothing wiring* rather than ICMP itself: `HostScan` demanded the full L2 wiring for
+every command, so the §7.3 gate exception killed even `ping`; and `DarwinIcmpPing.open` aborted the
+whole pinger when the IPv6 socket was refused, taking working IPv4 ICMP with it. Both are fixed —
+`ping`/`list` fall back to `openIcmpOnly()`, and the two ICMP families now open independently — but
+**the fix has not itself been run on a Mac.** See `CLAUDE.md` §13.10.1.
 
 Two gates remain, both requiring hardware:
 
