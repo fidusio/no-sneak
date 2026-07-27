@@ -1,0 +1,118 @@
+# Manual-trigger workflow that runs the two no-sneak-net hardware gates on
+# GitHub-hosted runners, so neither needs a Mac or an appliance on your desk.
+#
+#   * section 7.3 — the Darwin neighbor-table ABI probe, on BOTH Intel and Apple Silicon
+#   * section 13.1 — the Linux appliance spike, on x86-64 and aarch64
+#
+# Run it from the Actions tab ("Run workflow"), then read the job logs and the
+# uploaded artifacts. Nothing here runs on push: these are one-off measurements,
+# not continuous integration.
+
+name: no-sneak-net gates
+
+on:
+  workflow_dispatch:
+    inputs:
+      arp_target:
+        description: "On-link IPv4 to ARP/ping from the Linux runners (blank = auto-detect the default gateway)"
+        required: false
+        default: ""
+
+jobs:
+
+  # ---- section 7.3: the Darwin neighbor-table ABI probe ----
+  darwin-abi-probe:
+    name: "7.3 ABI probe (${{ matrix.label }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-13        # Intel x86_64
+            label: Intel x86_64
+          - runner: macos-latest    # Apple Silicon arm64
+            label: Apple Silicon arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show what we are measuring on
+        run: |
+          uname -a
+          sw_vers || true
+          echo "arch: $(uname -m)"
+
+      # The probe dumps the LIVE neighbor table; an empty one proves nothing,
+      # so touch the gateway first to make sure there is at least one entry.
+      - name: Populate the ARP table
+        run: |
+          GW=$(route -n get default 2>/dev/null | awk '/gateway:/{print $2}')
+          echo "default gateway: ${GW:-<none>}"
+          if [ -n "$GW" ]; then ping -c 3 -t 2 "$GW" || true; fi
+          arp -a || true
+
+      - name: Build and run the probe
+        run: |
+          cc -Wall -O0 -o /tmp/darwin-abi-probe \
+             no-sneak-net/src/main/c/darwin_neighbor_abi_probe.c
+          /tmp/darwin-abi-probe | tee /tmp/abi-${{ matrix.runner }}.txt
+
+      # arp -a is the independent oracle: if the probe's own walk disagrees with
+      # it, the Java parser built on those numbers would be wrong the same way.
+      - name: Cross-check against arp -a
+        run: |
+          echo "=== arp -a (compare against the probe's table dump above) ==="
+          arp -a || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: darwin-abi-${{ matrix.runner }}
+          path: /tmp/abi-${{ matrix.runner }}.txt
+
+  # ---- section 13.1: the Linux appliance spike ----
+  linux-spike:
+    name: "13.1 spike (${{ matrix.label }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest      # x86-64
+            label: x86-64
+          - runner: ubuntu-24.04-arm   # aarch64 - the appliance architecture
+            label: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Show what we are measuring on
+        run: |
+          uname -a
+          echo "arch: $(uname -m)"
+          ip -br addr || true
+
+      - name: Compile the module
+        run: mvn -B -q -pl no-sneak-net -am compile -DskipTests
+
+      - name: Run the spike
+        run: |
+          IFACE=$(ip -o -4 route show to default | awk '{print $5}' | head -1)
+          TARGET="${{ inputs.arp_target }}"
+          if [ -z "$TARGET" ]; then
+            TARGET=$(ip -o -4 route show to default | awk '{print $3}' | head -1)
+          fi
+          echo "interface=$IFACE target=$TARGET"
+          # Root is required: AF_PACKET and SOCK_RAW need CAP_NET_RAW.
+          sudo "$JAVA_HOME/bin/java" --enable-native-access=ALL-UNNAMED \
+               -cp no-sneak-net/target/classes \
+               io.xlogistx.nosneak.net.spike.LinuxSpike "$IFACE" "$TARGET" \
+               | tee /tmp/spike-${{ matrix.runner }}.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-spike-${{ matrix.runner }}
+          path: /tmp/spike-${{ matrix.runner }}.txt

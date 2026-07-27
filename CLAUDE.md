@@ -3,14 +3,20 @@
 Security tooling for assessing what a network endpoint exposes — TLS posture, **post-quantum
 readiness**, and running services — plus a Swing front-end and an AI-assistant layer.
 
-Four modules, one-way dependencies (`no-sneak-app → ai-assistant → ai-model`):
+Five modules, one-way dependencies (`no-sneak-app → ai-assistant → ai-model`):
 
 | Module | What it is | Orientation |
 |---|---|---|
 | **`no-sneak-core`** | The scanning engine (TLS/PQC + protocol probes + network scanner) | `no-sneak-core/CLAUDE.md` |
+| **`no-sneak-net`** | Host discovery (ICMP/ARP/NDP over FFM) — **spec only, not yet built** | `no-sneak-net/CLAUDE.md` |
 | **`no-sneak-app`** | Swing desktop front-end, session/security layer | `no-sneak-app/CLAUDE.md` |
 | **`ai-assistant`** | Swing window to send network data to third-party AI models and compare | `ai-assistant/CLAUDE.md` |
 | **`ai-model`** | The backend contract (DAOs + service interfaces, no implementations) | `ai-model/CLAUDE.md` |
+
+`no-sneak-net` is the one module whose `CLAUDE.md` describes code that does not exist yet: it is an
+authoritative build spec (base package `io.xlogistx.nosneak.net`, JDK 25 FFM, zero third-party
+dependencies), not a description of the module as it stands. Follow it rather than inferring design
+from the empty `NSNetUtil`.
 
 ## The one thing to know before touching `no-sneak-core`
 

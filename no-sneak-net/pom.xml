@@ -14,4 +14,44 @@
     <properties>
     </properties>
 
+    <build>
+        <plugins>
+            <!--
+              FFM restricted methods (Linker downcalls) warn on JDK 25 and will hard-fail
+              in a future release without this. ALL-UNNAMED, not a module name: this module
+              declares no module-info, so it always loads unnamed (spec section 12.8).
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine>--enable-native-access=ALL-UNNAMED</argLine>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-params</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.xlogistx</groupId>
+            <artifactId>xlogistx-common</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.xlogistx</groupId>
+            <artifactId>xlogistx-core</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.zoxweb</groupId>
+            <artifactId>zoxweb-core</artifactId>
+        </dependency>
+
+    </dependencies>
+
 </project>

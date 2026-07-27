@@ -13,11 +13,14 @@ compliance and for harvest-now-decrypt-later exposure.
 | Module | What it is |
 |---|---|
 | **`no-sneak-core`** | The scanning engine: TLS/PQC assessment, JSON-declared protocol probes, and a staged network scanner — all on one non-blocking state-machine core. Start with its `README.md`. |
+| **`no-sneak-net`** | Host discovery below the port scan: ICMP/ICMPv6 liveness, ARP/NDP layer-2 identity, IP↔MAC cache, CIDR sweep. JDK 25 FFM, no packet library. See its `README.md`. |
 | **`no-sneak-app`** | Swing desktop front-end — entry point, screens, navigation, and the session/security layer. See `CLAUDE.md`. |
 | **`ai-assistant`** | Swing window that lets the subject send their own network data to third-party AI models and compare answers. Owns no API keys. See `CLAUDE.md`. |
 | **`ai-model`** | The backend contract the assistant binds to: value DAOs and service interfaces, no provider or store implementations. See `CLAUDE.md`. |
 
-Dependency direction is one-way: `no-sneak-app → ai-assistant → ai-model`.
+Dependency direction is one-way: `no-sneak-app → ai-assistant → ai-model`. `no-sneak-net` stands
+alone — it answers "is this host there and what is its MAC", which comes *before* anything
+`no-sneak-core` does, and the two are not yet wired together.
 
 ## Build
 
@@ -48,8 +51,16 @@ chain-trust, revocation, protocol/cipher enumeration and grading; v1 is frozen a
 the maintainer merges. Vulnerability scanning, HTTP security-header analysis and CNSA 2.0
 compliance rules are not implemented yet — see `no-sneak-core/ACTION-PLAN.md`.
 
+`no-sneak-net` is new and **requires JDK 25** (FFM), unlike the rest of the reactor. Its API, codecs,
+cache and Windows backend are done, and the Windows path — including off-link routing through the
+gateway — is verified against live hardware. The Linux backend is written but has never been run,
+and macOS layer-2 is deliberately unwritten pending an ABI probe. `no-sneak-net/hostscan.cmd` is
+the quickest way to see it work; its `README.md` has the per-platform status.
+
 External dependencies: zoxweb (`org.zoxweb.*`) and the `io-xlogistx` modules (`common`, `core`,
 `http`, `shiro`, `opsec`, `datastore`). **Bouncy Castle is the only cryptographic library.**
+`no-sneak-net` additionally requires [Npcap](https://npcap.com/) on Windows only, which is not
+bundled and not redistributable under its free licence.
 
 ## License
 
