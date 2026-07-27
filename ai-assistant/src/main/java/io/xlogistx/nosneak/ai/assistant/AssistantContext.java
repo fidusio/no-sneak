@@ -1,8 +1,7 @@
 package io.xlogistx.nosneak.ai.assistant;
 
-import io.xlogistx.nosneak.ai.AIChatRepository;
+import io.xlogistx.nosneak.ai.AIRepository;
 import io.xlogistx.nosneak.ai.AICredentialSource;
-import io.xlogistx.nosneak.ai.AIProvider;
 import io.xlogistx.nosneak.ai.model.AIChat;
 import io.xlogistx.nosneak.ai.model.AIProviderRegistrar;
 import io.xlogistx.nosneak.ai.model.AISkill;
@@ -14,7 +13,7 @@ import java.util.List;
 
 public class AssistantContext {
     private final AICredentialSource credentials;
-    private final AIChatRepository chats;
+    private final AIRepository chats;
     private final AIProviderRegistrar providers;
 
     private AIChat currentChat;
@@ -24,7 +23,7 @@ public class AssistantContext {
 
     private final PropertyChangeSupport pcs = new PropertyChangeSupport(this);
 
-    public AssistantContext(AICredentialSource credentials, AIChatRepository chats) {
+    public AssistantContext(AICredentialSource credentials, AIRepository chats) {
         this.credentials = credentials;
         this.chats = chats;
         providers = new AIProviderRegistrar();
@@ -36,12 +35,12 @@ public class AssistantContext {
     }
 
     public void newChat() {
-        currentChat = chats.save(new AIChat("New chat"));
+        currentChat = chats.saveChat(new AIChat("New chat"));
         pcs.firePropertyChange("currentChat", null, currentChat);
     }
 
     public void deleteChat(AIChat chat) {
-        chats.delete(chat);
+        chats.deleteChat(chat);
         currentChat = null;
     }
 
@@ -57,7 +56,7 @@ public class AssistantContext {
         return credentials;
     }
 
-    public AIChatRepository getChats() {
+    public AIRepository getChats() {
         return chats;
     }
 

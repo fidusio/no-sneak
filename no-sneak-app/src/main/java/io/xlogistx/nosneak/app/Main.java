@@ -25,7 +25,7 @@ public class Main {
 
     public static final String dbName = "no-sneak";
 
-    static void main(String... args) {
+    public static void main(String... args) {
 
         ParamUtil.ParamMap params = ParamUtil.parse("=", args);
         String dsUser = params.stringValue("ds.user", true);

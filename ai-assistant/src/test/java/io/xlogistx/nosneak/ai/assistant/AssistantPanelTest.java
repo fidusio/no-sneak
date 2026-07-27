@@ -1,11 +1,12 @@
 package io.xlogistx.nosneak.ai.assistant;
 
 import io.xlogistx.nosneak.ai.AICredentialSource;
-import io.xlogistx.nosneak.ai.AIChatRepository;
+import io.xlogistx.nosneak.ai.AIRepository;
 import io.xlogistx.nosneak.ai.model.AIChat;
 import com.formdev.flatlaf.FlatLaf;
 import com.formdev.flatlaf.FlatLightLaf;
 import com.formdev.flatlaf.fonts.roboto.FlatRobotoFont;
+import io.xlogistx.nosneak.ai.model.AISkill;
 import org.zoxweb.shared.security.APIKey;
 import org.zoxweb.shared.security.SubjectAPIKey;
 
@@ -26,11 +27,7 @@ class AssistantPanelTest {
         }
     }
 
-    private static class chats implements AIChatRepository {
-        @Override
-        public AIChat save(AIChat chat) {
-            return chat;
-        }
+    private static class chats implements AIRepository {
 
         @Override
         public AIChat getChat(String refID) {
@@ -43,7 +40,32 @@ class AssistantPanelTest {
         }
 
         @Override
-        public void delete(AIChat chat) {
+        public AISkill saveSkill(AISkill skill) {
+            return null;
+        }
+
+        @Override
+        public void deleteSkill(AISkill skill) {
+
+        }
+
+        @Override
+        public AISkill getSkill(String refID) {
+            return null;
+        }
+
+        @Override
+        public List<AISkill> getAllSkills() {
+            return List.of();
+        }
+
+        @Override
+        public AIChat saveChat(AIChat chat) {
+            return null;
+        }
+
+        @Override
+        public void deleteChat(AIChat chat) {
 
         }
     }

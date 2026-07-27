@@ -9,6 +9,8 @@ import io.xlogistx.gui.PanelBuilder;
 
 import javax.swing.*;
 import java.awt.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.KeyEvent;
 import java.net.URL;
 
 public class LoginPanel extends JPanel {
@@ -32,9 +34,12 @@ public class LoginPanel extends JPanel {
     private final JButton passkeyAction = new JButton();
     private final JButton modeToggle = new JButton();
 
+    private final AppContext ctx;
+
     private boolean login = true;
 
     public LoginPanel(AppContext ctx) {
+        this.ctx = ctx;
         setLayout(new GridBagLayout());
         GridBagConstraints c = new GridBagConstraints();
         c.insets = new Insets(6, 6, 6, 6);
@@ -46,33 +51,16 @@ public class LoginPanel extends JPanel {
         cardStack.add(buildPasskeyScreen(), "Passkey");
         cardStack.show("Password");
 
+        this.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "login-register");
+        this.getActionMap().put("login-register", new AbstractAction() {
+            public void actionPerformed(ActionEvent e) {
+                passwordAction();
+            }
+        });
+
         // Action buttons branch on the current mode at click time.
         passwordAction.addActionListener(_ -> {
-            String user = username.getText();
-            char[] pwd = password.getPassword();
-
-            if (login) {
-
-                BackgroundTask.runCatching(this, passwordAction,
-                        () -> ctx.session().loginUsernamePassword(user, pwd),
-                        null);
-            } else {
-                if (!java.util.Arrays.equals(pwd, confirmPassword.getPassword())) {
-                    JOptionPane.showMessageDialog(this, "Passwords do not match.", "Register",
-                            JOptionPane.ERROR_MESSAGE);
-                    return;
-                }
-                BackgroundTask.runCatching(this, passwordAction,
-                        () -> ctx.session().registerUsernamePassword(user, pwd),
-                        () -> {
-                            JOptionPane.showMessageDialog(this, "Registered Successfully");
-                            password.setText("");
-                            confirmPassword.setText("");
-                            username.setText("");
-                            apiKey.setText("");
-                            toggleMode();
-                        });
-            }
+            passwordAction();
         });
         apiKeyAction.addActionListener(_ -> {
             if (login) {
@@ -203,5 +191,33 @@ public class LoginPanel extends JPanel {
 //                passwordSelector.setSelected(true);
 //                cardStack.show("Password");
 //            }
+    }
+
+    private void passwordAction() {
+        String user = username.getText();
+        char[] pwd = password.getPassword();
+
+        if (login) {
+
+            BackgroundTask.runCatching(this, passwordAction,
+                    () -> ctx.session().loginUsernamePassword(user, pwd),
+                    null);
+        } else {
+            if (!java.util.Arrays.equals(pwd, confirmPassword.getPassword())) {
+                JOptionPane.showMessageDialog(this, "Passwords do not match.", "Register",
+                        JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            BackgroundTask.runCatching(this, passwordAction,
+                    () -> ctx.session().registerUsernamePassword(user, pwd),
+                    () -> {
+                        JOptionPane.showMessageDialog(this, "Registered Successfully");
+                        password.setText("");
+                        confirmPassword.setText("");
+                        username.setText("");
+                        apiKey.setText("");
+                        toggleMode();
+                    });
+        }
     }
 }
