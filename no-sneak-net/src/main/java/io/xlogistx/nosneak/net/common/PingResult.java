@@ -40,6 +40,32 @@ public record PingResult(
         return received > 0;
     }
 
+    /**
+     * Whether an echo reply actually arrived on a wire.
+     * <p>
+     * NOT the same as {@link #reachable()}, and the difference is the whole point of
+     * {@link PingProbe#localInterface()}: pinging one of this host's own addresses
+     * answers from local configuration without sending anything, so the host is
+     * reachable while nothing was observed. Consumers that mean "this host answered
+     * ICMP" — {@link HostRecord#icmpAlive()}, a sweep's ICMP tally — must use THIS.
+     */
+    public boolean observedOnWire() {
+        return probes.stream().anyMatch(p -> p.replied() && !p.localInterface());
+    }
+
+    /**
+     * Whether any probe was actually timed, i.e. whether the RTT aggregates mean
+     * anything.
+     * <p>
+     * When false, {@link #minRtt()} and friends are {@link Duration#ZERO} because
+     * there was no sample — never because something replied instantly. Do not
+     * publish an RTT without checking this first; a fabricated {@code 0.000 ms}
+     * reads exactly like a real measurement.
+     */
+    public boolean measured() {
+        return probes.stream().anyMatch(p -> p.replied() && p.rtt() != null);
+    }
+
     public double lossPercent() {
         return sent == 0 ? 0.0 : 100.0 * (sent - received) / sent;
     }

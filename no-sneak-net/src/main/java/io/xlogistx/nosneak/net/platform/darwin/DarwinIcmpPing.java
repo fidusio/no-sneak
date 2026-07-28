@@ -346,7 +346,7 @@ public final class DarwinIcmpPing implements ICMPPing {
         Duration rtt = Duration.ofNanos(System.nanoTime() - probe.sentAtNanos);
         // rawEvidence is false here, so no bytes are retained; TTL is unavailable.
         probe.call.settle(new PingProbe(seq, true, rtt, PingProbe.TTL_UNAVAILABLE,
-                                        new byte[0], false, Optional.empty()));
+                                        new byte[0], false, false, Optional.empty()));
         return true;
     }
 

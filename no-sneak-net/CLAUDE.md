@@ -2398,9 +2398,8 @@ Two things the run showed that the code alone would not have:
   100% loss while `resolve 10.0.0.61` answers instantly from `LOCAL_INTERFACE`. This is the §13.12
   own-address problem in its ICMP form: pcap injects at layer 2, the frame goes out on the wire, and
   nothing brings the loopback reply back through the capture handle. **It is a backend fact, not a
-  tools-layer one, and must not be papered over in `HostScanner`** — the fix, if it is worth making,
-  is a short-circuit in `WindowsPcapBackend` alongside the existing `LOCAL_INTERFACE` one. Left
-  open deliberately.
+  tools-layer one, and must not be papered over in `HostScanner`** — the fix is a short-circuit in
+  `WindowsPcapBackend` alongside the existing `LOCAL_INTERFACE` one. **FIXED — §13.18.**
 
 **OPEN — which thread runs a caller's continuation.** No `*Async` overload in this module omits its
 executor, so nothing reaches `ForkJoinPool.commonPool()`. But the backends complete their futures
@@ -2511,14 +2510,142 @@ edited to a plausible wrong number.
 
 #### Still open
 
-- **No passive learning on Windows.** The single handle filters `"arp or icmp or icmp6"` and
-  `onIpv4` matches only its own echo replies. Wire parity with §13.13 would mean widening the filter
-  to `ip` and calling `cache.observe` with the frame's source MAC — more capture volume, and on a
-  switched port a non-promiscuous capture sees little anyway. The `GetIpNetEntry2` fallback covers
-  the common case instead.
-- **A host Windows has never talked to stays invisible**, exactly as before this change.
 - **`ResolveIpNetEntry2` was rejected**, not overlooked: it makes the OS do the resolution, which
   would have to be reported as `KERNEL_TABLE` provenance rather than as something we observed.
+- Passive learning closed the rest — §13.17.
+
+---
+
+### 13.17 Passive learning on Windows — the filter was the whole gap
+
+§13.16 shipped the unicast retry and left Windows depending on `GetIpNetEntry2` for its hint, on the
+reasoning that widening the capture filter cost volume for uncertain gain. That reasoning was wrong,
+and the measurement that shows it took two minutes.
+
+The backend was never blind: `onArp` has always cached every ARP sighting with `PASSIVE` provenance.
+What it lacked was frames to learn from. `"arp or icmp or icmp6"` captured exactly what this backend
+*answers with* and nothing it could learn from, and `onIpv4` threw away everything but its own echo
+replies — so a host that ignores broadcast ARP had no way of telling us where it lived.
+
+**Two changes, in that order.**
+
+1. **Learn from what is already captured** (free, no filter change): `onIpv4` now records the sender
+   before testing for ICMP, and `onIpv6` learns from neighbour *solicitations* — which are multicast,
+   arrive without promiscuous mode, and which Linux has always read (its NS branch). Not doing so was
+   the IPv6 half of the gap. Learning also fires an immediate unicast when a resolve is already
+   waiting on that host, so a passive sighting completes the resolve inside the caller's budget
+   instead of at the next retransmission.
+2. **Widen the filter to `"arp or ip or ip6"`** — one clause SHORTER than what it replaced, since
+   `icmp` is a subset of `ip` and `icmp6` of `ip6`, and it is the coverage of the Linux `ETH_P_IP`
+   learner reached through the handle this backend already owns.
+
+#### What it actually bought — identical 60 s listens, no probes sent at all
+
+```
+"arp or icmp or icmp6"   ->  2 neighbours learned
+"arp or ip or ip6"       ->  9 neighbours learned
+```
+
+Two of the nine — `10.0.0.234` and `10.0.0.74` — **never appear in a `/24` sweep at all**. Both carry
+locally-administered MACs (`1a:aa:…`, `66:29:…`), i.e. phones or laptops using MAC randomisation,
+which typically ignore ARP from strangers and drop ICMP. They are found only because they announce
+themselves over multicast. `10.0.0.108` is also learned passively now, so the §13.16 host no longer
+depends on Windows' table at all.
+
+Across a session that sweeps, idles 90 s, and sweeps again, the same `/24` went from **20 alive** to
+**22 alive, 22 by MAC, 20 by ICMP** — the extra pair found by MAC alone. Run-to-run the count varies
+between 20 and 22 because these devices are intermittent; that is a property of the population, not
+of the mechanism, and it is the honest number rather than a best case.
+
+> This is the §13.13 lesson repeating with the platforms swapped. There, passive learning beat
+> reading the kernel's table. Here it beats it again — and the reason the earlier work reached for
+> `GetIpNetEntry2` first was that the filter, not the backend's design, was hiding the traffic. The
+> two are complementary and both stay: the OS table covers a quiet host that Windows has talked to,
+> passive learning covers a chatty host it has not.
+
+#### The accuracy trade, stated plainly
+
+Passive entries are REPORTED — `resolve()` serves the cache as a `CACHE_HIT` — whereas the
+`GetIpNetEntry2` hint never enters it. So a wrong passive entry is a wrong *answer*, not just a
+wasted frame. The guards are therefore the load-bearing part, and `learnable()` copies Linux's
+exactly. The decisive one is **on-link**: an off-link sender's frames arrive bearing the ROUTER's
+MAC, and caching that would claim a remote host lives at the gateway's address. `PassiveLearningTest`
+pins all of them, including that a randomised MAC is a normal host and not a malformed frame.
+
+The drop risk that argued against widening — a full pcap buffer losing an ARP reply, which would
+surface as a spurious `TIMEOUT` — did not materialise: nine concurrent resolves all completed in
+7-31 ms, and sweep wall time was unchanged at ~1.26 s. Non-promiscuous capture is what bounds it; we
+see broadcast, multicast and our own traffic, not the whole segment. If a future segment proves
+noisier, the narrowing to reach for is `(ip and (ether broadcast or ether multicast))`, which keeps
+the announcements and drops the bulk.
+
+---
+
+### 13.18 Pinging ourselves — the answer was never on the wire
+
+`ping <our own address>` reported 100% loss on Windows while `resolve` of the same address answered
+instantly. Both facts were correct and the combination was absurd, which is what made it worth
+fixing: the tool said a host was down while simultaneously naming its MAC.
+
+**Why no retry could have helped.** `emitProbes` builds a frame carrying our own MAC as BOTH source
+and destination. A switch will not send a frame back out the port it arrived on, and the NIC does
+not loop transmitted frames into its own receive path, so the echo reply we wait for would have to
+be generated by the IP stack that pcap deliberately bypasses. The packet is not lost — it is
+answered by nobody, because the only host that could answer is the one asking. Exactly §13.12's
+own-address problem, one layer up.
+
+**The fix is not to measure harder, it is to stop asking the wire a question it cannot hold the
+answer to.** `NetworkInterface` already told us at `open()` that the address is configured on an
+interface that was up; `NicBinding` captured it, and `resolve()` has short-circuited on it since
+§13.12 via `ResolveSource.LOCAL_INTERFACE`. `ping()` now does the same through
+`ownAddress(target, localBindings())`, checking **every** binding rather than this one — one pinger
+serves all NICs, so the second adapter's address is ours too — plus `isLoopbackAddress()`, because
+`127.0.0.0/8` and `::1` have no binding at all (`usableInterfaces()` filters loopback out) and used
+to fail with `NETWORK_UNREACHABLE` rather than a timeout.
+
+**`PingProbe.localInterface` is how it stays honest**, and `rtt` is deliberately NULL rather than
+zero. A zero is a claim about timing that no clock produced, and it would be indistinguishable from
+a genuinely instant reply — the §13.12 diagnosability rule again. `PingResult.of` already skips
+null-RTT probes when computing min/avg/max, so the aggregate reports no statistics at all while
+`received` still counts the probe and `reachable()` is true. The CLI prints
+`local interface - alive, nothing sent` and omits the RTT line entirely.
+
+```
+ping 10.0.0.61      2 sent, 2 received, 0.0% loss   (no rtt line)
+ping 192.168.56.1   2 sent, 2 received, 0.0% loss   (the other NIC - also us)
+ping 127.0.0.1      2 sent, 2 received, 0.0% loss   (no binding exists for this)
+ping 10.0.0.108     2 sent, 2 received, rtt 13.951/16.109/18.267 ms   (unchanged)
+```
+
+**Windows only, on purpose.** Linux and macOS send ICMP through the kernel, which routes a self-ping
+over loopback and returns a real sub-millisecond measurement. That is strictly more information than
+"alive by configuration", and short-circuiting there to make the output uniform would be discarding
+a measurement to look consistent — the wrong trade in a tool whose value is what it observed.
+
+#### The bug the fix introduced, found on the first real sweep
+
+The first `/24` sweep after this change printed `10.0.0.61 … icmp 0.000 ms` — the exact fabricated
+measurement the null RTT was chosen to prevent, leaking through a path the change had not touched.
+`sweepOne` built its record from `result.reachable()`, which is now true for a local answer, so it
+attached `avgRtt()` (zero, because there were no samples) and counted the host in the ICMP tally.
+
+The formatter had been taught the difference and the sweep had not, which is the general shape of
+this mistake: a predicate meaning "this host is up" was doing duty for "this host answered ICMP",
+and those stopped being the same thing the moment a local answer existed. Two predicates on
+`PingResult` now name them separately — **`observedOnWire()`** (a reply actually arrived) and
+**`measured()`** (a clock actually ran) — and all three backends use `measured()` before publishing
+an RTT. `10.0.0.61` is back to `arp` with no RTT, and the ICMP tally counts wire replies only.
+
+> Worth generalising: adding a state to a value type means auditing every consumer that switches on
+> the states next to it, not only the one you were looking at. `reachable()` had exactly one meaning
+> for its whole life, and the new probe kind silently split it in two.
+
+> The general lesson, and the reason this took a conversation rather than a patch: `isReachable()`
+> was the tempting shortcut and would have been wrong for the same reason the whole module exists —
+> it answers a boolean by an unspecified mechanism that silently degrades to a TCP connect on port
+> 7. For our own address the right answer needed no probe of any kind. Ask what the question *is*
+> before choosing an instrument: liveness of a local address is a fact about configuration, and
+> `NetworkInterface` is its authoritative source.
 
 ---
 

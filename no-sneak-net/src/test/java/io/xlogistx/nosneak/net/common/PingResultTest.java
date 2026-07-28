@@ -31,7 +31,7 @@ public class PingResultTest {
     /** A probe that replied but was sent while ARP/NDP was still resolving. */
     private static PingProbe pending(int seq, long millis) {
         return new PingProbe(seq, true, Duration.ofMillis(millis),
-                             PingProbe.TTL_UNAVAILABLE, new byte[0], true, Optional.empty());
+                             PingProbe.TTL_UNAVAILABLE, new byte[0], true, false, Optional.empty());
     }
 
     // ---- counting ----
@@ -166,7 +166,7 @@ public class PingResultTest {
     @Test
     public void pendingAndLostIsJustLost() {
         PingProbe pendingLost = new PingProbe(1, false, null, PingProbe.TTL_UNAVAILABLE,
-                                              new byte[0], true, Optional.of(PingError.TIMEOUT));
+                                              new byte[0], true, false, Optional.of(PingError.TIMEOUT));
         PingResult r = PingResult.of(TARGET, List.of(pendingLost, ok(2, 10)), null);
 
         assertEquals(2, r.sent());
@@ -254,5 +254,85 @@ public class PingResultTest {
         PingResult r = PingResult.of(TARGET,
                 List.of(ok(1, 10), lost(2), lost(3)), null);
         assertEquals(200.0 / 3.0, r.lossPercent(), 1e-9);
+    }
+
+    // ---- our own address ----
+
+    /**
+     * A local-interface probe counts as received — the host IS up — but contributes
+     * no timing, because none was taken. Reporting {@code 0.000 ms} would be a
+     * measurement nobody made.
+     */
+    @Test
+    public void localInterfaceProbesAreAliveButUnmeasured() {
+        PingResult r = PingResult.of(TARGET,
+                List.of(PingProbe.localInterface(1), PingProbe.localInterface(2)), null);
+
+        assertEquals(2, r.sent());
+        assertEquals(2, r.received());
+        assertTrue(r.reachable());
+        assertEquals(0.0, r.lossPercent(), 1e-9);
+        assertEquals(Duration.ZERO, r.minRtt(), "no sample means no statistic");
+        assertEquals(Duration.ZERO, r.avgRtt());
+        assertEquals(Duration.ZERO, r.maxRtt());
+        assertTrue(r.probes().stream().allMatch(PingProbe::localInterface));
+        assertTrue(r.probes().stream().noneMatch(p -> p.rtt() != null),
+                   "a local answer carries no RTT at all, not a zero one");
+    }
+
+    /** The flag is what distinguishes it; a real reply must never carry it. */
+    @Test
+    public void anOrdinaryReplyIsNotMarkedLocal() {
+        assertFalse(PingProbe.replied(1, Duration.ofMillis(5)).localInterface());
+        assertFalse(PingProbe.failed(1, PingError.TIMEOUT).localInterface());
+        assertTrue(PingProbe.localInterface(1).localInterface());
+        assertFalse(PingProbe.localInterface(1).hasTtl(),
+                    "nothing was received, so there is no TTL to report");
+    }
+
+    /**
+     * The distinction a sweep depends on. Reporting a local answer as an ICMP reply
+     * with {@code avgRtt()} attached prints {@code 0.000 ms}, which is indistinguishable
+     * from a real instant reply — the bug this pair of predicates exists to prevent.
+     */
+    @Test
+    public void aLocalAnswerIsReachableButNeitherObservedNorMeasured() {
+        PingResult local = PingResult.of(TARGET, List.of(PingProbe.localInterface(1)), null);
+        assertTrue(local.reachable());
+        assertFalse(local.observedOnWire(), "nothing was transmitted, so nothing answered");
+        assertFalse(local.measured(), "no clock ran, so avgRtt() must not be published");
+
+        PingResult real = PingResult.of(TARGET, List.of(ok(1, 10)), null);
+        assertTrue(real.reachable());
+        assertTrue(real.observedOnWire());
+        assertTrue(real.measured());
+    }
+
+    @Test
+    public void aTimedOutResultIsNeitherObservedNorMeasured() {
+        PingResult r = PingResult.of(TARGET, List.of(lost(1), lost(2)), null);
+        assertFalse(r.reachable());
+        assertFalse(r.observedOnWire());
+        assertFalse(r.measured());
+    }
+
+    /** A real reply alongside a local one still counts as observed and measured. */
+    @Test
+    public void oneWireReplyIsEnoughToCountAsObserved() {
+        PingResult r = PingResult.of(TARGET,
+                List.of(PingProbe.localInterface(1), ok(2, 10)), null);
+        assertTrue(r.observedOnWire());
+        assertTrue(r.measured());
+    }
+
+    /** Mixing the two — possible only if a backend changed mid-call — keeps real samples. */
+    @Test
+    public void aRealSampleStillWinsWhenMixedWithALocalProbe() {
+        PingResult r = PingResult.of(TARGET,
+                List.of(PingProbe.localInterface(1), ok(2, 10)), null);
+
+        assertEquals(2, r.received());
+        assertEquals(Duration.ofMillis(10), r.minRtt());
+        assertEquals(Duration.ofMillis(10), r.maxRtt());
     }
 }

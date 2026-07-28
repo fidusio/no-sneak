@@ -23,6 +23,7 @@ Tier-1 probe engine. This module answers the question that comes before them.
 | Linux ARP (`AF_PACKET`) | **done and verified on live hardware — x86-64 and aarch64** |
 | Linux passive IPv4 learning (`ETH_P_IP`) | **done and verified** — resolves hosts the kernel itself cannot reach |
 | Windows unicast-ARP retry + `GetIpNetEntry2` hint | **done and verified on live hardware** — resolves a host that ignores broadcast ARP (§13.16) |
+| Windows passive learning (`ip`/`ip6` + NDP NS) | **done and verified on live hardware** — finds hosts no sweep reaches (§13.17) |
 | Linux IPv6 / NDP | **written, never exercised on a wire** — no v6 neighbours on the test segment |
 | macOS ICMP | **run once, threw at startup; two all-or-nothing bugs fixed — needs re-test** |
 | macOS ARP/NDP | **written over libpcap, never run** — needs a Mac; §7.3's ABI gate is retired, not passed |
@@ -75,9 +76,21 @@ receive-only `ETH_P_IP` learner per NIC.
 **Passive learning is not a nicety.** Broadcast ARP is not universally delivered — access points
 buffer broadcast against the DTIM interval and commonly suppress it — so a station can be fully
 reachable by unicast while never answering a solicitation. Every Ethernet frame carries its sender's
-MAC, so the `ETH_P_IP` socket learns those hosts from their own traffic and the resolver then aims a
-*unicast* ARP at them. Measured: four consecutive cold resolves of such a host succeeded with the
-kernel's own neighbour table empty (`CLAUDE.md` §13.13).
+MAC, so the `ETH_P_IP` socket on Linux — and every captured `ip`/`ip6` frame on Windows — learns
+those hosts from their own traffic, and the resolver then aims a *unicast* ARP at them. Measured on
+Linux: four consecutive cold resolves of such a host succeeded with the kernel's own neighbour table
+empty (§13.13). Measured on Windows: an identical 60-second listen learned **2 neighbours with the
+old ICMP-only filter and 9 with `ip`/`ip6`**, two of which never appear in a `/24` sweep at all —
+phones using MAC randomisation, which ignore ARP from strangers and drop ICMP, and are found solely
+because they announce themselves over multicast (§13.17).
+
+**Our own addresses are answered from configuration, not from the wire.** Nothing on a segment
+answers an ARP request for the asker's own address, and a pcap ping of it cannot see its own
+loopback reply — the frame would carry our MAC as both source and destination, and no switch sends
+it back. `NetworkInterface` already knows the answer, so `resolve()` reports
+`ResolveSource.LOCAL_INTERFACE` and `ping()` reports probes marked `localInterface` with **no RTT at
+all** rather than a fabricated zero. On Linux and macOS the kernel routes a self-ping over loopback
+and returns a real measurement, which is kept (§13.18).
 
 **ARP is the liveness oracle, not ICMP.** A host that answers ARP is alive whether or not it
 answers a ping, so `HostRecord.mac` and `HostRecord.icmpAlive` are independent facts and

@@ -302,7 +302,7 @@ public final class LinuxIcmpPing implements ICMPPing {
         Duration rtt = Duration.ofNanos(System.nanoTime() - probe.sentAtNanos);
         // neighborResolutionPending stays FALSE: on Linux the kernel owns the
         // neighbor table and we cannot see it, so we never know (§4.6).
-        probe.call.settle(new PingProbe(seq, true, rtt, ttl, raw, false, Optional.empty()));
+        probe.call.settle(new PingProbe(seq, true, rtt, ttl, raw, false, false, Optional.empty()));
     }
 
     @Override

@@ -76,7 +76,10 @@ public final class HostScanFormat {
         }
         sb.append(String.format("%n%n%d sent, %d received, %.1f%% loss",
                                 r.sent(), r.received(), r.lossPercent()));
-        if (r.reachable()) {
+        // Statistics only when something was actually timed. A local-interface answer
+        // replies without a measurement, and printing 0.000 ms would read as a real
+        // reading rather than as the absence of one.
+        if (r.reachable() && r.probes().stream().anyMatch(p -> p.replied() && p.rtt() != null)) {
             sb.append(String.format("%nrtt min/avg/max/stddev = %.3f/%.3f/%.3f/%.3f ms",
                                     millis(r.minRtt()), millis(r.avgRtt()),
                                     millis(r.maxRtt()), millis(r.stdDevRtt())));
@@ -89,6 +92,9 @@ public final class HostScanFormat {
     public static String probe(PingProbe p) {
         if (!p.replied()) {
             return "no reply (" + p.error().map(Enum::name).orElse("?") + ")";
+        }
+        if (p.localInterface()) {
+            return "local interface - alive, nothing sent";
         }
         return String.format("rtt=%.3f ms  ttl=%s%s",
                              millis(p.rtt()),

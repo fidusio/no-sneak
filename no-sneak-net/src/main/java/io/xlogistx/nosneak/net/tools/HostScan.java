@@ -14,6 +14,7 @@ import io.xlogistx.nosneak.net.common.Subscription;
 import io.xlogistx.nosneak.net.common.SweepOptions;
 import io.xlogistx.nosneak.net.common.SweepSummary;
 import io.xlogistx.nosneak.net.util.NSNetUtil;
+import org.zoxweb.shared.util.SUS;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -68,6 +69,7 @@ public final class HostScan {
 
     public static void main(String[] args) throws Exception {
         System.out.println("Current version:" + NSNetUtil.VERSION);
+        System.out.println("Current OS: " + SUS.toCanonicalID(',', System.getProperty("os.name"), System.getProperty("os.arch"),System.getProperty("os.version")));
         if (args.length > 0 && isHelp(args[0])) {
             usage(System.out);
             return;
