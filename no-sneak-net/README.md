@@ -15,7 +15,7 @@ Tier-1 probe engine. This module answers the question that comes before them.
 
 | Step | State |
 |---|---|
-| Public API, codecs, cache, ping aggregation | **done**, 182 tests green |
+| Public API, codecs, cache, ping aggregation | **done**, 192 tests green |
 | Windows (Npcap/pcap) backend | **done and verified on live hardware** |
 | Windows off-link routing (`iphlpapi`) | **done and verified against a live internet path** |
 | Factory wiring + `HostScan` CLI | **done and verified on live hardware** |
@@ -24,12 +24,13 @@ Tier-1 probe engine. This module answers the question that comes before them.
 | Linux passive IPv4 learning (`ETH_P_IP`) | **done and verified** — resolves hosts the kernel itself cannot reach |
 | Linux IPv6 / NDP | **written, never exercised on a wire** — no v6 neighbours on the test segment |
 | macOS ICMP | **run once, threw at startup; two all-or-nothing bugs fixed — needs re-test** |
-| macOS ARP/NDP | **deliberately not written** — see *The macOS gate* below |
+| macOS ARP/NDP | **written over libpcap, never run** — needs a Mac; §7.3's ABI gate is retired, not passed |
 
 Windows and Linux both have runtime evidence behind them now, on real segments rather than in
 principle. Three claims still do not, and they are the ones to distrust: **Linux IPv6/NDP** (written,
 never on a wire), **macOS ICMP** (the fixes have not themselves been run on a Mac), and **macOS
-layer-2** (unwritten by design). Everywhere else, "done" means it moved packets.
+layer-2** (written over libpcap, never run — see `CLAUDE.md` §13.14). Everywhere else, "done" means it
+moved packets.
 
 The first macOS run (2026-07-27) threw before sending a packet, for two reasons that were both
 about *all-or-nothing wiring* rather than ICMP itself: `HostScan` demanded the full L2 wiring for
@@ -46,7 +47,7 @@ against a checklist. `LinuxSpike` has been deleted. §2.3's claim that every lay
 identical on x86-64 and aarch64 is now a measurement rather than an argument — no arch-specific
 divergence turned up.
 
-One gate remains: **the macOS ABI probe** — see below.
+**No ABI gate remains.** The macOS one was retired rather than passed — see below.
 
 ## Design in one paragraph
 
@@ -141,7 +142,7 @@ ICMPPing ping = HostDiscoveryFactory.openIcmpOnly();
 ```
 
 Check `capabilities()` before relying on anything. Backends degrade honestly rather than returning
-empty results: macOS genuinely cannot observe passively, a Wi-Fi adapter that pcap cannot inject
+empty results: a Wi-Fi adapter that pcap cannot inject
 through is reported capture-only, Windows falls back to on-link only if `iphlpapi` will not load,
 and a `-1` TTL means "this backend cannot tell you", never "zero hops away".
 
@@ -151,11 +152,11 @@ and a `-1` TTL means "this backend cannot tell you", never "zero hops away".
 |---|---|---|---|
 | Binding | libc (FFM) | libc (FFM) | Npcap `wpcap.dll` + `iphlpapi` (FFM) |
 | ICMP | `SOCK_RAW` | `SOCK_DGRAM` (unprivileged) | crafted over pcap |
-| ARP/NDP | `AF_PACKET` | kernel neighbor table via `sysctl` | crafted L2 frames |
-| Passive observation | yes | **no** | yes (promiscuous) |
+| ARP/NDP | `AF_PACKET` | crafted L2 frames over libpcap | crafted L2 frames |
+| Passive observation | yes | yes | yes (promiscuous) |
 | TTL available | yes (IPv4) | no | yes |
 | Off-link ICMP | yes | yes | yes (via `GetBestRoute2`) |
-| Privilege | root | none | Npcap install |
+| Privilege | root | root for L2, none for ICMP | Npcap install |
 | Objects | 2 | 2 | **1, implementing both interfaces** |
 
 Windows is one object because pcap injects at L2 and bypasses routing, so a ping needs ARP — and it
@@ -199,18 +200,30 @@ three platforms all run anywhere. That is deliberate — layout tests caught a w
 offset (`sll_halen` is at byte 11, not 9, because `sll_hatype` is a `short`) on a Windows machine,
 before it ever became "ARP silently doesn't work" on the appliance.
 
-## The macOS gate
+## macOS: how the ABI gate was retired
 
-`src/main/c/darwin_neighbor_abi_probe.c` exists because §7.3 marks the kernel neighbor-table ABI
-`[VERIFY]` and forbids writing it from memory: `rt_msghdr` embeds `rt_metrics`, the `ROUNDUP`
-padding rule has diverged between Darwin and the BSDs, and `RTF_LLINFO` semantics have shifted
-across macOS releases.
+§7.3 marked the kernel neighbor-table ABI `[VERIFY]` and forbade writing it from memory — `rt_msghdr`
+embeds `rt_metrics`, the `ROUNDUP` padding rule has diverged between Darwin and the BSDs, and
+`RTF_LLINFO` semantics have shifted across releases. A C probe was supposed to measure all of it on
+both Intel and Apple Silicon first. **That probe was never written**, and it is no longer owed.
 
-```bash
-cc -Wall -O0 -o probe src/main/c/darwin_neighbor_abi_probe.c && ./probe
-```
+§2.2 picked the neighbour table for exactly one reason: BPF is `ioctl`-configured and `ioctl` is
+variadic, which hits the Darwin arm64 `firstVariadicArg` hazard. **libpcap is the BPF wrapper** — the
+`ioctl` calls happen inside the library, in C, where variadic conventions are the compiler's problem.
+Through that door the hazard does not exist, and once the wire is visible there is nothing left for
+`rt_msghdr` to answer. So `DarwinPcapBackend` does active ARP and NDP like every other platform, and
+the gate is gone rather than cleared. See `CLAUDE.md` §13.14.
 
-It prints every offset and size the parser needs, then **dumps the live ARP and NDP tables using the
-same walk the Java will use** — compare that against `arp -a`. Run it on **both** Intel and Apple
-Silicon, confirm they agree, record the numbers in §7.3, and only then write the parser. Until that
-happens `HostDiscoveryFactory` refuses macOS L2 with a message saying exactly this.
+What this costs: `/dev/bpf*` is mode 0600, so macOS layer-2 now needs **root**. ICMP alone still does
+not, and `openIcmpOnly()` — which `HostScan`'s `ping` and `list` fall back to — stays unprivileged.
+
+What it buys: `passiveObservation` and `rawEvidence` become true on macOS, where both were previously
+hardcoded false as a consequence of the neighbour-table design rather than of the OS. `ttlAvailable`
+stays false, because TTL reaches callers through `PingProbe` and the unprivileged datagram ICMP
+socket strips the IP header.
+
+**None of it has run on a Mac.** The 24-byte `pcap_pkthdr` it depends on was confirmed against live
+frames on Linux, which shares those offsets, so the layout is settled — but behaviour is not. Expect
+the BSD read-timeout trap in particular: BPF buffers until its buffer fills or the timeout expires,
+the same mechanism that made a 2 ms hop measure 197 ms on Windows, so check a one-hop RTT early.
+

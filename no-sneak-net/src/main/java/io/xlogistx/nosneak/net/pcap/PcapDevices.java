@@ -1,4 +1,4 @@
-package io.xlogistx.nosneak.net.platform.windows;
+package io.xlogistx.nosneak.net.pcap;
 
 import io.xlogistx.nosneak.net.common.DiscoveryException;
 import io.xlogistx.nosneak.net.common.NicBinding;
@@ -17,7 +17,7 @@ import static java.lang.foreign.ValueLayout.ADDRESS;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 /**
- * Enumerates Npcap devices and matches them to {@link NetworkInterface}s.
+ * Enumerates pcap devices and matches them to {@link NetworkInterface}s.
  * <p>
  * A pcap device name ({@code \Device\NPF_{GUID}}) has NOTHING in common with what
  * {@link NetworkInterface#getName()} returns, so the two are matched **by IP
@@ -55,6 +55,7 @@ public final class PcapDevices {
      */
     public static List<Device> findAll() throws DiscoveryException {
         Pcap.Handles h = Pcap.load();
+        PcapPlatform platform = Pcap.platform();
         List<Device> devices = new ArrayList<>();
 
         try (Arena arena = Arena.ofConfined()) {
@@ -76,7 +77,7 @@ public final class PcapDevices {
                     devices.add(new Device(
                             Pcap.cString(d.get(ADDRESS, Pcap.IF_NAME)),
                             Pcap.cString(d.get(ADDRESS, Pcap.IF_DESCRIPTION)),
-                            readAddresses(d.get(ADDRESS, Pcap.IF_ADDRESSES))));
+                            readAddresses(platform, d.get(ADDRESS, Pcap.IF_ADDRESSES))));
                 }
             } finally {
                 if (!first.equals(MemorySegment.NULL)) {
@@ -123,7 +124,7 @@ public final class PcapDevices {
         return forInterface(devices, nif)
                 .map(Device::name)
                 .orElseThrow(() -> new DiscoveryException(
-                        "No Npcap device matches interface '" + nif.getName()
+                        "No pcap device matches interface '" + nif.getName()
                         + "'. Devices are matched by IP address; this interface reports "
                         + nif.getInterfaceAddresses().size() + " address(es). "
                         + "A disabled or address-less adapter cannot be bound."));
@@ -132,11 +133,13 @@ public final class PcapDevices {
     /**
      * Walks the {@code pcap_addr} list, keeping only IPv4 and IPv6.
      * <p>
-     * Windows {@code sockaddr} has the family as two bytes at offset 0 with no
-     * leading length byte — one column now that macOS is off this backend.
-     * {@code AF_INET6} is 23 on Windows, not 10 as on Linux or 30 as on Darwin.
+     * The {@code sockaddr} shape differs by platform and is read through
+     * {@link PcapPlatform#readFamily}: Windows puts a 16-bit family at offset 0, while
+     * the BSDs lead with {@code sa_len} and the family is one byte at offset 1.
+     * {@code AF_INET6} differs too — 23 on Windows, 30 on Darwin — which is why it is
+     * never hardcoded here. The address payload offsets happen to agree on both.
      */
-    private static List<InetAddress> readAddresses(MemorySegment addrList) {
+    private static List<InetAddress> readAddresses(PcapPlatform platform, MemorySegment addrList) {
         List<InetAddress> out = new ArrayList<>();
         for (MemorySegment a = addrList;
              a != null && !a.equals(MemorySegment.NULL);
@@ -148,16 +151,16 @@ public final class PcapDevices {
                 continue;
             }
             MemorySegment sa = sockaddr.reinterpret(28);
-            int family = (sa.get(JAVA_BYTE, 0) & 0xFF) | ((sa.get(JAVA_BYTE, 1) & 0xFF) << 8);
+            int family = platform.readFamily(sa);
 
             try {
-                if (family == Pcap.AF_INET) {
+                if (family == PcapPlatform.AF_INET) {
                     byte[] raw = new byte[4];
-                    MemorySegment.copy(sa, JAVA_BYTE, 4, raw, 0, 4);
+                    MemorySegment.copy(sa, JAVA_BYTE, PcapPlatform.SIN_ADDR_OFFSET, raw, 0, 4);
                     out.add(InetAddress.getByAddress(raw));
-                } else if (family == Pcap.AF_INET6) {
+                } else if (family == platform.afInet6()) {
                     byte[] raw = new byte[16];
-                    MemorySegment.copy(sa, JAVA_BYTE, 8, raw, 0, 16);
+                    MemorySegment.copy(sa, JAVA_BYTE, PcapPlatform.SIN6_ADDR_OFFSET, raw, 0, 16);
                     out.add(InetAddress.getByAddress(raw));
                 }
             } catch (java.net.UnknownHostException e) {

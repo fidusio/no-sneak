@@ -1,9 +1,10 @@
 package io.xlogistx.nosneak.net.common;
 
 import io.xlogistx.nosneak.net.platform.darwin.DarwinIcmpPing;
+import io.xlogistx.nosneak.net.platform.darwin.DarwinPcapBackend;
 import io.xlogistx.nosneak.net.platform.linux.LinuxHostDiscovery;
 import io.xlogistx.nosneak.net.platform.linux.LinuxIcmpPing;
-import io.xlogistx.nosneak.net.platform.windows.PcapDevices;
+import io.xlogistx.nosneak.net.pcap.PcapDevices;
 import io.xlogistx.nosneak.net.platform.windows.WindowsPcapBackend;
 
 import org.zoxweb.server.task.TaskUtil;
@@ -218,25 +219,46 @@ public final class HostDiscoveryFactory {
         },
 
         MACOS {
+            /** Enumerated once per open() call, not once per interface. */
+            @Override
+            Object newContext() throws DiscoveryException {
+                return PcapDevices.findAll();
+            }
+
             /**
-             * BLOCKED BY DESIGN, not by effort. §7.3 marks the neighbor-table ABI
-             * [VERIFY] — {@code rt_msghdr} embeds {@code rt_metrics}, the
-             * {@code ROUNDUP} rule has diverged between Darwin and the BSDs, and
-             * {@code RTF_LLINFO} semantics have shifted across releases. It must be
-             * measured by the C probe on BOTH Intel and Apple Silicon before any
-             * Java is written against it.
+             * Layer 2 over libpcap, NOT the §7.3 kernel neighbour table.
+             * <p>
+             * §7.3's ABI gate is retired rather than passed. libpcap is the BPF wrapper,
+             * so the variadic {@code ioctl} hazard §2.2 avoided lives inside C where it
+             * is already solved, and seeing the wire directly removes any need to parse
+             * {@code rt_msghdr}. Needs root — {@code /dev/bpf*} is mode 0600 — whereas
+             * ICMP alone still does not.
              */
             @Override
+            @SuppressWarnings("unchecked")
             HostDiscovery openBackend(NetworkInterface nif, Object context,
                                       ScheduledExecutorService s, ExecutorService d)
                     throws DiscoveryException {
-                throw new DiscoveryException(
-                        "macOS L2 (ARP/NDP) is not implemented: spec section 7.3 marks the "
-                        + "kernel neighbor-table ABI [VERIFY] and forbids writing it from "
-                        + "memory. Run src/main/c/darwin_neighbor_abi_probe.c on both Intel "
-                        + "and Apple Silicon, cross-check its output against `arp -a`, record "
-                        + "the numbers in section 7.3, and only then write the parser. "
-                        + "ICMP liveness works today via openIcmpOnly().");
+                List<PcapDevices.Device> devices = (List<PcapDevices.Device>) context;
+                NicBinding binding;
+                try {
+                    binding = NicBinding.from(nif, candidate -> {
+                        try {
+                            return PcapDevices.requireDeviceName(devices, candidate);
+                        } catch (DiscoveryException e) {
+                            // The resolver is a Function and cannot declare a checked
+                            // exception; unwrapped immediately below.
+                            throw new IllegalStateException(e.getMessage(), e);
+                        }
+                    });
+                } catch (SocketException e) {
+                    throw new DiscoveryException("Could not read interface " + nif.getName(), e);
+                } catch (IllegalStateException e) {
+                    throw new DiscoveryException(e.getMessage(), e.getCause());
+                }
+                // Promiscuous stays off until observe() asks: it raises capture volume
+                // substantially and is detectable on the segment.
+                return DarwinPcapBackend.open(binding, s, d, false);
             }
 
             /** ICMP is NOT gated — §7.5 is fully specified and needs no privilege. */

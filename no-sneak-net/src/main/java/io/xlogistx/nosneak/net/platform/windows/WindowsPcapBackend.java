@@ -29,6 +29,10 @@ import io.xlogistx.nosneak.net.common.SweepSummary;
 import io.xlogistx.nosneak.net.util.Identifiers;
 import io.xlogistx.nosneak.net.util.IpMacCache;
 
+import io.xlogistx.nosneak.net.pcap.Pcap;
+import io.xlogistx.nosneak.net.pcap.PcapDevices;
+import io.xlogistx.nosneak.net.pcap.PcapHandle;
+
 import java.net.Inet4Address;
 import java.net.Inet6Address;
 import java.net.InetAddress;

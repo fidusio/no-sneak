@@ -11,7 +11,8 @@ named subpackage:
 | `…net.codecs` | shared codecs: ARP, ICMPv4/v6 echo, NS/NA, IPv6 header, checksums (§5) | yes |
 | `…net.platform.linux` | libc via FFM (§6) | **no** |
 | `…net.platform.darwin` | libc via FFM (§7) | **no** |
-| `…net.platform.windows` | Npcap `wpcap.dll` + `iphlpapi` via FFM (§8) | **no** |
+| `…net.pcap` | libpcap bindings shared by every backend that speaks it — `Pcap`, `PcapPlatform`, `PcapHandle`, `PcapDevices`. Windows and macOS use it; a Linux entry exists but nothing calls it | yes |
+| `…net.platform.windows` | Npcap-specific backend + `iphlpapi` via FFM (§8) | **no** |
 | `…net.tools` | `HostScan`, the CLI front end (§14) | yes |
 
 Matches the house layout — `io-xlogistx` uses the same `common` convention. This spec was
@@ -122,20 +123,20 @@ So: `ICMPPing` is host-scoped and has **no** `binding()`. `HostDiscovery` is per
 | Object model        | 2 objects (§2.0)          | 2 objects (§2.0)          | **1 object, 2 interfaces** (§8.6) |
 | ICMPv4              | `SOCK_RAW`/`IPPROTO_ICMP` | `SOCK_DGRAM`/`IPPROTO_ICMP` | crafted over pcap       |
 | ICMPv6              | `SOCK_RAW`/`IPPROTO_ICMPV6` | `SOCK_DGRAM`/`IPPROTO_ICMPV6` | crafted over pcap   |
-| ARP                 | `AF_PACKET` + `SOCK_DGRAM`, crafted | kernel neighbor table via `sysctl` | crafted L2 frame |
-| NDP                 | `AF_PACKET`, crafted NS   | kernel neighbor table via `sysctl` | crafted NS         |
-| Passive observation | yes                       | **no**                    | yes (promisc)             |
+| ARP                 | `AF_PACKET` + `SOCK_DGRAM`, crafted | crafted L2 frame over libpcap | crafted L2 frame |
+| NDP                 | `AF_PACKET`, crafted NS   | crafted NS over libpcap   | crafted NS         |
+| Passive observation | yes                       | yes (§13.14)              | yes (promisc)             |
 | TTL available       | **yes** (IPv4 only)       | no                        | **yes**                   |
 | Raw evidence        | yes                       | no                        | yes                       |
 | Off-link ICMP       | yes (kernel routes)       | yes (kernel routes)       | yes (`GetBestRoute2`, §8.7) |
-| Privilege           | root                      | none                      | Npcap install             |
+| Privilege           | root                      | root for L2, none for ICMP | Npcap install            |
 
 `DiscoveryCapabilities` (§3.7) is the runtime expression of this table. On the appliance every row is `true`; macOS is honestly degraded and the API must say so rather than silently returning empty results.
 
 ### 2.2 Why the split is drawn three ways
 
 - **Linux** runs as root on the appliance, so `SOCK_RAW` is unconditionally available. Raw IPv4 sockets deliver the full IP header on receive, which yields TTL and raw evidence with no extra binding surface — this is the platform where distance and fingerprinting evidence actually matter, so it gets the privileged path.
-- **macOS** has no `AF_PACKET`. Active L2 there would mean BPF (`/dev/bpf*`), which is root-owned, exclusive-open, and `ioctl`-configured — variadic, hitting the Darwin arm64 `firstVariadicArg` hazard. Instead macOS reads the **kernel's own neighbor table** via `sysctl(3)`, which is non-variadic, unprivileged, and pure libc. Active resolution becomes indirect: provoke the kernel into resolving, then read the table (§7.4).
+- ~~**macOS** has no `AF_PACKET`. Active L2 there would mean BPF (`/dev/bpf*`), which is root-owned, exclusive-open, and `ioctl`-configured — variadic, hitting the Darwin arm64 `firstVariadicArg` hazard. Instead macOS reads the **kernel's own neighbor table** via `sysctl(3)`.~~ — **SUPERSEDED (§13.14). macOS L2 now goes through libpcap.** The variadic hazard was the whole argument, and it evaporates through libpcap: the `ioctl` calls happen inside the library, in C. Seeing the wire directly also removes any need to parse the `[VERIFY]` neighbour-table ABI, so §7.3's gate is retired rather than passed. The cost is root, since `/dev/bpf*` is mode 0600 — ICMP alone remains unprivileged.
 - **Windows** has no OS-level L2 injection and no equivalent unprivileged ICMP facility reachable without a second binding. Npcap is the only route, and it is the only external dependency in the whole subsystem.
 
 Consequences of dropping macOS from the pcap backend: only **one** `pcap_pkthdr` layout is live (Windows LLP64), and the `sockaddr` family table reduces to two columns. The most dangerous part of the v1 draft largely disappears.
@@ -1431,7 +1432,20 @@ Injection bypasses OS routing entirely, so an off-link destination needs the def
 
 ### 8.5 `pcap_pkthdr` layout — Windows only  **[REFERENCE]**
 
-Read on **every** received packet. With macOS moved off this backend, only one variant is live.
+Read on **every** received packet. **Two variants are live again** now that macOS goes through
+libpcap as well, and `net.pcap.PcapPlatform` holds all three:
+
+| | size | `caplen` | why |
+|---|---|---|---|
+| Windows | 16 | 8 | LLP64 — `timeval` is two 32-bit longs |
+| Darwin | 24 | 16 | LP64 — 8-byte `tv_sec`, 32-bit `tv_usec`, 4 padding |
+| Linux | 24 | 16 | LP64 — `suseconds_t` is a full `long`, so two 8-byte fields, no padding |
+
+Darwin and Linux agree on the arithmetic for **different structural reasons**, which is worth knowing
+before anyone "simplifies" them into one entry. Reading either at the Windows offset returns the high
+half of a timestamp, which the plausibility check below rejects — that is what it is for.
+`PcapLayoutTest` pins all three from any machine, and the 24-byte pair was confirmed by opening a
+live handle on Linux and capturing real frames, not from documentation.
 
 ```java
 // Windows (LLP64) — 16 bytes. timeval = { long tv_sec (4), long tv_usec (4) }.
@@ -1708,7 +1722,7 @@ probe.
 9. ~~`sweep()` fan-out with bounded in-flight window and pps pacing, **including the no-pinger degraded path**; `discoverIpv6Segment()`.~~ — **DONE** in both backends; Windows verified live (a /27 finds 11 hosts in ~1 s). **`maxPacketsPerSecond` was validated but NOT enforced until a doc audit caught it** — the API accepted a rate cap and silently ignored it, which is worse than not offering one. Now enforced by `util.RateLimiter`; see §13.11.
 10. Shutdown tests (§11.6) — verify before declaring the Linux backend done.
 11. **Ship v1 (Linux).**
-12. **PARTIALLY DONE — split by the §7.3 gate.** ICMP half (§7.5) is **written**: `DarwinIcmpPing`, unprivileged, `openIcmpOnly()` works. L2 half is **deliberately NOT written** — the neighbor-table ABI is `[VERIFY]` and the C probe must run on both Intel and Apple Silicon first. See §13.10.
+12. ~~macOS backend.~~ — **BOTH HALVES WRITTEN, NEITHER RUN ON A MAC.** ICMP (§7.5) is `DarwinIcmpPing`, unprivileged, and `openIcmpOnly()` works. L2 is `DarwinPcapBackend` over libpcap — the §7.3 neighbour-table gate was **retired rather than passed**, because libpcap wraps the variadic `ioctl` that §2.2 was avoiding and seeing the wire removes any need to parse `rt_msghdr`. Costs root (`/dev/bpf*` is 0600). See §13.14, and §13.10.1 for the ICMP fixes still owed a Mac.
 13. ~~v1.1: `WindowsPcapBackend` — library lookup and Npcap detection (§8.1) → device enumeration (§8.3) → frame send (§8.4) → capture loop (§8.5) → **dual-interface role and multi-NIC ping selection (§8.6), last**, since it depends on everything above it.~~ — **DONE, built out of order and VERIFIED ON LIVE HARDWARE.** See §13.7.
 14. Full matrix validation.
 
@@ -1912,7 +1926,7 @@ Design points worth knowing about this backend:
 | **ICMP (§7.1, §7.2, §7.5)** | **Written.** `DarwinLibc` + `DarwinIcmpPing`. Unprivileged, so it needs no root; `HostDiscoveryFactory.openIcmpOnly()` returns it on macOS |
 | **L2 / neighbor table (§7.3, §7.4)** | **NOT written.** `openBackend` throws a `DiscoveryException` explaining the gate and naming the probe to run |
 
-**The probe is written and ready**: `src/main/c/darwin_neighbor_abi_probe.c`.
+> **SUPERSEDED (§13.14).** The probe described below was never actually written, and is no longer needed: macOS L2 goes through libpcap, so the neighbour-table ABI is never parsed. Kept as the record of a gate that was dissolved rather than cleared.
 
 ```bash
 cc -Wall -O0 -o probe src/main/c/darwin_neighbor_abi_probe.c && ./probe
@@ -2269,6 +2283,79 @@ runs at `20 alive (20 by MAC, 20 by ICMP)` in ~1390 ms, with no second echo per 
 > the host's view of it. The kernel's table is a cache of the same broadcasts we were already failing
 > to get answered — it could never have contained information we could not also have obtained, and it
 > carried worse provenance for it.
+
+---
+
+### 13.14 Step 12 completed — macOS layer 2 over libpcap, and the gate that was retired rather than passed
+
+**`DarwinPcapBackend` implements `HostDiscovery` for macOS. §7.3's `[VERIFY]` gate is gone.**
+
+#### Why the gate could be dissolved instead of cleared
+
+§7.3 blocked macOS L2 behind a C probe that had to run on Intel and Apple Silicon before a line of
+Java could be written, because `rt_msghdr` embeds `rt_metrics`, the `ROUNDUP` padding rule has
+diverged between Darwin and the BSDs, and `RTF_LLINFO` semantics have shifted across releases. That
+probe was **never written** — `CLAUDE.md` claimed `src/main/c/darwin_neighbor_abi_probe.c` was "ready"
+and the file has never existed in the tree.
+
+None of it is needed. §2.2 chose the neighbour table for one reason: BPF is `ioctl`-configured, and
+`ioctl` is variadic, which hits the Darwin arm64 `firstVariadicArg` hazard. **libpcap is the BPF
+wrapper** — `BIOCSETIF`, `BIOCIMMEDIATE` and the rest happen inside the library, in C, where variadic
+conventions are the compiler's problem. The hazard does not exist through that door, and once we can
+see the wire there is nothing left for `rt_msghdr` to answer. So the gate is retired, not passed, and
+the probe is no longer owed.
+
+The deeper point: §7.4's entire indirect design — provoke the kernel, poll its table, infer — existed
+only because macOS was assumed unable to observe the segment. That assumption, not the ABI, was the
+real blocker.
+
+#### Shape: two objects, like Linux — not one, like Windows
+
+`DarwinIcmpPing` is untouched. ICMP stays on unprivileged `SOCK_DGRAM` sockets where **the kernel
+routes**, so off-link echo works for nothing. Moving it onto pcap would bypass routing and import the
+whole next-hop and gateway-MAC problem §8.7 solves for Windows, onto a platform that does not have
+it. Windows fuses the two roles because a pcap ping *needs* ARP; macOS has no such constraint.
+
+Everything the Linux backend learned this week ported across, since both are now "capture, learn,
+solicit" designs: the shared-future `PendingResolve` (no sweep hang), the self-address short-circuit,
+unicast ARP with a cache hint, passive IPv4 learning that fires a unicast solicitation on the spot,
+and `resolve`/`ping` running concurrently in `sweep`.
+
+#### Capabilities: two restored, one deliberately not
+
+| | before | now | why |
+|---|---|---|---|
+| `passiveObservation` | false | **true** | capture is what pcap is; the false was a property of the neighbour-table design, not of macOS |
+| `rawEvidence` | false | **true** | whole frames, as on Linux `AF_PACKET` |
+| `ttlAvailable` | false | **false** | see below |
+| `activeArp` / `activeNdp` | false | **true**, when injection probes successfully |
+
+`ttlAvailable` stays false and that is not an oversight. TTL reaches callers through `PingProbe`,
+which `DarwinIcmpPing` fills from a datagram socket that strips the IP header. This backend sees TTL
+on every captured frame and has no way to hand it over — the pinger owns ICMP and its identifier, so
+bridging them means correlating captured echo replies against another object's in-flight probes.
+Windows can report true only because its backend *is* its pinger. Claiming true here would advertise
+a distance that `sweep` then reports as `-1`, which is §3.7's exact warning about `-1` never reading
+as a distance.
+
+#### Privilege is the real cost
+
+`/dev/bpf*` is mode 0600, so `open()` now needs root on macOS where it never did. `openIcmpOnly()`
+stays unprivileged, which is what keeps §13.10.1's degraded path usable — and `HostScan` already
+falls back to it, so an unprivileged `ping` and `list` still work. The open failure names `/dev/bpf`
+explicitly, because "permission denied" on a Mac almost always means exactly that.
+
+> **WRITTEN, NEVER RUN.** No Mac was available. §13.7 found three bugs in the Windows pcap backend
+> that only live hardware could surface — a read timeout acting as an RTT floor, an arena closed under
+> an active downcall, and injection silently failing on Wi-Fi — and §13.12 found a fourth class on
+> Linux. Expect the same here. The read-timeout trap in particular is waiting: BSD BPF buffers until
+> its buffer fills or the timeout expires, which is the exact mechanism behind the 197 ms reading in
+> §13.7, so measure a one-hop RTT early.
+>
+> What is *not* guesswork is the layout. Darwin's 24-byte `pcap_pkthdr` with `caplen` at 16 was
+> confirmed by opening a live handle and capturing real frames — on Linux, which shares those offsets
+> (§8.5). The struct most likely to fail silently is already proven; what remains untested is
+> behaviour.
 
 ---
 

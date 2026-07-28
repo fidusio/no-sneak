@@ -15,14 +15,15 @@ Five modules, one-way dependencies (`no-sneak-app → ai-assistant → ai-model`
 
 `no-sneak-net`'s `CLAUDE.md` is two documents in one: an authoritative build spec (base package
 `io.xlogistx.nosneak.net`, JDK 25 FFM, house libraries only) in §1–§12, and a running verification
-log in §13. The code is real — three backends, a `HostScan` CLI, 189 green tests — so §13 is where
+log in §13. The code is real — three backends, a `HostScan` CLI, 192 green tests — so §13 is where
 you learn what has actually touched a wire versus what merely compiles, and it is worth reading
 before trusting any claim in the earlier sections.
 
-**One gap is genuine and deliberate: macOS layer-2.** `HostDiscovery` throws there by design until
-the kernel neighbour-table ABI is measured by the C probe in `no-sneak-net/src/main/c` — §7.3 marks
-it `[VERIFY]` and forbids writing it from memory. macOS ICMP works. Linux IPv6/NDP is written but
-has never been exercised on a wire.
+**Every platform now has a layer-2 backend**; macOS was the last, and goes through libpcap rather
+than the kernel neighbour table §7.3 gated on — that ABI is retired, not measured (§13.14). Two
+claims still lack runtime evidence and are the ones to distrust: **macOS as a whole** (its L2 backend
+has never run, and the ICMP fixes have not been re-run on a Mac) and **Linux IPv6/NDP** (written,
+never on a wire).
 
 ## The one thing to know before touching `no-sneak-core`
 

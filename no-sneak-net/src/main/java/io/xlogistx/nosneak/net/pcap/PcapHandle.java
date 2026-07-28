@@ -1,4 +1,4 @@
-package io.xlogistx.nosneak.net.platform.windows;
+package io.xlogistx.nosneak.net.pcap;
 
 import io.xlogistx.nosneak.net.common.DiscoveryException;
 
@@ -21,10 +21,10 @@ import static java.lang.foreign.ValueLayout.JAVA_BYTE;
  * NOT thread-safe for capture: {@link #nextPacket} must be called from exactly
  * one reader thread.
  */
-final class PcapHandle implements AutoCloseable {
+public final class PcapHandle implements AutoCloseable {
 
     /** Big enough for any Ethernet frame; §6.4's "use 65536 and be done with it". */
-    static final int SNAPLEN = 65536;
+    public static final int SNAPLEN = 65536;
 
     /**
      * Capture read timeout in milliseconds. MUST be positive — zero means wait
@@ -38,9 +38,10 @@ final class PcapHandle implements AutoCloseable {
      * same path reports sub-millisecond times, and an idle reader wakes 100 times
      * a second instead of 5, which costs nothing measurable.
      */
-    static final int READ_TIMEOUT_MS = 10;
+    public static final int READ_TIMEOUT_MS = 10;
 
     private final Pcap.Handles h;
+    private final PcapPlatform platform;
     private final String deviceName;
     private final MemorySegment pcap;
     private final Arena arena;
@@ -51,8 +52,10 @@ final class PcapHandle implements AutoCloseable {
 
     private volatile boolean closed;
 
-    private PcapHandle(Pcap.Handles h, String deviceName, MemorySegment pcap, Arena arena) {
+    private PcapHandle(Pcap.Handles h, PcapPlatform platform, String deviceName,
+                       MemorySegment pcap, Arena arena) {
         this.h = h;
+        this.platform = platform;
         this.deviceName = deviceName;
         this.pcap = pcap;
         this.arena = arena;
@@ -67,8 +70,9 @@ final class PcapHandle implements AutoCloseable {
      *                    promiscuous mode raises capture volume substantially and
      *                    is detectable on the segment
      */
-    static PcapHandle open(String deviceName, boolean promiscuous) throws DiscoveryException {
+    public static PcapHandle open(String deviceName, boolean promiscuous) throws DiscoveryException {
         Pcap.Handles h = Pcap.load();
+        PcapPlatform platform = Pcap.platform();
         // Shared, not confined: the reader thread touches segments allocated here,
         // and a confined arena would throw WrongThreadException (spec section 4.1).
         Arena arena = Arena.ofShared();
@@ -92,7 +96,7 @@ final class PcapHandle implements AutoCloseable {
                         + "Ethernet header unconditionally; loopback and tunnel interfaces "
                         + "would be parsed as garbage.");
             }
-            return new PcapHandle(h, deviceName, pcap, arena);
+            return new PcapHandle(h, platform, deviceName, pcap, arena);
         } catch (DiscoveryException e) {
             arena.close();
             throw e;
@@ -110,7 +114,7 @@ final class PcapHandle implements AutoCloseable {
      * {@code vlan} on a tagged segment, and remember a tag shifts every subsequent
      * offset by four bytes.
      */
-    void setFilter(String expression) throws DiscoveryException {
+    public void setFilter(String expression) throws DiscoveryException {
         try (Arena scratch = Arena.ofConfined()) {
             MemorySegment program = scratch.allocate(Pcap.BPF_PROGRAM);
             MemorySegment text = scratch.allocateFrom(expression);
@@ -146,7 +150,7 @@ final class PcapHandle implements AutoCloseable {
      *
      * @return true when the frame was accepted by the driver
      */
-    synchronized boolean send(byte[] frame) {
+    public synchronized boolean send(byte[] frame) {
         if (closed) {
             return false;
         }
@@ -160,7 +164,7 @@ final class PcapHandle implements AutoCloseable {
     }
 
     /** The driver's explanation for the last failure, for diagnostics. */
-    String lastError() {
+    public String lastError() {
         return Pcap.lastError(h, pcap);
     }
 
@@ -171,7 +175,7 @@ final class PcapHandle implements AutoCloseable {
      *         both are normal and mean "loop again and re-check the running flag"
      * @throws DiscoveryException on a genuine capture error, which ends the loop
      */
-    byte[] nextPacket() throws DiscoveryException {
+    public byte[] nextPacket() throws DiscoveryException {
         if (closed) {
             return null;
         }
@@ -186,13 +190,14 @@ final class PcapHandle implements AutoCloseable {
                 }
                 throw new DiscoveryException("pcap_next_ex returned " + rc + ": " + lastError());
             }
-            MemorySegment header = headerHolder.get(ADDRESS, 0).reinterpret(Pcap.PKTHDR.byteSize());
-            if (!Pcap.plausibleHeader(header, SNAPLEN)) {
+            MemorySegment header = headerHolder.get(ADDRESS, 0)
+                                              .reinterpret(platform.pktHdr().byteSize());
+            if (!Pcap.plausibleHeader(platform, header, SNAPLEN)) {
                 // Defensive: catches a pcap_pkthdr layout change immediately
                 // instead of yielding silently corrupt frames.
                 return null;
             }
-            return Pcap.copyPacket(dataHolder.get(ADDRESS, 0), Pcap.caplen(header));
+            return Pcap.copyPacket(dataHolder.get(ADDRESS, 0), Pcap.caplen(platform, header));
         } catch (DiscoveryException e) {
             throw e;
         } catch (Throwable t) {
@@ -203,11 +208,11 @@ final class PcapHandle implements AutoCloseable {
         }
     }
 
-    String deviceName() {
+    public String deviceName() {
         return deviceName;
     }
 
-    boolean isClosed() {
+    public boolean isClosed() {
         return closed;
     }
 
