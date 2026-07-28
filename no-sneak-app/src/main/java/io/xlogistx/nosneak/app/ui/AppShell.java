@@ -23,7 +23,7 @@ public class AppShell extends JPanel {
         setLayout(new BorderLayout());
         this.ctx = ctx;
 
-        assistantPanel = new AssistantPanel(new AssistantContext(new SessionAICredentialSource(ctx.session()), new AssistantStorage(ctx.session().getDomainSecurityManager().getDataStore())));
+        assistantPanel = new AssistantPanel(new AssistantContext(new SessionAICredentialSource(ctx.session()), new AssistantStorage(ctx.session())));
 
         content.add(new LoginPanel(ctx), Navigator.Screen.LOGIN.name());
         content.add(new PQCRegistryPanel(ctx), Navigator.Screen.MAIN.name());
