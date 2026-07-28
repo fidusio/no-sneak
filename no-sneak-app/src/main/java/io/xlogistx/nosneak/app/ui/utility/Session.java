@@ -67,6 +67,10 @@ public class Session {
         }
     }
 
+    public String getSubjectGUID() {
+        return subjectIdentifier != null ? subjectIdentifier.getSubjectGUID() : null;
+    }
+
     /**
      * Creates a session over the given security manager; starts signed out.
      */

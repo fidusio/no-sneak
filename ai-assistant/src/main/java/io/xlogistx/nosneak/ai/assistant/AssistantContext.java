@@ -9,11 +9,15 @@ import org.zoxweb.shared.security.APIKey;
 
 import java.beans.PropertyChangeListener;
 import java.beans.PropertyChangeSupport;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class AssistantContext {
     private final AICredentialSource credentials;
-    private final AIRepository chats;
+    private final AIRepository repository;
     private final AIProviderRegistrar providers;
 
     private AIChat currentChat;
@@ -23,24 +27,17 @@ public class AssistantContext {
 
     private final PropertyChangeSupport pcs = new PropertyChangeSupport(this);
 
-    public AssistantContext(AICredentialSource credentials, AIRepository chats) {
+    private final Map<String, AIChat> cache = new ConcurrentHashMap<>();
+
+    public AssistantContext(AICredentialSource credentials, AIRepository repository) {
         this.credentials = credentials;
-        this.chats = chats;
+        this.repository = repository;
         providers = new AIProviderRegistrar();
     }
 
-    public void openChat(String refID) {
-        currentChat = chats.getChat(refID);
-        pcs.firePropertyChange("currentChat", null, currentChat);
-    }
-
-    public void newChat() {
-        currentChat = chats.saveChat(new AIChat("New chat"));
-        pcs.firePropertyChange("currentChat", null, currentChat);
-    }
-
     public void deleteChat(AIChat chat) {
-        chats.deleteChat(chat);
+        repository.deleteChat(chat);
+        if (chat.getReferenceID() != null) cache.remove(chat.getReferenceID());
         currentChat = null;
     }
 
@@ -56,8 +53,8 @@ public class AssistantContext {
         return credentials;
     }
 
-    public AIRepository getChats() {
-        return chats;
+    public AIRepository getRepository() {
+        return repository;
     }
 
     public AIProviderRegistrar getProviders() {
@@ -80,8 +77,8 @@ public class AssistantContext {
         return currentModel;
     }
 
-    public void setCurrentChat(AIChat currentChat) {
-        this.currentChat = currentChat;
+    public void setCurrentChat(AIChat chat) {
+        this.currentChat = canonical(chat);
         pcs.firePropertyChange("currentChat", null, currentChat);
     }
 
@@ -103,5 +100,22 @@ public class AssistantContext {
 
     public void clearProviders() {
         providers.getCacheMap().clear();
+    }
+
+    private AIChat canonical(AIChat c) {
+        if (c == null) return null;
+        String id = c.getReferenceID();
+        if (id == null) return c;
+        return cache.merge(id, c, (existing, incoming) -> existing);
+    }
+
+    public List<AIChat> allChats() {
+        List<AIChat> out = new ArrayList<>();
+        for (AIChat c : repository.getAllChats()) out.add(canonical(c));
+        return out;
+    }
+
+    public AIChat saveChat(AIChat chat) {
+        return canonical(repository.saveChat(chat));
     }
 }
