@@ -15,12 +15,13 @@ Tier-1 probe engine. This module answers the question that comes before them.
 
 | Step | State |
 |---|---|
-| Public API, codecs, cache, ping aggregation | **done**, 189 tests green |
+| Public API, codecs, cache, ping aggregation | **done**, 182 tests green |
 | Windows (Npcap/pcap) backend | **done and verified on live hardware** |
 | Windows off-link routing (`iphlpapi`) | **done and verified against a live internet path** |
 | Factory wiring + `HostScan` CLI | **done and verified on live hardware** |
 | Linux ICMP (`SOCK_RAW`, v4 + TTL) | **done and verified on live hardware — x86-64 and aarch64** |
 | Linux ARP (`AF_PACKET`) | **done and verified on live hardware — x86-64 and aarch64** |
+| Linux passive IPv4 learning (`ETH_P_IP`) | **done and verified** — resolves hosts the kernel itself cannot reach |
 | Linux IPv6 / NDP | **written, never exercised on a wire** — no v6 neighbours on the test segment |
 | macOS ICMP | **run once, threw at startup; two all-or-nothing bugs fixed — needs re-test** |
 | macOS ARP/NDP | **deliberately not written** — see *The macOS gate* below |
@@ -55,7 +56,15 @@ address, so it has no interface binding and one instance serves the whole JVM.
 **`HostDiscovery`** is L2 and **interface-scoped**: ARP and NDP frames carry an ifindex and the
 interface's own MAC, and nothing routes that for you. A `HostDiscovery` optionally holds an
 `ICMPPing` to enrich `sweep()`; without one it sweeps on ARP/NDP alone. On an N-interface Linux box
-that costs `2 + 2N` reader threads instead of `4N`.
+that costs `2 + 3N` reader threads instead of `4N` — two JVM-wide ICMP readers, plus ARP, NDP and a
+receive-only `ETH_P_IP` learner per NIC.
+
+**Passive learning is not a nicety.** Broadcast ARP is not universally delivered — access points
+buffer broadcast against the DTIM interval and commonly suppress it — so a station can be fully
+reachable by unicast while never answering a solicitation. Every Ethernet frame carries its sender's
+MAC, so the `ETH_P_IP` socket learns those hosts from their own traffic and the resolver then aims a
+*unicast* ARP at them. Measured: four consecutive cold resolves of such a host succeeded with the
+kernel's own neighbour table empty (`CLAUDE.md` §13.13).
 
 **ARP is the liveness oracle, not ICMP.** A host that answers ARP is alive whether or not it
 answers a ping, so `HostRecord.mac` and `HostRecord.icmpAlive` are independent facts and

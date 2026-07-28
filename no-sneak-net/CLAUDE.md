@@ -895,9 +895,9 @@ A `ScheduledExecutorService` arms per-probe timeouts. On fire: remove the in-fli
     - macOS `HostDiscovery` — no blocking reader; a scheduled neighbor-table poller per NIC.
     - Windows — one thread per NIC running `pcap_next_ex`, demultiplexing by ethertype and serving **both** roles of the single object (§8.6).
 
-  So an N-interface Linux appliance costs `2 + 2N` reader threads, not `4N`. That arithmetic is the practical payoff of the split.
+  So an N-interface Linux appliance costs `2 + 3N` reader threads, not `4N` — two JVM-wide ICMP readers plus ARP, NDP and passive-IPv4 per NIC. The split is still what keeps ICMP off the per-NIC multiplier; the third L2 socket was added deliberately in §13.13 and is what makes a broadcast-suppressed host resolvable at all.
 - Reader threads are **blocking**. Do not wire these FDs into `java.nio.channels.Selector` — arbitrary native FDs cannot be registered, and pcap handles are not portably selectable. This is the deliberate transport divergence from the TCP probe engine: per-target FSMs are driven off the reader-thread dispatch queue, not off selector readiness.
-- **Reader threads are DEDICATED PLATFORM THREADS. Never take them from the §4.3 executor pools.** A reader is an infinite blocking loop, so submitting one does not *use* a pool thread, it *permanently consumes* one. `TaskUtil` sizes its pool at `max(availableProcessors * 4, 16)`, so a 4-core appliance has 16 threads; a 4-NIC box needs `2 + 2N` = 10 readers, which would hold 10 of them forever, and adding a writer thread per source would need 20 in a 16-thread pool — at which point no timeout ever fires and no callback ever dispatches, for no-sneak **and** for every other component sharing that process-wide singleton. The pools take short bursty work (fire a timeout, run one callback); reader and writer loops are not that.
+- **Reader threads are DEDICATED PLATFORM THREADS. Never take them from the §4.3 executor pools.** A reader is an infinite blocking loop, so submitting one does not *use* a pool thread, it *permanently consumes* one. `TaskUtil` sizes its pool at `max(availableProcessors * 4, 16)`, so a 4-core appliance has 16 threads; a 4-NIC box needs `2 + 3N` = 14 readers, which would hold 14 of them forever, and adding a writer thread per source would need 20 in a 16-thread pool — at which point no timeout ever fires and no callback ever dispatches, for no-sneak **and** for every other component sharing that process-wide singleton. The pools take short bursty work (fire a timeout, run one callback); reader and writer loops are not that.
 - **Virtual threads do not help here.** An FFM downcall pins its carrier for the duration of the call, and `recvfrom` blocks *inside* the native call — so a virtual reader pins a carrier for the whole wait, costing what a platform thread costs with extra indirection.
 - Sends must not interleave on a given native source — one `sendto` / `pcap_sendpacket` in flight per fd or pcap handle, since two threads filling a shared native buffer produce a corrupt frame. **Do not reach for a `ReentrantLock` to get this.** The mechanism is an open decision (§12.7) and is deliberately unspecified for now; until it is settled, keep every send funnelled through **one** private method per source that owns its own buffer, so serialization can be imposed at that single choke point instead of being sprinkled through the backends.
 
@@ -956,7 +956,7 @@ Two consequences the implementation must handle:
 
 > Do not fake it on Linux by consulting `IpMacCache` — that cache reflects **our** ARP, not the kernel's neighbor table, and the two are independent. A false positive here silently drops a valid probe from the RTT statistics.
 
-> **NARROWED, 2026-07-27.** "Linux does not read the kernel neighbor table" is a rule about **this flag**, and it still holds: `neighborResolutionPending` is always `false` on Linux and must not be inferred. It is *not* a blanket ban on ever reading `/proc/net/arp`. `platform.linux.KernelNeighbors` now reads it for one purpose — a destination MAC to aim a unicast ARP request at when broadcast has failed (§13.12). That is a hint, never an answer: resolution still requires a reply on our own `AF_PACKET` socket, the reported `ResolveSource` stays `ACTIVE_ARP`, and a stale hint costs one wasted frame rather than a wrong result. The distinction that matters is **evidence versus aim**: the flag would have been reported as fact, the hint only decides where to send a probe whose answer we still verify ourselves.
+> **BRIEFLY BROKEN AND THEN RESTORED, 2026-07-27.** A `KernelNeighbors` class was added that read `/proc/net/arp` to aim a unicast ARP retry, and this rule was narrowed to permit it. **Both are reverted; the rule stands unqualified.** The kernel table cannot help in the case that motivated it — the kernel resolves a cold neighbour by broadcast, which is exactly what a suppressing access point drops, so it only ever knows what it has already been able to learn. Measured: with the entry flushed, a resolve still timed out and the kernel's own entry sat at `INCOMPLETE`. Passive learning on an `ETH_P_IP` socket replaced it and is strictly better — our own observation, `PASSIVE` provenance, and it works when the kernel table is *empty*. See §13.13.
 
 ### 4.7 errno mapping
 
@@ -1234,7 +1234,7 @@ Receive buffers must be at least MTU-sized; use 65536 and be done with it.
 
 ### 6.6 Socket summary (Linux)
 
-The **Owner** column is the §2.0 split made concrete: the two ICMP sockets exist once per JVM, the two `AF_PACKET` sockets once per NIC.
+The **Owner** column is the §2.0 split made concrete: the two ICMP sockets exist once per JVM, the three `AF_PACKET` sockets once per NIC.
 
 | Operation | Socket | Owner | Count |
 |-----------|--------|-------|-------|
@@ -1242,7 +1242,14 @@ The **Owner** column is the §2.0 split made concrete: the two ICMP sockets exis
 | ICMPv6 echo | `AF_INET6`, `SOCK_RAW`, `IPPROTO_ICMPV6` + `ICMP6_FILTER` | `ICMPPing` | 1 per JVM |
 | ARP send/recv | `AF_PACKET`, `SOCK_DGRAM`, `htons(ETH_P_ARP)`, bound to ifindex | `HostDiscovery` | 1 per NIC |
 | NDP send/recv | `AF_PACKET`, `SOCK_DGRAM`, `htons(ETH_P_IPV6)`, bound to ifindex | `HostDiscovery` | 1 per NIC |
-| Passive observe | the same two `AF_PACKET` sockets + `PACKET_MR_PROMISC` | `HostDiscovery` | — |
+| **Passive IPv4 learn** | `AF_PACKET`, `SOCK_DGRAM`, `htons(ETH_P_IP)`, bound to ifindex — **receive only** | `HostDiscovery` | 1 per NIC |
+| Passive observe | the same `AF_PACKET` sockets + `PACKET_MR_PROMISC` | `HostDiscovery` | — |
+
+> **The `ETH_P_IP` socket never sends.** It exists because every Ethernet frame carries its sender's
+> MAC, so ordinary IPv4 traffic teaches us the segment's IP-to-MAC map for free — including from
+> hosts that will not answer a broadcast ARP at all (§13.13). Frames tagged `PACKET_OUTGOING` must be
+> skipped: the kernel loops our own sends back to every `AF_PACKET` socket, and learning from those
+> records our own MAC against every address we probe.
 
 ---
 
@@ -2076,12 +2083,11 @@ throughout and only our broadcast-only solicitation failed.
 than it looks: `sweep()`'s default one-second per-host budget allows **only** attempt 0, so a swept
 host gets exactly one round to answer.
 
-The hint comes from `IpMacCache` first and then `platform.linux.KernelNeighbors`. The cache alone
-cannot bootstrap the case — the first ever resolve of a broadcast-suppressed host has nothing cached,
-which is precisely when the hint is needed — so `/proc/net/arp` is read as a fallback. See the
-narrowing note under §4.6 for why that does not contradict the "Linux does not read the kernel
-neighbor table" rule: this is **aim, not evidence**. A hint only decides where to send a probe whose
-answer we still verify on our own socket, and `ResolveSource` stays `ACTIVE_ARP`.
+The hint comes from `IpMacCache` — from something this process saw on the wire itself.
+
+> **A first attempt at the hint source was wrong and was removed the same day.** A
+> `platform.linux.KernelNeighbors` class read `/proc/net/arp`, on the reasoning that the cache cannot
+> bootstrap a host it has never seen. §13.13 records why that was a dead end and what replaced it.
 
 Result on the same segment: `resolve 10.0.0.108` went from `TIMEOUT` at 3008 ms to `RESOLVED` at
 11 ms, and the sweep from 17-of-19 MACs to **19 of 19**, at the same wall time.
@@ -2115,6 +2121,157 @@ Result on the same segment: `resolve 10.0.0.108` went from `TIMEOUT` at 3008 ms 
 
 ---
 
+### 13.13 Passive learning — why reading the kernel's table was the wrong instinct
+
+§13.12 fixed the broadcast-suppression failure by retrying unicast, and needed a MAC to aim at. The
+first hint source was `/proc/net/arp`. **That was wrong, and the experiment that killed it is worth
+keeping**, because the reasoning error is easy to repeat.
+
+#### The measurement
+
+Flush the kernel's entry for the suppressed host, then resolve:
+
+```
+$ sudo ip neigh del 10.0.0.108 dev eth0
+$ hostscan resolve 10.0.0.108
+outcome : TIMEOUT      elapsed : 3013 ms
+$ ip neigh show 10.0.0.108
+10.0.0.108 dev eth0 INCOMPLETE          →  FAILED
+```
+
+`INCOMPLETE` is the whole answer. The kernel accepted the provocation, started resolving, and **its
+own broadcast ARP went unanswered exactly like ours**. The kernel table can only ever report what the
+kernel has already managed to learn, so consulting it in the one case that needs help is circular. It
+worked earlier only because a `STALE` entry happened to be present and Linux revalidates those by
+unicast.
+
+> **A hazard that fell out of the same experiment: deleting the neighbour entry for a
+> broadcast-suppressed host severs the machine's own connectivity to it.** Ping went to 100% loss and
+> stayed there, because the kernel cannot re-learn a MAC it can only obtain by broadcast. It is a
+> one-way door until that host next speaks. Restoring it needs
+> `ip neigh replace <ip> lladdr <mac> dev <nic> nud stale`. Do not flush neighbours on such a segment
+> casually.
+
+#### What replaced it
+
+A third `AF_PACKET`/`SOCK_DGRAM` socket per NIC, bound to `ETH_P_IP` and **never used to send**.
+Every Ethernet frame carries its sender's MAC in `sll_addr`, so ordinary IPv4 traffic teaches us the
+segment's IP-to-MAC map for free. The suppressed host will not answer a broadcast ARP, but its
+unicast traffic — an echo reply, mDNS, anything — reaches us with its MAC in the frame header.
+
+`onIpv4` records the pair as `PASSIVE` and, if a resolve for that address is in flight, **fires the
+unicast ARP immediately** rather than waiting for the next retransmit slot. Event-driven, so there is
+no polling interval to tune: the §4.5 grid is a second wide and a reply arrives in milliseconds.
+Completion still requires a genuine ARP reply on the ARP socket, so `ResolveSource` stays
+`ACTIVE_ARP` and nothing observed passively is ever reported as the answer.
+
+#### The result
+
+Four consecutive cold resolves with the kernel entry deleted each time:
+
+```
+run 1: RESOLVED  383 ms   | kernel entry afterwards: (none)
+run 2: RESOLVED  760 ms   | (none)
+run 3: RESOLVED  958 ms   | (none)
+run 4: RESOLVED  205 ms   | (none)
+```
+
+The kernel column is the point: **we resolved a host the operating system itself could not reach**,
+with `/proc/net/arp` empty throughout. Every run landed under one second, i.e. before the retry-based
+provocation even fires — this is pure passive learning from the host's own chatter, and the variance
+is simply how long until it next spoke. A later sweep showed the same host as `alive … arp` with
+`19 by MAC, 18 by ICMP`, which is §3.2's "ARP is the liveness oracle, `icmpAlive` is a separate fact"
+demonstrated about as sharply as it can be.
+
+#### The ordering bug it exposed — `sweep` was defeating its own learner
+
+The first sweep after passive learning landed reported `18 by MAC, 20 by ICMP`: the two
+broadcast-suppressed hosts were ICMP-alive with an **empty MAC**. A standalone `resolve` of the same
+addresses worked. The difference was `sweepOne`, which did this:
+
+```java
+mac.thenCompose(resolved -> { ... p.ping(...) ... })   // ping CREATED after resolve completes
+```
+
+Sequential. The echo reply is what carries the MAC, so the ping had to finish before the learner
+could see anything — but the resolve it was supposed to help had already timed out one second
+earlier. The learner worked perfectly and always arrived too late.
+
+Worse, the failure was *self-concealing*: whenever the kernel could reach the host, ICMP succeeded
+and the row looked merely incomplete rather than wrong. And it inverted run to run — when the kernel
+could NOT reach the host, the same sweep reported `20 by MAC, 18 by ICMP`, because then the MAC came
+from the host's unsolicited chatter instead. Two runs of the same code disagreeing about which half
+of the record was missing is what made it obvious that ordering, not capability, was the problem.
+
+`resolve` and `ping` now start **concurrently** via `thenAcceptBoth`. Both are bounded by
+`perHostTimeout`, so wall time is the slower of the two rather than their sum — which also made the
+sweep substantially faster:
+
+```
+before:  256 probed, 20 alive (18 by MAC, 20 by ICMP) in 2393 ms
+after :  256 probed, 20 alive (20 by MAC, 20 by ICMP) in 1393 ms
+         256 probed, 21 alive (21 by MAC, 20 by ICMP) in 1386 ms
+         256 probed, 20 alive (20 by MAC, 20 by ICMP) in 1391 ms
+```
+
+> §4.6 already warned that ordering `doMac` before `doIcmp` does **not** prime the kernel and is not
+> a warm-up step. True, and it is why the sequencing looked harmless. What it does not say — and now
+> does — is that the ordering actively *costs* something once anything learns from received traffic:
+> a probe whose reply is evidence must be in flight while the thing that needs the evidence is still
+> waiting.
+
+Note the alive count varies (20, 21, 20) while MAC coverage does not. Passive learning only catches
+hosts that speak during the window, so **sweep counts are not a stable baseline** the way ARP and
+ICMP results are. A long-running process accumulates; a 1.4-second CLI invocation sees one slice.
+
+#### And the same ordering mistake, once more, in `resolve`
+
+Fixing `sweep` did not fix `resolve` — separate paths — and measuring showed the standalone call was
+bimodal on a suppressed host:
+
+```
+resolve 10.0.0.108:  280 ms, 1015 ms, 1020 ms, 336 ms, 310 ms
+resolve 10.0.0.15 :    8 ms,    9 ms,   16 ms          (a host that answers broadcast)
+```
+
+The fast runs are luck — the host happened to speak during the window and passive learning caught it.
+The ~1015 ms runs are the provocation echo, which was deferred to the first retry.
+
+Deferring it looked frugal: hosts that answer broadcast normally never need provoking, so why spend a
+packet on them? **The saving was imaginary.** Those hosts resolve in ~10 ms and never reach the retry
+either, so the guard protected nothing while charging a flat extra second to every host that did need
+it. Provocation now fires at attempt 0, and `sweep()` opts out through a private
+`resolve(target, timeout, provoke)` overload because it already pings concurrently.
+
+```
+after:  16 ms, 18 ms, 20 ms, 21 ms, 23 ms      (was 280-1020 ms)
+```
+
+That is a suppressed host resolving as fast as an ordinary one, and `sweep` is unaffected — three
+runs at `20 alive (20 by MAC, 20 by ICMP)` in ~1390 ms, with no second echo per host.
+
+> Both bugs in this section are the same mistake: an *ordering* choice made for a cost that turns out
+> not to exist, on a path where a probe's reply is also evidence. When receiving teaches you
+> something, the thing that needs teaching has to already be waiting.
+
+#### Costs, stated plainly
+
+- **`2 + 2N` reader threads becomes `2 + 3N`** (§4.4). That arithmetic was called "the practical
+  payoff of the split", and a third of it is now spent here. It buys a class of host that was
+  otherwise unresolvable; judge it on that trade.
+- `PACKET_OUTGOING` frames must be skipped or the learner records our own MAC against every address
+  we probe — the kernel loops our sends back to every `AF_PACKET` socket.
+- Learning is live-only. A host that has been silent since the process started is still unknown,
+  which is the residual gap a persistent cache across restarts would close.
+
+> The generalisable error: I reached for what the *operating system* knew instead of for what was
+> **on the wire**, in a module whose entire purpose is to observe the wire directly rather than trust
+> the host's view of it. The kernel's table is a cache of the same broadcasts we were already failing
+> to get answered — it could never have contained information we could not also have obtained, and it
+> carried worse provenance for it.
+
+---
+
 ## Appendix A — Changes from the v1 draft
 
 ### A.0 Post-v2 revisions (applied in place)
@@ -2124,7 +2281,7 @@ Made after v2 was written, in this order. Anything below in A.1 that contradicts
 - **Rehomed into no-sneak.** Root namespace `io.xlogistx.nosneak.net`, Maven module `no-sneak-net`; the public API sits in the `.common` subpackage, matching the house layout. The original `io.xlogistx.mgw.netdiscovery` is dead — it must not reappear in code, `module-info`, launch flags, or the pcap library system property.
 - **`Probe` → `PingProbe`,** joining the `PingResult`/`PingError` family and clearing the collision with no-sneak-core's Tier-1 probe engine vocabulary.
 - **`ReentrantLock` mandate withdrawn** (§4.4). The send-serialization invariant stands; the mechanism is open decision §12.7.
-- **The single `HostDiscovery` interface split into `ICMPPing` + `HostDiscovery`** (§2.0, §3.1, §3.2). ICMP is host-scoped and unbound; ARP/NDP is per-interface. `HostDiscovery` holds the pinger as an optional, set-once, **borrowed** collaborator; `sweep()` degrades cleanly without one. Thread cost on an N-NIC Linux box drops from `4N` to `2 + 2N`.
+- **The single `HostDiscovery` interface split into `ICMPPing` + `HostDiscovery`** (§2.0, §3.1, §3.2). ICMP is host-scoped and unbound; ARP/NDP is per-interface. `HostDiscovery` holds the pinger as an optional, set-once, **borrowed** collaborator; `sweep()` degrades cleanly without one. Thread cost on an N-NIC Linux box drops from `4N` to `2 + 2N` (later `2 + 3N`, when §13.13 added the passive-learning socket).
 - **`HostDiscoveryFactory` now returns a `Discovery` bundle** (§3.8) and owns the wiring order — it is the only thing that can make set-once injection safe, and the only owner of the pinger's lifetime. Added `openIcmpOnly()`.
 - **Backend packages renamed** to `platform.linux` / `platform.darwin` / `platform.windows`. `darwin` rather than `macos` because `mac` reads as MAC address in this module; all FFM and pcap code lives in these three and nowhere else.
 - **Windows implements both interfaces on one object** (§8.6), because pcap ping needs ARP and it is physically one handle, one device, one reader. Its pinger is constructed over the per-NIC backends and selects among them by on-link test. Off-link stays false; per-NIC send capability is probed, not assumed.

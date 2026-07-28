@@ -48,6 +48,18 @@ final class Libc {
     static final int PACKET_ADD_MEMBERSHIP = 1;
     static final int PACKET_DROP_MEMBERSHIP = 2;
     static final int PACKET_MR_PROMISC = 1;
+
+    /**
+     * {@code sll_pkttype} values. {@code PACKET_OUTGOING} is the one that matters: the
+     * kernel loops frames WE send back to every {@code AF_PACKET} socket, so a passive
+     * learner that does not skip them will happily record its own MAC against every
+     * address it probes.
+     */
+    static final int PACKET_HOST = 0;
+    static final int PACKET_BROADCAST = 1;
+    static final int PACKET_MULTICAST = 2;
+    static final int PACKET_OTHERHOST = 3;
+    static final int PACKET_OUTGOING = 4;
     static final int ICMP6_FILTER = 1;       // level = IPPROTO_ICMPV6
 
     // ---- errno (§4.7) ----

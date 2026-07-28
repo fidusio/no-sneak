@@ -43,6 +43,7 @@ import java.util.concurrent.TimeUnit;
  * made every command fail on a platform where ping works perfectly.
  */
 public final class HostScan {
+    public static final String VERSION ="host-scan-1.0.1";
 
     private HostScan() {
     }
@@ -52,6 +53,7 @@ public final class HostScan {
             usage();
             return;
         }
+        System.out.println("Current version:" + VERSION);
         String command = args[0].toLowerCase(java.util.Locale.ROOT);
         try {
             switch (command) {

@@ -2,6 +2,7 @@ package io.xlogistx.nosneak.net.platform.linux;
 
 import io.xlogistx.nosneak.net.codecs.ArpPacket;
 import io.xlogistx.nosneak.net.codecs.Icmp6;
+import io.xlogistx.nosneak.net.codecs.Ipv4Header;
 import io.xlogistx.nosneak.net.codecs.Ipv6Header;
 import io.xlogistx.nosneak.net.codecs.TtlDistance;
 import io.xlogistx.nosneak.net.common.CidrRange;
@@ -77,12 +78,30 @@ public final class LinuxHostDiscovery implements HostDiscovery {
     private static final Duration RETRANSMIT = Duration.ofSeconds(1);
     private static final int SOLICIT_ATTEMPTS = 3;
 
+
     private final NicBinding binding;
     private final Arena arena = Arena.ofShared();
     private final MemorySegment state = arena.allocate(Libc.CAPTURE);
 
     private final int arpSocket;
     private final int ndpSocket;
+
+    /**
+     * {@code ETH_P_IP}, for PASSIVE LEARNING only — nothing is ever sent on it.
+     * <p>
+     * Every Ethernet frame carries its sender's MAC, so ordinary IPv4 traffic teaches us
+     * the segment's IP-to-MAC map for free. That matters because broadcast ARP is not
+     * universally delivered: an access point buffers broadcast against the DTIM interval
+     * and commonly suppresses it, so a station can be fully reachable by unicast while
+     * never answering a broadcast ARP. Its ICMP echo REPLY, however, is unicast straight
+     * back to us — and its source MAC is exactly the address we could not solicit.
+     * <p>
+     * This is the third socket per NIC, taking the reader arithmetic from §2.0's
+     * {@code 2+2N} to {@code 2+3N}. It is worth the thread: the alternative is
+     * consulting the kernel's own neighbour table, which only ever knows what the kernel
+     * has already resolved and is therefore useless in precisely the case that needs it.
+     */
+    private final int ipSocket;
 
     private final IpMacCache cache = IpMacCache.withDefaults(256);
     private final ScheduledExecutorService scheduler;
@@ -104,11 +123,12 @@ public final class LinuxHostDiscovery implements HostDiscovery {
     private volatile boolean promiscuous;
 
 
-    private LinuxHostDiscovery(NicBinding binding, int arpSocket, int ndpSocket,
+    private LinuxHostDiscovery(NicBinding binding, int arpSocket, int ndpSocket, int ipSocket,
                                ScheduledExecutorService scheduler, ExecutorService dispatcher) {
         this.binding = binding;
         this.arpSocket = arpSocket;
         this.ndpSocket = ndpSocket;
+        this.ipSocket = ipSocket;
         this.scheduler = scheduler;
         this.dispatcher = dispatcher;
     }
@@ -136,6 +156,7 @@ public final class LinuxHostDiscovery implements HostDiscovery {
             int arp = Libc.socket(bootstrap, Libc.AF_PACKET, Libc.SOCK_DGRAM,
                                   Libc.htons(Libc.ETH_P_ARP) & 0xFFFF);
             int ndp;
+            int ip;
             try {
                 ndp = Libc.socket(bootstrap, Libc.AF_PACKET, Libc.SOCK_DGRAM,
                                   Libc.htons(Libc.ETH_P_IPV6) & 0xFFFF);
@@ -143,11 +164,21 @@ public final class LinuxHostDiscovery implements HostDiscovery {
                 Libc.closeQuietly(bootstrap, arp);
                 throw e;
             }
-            backend = new LinuxHostDiscovery(binding, arp, ndp, scheduler, dispatcher);
+            try {
+                ip = Libc.socket(bootstrap, Libc.AF_PACKET, Libc.SOCK_DGRAM,
+                                 Libc.htons(Libc.ETH_P_IP) & 0xFFFF);
+            } catch (DiscoveryException e) {
+                Libc.closeQuietly(bootstrap, arp);
+                Libc.closeQuietly(bootstrap, ndp);
+                throw e;
+            }
+            backend = new LinuxHostDiscovery(binding, arp, ndp, ip, scheduler, dispatcher);
             backend.bindToInterface(arp, Libc.ETH_P_ARP);
             backend.bindToInterface(ndp, Libc.ETH_P_IPV6);
+            backend.bindToInterface(ip, Libc.ETH_P_IP);
             Libc.setReceiveTimeout(backend.arena, backend.state, arp);
             Libc.setReceiveTimeout(backend.arena, backend.state, ndp);
+            Libc.setReceiveTimeout(backend.arena, backend.state, ip);
             if (promiscuous) {
                 backend.setPromiscuous(true);
             }
@@ -229,6 +260,19 @@ public final class LinuxHostDiscovery implements HostDiscovery {
 
     @Override
     public CompletableFuture<ResolveResult> resolve(InetAddress target, Duration timeout) {
+        return resolve(target, timeout, true);
+    }
+
+    /**
+     * @param provoke whether to emit the ICMP echo that makes the target reveal its MAC
+     *                (see {@link #provokeKernelResolution}). {@code sweep()} passes
+     *                {@code false} because it already pings every host CONCURRENTLY with
+     *                the resolve, which achieves the same thing — provoking as well
+     *                would put two echoes on the wire per host, and on a mostly-dead /24
+     *                that is hundreds of wasted probes.
+     */
+    private CompletableFuture<ResolveResult> resolve(InetAddress target, Duration timeout,
+                                                     boolean provoke) {
         Instant started = Instant.now();
 
         Optional<IpMacCache.Entry> cached = cache.get(target);
@@ -258,6 +302,14 @@ public final class LinuxHostDiscovery implements HostDiscovery {
 
         if (entry.started.compareAndSet(false, true)) {
             cache.markIncomplete(target);
+            // Provoke FIRST, so the kernel's resolution and our broadcast are in flight
+            // together. Deferring this to the first retry cost a full second on exactly
+            // the hosts it exists for: measured on a broadcast-suppressed host, resolve
+            // was bimodal at ~300 ms (it happened to speak) or ~1015 ms (it did not, and
+            // we waited for the retry). Firing at attempt 0 collapses that.
+            if (provoke) {
+                provokeKernelResolution(target, Math.max(1, timeout.toMillis()));
+            }
             solicit(target, 0);
             scheduleRetries(target, timeout);
         }
@@ -293,6 +345,59 @@ public final class LinuxHostDiscovery implements HostDiscovery {
                         Duration.between(dropped.startedAt, Instant.now())));
             }
         }, budget, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * Makes the KERNEL resolve {@code target}, by sending it one ICMP echo and throwing
+     * the result away.
+     * <p>
+     * The echo is a means, not an end. A host cannot be sent an IP datagram until its
+     * link-layer address is known, so the kernel performs neighbour resolution as a side
+     * effect of the attempt — and it does so <em>whether or not the echo is ever
+     * answered</em>, which is why this works against an ICMP-filtered host. That is the
+     * same separation §3.2 draws between ARP as the liveness oracle and {@code icmpAlive}
+     * as a distinct fact, used here to provoke rather than to interpret.
+     * <p>
+     * §7.4 specifies the same move for macOS — "emit traffic to the target — the ICMP echo
+     * from {@code ping()} is sufficient". macOS then has to poll the kernel's neighbour
+     * table, because it has no way to watch the wire. We do: the echo REPLY comes back
+     * unicast and {@link #onIpv4} reads the sender's MAC straight off the frame, which is
+     * our own evidence rather than the kernel's opinion, and arrives the moment it lands
+     * instead of on a polling interval.
+     * <p>
+     * <b>Scoped, because the cost is a packet on someone's network.</b> It fires only for
+     * IPv4, only when a pinger is wired, only when we do not already hold a hint, and
+     * only for callers that are not pinging anyway — {@code sweep()} opts out, since it
+     * runs its own echo concurrently with the resolve and a second one would double the
+     * probes on a mostly-dead range.
+     * <p>
+     * It fires at attempt 0 rather than on the first retry. Deferring it looked frugal —
+     * hosts that answer broadcast normally never need it — but those hosts resolve in
+     * ~10 ms and never reach the retry either, so the saving was imaginary while the cost
+     * was a flat extra second on every host that did need it.
+     * <p>
+     * <b>What it does not fix.</b> If the kernel holds no entry at all, its own cold
+     * resolution is also a broadcast ARP, and an access point that suppresses ours
+     * suppresses the kernel's too. This rescues the cases where the kernel can get there
+     * and we cannot — a stale entry it revalidates by unicast, or an {@code INCOMPLETE}
+     * row that completes while we wait — not the genuinely never-seen host.
+     * <p>
+     * No recursion: Linux {@code ping()} routes through the kernel and never calls
+     * {@code resolve()}. That is NOT true on Windows, where the two roles are one object.
+     */
+    private void provokeKernelResolution(InetAddress target, long budgetMillis) {
+        ICMPPing p = pinger;
+        if (p == null || !(target instanceof Inet4Address) || unicastHint(target).isPresent()) {
+            return;
+        }
+        try {
+            p.ping(target, 1, Duration.ofMillis(Math.min(budgetMillis, 1000)));
+        } catch (RuntimeException ignored) {
+            // Best effort. A pinger that refuses just means no hint; the broadcast
+            // retries continue regardless.
+        }
+        // No polling: the reply, if it comes, arrives on the ETH_P_IP reader and
+        // onIpv4 fires the unicast solicitation from there.
     }
 
     /**
@@ -358,29 +463,30 @@ public final class LinuxHostDiscovery implements HostDiscovery {
     }
 
     /**
-     * A MAC to aim a unicast ARP request at — our own cache first, then the kernel's
-     * IPv4 neighbour table.
+     * A MAC to aim a unicast ARP request at, from {@link IpMacCache} — which is to say,
+     * from something this process saw on the wire itself.
      * <p>
-     * The cache is preferred because it is our own evidence. It cannot bootstrap the
-     * broadcast-suppressed case on its own, though: the first ever resolve of such a
-     * host has nothing cached, which is exactly when the hint is needed. See
-     * {@link KernelNeighbors} for why consulting the kernel here does not contradict
-     * §4.6.
+     * An earlier version fell back to reading the kernel's {@code /proc/net/arp}. That
+     * was removed: it can only ever report what the kernel has already resolved, and the
+     * kernel resolves a cold neighbour by BROADCAST — the very thing being suppressed.
+     * Measured directly: with the kernel entry flushed, a resolve still timed out and the
+     * kernel's own entry sat at {@code INCOMPLETE}, its broadcast unanswered exactly like
+     * ours. Passive learning on the {@code ETH_P_IP} socket replaces it and is strictly
+     * better — it is our own observation, it carries {@code PASSIVE} provenance, and it
+     * catches any host that speaks at all rather than only ones the kernel happens to
+     * have talked to.
      * <p>
-     * A {@code STALE} cache entry is accepted deliberately — staleness is precisely
-     * the state in which a neighbour wants revalidating, and it still carries the only
-     * MAC that makes a unicast probe possible. {@code INCOMPLETE} entries carry none
-     * and are skipped, which also stops {@code resolve()} reading back the placeholder
-     * it just wrote via {@code markIncomplete}.
+     * A {@code STALE} entry is accepted deliberately — staleness is precisely the state
+     * in which a neighbour wants revalidating, and it still carries the only MAC that
+     * makes a unicast probe possible. {@code INCOMPLETE} entries carry none and are
+     * skipped, which also stops {@code resolve()} reading back the placeholder it just
+     * wrote via {@code markIncomplete}.
      */
     private Optional<MacAddress> unicastHint(InetAddress target) {
-        Optional<MacAddress> cached = cache.get(target)
+        return cache.get(target)
                 .filter(IpMacCache.Entry::hasMac)
                 .map(IpMacCache.Entry::mac)
                 .filter(mac -> !mac.isBroadcast() && !mac.isMulticast() && !mac.isZero());
-        return cached.isPresent()
-                ? cached
-                : KernelNeighbors.lookup(target, binding.javaName());
     }
 
     /**
@@ -519,40 +625,47 @@ public final class LinuxHostDiscovery implements HostDiscovery {
         if (binding.isNetworkOrBroadcast(target)) {
             return CompletableFuture.completedFuture(null);
         }
+        // BOTH probes start NOW. They used to be sequenced — resolve, then ping — and
+        // that quietly defeated passive learning for the hosts that need it most. The
+        // echo REPLY carries the target's MAC in its Ethernet header, and onIpv4 turns
+        // that into an immediate unicast ARP; but if the ping only starts once resolve
+        // has finished, the reply always lands after resolve has already given up. The
+        // symptom is a host reported icmp-alive with an empty MAC — precisely the two
+        // facts §3.2 insists are independent, collapsed by an ordering accident.
+        // Running them concurrently costs nothing: both are bounded by perHostTimeout,
+        // so wall time is the slower of the two rather than their sum.
         CompletableFuture<ResolveResult> mac = options.doMac()
-                ? resolve(target, options.perHostTimeout())
+                ? resolve(target, options.perHostTimeout(), false)
                 : CompletableFuture.completedFuture(ResolveResult.notResolved(
                         target, ResolveOutcome.UNSUPPORTED, Duration.ZERO));
 
-        return mac.thenCompose(resolved -> {
-            boolean haveMac = resolved.resolved();
-            ICMPPing p = pinger;
-            // DEGRADES CLEANLY: no pinger means ARP alone still finds every
-            // on-link host - a reduced result, not an error.
-            CompletableFuture<PingResult> pinged = options.doIcmp() && p != null
-                    ? p.ping(target, options.pingCount(), options.perHostTimeout())
-                    : CompletableFuture.completedFuture(PingResult.of(target, List.of(), null));
+        ICMPPing p = pinger;
+        // DEGRADES CLEANLY: no pinger means ARP alone still finds every on-link host -
+        // a reduced result, not an error.
+        CompletableFuture<PingResult> pinged = options.doIcmp() && p != null
+                ? p.ping(target, options.pingCount(), options.perHostTimeout())
+                : CompletableFuture.completedFuture(PingResult.of(target, List.of(), null));
 
-            return pinged.thenAccept(result -> {
-                if (!haveMac && !result.reachable()) {
-                    return;
-                }
-                alive.incrementAndGet();
-                if (haveMac) {
-                    macs.incrementAndGet();
-                }
-                if (result.reachable()) {
-                    icmp.incrementAndGet();
-                }
-                int ttl = result.probes().stream().filter(PingProbe::hasTtl)
-                                .mapToInt(PingProbe::ttlOrHopLimit).findFirst()
-                                .orElse(PingProbe.TTL_UNAVAILABLE);
-                HostRecord record = new HostRecord(target, resolved.mac(), result.reachable(),
-                        result.reachable() ? Optional.of(result.avgRtt()) : Optional.empty(),
-                        ttl, ttl > 0 ? TtlDistance.hopCount(ttl) : Optional.empty(),
-                        haveMac ? resolved.source() : null, Instant.now());
-                dispatcher.execute(() -> onHost.accept(record));
-            });
+        return mac.thenAcceptBoth(pinged, (resolved, result) -> {
+            boolean haveMac = resolved.resolved();
+            if (!haveMac && !result.reachable()) {
+                return;
+            }
+            alive.incrementAndGet();
+            if (haveMac) {
+                macs.incrementAndGet();
+            }
+            if (result.reachable()) {
+                icmp.incrementAndGet();
+            }
+            int ttl = result.probes().stream().filter(PingProbe::hasTtl)
+                            .mapToInt(PingProbe::ttlOrHopLimit).findFirst()
+                            .orElse(PingProbe.TTL_UNAVAILABLE);
+            HostRecord record = new HostRecord(target, resolved.mac(), result.reachable(),
+                    result.reachable() ? Optional.of(result.avgRtt()) : Optional.empty(),
+                    ttl, ttl > 0 ? TtlDistance.hopCount(ttl) : Optional.empty(),
+                    haveMac ? resolved.source() : null, Instant.now());
+            dispatcher.execute(() -> onHost.accept(record));
         });
     }
 
@@ -604,6 +717,8 @@ public final class LinuxHostDiscovery implements HostDiscovery {
                                 () -> readLoop(arpSocket)));
         readers.add(startReader("nosneak-ndp-" + binding.javaName(),
                                 () -> readLoop(ndpSocket)));
+        readers.add(startReader("nosneak-ip-" + binding.javaName(),
+                                () -> readLoop(ipSocket)));
     }
 
     private Thread startReader(String name, Runnable body) {
@@ -647,6 +762,7 @@ public final class LinuxHostDiscovery implements HostDiscovery {
                 // The ethertype is NOT in the buffer - the kernel stripped the
                 // Ethernet header. It is here, in the sockaddr recvfrom filled in.
                 int ethertype = Libc.ntohs(from.get(JAVA_SHORT, Libc.SLL_PROTOCOL));
+                int pkttype = from.get(JAVA_BYTE, Libc.SLL_PKTTYPE) & 0xFF;
                 int halen = from.get(JAVA_BYTE, Libc.SLL_HALEN) & 0xFF;
                 MacAddress frameSource = null;
                 if (halen == MacAddress.LENGTH) {
@@ -654,12 +770,20 @@ public final class LinuxHostDiscovery implements HostDiscovery {
                     MemorySegment.copy(from, JAVA_BYTE, Libc.SLL_ADDR, raw, 0, MacAddress.LENGTH);
                     frameSource = new MacAddress(raw);
                 }
+                // AF_PACKET loops our OWN sends back to every AF_PACKET socket, tagged
+                // PACKET_OUTGOING. Learning from those would teach us our own MAC for
+                // every address we probe.
+                if (pkttype == Libc.PACKET_OUTGOING) {
+                    continue;
+                }
                 byte[] payload = buf.asSlice(0, n).toArray(JAVA_BYTE);
                 try {
                     if (ethertype == Libc.ETH_P_ARP) {
                         onArp(payload, frameSource);
                     } else if (ethertype == Libc.ETH_P_IPV6) {
                         onIpv6(payload);
+                    } else if (ethertype == Libc.ETH_P_IP) {
+                        onIpv4(payload, frameSource);
                     }
                 } catch (RuntimeException ignored) {
                     // a malformed frame must never kill the reader
@@ -690,6 +814,44 @@ public final class LinuxHostDiscovery implements HostDiscovery {
         ObservationKind kind = arp.isGratuitous() ? ObservationKind.GRATUITOUS_ARP
                 : arp.isReply() ? ObservationKind.ARP_REPLY : ObservationKind.ARP_REQUEST;
         notifyObservers(new ObservedNeighbor(sender, mac, kind, Instant.now()));
+    }
+
+    /**
+     * Learns an IP-to-MAC binding from ordinary IPv4 traffic, and — when a resolve for
+     * that address is in flight — immediately aims a unicast ARP at what it just learned.
+     * <p>
+     * This is the answer to the broadcast-suppressed host. Its echo reply is unicast
+     * straight back to us, so its source MAC arrives here even though the same host will
+     * not answer a broadcast ARP. The MAC is taken from {@code sll_addr} rather than
+     * from any payload field, because the Ethernet header is the one place a sender
+     * cannot omit it.
+     * <p>
+     * The learned MAC is a HINT, never an answer. It is recorded as {@code PASSIVE}
+     * provenance, and the pending resolve still completes only when a real ARP reply
+     * arrives on the ARP socket — which is why firing the solicitation from here, rather
+     * than completing the future, keeps {@code ResolveSource.ACTIVE_ARP} honest.
+     * <p>
+     * Firing on learning rather than polling on a timer is what makes this fast: the
+     * §4.5 retransmit grid is a full second wide, and an echo reply comes back in
+     * single-digit milliseconds.
+     */
+    private void onIpv4(byte[] payload, MacAddress frameSource) {
+        if (frameSource == null || frameSource.isZero() || frameSource.isMulticast()) {
+            return;
+        }
+        Ipv4Header.View ip = Ipv4Header.parse(payload, 0, payload.length).orElse(null);
+        if (ip == null) {
+            return;
+        }
+        InetAddress source = address(ip.src4());
+        if (source == null || source.isAnyLocalAddress() || !binding.isOnLink(source)
+                || binding.isLocalAddress(source)) {
+            return;
+        }
+        cache.observe(source, frameSource, ResolveSource.PASSIVE);
+        if (pending.containsKey(source)) {
+            sendArp(source, 1);
+        }
     }
 
     private void onIpv6(byte[] payload) {
@@ -773,6 +935,7 @@ public final class LinuxHostDiscovery implements HostDiscovery {
         }
         Libc.closeQuietly(state, arpSocket);
         Libc.closeQuietly(state, ndpSocket);
+        Libc.closeQuietly(state, ipSocket);
 
         pending.values().forEach(p -> p.completeAll(
                 ResolveResult.notResolved(p.target, ResolveOutcome.ERROR, Duration.ZERO)));
