@@ -2012,43 +2012,62 @@ concurrency, which is the failure mode the whole mechanism exists to prevent.
 
 ---
 
-## 14. `HostScan` — the CLI  **[IMPLEMENT]**
+## 14. The `tools` package — `HostScanner`, `HostScan`, `HostScanFormat`  **[IMPLEMENT]**
 
-`io.xlogistx.nosneak.net.tools.HostScan`. Not part of the subsystem's contract, but it is how the
-Windows backend was actually verified, and the fastest way for anyone to see this working.
+Not part of the subsystem's contract, but this is how the Windows and Linux backends were actually
+verified, and it is what an embedding application drives. Three types, and the split between them is
+the point:
+
+| Type | What it is |
+|---|---|
+| `HostScanner` | a long-lived session: open once, run many pings/resolves/sweeps, close. **The embedding surface.** |
+| `HostScan` | a command line over `HostScanner`, including an interactive shell |
+| `HostScanFormat` | result-to-text, so a Swing pane and a terminal print the same thing |
 
 ```
-hostscan list                  interfaces, backend devices, capabilities
-hostscan resolve <ip|host>     ARP/NDP - the MAC, and where it came from
-hostscan ping    <ip|host> [n] ICMP echo, pipelined (default 4)
-hostscan sweep   <cidr>        ARP + ICMP across a range
+hostscan                        interactive shell - one session, many commands
+hostscan list                   interfaces, backend devices, capabilities
+hostscan status                 backend mode, and why it is what it is
+hostscan resolve <ip|host>...   ARP/NDP - the MAC, and where it came from
+hostscan ping    <ip|host>...   ICMP echo, pipelined (default 4 probes)
+hostscan sweep   <cidr>...      ARP + ICMP across a range
+hostscan segment <iface>        IPv6 neighbours on one segment
+hostscan observe [seconds]      passive neighbours; transmits nothing
+hostscan reopen                 rebuild the session after a NIC change
+
+  -c/--count N   -w/--timeout MS   -i/--iface NAME
 ```
 
-Run it from an IDE (VM options `--enable-native-access=ALL-UNNAMED`), or from a terminal after
-`mvn dependency:copy-dependencies -DoutputDirectory=target/deps` with
-`-cp "target/classes;target/deps/*"`. A `hostscan.cmd` launcher existed briefly and was removed
-as redundant with IDE run configurations.
+### 14.1 `HostScanner` — why the session is a type and not a static method
 
-Four things it does that are worth preserving if it is ever rewritten:
+The factory hands back *wiring*, not a workflow, and the wiring is expensive: `open()` costs a pcap
+handle or a raw socket plus two reader threads **per interface**. The first `HostScan` opened and
+closed that around every single command, which is exactly wrong for an application that wants to
+ping a host, then resolve it, then sweep its subnet. `HostScanner` holds it open.
 
-- **It resolves hostnames** — `InetAddress.getByName`, not `ofLiteral`. `ofLiteral` refuses DNS,
-  which is correct for `CidrRange` and anywhere near `IpMacCache` (§9.1 forbids reverse DNS), and
-  wrong for a CLI.
-- **It explains an unreachable target BEFORE probing it**, rather than leaving the user with a bare
-  `NETWORK_UNREACHABLE`. If `offLinkIcmp` is false and the target is off-link, it says why. Since
-  §8.7 that path is rarely taken on Windows, but it still fires if `iphlpapi` will not load.
-- **It refuses `resolve` on an off-link address with a category error, not a limitation.** ARP and
-  NDP are link-local by definition; there is no such thing as the MAC of a host beyond the segment,
-  and what you would get is the router's.
-- **It calls `TaskUtil.close()` on exit.** zoxweb's pool threads are not daemons, so without it the
-  process hangs after the work is done. This is legitimate ONLY because `HostScan` is the whole
-  application and owns the process. **A library must never do this** — `Discovery.close()`
-  deliberately leaves the executors alone (§4.3).
+What it guarantees, and what an embedder programs against:
 
-> If a launcher script is ever reintroduced on Windows: stage jars into a directory and use a
-> wildcard classpath rather than reading one into a variable. The classpath is ~3 KB and `cmd`'s
-> `set /p` silently truncates a line at about 1 KB, which surfaces as `NoClassDefFoundError` on a
-> dependency that is demonstrably present.
+- **Nothing blocks except `open`, `reopen` and `close`.** Every operation returns a
+  `CompletableFuture`, and hostname lookup is pushed onto the dispatcher — so a Swing action
+  listener can call these from the event thread. Callbacks arrive on a dispatcher thread, never a
+  reader thread.
+- **It never fails to open.** No Npcap, or Linux without root, still yields a usable object in a
+  degraded `Mode` (`FULL` / `ICMP_ONLY` / `UNAVAILABLE`) with `diagnostic()` naming what failed.
+  That is the honest-degradation rule applied to the *session* rather than to a result: a UI needs
+  something to render and something to grey out, not an exception out of a constructor.
+- **Exceptional means "this backend cannot do that", never "the host is down."** An unreachable
+  host is `received == 0`. A future completes exceptionally only for no pinger, layer 2 on an
+  ICMP-only session, an off-link `resolve` (a category error — ARP and NDP are link-local by
+  definition), an unknown interface name, or an unparseable CIDR.
+- **It does not own the executors.** Same rule as `Discovery.close()` — the pools are shared with
+  the rest of no-sneak, and only `HostScan`, which owns the process, may call `TaskUtil.close()`.
+- **The multi-target shapes encode the pacing rule.** `pingAll`/`resolveAll` run concurrently;
+  `sweepAll` runs ranges **sequentially**, because `maxPacketsPerSecond` bounds one sweep and
+  concurrent ranges would multiply exactly the load the cap exists to bound (§13.11).
+
+`reopen()` exists for the case a long-lived UI actually hits: a NIC comes up, an address changes, or
+Npcap is installed while the application is running. It closes and rebuilds under a lock, and every
+`interfaces()` reference held across the call is dead afterwards.
 
 ---
 
@@ -2356,6 +2375,150 @@ explicitly, because "permission denied" on a Mac almost always means exactly tha
 > confirmed by opening a live handle and capturing real frames — on Linux, which shares those offsets
 > (§8.5). The struct most likely to fail silently is already proven; what remains untested is
 > behaviour.
+
+---
+
+### 13.15 The tools package became embeddable — a session, not a command
+
+The application needs to run *many* operations against this subsystem, so the one-shot shape had to
+go. `HostScanner` (§14.1) now holds the wiring, `HostScan` is a shell and an argument parser over it,
+and `HostScanFormat` renders results for both a terminal and a Swing pane.
+
+**Verified on live Windows hardware (Npcap, two NICs), 2026-07-27**, driving one session through the
+shell: `status`, then `sweep 10.0.0.0/29` → 5 of 8 alive with MACs in 1021 ms, then `ping 10.0.0.1
+-c 1` → 10.330 ms, ttl 64. Multi-target concurrency confirmed with `ping 10.0.0.1 10.0.0.61 -c 2`
+and `resolve 10.0.0.1 10.0.0.61` in one command each. 215 tests green (23 new).
+
+Two things the run showed that the code alone would not have:
+
+- **The shared session is observable in the output.** The ping after the sweep opened at `seq=5`,
+  not `seq=0` — the same pinger, the same allocator, no reopened handle. That is the cheapest
+  regression check there is for the whole change, and it is why the sequence numbers are printed.
+- **A self-ping on the Windows pcap backend times out.** `ping 10.0.0.61` (our own address) reports
+  100% loss while `resolve 10.0.0.61` answers instantly from `LOCAL_INTERFACE`. This is the §13.12
+  own-address problem in its ICMP form: pcap injects at layer 2, the frame goes out on the wire, and
+  nothing brings the loopback reply back through the capture handle. **It is a backend fact, not a
+  tools-layer one, and must not be papered over in `HostScanner`** — the fix, if it is worth making,
+  is a short-circuit in `WindowsPcapBackend` alongside the existing `LOCAL_INTERFACE` one. Left
+  open deliberately.
+
+**OPEN — which thread runs a caller's continuation.** No `*Async` overload in this module omits its
+executor, so nothing reaches `ForkJoinPool.commonPool()`. But the backends complete their futures
+**inline on the reader thread** (`PendingCall.settle`, `PendingResolve.completeAll`), and
+`HostScanner` composes with the no-executor `thenCompose`/`thenApply` forms, so an embedder's plain
+`thenAccept` runs on a reader thread and stalls reception for that NIC while it runs. A fix that
+hopped every returned future onto the dispatcher was written and **reverted at the maintainer's
+request** — the design question is undecided, not the mechanism. Decide it before the app attaches
+UI callbacks.
+
+> Also worth keeping: the shell strips a leading BOM before dispatching. Piping a command file into
+> it on Windows prepends one, and the resulting `Unknown command: status` is unreadable, because the
+> name it prints is character-for-character the command you typed.
+
+---
+
+### 13.16 §13.12 reproduces on Windows — measured, fixed, and the fix did NOT port as-is
+
+`10.0.0.108`, the host §13.12 diagnosed on Linux, fails on Windows: `resolve` times out at 3006 ms,
+`ping` returns `HOST_UNREACHABLE` three times, and a `sweep 10.0.0.104/29` reports **0 of 8 alive**,
+so the host does not appear at all. Windows' own ARP table holds it throughout —
+`10.0.0.108 → 94-e6-ba-4d-66-1b`, the same MAC §13.12 recorded — so the host is alive and only our
+pcap path cannot reach it.
+
+#### The measurement
+
+`io.xlogistx.nosneak.net.spike.WindowsArpSpike <targetIp> <hintMac>` sends three broadcast ARP
+requests, then three unicast requests to the hint MAC, and counts replies. It shares nothing with
+`WindowsPcapBackend` beyond the codecs and the pcap handle — a spike that reuses the code under
+suspicion cannot exonerate it. Two runs of the target, one control, same segment:
+
+```
+10.0.0.108   BROADCAST x3 -> 0 replies    UNICAST x3 -> 3 replies   (run 1: 10/1012/2009 ms)
+10.0.0.108   BROADCAST x3 -> 0 replies    UNICAST x3 -> 3 replies   (run 2:  6/1008/2009 ms)
+10.0.0.1     BROADCAST x3 -> 3 replies    UNICAST x3 -> 3 replies   (control - gateway)
+```
+
+**The control is the part that matters.** The gateway answers our broadcast frames on the same
+handle, in the same run, so injection works and the frames are well formed. The 0-of-3 against
+`.108` is the host, not us — the DTIM broadcast-suppression case, exactly as on Linux.
+
+#### Why the Linux fix is not a copy-paste
+
+Two things are missing on Windows, and only the first is the same bug:
+
+1. `solicit()` sends to `MacAddress.BROADCAST` unconditionally, and `scheduleResolveRetries` simply
+   calls it again, so all three attempts are identical broadcasts. `LinuxHostDiscovery.sendArp` has
+   the unicast-when-hinted branch; Windows never got it.
+2. **There is no hint to aim with.** Linux's `onIpv4` learns the source MAC off any on-link IPv4
+   frame (§13.13); the Windows `onIpv4` parses IPv4 only to match its own echo replies
+   (`if (echo.id() != identifier) return;`) and never calls `cache.observe`, and the BPF filter
+   `"arp or icmp or icmp6"` would not carry general IP traffic anyway.
+
+And the bootstrap that makes it self-healing on Linux does not exist here. There, ICMP goes through
+the kernel, which does its own unicast neighbour probing, so `ping` succeeds and the reply frame
+teaches us the MAC. Here the ping is injected at L2 and needs the MAC *first* — hence
+`HOST_UNREACHABLE` rather than a timeout, and hence a host that is strictly worse off than pre-fix
+Linux was: it vanishes from the sweep instead of appearing without a MAC.
+
+#### The fix, in two halves — SHIPPED and verified on live hardware
+
+`solicit()` takes an attempt number and mirrors `LinuxHostDiscovery.sendArp`: unicast to a MAC hint
+whenever one exists, plus broadcast on attempt 0 so a stale hint cannot blind us to a host that has
+moved. Later attempts are unicast only. IPv6 is untouched — an NS already goes to the solicited-node
+multicast address, and multicast NS is not what was measured failing.
+
+The hint comes from `unicastHint()`, which asks **`IpMacCache` first** — our own wire observation,
+with real provenance — and falls back to **`Iphlpapi.neighborMac()`**, a new `GetIpNetEntry2`
+binding on the DLL already open for `GetBestRoute2`. The fallback is deliberately NOT written into
+the cache: the cache means "seen on the wire by us", and Windows' belief is not that.
+
+**Why this is not the thing §13.13 deleted.** That removed a `/proc/net/arp` reader because the
+Linux kernel resolves a cold neighbour by broadcast — the very thing being suppressed — so a flushed
+entry sat `INCOMPLETE` and could never help. The asymmetry is that Linux has something strictly
+better: an `ETH_P_IP` socket learning MACs off ordinary traffic. Windows learns from ARP frames and
+NDP advertisements — anything that ARPs within earshot is already cached with `PASSIVE` provenance —
+but nothing teaches it a host that is not currently ARPing, which is exactly the host in question.
+So its neighbour table is not a worse alternative to a general-traffic learner, it is what fills the
+gap where no learner exists. The §13.13 limitation still holds and is not papered over — the
+fallback can only help for a host Windows has itself talked to; for one it has not, there is no
+entry, no hint, and the solicitation broadcasts exactly as before.
+
+Provenance is unchanged: a resolve still completes only on a reply that arrived on our own handle,
+and still reports `ACTIVE_ARP`. A hint that is wrong costs one wasted frame, never a wrong answer.
+
+#### Result on the same segment
+
+```
+resolve 10.0.0.108   TIMEOUT 3006 ms  ->  RESOLVED 11 ms via ACTIVE_ARP
+ping    10.0.0.108   3x HOST_UNREACHABLE -> 3 of 3 replies, ~20 ms, ttl 64
+sweep   10.0.0.0/24  ...              ->  256 probed, 20 alive, 20 of 20 with MACs, 1262 ms
+```
+
+Almost exactly §13.12's Linux numbers (3008 ms → 11 ms there). The `/24` is the regression evidence:
+every host that worked before still works, our own address still short-circuits to
+`LOCAL_INTERFACE`, and `10.0.0.253` still times out honestly because nothing is there.
+
+#### The layout, and why a wrong one is harmless
+
+`MIB_IPNET_ROW2` is a `[VERIFY]` struct and was confirmed empirically rather than from memory: read
+back against MACs already known from `arp -a`, both hit; an absent address returned empty; and a
+**bogus interface index returned empty**, which is what proves `InterfaceIndex` is read at the right
+offset — at a wrong one Windows would have ignored our value and answered anyway. `neighborMac`
+additionally re-checks the echoed `Address` and requires `PhysicalAddressLength == 6`, so a layout
+that ever changes yields NO HINT rather than a garbage MAC, and resolution degrades to broadcast.
+`IphlpapiLayoutTest` re-derives every offset from member sizes so a constant cannot be quietly
+edited to a plausible wrong number.
+
+#### Still open
+
+- **No passive learning on Windows.** The single handle filters `"arp or icmp or icmp6"` and
+  `onIpv4` matches only its own echo replies. Wire parity with §13.13 would mean widening the filter
+  to `ip` and calling `cache.observe` with the frame's source MAC — more capture volume, and on a
+  switched port a non-promiscuous capture sees little anyway. The `GetIpNetEntry2` fallback covers
+  the common case instead.
+- **A host Windows has never talked to stays invisible**, exactly as before this change.
+- **`ResolveIpNetEntry2` was rejected**, not overlooked: it makes the OS do the resolution, which
+  would have to be reported as `KERNEL_TABLE` provenance rather than as something we observed.
 
 ---
 

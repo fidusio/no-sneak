@@ -1,37 +1,10 @@
 package io.xlogistx.nosneak.net.platform.windows;
 
-import io.xlogistx.nosneak.net.codecs.ArpPacket;
-import io.xlogistx.nosneak.net.codecs.EthernetFrame;
-import io.xlogistx.nosneak.net.codecs.Icmp4Echo;
-import io.xlogistx.nosneak.net.codecs.Icmp6;
-import io.xlogistx.nosneak.net.codecs.Ipv4Header;
-import io.xlogistx.nosneak.net.codecs.Ipv6Header;
-import io.xlogistx.nosneak.net.codecs.TtlDistance;
-import io.xlogistx.nosneak.net.common.CidrRange;
-import io.xlogistx.nosneak.net.common.DiscoveryCapabilities;
-import io.xlogistx.nosneak.net.common.DiscoveryException;
-import io.xlogistx.nosneak.net.common.HostDiscovery;
-import io.xlogistx.nosneak.net.common.HostRecord;
-import io.xlogistx.nosneak.net.common.ICMPPing;
-import io.xlogistx.nosneak.net.common.MacAddress;
-import io.xlogistx.nosneak.net.common.NicBinding;
-import io.xlogistx.nosneak.net.common.ObservationKind;
-import io.xlogistx.nosneak.net.common.ObservedNeighbor;
-import io.xlogistx.nosneak.net.common.PingError;
-import io.xlogistx.nosneak.net.common.PingProbe;
-import io.xlogistx.nosneak.net.common.PingResult;
-import io.xlogistx.nosneak.net.common.ResolveOutcome;
-import io.xlogistx.nosneak.net.common.ResolveResult;
-import io.xlogistx.nosneak.net.common.ResolveSource;
-import io.xlogistx.nosneak.net.common.Subscription;
-import io.xlogistx.nosneak.net.common.SweepOptions;
-import io.xlogistx.nosneak.net.common.SweepSummary;
+import io.xlogistx.nosneak.net.codecs.*;
+import io.xlogistx.nosneak.net.common.*;
+import io.xlogistx.nosneak.net.pcap.PcapHandle;
 import io.xlogistx.nosneak.net.util.Identifiers;
 import io.xlogistx.nosneak.net.util.IpMacCache;
-
-import io.xlogistx.nosneak.net.pcap.Pcap;
-import io.xlogistx.nosneak.net.pcap.PcapDevices;
-import io.xlogistx.nosneak.net.pcap.PcapHandle;
 
 import java.net.Inet4Address;
 import java.net.Inet6Address;
@@ -39,16 +12,9 @@ import java.net.InetAddress;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -232,19 +198,47 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
 
         if (pending.started.compareAndSet(false, true)) {
             cache.markIncomplete(target);
-            solicit(target);
+            solicit(target, 0);
             scheduleResolveRetries(pending, target, timeout);
         }
         return future;
     }
 
-    private void solicit(InetAddress target) {
+    /**
+     * Sends one solicitation. For IPv4, BROADCAST on attempt 0 and UNICAST to a MAC
+     * hint whenever one exists.
+     * <p>
+     * Broadcast alone is not sufficient in practice. Wi-Fi access points buffer
+     * broadcast against the DTIM interval and commonly suppress or proxy it, so a
+     * station can be fully reachable by unicast while never seeing a broadcast ARP.
+     * Measured on this transport (§13.16): a host answered 0 of 3 broadcast requests
+     * and 3 of 3 unicast requests to the same MAC, seconds apart, while the gateway
+     * answered 3 of 3 both ways on the same handle — so the frames were fine and the
+     * host was suppressing.
+     * <p>
+     * Both frames go out on attempt 0 when a hint exists, because neither alone is
+     * safe: unicast to a stale MAC reaches a host that has moved, and broadcast alone
+     * is the case that fails here. Later attempts are unicast only. Note {@code sweep()}
+     * with its default one-second per-host budget gets ONLY attempt 0, so covering both
+     * paths there is what makes a swept host resolvable at all.
+     * <p>
+     * IPv6 is unchanged: a neighbour solicitation already goes to the solicited-node
+     * multicast address rather than a broadcast, and multicast NS is not what was
+     * measured failing.
+     */
+    private void solicit(InetAddress target, int attempt) {
         if (target instanceof Inet4Address) {
             byte[] arp = ArpPacket.request(binding.hardwareAddress(),
                     binding.sourceFor(target).orElseThrow().address().getAddress(),
                     target.getAddress());
-            handle.send(EthernetFrame.build(MacAddress.BROADCAST, binding.hardwareAddress(),
-                                            EthernetFrame.ETHERTYPE_ARP, arp));
+            Optional<MacAddress> hint = unicastHint(target);
+            hint.ifPresent(mac -> handle.send(
+                    EthernetFrame.build(mac, binding.hardwareAddress(),
+                                        EthernetFrame.ETHERTYPE_ARP, arp)));
+            if (hint.isEmpty() || attempt == 0) {
+                handle.send(EthernetFrame.build(MacAddress.BROADCAST, binding.hardwareAddress(),
+                                                EthernetFrame.ETHERTYPE_ARP, arp));
+            }
         } else {
             byte[] src = binding.sourceFor(target).orElseThrow().address().getAddress();
             byte[] ns = Icmp6.neighborSolicitation(src, target.getAddress(),
@@ -259,6 +253,45 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
         }
     }
 
+    /**
+     * A MAC to aim a unicast ARP request at.
+     * <p>
+     * OUR OWN OBSERVATION FIRST. {@link IpMacCache} holds what this process saw on
+     * the wire, which is the better source whenever it has anything: it carries real
+     * provenance and it is current. A {@code STALE} entry is accepted deliberately —
+     * staleness is exactly the state in which a neighbour wants revalidating, and it
+     * still carries the only MAC that makes a unicast probe possible. {@code INCOMPLETE}
+     * entries carry none and are skipped, which also stops this reading back the
+     * placeholder {@code resolve()} just wrote via {@code markIncomplete}.
+     * <p>
+     * WINDOWS' NEIGHBOUR TABLE SECOND, and only because this backend has nothing
+     * better. Linux learns MACs off ordinary IPv4 traffic on a dedicated socket
+     * (§13.13) and so deleted its kernel-table reader; the single pcap handle here
+     * filters {@code "arp or icmp or icmp6"} and learns nothing from general traffic,
+     * so for a host that has never ARPed within earshot the cache is empty and
+     * {@code GetIpNetEntry2} is the difference between resolving and timing out.
+     * <p>
+     * The fallback is NOT written back into the cache: the cache means "seen on the
+     * wire by us", and Windows' belief is not that. It only addresses the frame — the
+     * reply still has to arrive here before anything is reported.
+     */
+    private Optional<MacAddress> unicastHint(InetAddress target) {
+        Optional<MacAddress> observed = cache.get(target)
+                .filter(IpMacCache.Entry::hasMac)
+                .map(IpMacCache.Entry::mac)
+                .filter(WindowsPcapBackend::usableAsHint);
+        if (observed.isPresent()) {
+            return observed;
+        }
+        return Iphlpapi.neighborMac(target, binding.ifIndex())
+                       .filter(WindowsPcapBackend::usableAsHint);
+    }
+
+    /** A hint has to be a single host's address; the others cannot be unicast to. */
+    private static boolean usableAsHint(MacAddress mac) {
+        return !mac.isBroadcast() && !mac.isMulticast() && !mac.isZero();
+    }
+
     /** RFC 4861 timing, and the same for ARP: up to 3 attempts, 1s apart. */
     private void scheduleResolveRetries(PendingResolve pending, InetAddress target,
                                         Duration timeout) {
@@ -268,9 +301,10 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
             if (at >= budgetMs) {
                 break;
             }
+            int retry = attempt;   // the loop variable is not effectively final
             scheduler.schedule(() -> {
                 if (pendingResolves.containsKey(target)) {
-                    solicit(target);
+                    solicit(target, retry);
                 }
             }, at, TimeUnit.MILLISECONDS);
         }

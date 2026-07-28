@@ -2,91 +2,440 @@ package io.xlogistx.nosneak.net.tools;
 
 import io.xlogistx.nosneak.net.common.CidrRange;
 import io.xlogistx.nosneak.net.common.DiscoveryCapabilities;
-import io.xlogistx.nosneak.net.common.DiscoveryException;
 import io.xlogistx.nosneak.net.common.HostDiscovery;
 import io.xlogistx.nosneak.net.common.HostDiscoveryFactory;
-import io.xlogistx.nosneak.net.common.ICMPPing;
-import io.xlogistx.nosneak.net.common.MacAddress;
 import io.xlogistx.nosneak.net.common.HostRecord;
-import io.xlogistx.nosneak.net.common.PingProbe;
+import io.xlogistx.nosneak.net.common.MacAddress;
+import io.xlogistx.nosneak.net.common.NicBinding;
+import io.xlogistx.nosneak.net.common.ObservedNeighbor;
 import io.xlogistx.nosneak.net.common.PingResult;
 import io.xlogistx.nosneak.net.common.ResolveResult;
+import io.xlogistx.nosneak.net.common.Subscription;
 import io.xlogistx.nosneak.net.common.SweepOptions;
 import io.xlogistx.nosneak.net.common.SweepSummary;
+import io.xlogistx.nosneak.net.util.NSNetUtil;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.PrintStream;
 import java.net.InetAddress;
-import java.net.NetworkInterface;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Command-line front end for the host-discovery subsystem — the easiest way to
- * see it working.
+ * Command line over {@link HostScanner} — the fastest way to see the subsystem
+ * working, and how the Windows and Linux backends were actually verified.
  *
  * <pre>
- *   hostscan list                     # interfaces, backend devices, capabilities
- *   hostscan resolve 10.0.0.1         # ARP/NDP - the MAC, and where it came from
- *   hostscan ping    10.0.0.1 [n]     # ICMP echo, pipelined
- *   hostscan sweep   10.0.0.0/24      # ARP + ICMP across a range
+ *   hostscan                            interactive shell: many commands, one open session
+ *   hostscan list                       interfaces, backend devices, capabilities
+ *   hostscan resolve 10.0.0.1 10.0.0.2  ARP/NDP - the MAC, and where it came from
+ *   hostscan ping    10.0.0.1 -c 4      ICMP echo, pipelined
+ *   hostscan sweep   10.0.0.0/24        ARP + ICMP across a range
+ *   hostscan observe 30                 passive neighbours for 30 seconds
  * </pre>
  * <p>
- * Runs on any platform whose backend is built; today that is Windows (Npcap) and
- * Linux (untested). Every command opens the full wiring through
- * {@link HostDiscoveryFactory} and closes it again, so it exercises the same path
- * an embedding application would.
+ * Every command takes one or more targets and runs them together: several pings
+ * or resolves go out concurrently, several sweeps run one after another so the
+ * per-sweep packet rate still bounds what hits the segment.
  * <p>
- * EXCEPT that {@code ping} and {@code list} fall back to
- * {@link HostDiscoveryFactory#openIcmpOnly()} when the layer-2 backend will not
- * open. ICMP does not need L2 on a platform where the kernel routes, and on macOS
- * the L2 half is gated behind the §7.3 ABI probe — so demanding the full wiring
- * made every command fail on a platform where ping works perfectly.
+ * <b>The session is opened once</b> and reused for every command in the run — which
+ * is the whole point of the shell. Repeatedly opening the factory around single
+ * commands costs a pcap handle or a raw socket plus two reader threads per
+ * interface each time.
+ * <p>
+ * The one thing this class does that a library must never do is call
+ * {@code TaskUtil.close()} on exit: zoxweb's pool threads are not daemons, so the
+ * process would otherwise hang after the work is done. That is legitimate only
+ * because {@code HostScan} owns the process — {@link HostScanner#close()}
+ * deliberately leaves the pools alone.
  */
 public final class HostScan {
-    public static final String VERSION = "host-scan-1.0.2";
+
+    private static final Duration AWAIT_SLACK = Duration.ofSeconds(10);
+    private static final Duration LOOKUP_TIMEOUT = Duration.ofSeconds(20);
+    private static final Duration SWEEP_BUDGET = Duration.ofMinutes(10);
 
     private HostScan() {
     }
 
     public static void main(String[] args) throws Exception {
-        if (args.length == 0) {
-            usage();
+        System.out.println("Current version:" + NSNetUtil.VERSION);
+        if (args.length > 0 && isHelp(args[0])) {
+            usage(System.out);
             return;
         }
-        System.out.println("Current version:" + VERSION);
-        String command = args[0].toLowerCase(java.util.Locale.ROOT);
-        try {
-            switch (command) {
-                case "list" -> list();
-                case "resolve" -> resolve(require(args, 1, "an IP address or hostname"));
-                case "ping" -> ping(require(args, 1, "an IP address or hostname"),
-                        args.length > 2 ? Integer.parseInt(args[2]) : 4);
-                case "sweep" -> sweep(require(args, 1, "a CIDR range"));
-                default -> {
-                    System.err.println("Unknown command: " + command);
-                    usage();
-                    System.exit(2);
-                }
+        int exit = 0;
+        try (HostScanner scanner = HostScanner.open()) {
+            if (args.length == 0 || args[0].equalsIgnoreCase("shell")) {
+                System.out.println("session : " + scanner.mode() + " - " + scanner.diagnostic());
+                shell(scanner, System.out);
+            } else {
+                exit = runOnce(scanner, args, System.out);
             }
-        } catch (Exception e) {
-            System.err.println("\nFAILED: " + e.getMessage());
-            if (e.getCause() != null) {
-                System.err.println("  cause: " + e.getCause());
-            }
+        } finally {
             shutdownSharedPools();
-            System.exit(1);
         }
-        shutdownSharedPools();
+        if (exit != 0) {
+            System.exit(exit);
+        }
+    }
+
+    private static int runOnce(HostScanner scanner, String[] argv, PrintStream out) {
+        try {
+            return execute(scanner, argv, out);
+        } catch (Exception e) {
+            printFailure(e, out);
+            return 1;
+        }
     }
 
     /**
-     * Shuts down zoxweb's process-wide pools so the JVM can exit.
+     * Reads commands until EOF or {@code quit}, against the one open session.
      * <p>
-     * Their threads are NOT daemons, so without this the process hangs after the
-     * work is done. This is legitimate ONLY because {@code HostScan} is the whole
-     * application and therefore owns the process. A LIBRARY must never do this —
-     * closing a {@code Discovery} deliberately leaves the executors alone, since
-     * they are shared with the rest of no-sneak (§4.3).
+     * A failing command reports and returns to the prompt: a timed-out sweep is no
+     * reason to tear down handles that took real work to open.
+     */
+    private static void shell(HostScanner scanner, PrintStream out) throws IOException {
+        out.println("Interactive mode - one command per line, 'help' for the list, "
+                    + "'quit' to exit.");
+        BufferedReader in = new BufferedReader(new InputStreamReader(System.in));
+        while (true) {
+            out.print("hostscan> ");
+            out.flush();
+            String line = in.readLine();
+            if (line == null) {
+                out.println();
+                return;
+            }
+            String[] argv = tokenize(line);
+            if (argv.length == 0) {
+                continue;
+            }
+            String command = argv[0].toLowerCase(Locale.ROOT);
+            if (command.equals("quit") || command.equals("exit")) {
+                return;
+            }
+            try {
+                execute(scanner, argv, out);
+            } catch (Exception e) {
+                printFailure(e, out);
+            }
+            out.println();
+        }
+    }
+
+    /** Dispatch, shared by the shell and the one-shot path. */
+    private static int execute(HostScanner scanner, String[] argv, PrintStream out)
+            throws Exception {
+        String command = argv[0].toLowerCase(Locale.ROOT);
+        switch (command) {
+            case "list" -> list(scanner, out);
+            case "status" -> status(scanner, out);
+            case "reopen" -> {
+                scanner.reopen();
+                out.println("session : " + scanner.mode() + " - " + scanner.diagnostic());
+            }
+            case "ping" -> {
+                return ping(scanner, Args.parse(argv, HostScanner.DEFAULT_PING_COUNT,
+                                                HostScanner.DEFAULT_PING_TIMEOUT, true), out);
+            }
+            case "resolve" -> {
+                return resolve(scanner, Args.parse(argv, 1,
+                                                   HostScanner.DEFAULT_RESOLVE_TIMEOUT, false), out);
+            }
+            case "sweep" -> {
+                return sweep(scanner, Args.parse(argv, SweepOptions.defaults().pingCount(),
+                                                 SweepOptions.defaults().perHostTimeout(), false), out);
+            }
+            case "segment" -> {
+                return segment(scanner, Args.parse(argv, SweepOptions.defaults().pingCount(),
+                                                   SweepOptions.defaults().perHostTimeout(), false), out);
+            }
+            case "observe" -> observe(scanner, argv, out);
+            case "help" -> usage(out);
+            default -> {
+                out.println("Unknown command: " + command);
+                usage(out);
+                return 2;
+            }
+        }
+        return 0;
+    }
+
+    // -------------------------------------------------------------- commands
+
+    private static void list(HostScanner scanner, PrintStream out) {
+        List<HostDiscovery> nics = scanner.interfaces();
+        if (nics.isEmpty()) {
+            out.println("No layer-2 interfaces are bound (" + scanner.diagnostic() + ").");
+            listFromJavaNet(out);
+        } else {
+            out.println(HostScanFormat.nicHeader());
+            for (HostDiscovery h : nics) {
+                out.println(HostScanFormat.nic(h));
+            }
+        }
+        status(scanner, out);
+    }
+
+    /**
+     * What {@code list} can still say with no layer-2 backend: the interfaces as
+     * java.net sees them. Needs no native access at all.
+     */
+    private static void listFromJavaNet(PrintStream out) {
+        try {
+            for (java.net.NetworkInterface nif : HostDiscoveryFactory.usableInterfaces()) {
+                byte[] mac = nif.getHardwareAddress();
+                out.printf("%-16s %-8d %s%n", nif.getName(), nif.getIndex(),
+                           mac == null ? "-" : new MacAddress(mac));
+                for (var a : nif.getInterfaceAddresses()) {
+                    out.println("    " + a.getAddress().getHostAddress()
+                                + "/" + a.getNetworkPrefixLength());
+                }
+            }
+        } catch (Exception e) {
+            out.println("  (could not enumerate interfaces: " + e.getMessage() + ")");
+        }
+    }
+
+    private static void status(HostScanner scanner, PrintStream out) {
+        out.println("\nsession : " + scanner.mode() + " - " + scanner.diagnostic());
+        scanner.pinger().ifPresent(p -> out.println("pinger  : " + p.getClass().getSimpleName()
+                                                    + "  " + HostScanFormat.capabilities(p.capabilities())));
+    }
+
+    /**
+     * Pings every target concurrently. Names are looked up first so the off-link
+     * warning and any DNS failure are reported before probes go out.
+     */
+    private static int ping(HostScanner scanner, Args args, PrintStream out) throws Exception {
+        args.requireTargets("an IP address or hostname");
+        int failures = 0;
+        List<InetAddress> addresses = new ArrayList<>();
+        List<String> names = new ArrayList<>();
+        for (String target : args.targets()) {
+            try {
+                InetAddress ip = await(scanner.lookup(target), LOOKUP_TIMEOUT);
+                if (!ip.getHostAddress().equals(target)) {
+                    out.println(target + " resolved to " + ip.getHostAddress());
+                }
+                warnIfOffLinkUnsupported(scanner, ip, out);
+                addresses.add(ip);
+                names.add(target);
+            } catch (Exception e) {
+                out.println("FAILED " + target + ": " + rootMessage(e));
+                failures++;
+            }
+        }
+        List<CompletableFuture<PingResult>> pending = new ArrayList<>(addresses.size());
+        for (InetAddress ip : addresses) {
+            pending.add(scanner.ping(ip, args.count(), args.timeout()));
+        }
+        Duration budget = args.timeout().multipliedBy(args.count()).plus(AWAIT_SLACK);
+        for (int i = 0; i < pending.size(); i++) {
+            try {
+                out.println(HostScanFormat.ping(await(pending.get(i), budget)));
+            } catch (Exception e) {
+                out.println("FAILED " + names.get(i) + ": " + rootMessage(e));
+                failures++;
+            }
+            out.println();
+        }
+        return failures == 0 ? 0 : 1;
+    }
+
+    /** Resolves every target concurrently — they are independent ARP/NDP exchanges. */
+    private static int resolve(HostScanner scanner, Args args, PrintStream out) throws Exception {
+        args.requireTargets("an IP address or hostname");
+        int failures = 0;
+        List<String> names = new ArrayList<>();
+        List<CompletableFuture<ResolveResult>> pending = new ArrayList<>();
+        for (String target : args.targets()) {
+            names.add(target);
+            pending.add(scanner.resolve(target, args.timeout()));
+        }
+        out.printf("%-39s %-19s %-14s %s%n", "TARGET", "MAC", "OUTCOME", "DETAIL");
+        Duration budget = args.timeout().plus(AWAIT_SLACK);
+        for (int i = 0; i < pending.size(); i++) {
+            try {
+                out.println(HostScanFormat.resolve(await(pending.get(i), budget)));
+            } catch (Exception e) {
+                out.println("FAILED " + names.get(i) + ": " + rootMessage(e));
+                failures++;
+            }
+        }
+        return failures == 0 ? 0 : 1;
+    }
+
+    /**
+     * Sweeps each range in turn. Sequential on purpose: the packet-rate cap bounds
+     * one sweep, so running ranges together would multiply the load on the segment.
+     */
+    private static int sweep(HostScanner scanner, Args args, PrintStream out) throws Exception {
+        args.requireTargets("a CIDR range");
+        SweepOptions options = args.sweepOptions();
+        int failures = 0;
+        for (String cidr : args.targets()) {
+            try {
+                CidrRange range = CidrRange.parse(cidr);
+                String via = args.iface() != null ? args.iface() : chosenInterface(scanner, range);
+                out.println("sweeping " + range + " via " + via);
+                AtomicInteger seen = new AtomicInteger();
+                CompletableFuture<SweepSummary> future = args.iface() != null
+                        ? scanner.sweepVia(args.iface(), range, options, h -> printHost(h, seen, out))
+                        : scanner.sweep(range, options, h -> printHost(h, seen, out));
+                out.println("\n" + HostScanFormat.sweep(await(future, SWEEP_BUDGET)) + "\n");
+            } catch (Exception e) {
+                out.println("FAILED " + cidr + ": " + rootMessage(e));
+                failures++;
+            }
+        }
+        return failures == 0 ? 0 : 1;
+    }
+
+    /** IPv6 neighbours on one segment — CIDR expansion is meaningless for a /64. */
+    private static int segment(HostScanner scanner, Args args, PrintStream out) throws Exception {
+        String iface = args.iface() != null ? args.iface()
+                : args.targets().isEmpty() ? null : args.targets().get(0);
+        if (iface == null) {
+            out.println("Expected an interface name, e.g. 'segment eth0'. Bound: "
+                        + scanner.bindings().stream().map(NicBinding::javaName).toList());
+            return 2;
+        }
+        AtomicInteger seen = new AtomicInteger();
+        out.println("discovering IPv6 neighbours on " + iface);
+        SweepSummary s = await(scanner.discoverIpv6Segment(iface, args.sweepOptions(),
+                                                           h -> printHost(h, seen, out)),
+                               SWEEP_BUDGET);
+        out.println("\n" + HostScanFormat.sweep(s));
+        return 0;
+    }
+
+    /** Passive neighbours for a while — nothing is transmitted. */
+    private static void observe(HostScanner scanner, String[] argv, PrintStream out)
+            throws InterruptedException {
+        int seconds = argv.length > 1 ? Integer.parseInt(argv[1]) : 30;
+        boolean supported = scanner.interfaces().stream()
+                                   .anyMatch(h -> h.capabilities().passiveObservation());
+        if (!supported) {
+            out.println("No bound interface supports passive observation; "
+                        + "this will register and never fire.");
+        }
+        out.println("observing for " + seconds + "s (broadcast ARP, gratuitous ARP, NS/NA)");
+        AtomicInteger seen = new AtomicInteger();
+        try (Subscription sub = scanner.observe(n -> printNeighbor(n, seen, out))) {
+            TimeUnit.SECONDS.sleep(seconds);
+        }
+        out.println("\n" + seen.get() + " observation(s)");
+    }
+
+    // -------------------------------------------------------------- plumbing
+
+    /**
+     * Explains an unreachable off-link target BEFORE sending probes that cannot
+     * arrive, rather than leaving the user with a bare {@code NETWORK_UNREACHABLE}.
+     * <p>
+     * pcap injects at layer 2 and bypasses OS routing, so an off-link destination
+     * needs the gateway's MAC. Windows now gets that from {@code GetBestRoute2}, so
+     * this fires only when that binding will not load; Linux and macOS send through
+     * the kernel and route normally.
+     */
+    private static void warnIfOffLinkUnsupported(HostScanner scanner, InetAddress ip,
+                                                 PrintStream out) {
+        DiscoveryCapabilities caps = scanner.capabilities().orElse(null);
+        if (caps == null || caps.offLinkIcmp()) {
+            return;
+        }
+        if (scanner.interfaceFor(ip).isPresent()) {
+            return;
+        }
+        out.println("""
+                NOTE: %s is not on any local subnet, and this backend (%s) cannot
+                      reach off-link targets - it injects at layer 2 and bypasses
+                      routing, so it would need the gateway's MAC to get there.
+                      Expect NETWORK_UNREACHABLE. Only on-link addresses work here;
+                      Linux and macOS route through the kernel and do not have this
+                      limit.""".formatted(ip.getHostAddress(), caps.backend()));
+    }
+
+    /** Which interface {@link HostScanner#sweep} will pick, so the CLI can name it up front. */
+    private static String chosenInterface(HostScanner scanner, CidrRange range) {
+        return scanner.interfaceFor(range.networkAddress())
+                      .or(() -> scanner.interfaces().stream().findFirst())
+                      .map(h -> h.binding().javaName())
+                      .orElse("(none)");
+    }
+
+    private static synchronized void printHost(HostRecord h, AtomicInteger seen, PrintStream out) {
+        seen.incrementAndGet();
+        out.println(HostScanFormat.host(h));
+    }
+
+    private static synchronized void printNeighbor(ObservedNeighbor n, AtomicInteger seen,
+                                                   PrintStream out) {
+        seen.incrementAndGet();
+        out.println(HostScanFormat.neighbor(n));
+    }
+
+    /** Waits on a future and unwraps the completion cause into something readable. */
+    private static <T> T await(CompletableFuture<T> future, Duration budget) throws Exception {
+        try {
+            return future.get(budget.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof Exception ex) {
+                throw ex;
+            }
+            throw e;
+        }
+    }
+
+    private static String rootMessage(Throwable t) {
+        Throwable cause = t;
+        while (cause.getCause() != null && cause.getMessage() == null) {
+            cause = cause.getCause();
+        }
+        return cause.getMessage() == null ? cause.toString() : cause.getMessage();
+    }
+
+    private static void printFailure(Exception e, PrintStream out) {
+        out.println("FAILED: " + rootMessage(e));
+        if (e.getCause() != null) {
+            out.println("  cause: " + e.getCause());
+        }
+    }
+
+    private static boolean isHelp(String arg) {
+        String a = arg.toLowerCase(Locale.ROOT);
+        return a.equals("help") || a.equals("-h") || a.equals("--help");
+    }
+
+    /**
+     * Splits a shell line. Strips a leading byte-order mark: piping a command file
+     * into the shell on Windows routinely prepends one, and it would otherwise turn
+     * {@code status} into an unknown command whose name looks identical to the real
+     * one.
+     */
+    static String[] tokenize(String line) {
+        String trimmed = line.trim();
+        if (!trimmed.isEmpty() && trimmed.charAt(0) == 0xFEFF) {
+            trimmed = trimmed.substring(1).trim();
+        }
+        return trimmed.isEmpty() ? new String[0] : trimmed.split("\\s+");
+    }
+
+    /**
+     * Shuts down zoxweb's process-wide pools so the JVM can exit — their threads are
+     * not daemons. Legitimate ONLY because this class is the whole application; a
+     * library must never do it.
      */
     private static void shutdownSharedPools() {
         try {
@@ -96,223 +445,100 @@ public final class HostScan {
         }
     }
 
-    private static void list() throws Exception {
-        List<NetworkInterface> nics = HostDiscoveryFactory.usableInterfaces();
-        if (nics.isEmpty()) {
-            System.out.println("No usable interfaces (up, addressed, non-loopback).");
-            return;
-        }
-        HostDiscoveryFactory.Discovery opened;
-        try {
-            opened = HostDiscoveryFactory.open(nics);
-        } catch (DiscoveryException e) {
-            System.out.println("Layer-2 backend unavailable on this platform:");
-            System.out.println("  " + e.getMessage());
-            System.out.println();
-            listIcmpOnly(nics);
-            return;
-        }
-        try (var discovery = opened) {
-            System.out.printf("%-16s %-10s %-19s %s%n",
-                    "INTERFACE", "IFINDEX", "MAC", "CAPABILITIES");
-            for (HostDiscovery h : discovery.perInterface()) {
-                DiscoveryCapabilities c = h.capabilities();
-                System.out.printf("%-16s %-10d %-19s %s%n",
-                        h.binding().javaName(),
-                        h.binding().ifIndex(),
-                        String.valueOf(h.binding().hardwareAddress()),
-                        summarise(c));
-                for (var a : h.binding().ipv4()) {
-                    System.out.println("    " + a.address().getHostAddress()
-                            + "/" + a.prefixLength());
-                }
-                System.out.println("    device: " + h.binding().backendDeviceName());
-            }
-            System.out.println("\npinger: " + discovery.ping().getClass().getSimpleName()
-                    + (discovery.perInterface().contains(discovery.ping())
-                    ? " (same object as a backend - normal on Windows)" : ""));
-        }
-    }
-
-    /**
-     * What {@code list} can still say when only ICMP is available: the interfaces
-     * as java.net sees them, and the pinger's real capabilities. Everything here
-     * comes from {@code NetworkInterface}, so it needs no backend at all.
-     */
-    private static void listIcmpOnly(List<NetworkInterface> nics) throws Exception {
-        System.out.printf("%-16s %-10s %s%n", "INTERFACE", "IFINDEX", "MAC");
-        for (NetworkInterface nif : nics) {
-            byte[] mac = nif.getHardwareAddress();
-            System.out.printf("%-16s %-10d %s%n", nif.getName(), nif.getIndex(),
-                    mac == null ? "-" : new MacAddress(mac).toString());
-            for (var a : nif.getInterfaceAddresses()) {
-                System.out.println("    " + a.getAddress().getHostAddress()
-                        + "/" + a.getNetworkPrefixLength());
-            }
-        }
-        try (ICMPPing p = HostDiscoveryFactory.openIcmpOnly()) {
-            System.out.println("\npinger: " + p.getClass().getSimpleName());
-            System.out.println("    " + summarise(p.capabilities()));
-        }
-    }
-
-    private static void resolve(String target) throws Exception {
-        InetAddress ip = InetAddress.getByName(target);
-        if (!ip.getHostAddress().equals(target)) {
-            System.out.println(target + " resolved to " + ip.getHostAddress());
-        }
-        try (var discovery = HostDiscoveryFactory.open(HostDiscoveryFactory.usableInterfaces())) {
-            HostDiscovery via = discovery.forTarget(ip).orElseThrow(() -> new IllegalStateException(
-                    ip.getHostAddress() + " is not on any local subnet. ARP and NDP are "
-                            + "link-local protocols by definition - there is no such thing as the MAC "
-                            + "of a host beyond the local segment; what you would get is the router's."));
-            System.out.println("via " + via.binding().javaName());
-
-            ResolveResult r = via.resolve(ip, Duration.ofSeconds(3)).get(15, TimeUnit.SECONDS);
-            System.out.println("outcome : " + r.outcome());
-            System.out.println("mac     : " + r.mac().map(Object::toString).orElse("-"));
-            System.out.println("source  : " + r.source());
-            System.out.println("elapsed : " + r.elapsed().toMillis() + " ms");
-        }
-    }
-
-    private static void ping(String target, int count) throws Exception {
-        // getByName, not ofLiteral: a CLI should accept a hostname. ofLiteral
-        // refuses to do DNS, which is the right default for CidrRange and the
-        // cache but wrong here.
-        InetAddress ip = InetAddress.getByName(target);
-        if (!ip.getHostAddress().equals(target)) {
-            System.out.println(target + " resolved to " + ip.getHostAddress());
-        }
-        HostDiscoveryFactory.Discovery discovery = null;
-        ICMPPing pinger;
-        try {
-            discovery = HostDiscoveryFactory.open(HostDiscoveryFactory.usableInterfaces());
-            pinger = discovery.ping();
-            warnIfOffLinkUnsupported(discovery, ip);
-        } catch (DiscoveryException e) {
-            // The L2 backend is unavailable, but ICMP does not depend on it
-            // wherever the kernel routes. This is the macOS path until §7.3.
-            System.out.println("note: layer-2 backend unavailable, pinging ICMP-only");
-            System.out.println("      " + e.getMessage());
-            pinger = HostDiscoveryFactory.openIcmpOnly();
-        }
-        try {
-            PingResult p = pinger.ping(ip, count, Duration.ofSeconds(2))
-                    .get(30, TimeUnit.SECONDS);
-            System.out.println("PING " + target + "  " + count + " probes, pipelined");
-            for (PingProbe probe : p.probes()) {
-                System.out.printf("  seq=%-6d %s%n", probe.sequence(),
-                        probe.replied()
-                                ? String.format("rtt=%.3f ms  ttl=%s", micros(probe) / 1000.0,
-                                probe.hasTtl() ? probe.ttlOrHopLimit() : "n/a")
-                                : "no reply (" + probe.error().map(Enum::name).orElse("?") + ")");
-            }
-            System.out.printf("%n%d sent, %d received, %.1f%% loss%n",
-                    p.sent(), p.received(), p.lossPercent());
-            if (p.reachable()) {
-                System.out.printf("rtt min/avg/max/stddev = %.3f/%.3f/%.3f/%.3f ms%n",
-                        p.minRtt().toNanos() / 1e6, p.avgRtt().toNanos() / 1e6,
-                        p.maxRtt().toNanos() / 1e6, p.stdDevRtt().toNanos() / 1e6);
-            }
-        } finally {
-            // Closing the Discovery closes the pinger it owns; a standalone
-            // pinger owns itself.
-            if (discovery != null) {
-                discovery.close();
-            } else {
-                pinger.close();
-            }
-        }
-    }
-
-    private static void sweep(String cidr) throws Exception {
-        CidrRange range = CidrRange.parse(cidr);
-        try (var discovery = HostDiscoveryFactory.open(HostDiscoveryFactory.usableInterfaces())) {
-            HostDiscovery via = discovery.forTarget(range.networkAddress())
-                    .orElse(discovery.perInterface().get(0));
-            System.out.println("sweeping " + range + " via " + via.binding().javaName() + "\n");
-
-            SweepSummary s = via.sweep(range, SweepOptions.defaults(), HostScan::printHost)
-                    .get(10, TimeUnit.MINUTES);
-            System.out.printf("%n%d probed, %d alive (%d by MAC, %d by ICMP) in %d ms%n",
-                    s.total(), s.alive(), s.macsResolved(), s.icmpAlive(), s.elapsed().toMillis());
-        }
-    }
-
-    /**
-     * Explains an unreachable off-link target BEFORE sending probes that cannot
-     * possibly arrive, rather than leaving the user with a bare
-     * {@code NETWORK_UNREACHABLE}.
-     * <p>
-     * This is not a defect: pcap injects at layer 2 and bypasses OS routing, so an
-     * off-link destination needs the default gateway's MAC, which needs its IP,
-     * which needs an {@code iphlpapi} binding — explicitly out of scope for v1
-     * (§1, §8.4). Linux and macOS send through the kernel, which routes normally,
-     * so off-link works there.
-     */
-    private static void warnIfOffLinkUnsupported(HostDiscoveryFactory.Discovery discovery,
-                                                 InetAddress ip) {
-        if (discovery.ping().capabilities().offLinkIcmp()) {
-            return;
-        }
-        boolean onLink = discovery.perInterface().stream()
-                .anyMatch(h -> h.binding().isOnLink(ip));
-        if (onLink) {
-            return;
-        }
-        System.out.println("""
-                NOTE: %s is not on any local subnet, and this backend (%s) cannot
-                      reach off-link targets - it injects at layer 2 and bypasses
-                      routing, so it would need the gateway's MAC to get there.
-                      Expect NETWORK_UNREACHABLE. Only on-link addresses work here;
-                      Linux and macOS route through the kernel and do not have this
-                      limit.
-                """.formatted(ip.getHostAddress(),
-                discovery.ping().capabilities().backend()));
-    }
-
-    private static synchronized void printHost(HostRecord h) {
-        System.out.printf("  %-16s %-19s %-8s %s%n",
-                h.ip().getHostAddress(),
-                h.mac().map(Object::toString).orElse("-"),
-                h.icmpAlive() ? "icmp" : "arp",
-                h.rtt().map(d -> String.format("%.3f ms", d.toNanos() / 1e6)).orElse(""));
-    }
-
-    private static long micros(PingProbe p) {
-        return p.rtt() == null ? 0 : p.rtt().toNanos() / 1000;
-    }
-
-    private static String summarise(DiscoveryCapabilities c) {
-        StringBuilder sb = new StringBuilder();
-        if (c.icmpV4()) sb.append("icmp ");
-        if (c.activeArp()) sb.append("arp ");
-        if (c.activeNdp()) sb.append("ndp ");
-        if (c.passiveObservation()) sb.append("passive ");
-        if (c.ttlAvailable()) sb.append("ttl ");
-        if (c.offLinkIcmp()) sb.append("off-link ");
-        sb.append('[').append(c.backend()).append(']');
-        return sb.toString();
-    }
-
-    private static String require(String[] args, int index, String what) {
-        if (args.length <= index) {
-            throw new IllegalArgumentException("Expected " + what);
-        }
-        return args[index];
-    }
-
-    private static void usage() {
-        System.out.println("""
+    private static void usage(PrintStream out) {
+        out.println("""
                 no-sneak host discovery
-                
-                  hostscan list                  interfaces, devices, capabilities
-                  hostscan resolve <ip>          ARP/NDP lookup
-                  hostscan ping    <ip> [count]  ICMP echo (default 4, pipelined)
-                  hostscan sweep   <cidr>        ARP + ICMP across a range
-                
+
+                  hostscan                        interactive shell (one session, many commands)
+                  hostscan list                   interfaces, devices, capabilities
+                  hostscan status                 backend mode and why it is what it is
+                  hostscan resolve <ip> [ip...]   ARP/NDP lookup, targets run concurrently
+                  hostscan ping    <ip> [ip...]   ICMP echo, pipelined, targets concurrent
+                  hostscan sweep   <cidr> [...]   ARP + ICMP across a range, ranges in turn
+                  hostscan segment <iface>        IPv6 neighbours on one segment
+                  hostscan observe [seconds]      passive neighbours, transmits nothing
+                  hostscan reopen                 rebuild the session after a NIC change
+
+                Options
+                  -c, --count N       probes per host (ping), or per host in a sweep
+                  -w, --timeout MS    per-probe timeout in milliseconds
+                  -i, --iface NAME    force the interface for sweep/segment
+                  A bare trailing number still means the ping count: 'ping 10.0.0.1 4'.
+
                 Windows needs Npcap installed (https://npcap.com/).
-                Linux needs root.""");
+                Linux needs root for layer 2; ICMP alone does not.""");
+    }
+
+    /**
+     * One command's arguments: the targets plus the shared options.
+     * <p>
+     * Package-private and parsed in one place so the shell and the one-shot path
+     * cannot drift apart, and so the parsing is testable without a network.
+     */
+    record Args(List<String> targets, int count, Duration timeout, String iface) {
+
+        /**
+         * @param trailingCount accept a bare trailing integer as the count, which is
+         *                      what {@code ping 10.0.0.1 4} has always meant. Off for
+         *                      sweep, where a bare integer is simply not a CIDR and
+         *                      swallowing it would hide the mistake.
+         */
+        static Args parse(String[] argv, int defaultCount, Duration defaultTimeout,
+                          boolean trailingCount) {
+            List<String> targets = new ArrayList<>();
+            int count = defaultCount;
+            Duration timeout = defaultTimeout;
+            String iface = null;
+            boolean explicitCount = false;
+            for (int i = 1; i < argv.length; i++) {
+                String arg = argv[i];
+                switch (arg) {
+                    case "-c", "--count" -> {
+                        count = Integer.parseInt(need(argv, ++i, arg));
+                        explicitCount = true;
+                    }
+                    case "-w", "--timeout" ->
+                            timeout = Duration.ofMillis(Long.parseLong(need(argv, ++i, arg)));
+                    case "-i", "--iface" -> iface = need(argv, ++i, arg);
+                    default -> {
+                        if (arg.startsWith("-")) {
+                            throw new IllegalArgumentException("Unknown option: " + arg);
+                        }
+                        targets.add(arg);
+                    }
+                }
+            }
+            if (trailingCount && !explicitCount && targets.size() > 1
+                && targets.get(targets.size() - 1).matches("\\d+")) {
+                count = Integer.parseInt(targets.remove(targets.size() - 1));
+            }
+            if (count < 1) {
+                throw new IllegalArgumentException("count must be >= 1, got " + count);
+            }
+            if (timeout.isZero() || timeout.isNegative()) {
+                throw new IllegalArgumentException("timeout must be positive, got " + timeout);
+            }
+            return new Args(List.copyOf(targets), count, timeout, iface);
+        }
+
+        private static String need(String[] argv, int index, String option) {
+            if (index >= argv.length) {
+                throw new IllegalArgumentException(option + " needs a value");
+            }
+            return argv[index];
+        }
+
+        void requireTargets(String what) {
+            if (targets.isEmpty()) {
+                throw new IllegalArgumentException("Expected " + what);
+            }
+        }
+
+        /** Sweep tuning with the command's count and timeout folded in. */
+        SweepOptions sweepOptions() {
+            SweepOptions d = SweepOptions.defaults();
+            return new SweepOptions(d.maxInFlight(), d.maxPacketsPerSecond(), timeout,
+                                    d.doIcmp(), d.doMac(), count, d.maxHosts());
+        }
     }
 }

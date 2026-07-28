@@ -55,9 +55,11 @@ compliance rules are not implemented yet — see `no-sneak-core/ACTION-PLAN.md`.
 cache, factory wiring, `HostScan` CLI and both the Windows and Linux backends are done and verified
 against live hardware — the Windows path including off-link routing through the gateway, and the
 Linux path on **x86-64 and the aarch64 appliance**. Linux IPv6/NDP is written but has never been
-exercised on a wire, and macOS layer-2 is deliberately unwritten pending an ABI probe. The quickest
-way to see it work is `io.xlogistx.nosneak.net.tools.HostScan` (`hostscan list | resolve | ping |
-sweep`); its `README.md` has the run recipe and the per-platform status.
+exercised on a wire, and macOS — both its ICMP fixes and its libpcap layer-2 backend — has never
+run at all. The quickest way to see it work is `io.xlogistx.nosneak.net.tools.HostScan`
+(`hostscan list | resolve | ping | sweep`, or no argument for a shell that keeps one session open);
+an application embeds `HostScanner`, the same session type the CLI drives. Its `README.md` has the
+run recipe, the embedding example, and the per-platform status.
 
 External dependencies: zoxweb (`org.zoxweb.*`) and the `io-xlogistx` modules (`common`, `core`,
 `http`, `shiro`, `opsec`, `datastore`). **Bouncy Castle is the only cryptographic library.**

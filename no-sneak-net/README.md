@@ -22,6 +22,7 @@ Tier-1 probe engine. This module answers the question that comes before them.
 | Linux ICMP (`SOCK_RAW`, v4 + TTL) | **done and verified on live hardware — x86-64 and aarch64** |
 | Linux ARP (`AF_PACKET`) | **done and verified on live hardware — x86-64 and aarch64** |
 | Linux passive IPv4 learning (`ETH_P_IP`) | **done and verified** — resolves hosts the kernel itself cannot reach |
+| Windows unicast-ARP retry + `GetIpNetEntry2` hint | **done and verified on live hardware** — resolves a host that ignores broadcast ARP (§13.16) |
 | Linux IPv6 / NDP | **written, never exercised on a wire** — no v6 neighbours on the test segment |
 | macOS ICMP | **run once, threw at startup; two all-or-nothing bugs fixed — needs re-test** |
 | macOS ARP/NDP | **written over libpcap, never run** — needs a Mac; §7.3's ABI gate is retired, not passed |
@@ -32,11 +33,22 @@ never on a wire), **macOS ICMP** (the fixes have not themselves been run on a Ma
 layer-2** (written over libpcap, never run — see `CLAUDE.md` §13.14). Everywhere else, "done" means it
 moved packets.
 
+**Broadcast ARP is not universally delivered, on either platform.** Wi-Fi access points buffer
+broadcast against the DTIM interval and commonly suppress it, so a station can be fully reachable by
+unicast while never answering a broadcast solicitation. Measured with `spike.WindowsArpSpike`: the
+affected host answered 0 of 3 broadcast requests and 3 of 3 unicast requests, while the gateway
+answered 3 of 3 both ways on the same handle. Both backends now retry unicast against a MAC hint —
+Linux from its passive learner, Windows from `IpMacCache` and then Windows' own neighbour table via
+`GetIpNetEntry2`, used strictly as an aiming hint since resolution still requires a reply on our own
+wire. On Windows this took the host from a 3006 ms timeout and `HOST_UNREACHABLE` pings to
+`RESOLVED` in 11 ms and 20 of 20 MACs across a `/24`. See `CLAUDE.md` §13.12, §13.13 and §13.16.
+
 The first macOS run (2026-07-27) threw before sending a packet, for two reasons that were both
 about *all-or-nothing wiring* rather than ICMP itself: `HostScan` demanded the full L2 wiring for
 every command, so the §7.3 gate exception killed even `ping`; and `DarwinIcmpPing.open` aborted the
 whole pinger when the IPv6 socket was refused, taking working IPv4 ICMP with it. Both are fixed —
-`ping`/`list` fall back to `openIcmpOnly()`, and the two ICMP families now open independently — but
+the fallback to `openIcmpOnly()` now lives in `HostScanner`, so every command degrades to
+`ICMP_ONLY` together rather than one at a time, and the two ICMP families open independently — but
 **the fix has not itself been run on a Mac.** See `CLAUDE.md` §13.10.1.
 
 **The Linux backend runs on real hardware, on both supported architectures.** The §13.1 spike was
@@ -83,11 +95,26 @@ java --enable-native-access=ALL-UNNAMED      -cp "no-sneak-net/target/classes;no
 ```
 
 ```
-list                  interfaces, devices, capabilities
-resolve <ip|host>     ARP/NDP - the MAC, and where it came from
-ping    <ip|host> [n] ICMP echo, pipelined
-sweep   <cidr>        ARP + ICMP across a range
+(no command)             interactive shell - one open session, many commands
+list                     interfaces, devices, capabilities
+status                   backend mode, and why it is what it is
+resolve <ip|host>...     ARP/NDP - the MAC, and where it came from
+ping    <ip|host>... [n] ICMP echo, pipelined
+sweep   <cidr>...        ARP + ICMP across a range
+segment <iface>          IPv6 neighbours on one segment
+observe [seconds]        passive neighbours; transmits nothing
+reopen                   rebuild the session after a NIC change
+
+  -c/--count N   probes per host    -w/--timeout MS   per-probe timeout
+  -i/--iface NAME   force the interface for sweep/segment
 ```
+
+**Every command takes several targets.** Pings and resolves go out concurrently, so `ping a b c`
+costs one round of wall time rather than three; sweeps run one range after another, because
+`maxPacketsPerSecond` bounds a single sweep and running them together would multiply what hits the
+segment. Run it with no command for a shell that keeps **one** session open across every command —
+opening the factory per command costs a pcap handle or raw socket plus two reader threads per NIC
+each time.
 
 Windows needs [Npcap](https://npcap.com/); Linux needs root. Real output from a Windows box:
 
@@ -112,7 +139,56 @@ $ HostScan sweep 10.0.0.0/27
 That `ttl=47` is worth noticing: an initial 64 minus 17 hops, i.e. a genuine internet path. On-link
 replies show 64.
 
-## Usage
+```
+$ HostScan
+session : FULL - layer 2 and ICMP over 2 interface(s)
+hostscan> sweep 10.0.0.0/29
+sweeping 10.0.0.0/29 via ethernet_32769
+  10.0.0.6      3a:68:7b:31:c8:72   icmp     23.614 ms
+  10.0.0.1      42:25:47:35:03:ec   icmp     41.357 ms
+8 probed, 5 alive (5 by MAC, 5 by ICMP) in 1021 ms
+hostscan> ping 10.0.0.1 -c 1
+  seq=5      rtt=10.330 ms  ttl=64
+```
+
+`seq=5` on a fresh command is the tell that the session really is shared: the sequence allocator
+carried on from the sweep instead of restarting at zero.
+
+## Embedding it
+
+`HostScanner` is the surface an application drives — open it once, keep it, run as much as you like
+through it:
+
+```java
+HostScanner scanner = HostScanner.open();          // never throws; ask mode() what you got
+
+scanner.ping("10.0.0.1", 4, Duration.ofSeconds(2))
+       .thenAccept(r -> SwingUtilities.invokeLater(() -> log(HostScanFormat.ping(r))));
+scanner.resolveAll(List.of("10.0.0.1", "10.0.0.2"), Duration.ofSeconds(3));
+scanner.sweep("10.0.0.0/24", SweepOptions.defaults(), host -> ...);   // streams as it goes
+
+scanner.close();   // releases handles and reader threads; leaves the shared pools alone
+```
+
+Three properties that matter to a UI:
+
+- **Nothing blocks the caller** except `open`, `reopen` and `close`. Even hostname lookup is pushed
+  onto the dispatcher, so an action listener can call these straight from the event thread. Sweep
+  records arrive on a dispatcher thread, never a reader thread.
+- **It always opens.** No Npcap, or Linux without root, still yields a working object in a degraded
+  `Mode` — `FULL`, `ICMP_ONLY` or `UNAVAILABLE` — with `diagnostic()` naming what failed. Disable
+  the controls that mode cannot serve rather than guessing.
+- **An unreachable host is a result, not an error.** Futures complete exceptionally only for a
+  backend that cannot perform the operation at all: no pinger, an off-link `resolve` (ARP is
+  link-local by definition — there is no MAC of a host beyond the segment), an unparseable CIDR.
+
+`HostScanFormat` renders any result as the text the CLI prints, so a Swing log pane and a terminal
+show the same thing.
+
+## Usage — the layer underneath
+
+`HostScanner` is a convenience over the factory; the interfaces are public and can be driven
+directly when an application wants to own the wiring:
 
 ```java
 // Everything, wired: one backend per NIC plus a shared pinger.
@@ -215,7 +291,8 @@ Through that door the hazard does not exist, and once the wire is visible there 
 the gate is gone rather than cleared. See `CLAUDE.md` §13.14.
 
 What this costs: `/dev/bpf*` is mode 0600, so macOS layer-2 now needs **root**. ICMP alone still does
-not, and `openIcmpOnly()` — which `HostScan`'s `ping` and `list` fall back to — stays unprivileged.
+not, and `openIcmpOnly()` — which `HostScanner` falls back to, giving `Mode.ICMP_ONLY` — stays
+unprivileged.
 
 What it buys: `passiveObservation` and `rawEvidence` become true on macOS, where both were previously
 hardcoded false as a consequence of the neighbour-table design rather than of the OS. `ttlAvailable`
