@@ -30,7 +30,7 @@ import java.util.concurrent.TimeUnit;
  *   hostscan ping    10.0.0.1 [n]     # ICMP echo, pipelined
  *   hostscan sweep   10.0.0.0/24      # ARP + ICMP across a range
  * </pre>
- *
+ * <p>
  * Runs on any platform whose backend is built; today that is Windows (Npcap) and
  * Linux (untested). Every command opens the full wiring through
  * {@link HostDiscoveryFactory} and closes it again, so it exercises the same path
@@ -43,7 +43,7 @@ import java.util.concurrent.TimeUnit;
  * made every command fail on a platform where ping works perfectly.
  */
 public final class HostScan {
-    public static final String VERSION ="host-scan-1.0.1";
+    public static final String VERSION = "host-scan-1.0.1";
 
     private HostScan() {
     }
@@ -60,7 +60,7 @@ public final class HostScan {
                 case "list" -> list();
                 case "resolve" -> resolve(require(args, 1, "an IP address or hostname"));
                 case "ping" -> ping(require(args, 1, "an IP address or hostname"),
-                                    args.length > 2 ? Integer.parseInt(args[2]) : 4);
+                        args.length > 2 ? Integer.parseInt(args[2]) : 4);
                 case "sweep" -> sweep(require(args, 1, "a CIDR range"));
                 default -> {
                     System.err.println("Unknown command: " + command);
@@ -114,7 +114,7 @@ public final class HostScan {
         }
         try (var discovery = opened) {
             System.out.printf("%-16s %-10s %-19s %s%n",
-                              "INTERFACE", "IFINDEX", "MAC", "CAPABILITIES");
+                    "INTERFACE", "IFINDEX", "MAC", "CAPABILITIES");
             for (HostDiscovery h : discovery.perInterface()) {
                 DiscoveryCapabilities c = h.capabilities();
                 System.out.printf("%-16s %-10d %-19s %s%n",
@@ -124,13 +124,13 @@ public final class HostScan {
                         summarise(c));
                 for (var a : h.binding().ipv4()) {
                     System.out.println("    " + a.address().getHostAddress()
-                                       + "/" + a.prefixLength());
+                            + "/" + a.prefixLength());
                 }
                 System.out.println("    device: " + h.binding().backendDeviceName());
             }
             System.out.println("\npinger: " + discovery.ping().getClass().getSimpleName()
                     + (discovery.perInterface().contains(discovery.ping())
-                            ? " (same object as a backend - normal on Windows)" : ""));
+                    ? " (same object as a backend - normal on Windows)" : ""));
         }
     }
 
@@ -144,10 +144,10 @@ public final class HostScan {
         for (NetworkInterface nif : nics) {
             byte[] mac = nif.getHardwareAddress();
             System.out.printf("%-16s %-10d %s%n", nif.getName(), nif.getIndex(),
-                              mac == null ? "-" : new MacAddress(mac).toString());
+                    mac == null ? "-" : new MacAddress(mac).toString());
             for (var a : nif.getInterfaceAddresses()) {
                 System.out.println("    " + a.getAddress().getHostAddress()
-                                   + "/" + a.getNetworkPrefixLength());
+                        + "/" + a.getNetworkPrefixLength());
             }
         }
         try (ICMPPing p = HostDiscoveryFactory.openIcmpOnly()) {
@@ -164,8 +164,8 @@ public final class HostScan {
         try (var discovery = HostDiscoveryFactory.open(HostDiscoveryFactory.usableInterfaces())) {
             HostDiscovery via = discovery.forTarget(ip).orElseThrow(() -> new IllegalStateException(
                     ip.getHostAddress() + " is not on any local subnet. ARP and NDP are "
-                    + "link-local protocols by definition - there is no such thing as the MAC "
-                    + "of a host beyond the local segment; what you would get is the router's."));
+                            + "link-local protocols by definition - there is no such thing as the MAC "
+                            + "of a host beyond the local segment; what you would get is the router's."));
             System.out.println("via " + via.binding().javaName());
 
             ResolveResult r = via.resolve(ip, Duration.ofSeconds(3)).get(15, TimeUnit.SECONDS);
@@ -199,17 +199,17 @@ public final class HostScan {
         }
         try {
             PingResult p = pinger.ping(ip, count, Duration.ofSeconds(2))
-                                 .get(30, TimeUnit.SECONDS);
+                    .get(30, TimeUnit.SECONDS);
             System.out.println("PING " + target + "  " + count + " probes, pipelined");
             for (PingProbe probe : p.probes()) {
                 System.out.printf("  seq=%-6d %s%n", probe.sequence(),
                         probe.replied()
                                 ? String.format("rtt=%.3f ms  ttl=%s", micros(probe) / 1000.0,
-                                        probe.hasTtl() ? probe.ttlOrHopLimit() : "n/a")
+                                probe.hasTtl() ? probe.ttlOrHopLimit() : "n/a")
                                 : "no reply (" + probe.error().map(Enum::name).orElse("?") + ")");
             }
             System.out.printf("%n%d sent, %d received, %.1f%% loss%n",
-                              p.sent(), p.received(), p.lossPercent());
+                    p.sent(), p.received(), p.lossPercent());
             if (p.reachable()) {
                 System.out.printf("rtt min/avg/max/stddev = %.3f/%.3f/%.3f/%.3f ms%n",
                         p.minRtt().toNanos() / 1e6, p.avgRtt().toNanos() / 1e6,
@@ -234,7 +234,7 @@ public final class HostScan {
             System.out.println("sweeping " + range + " via " + via.binding().javaName() + "\n");
 
             SweepSummary s = via.sweep(range, SweepOptions.defaults(), HostScan::printHost)
-                                .get(10, TimeUnit.MINUTES);
+                    .get(10, TimeUnit.MINUTES);
             System.out.printf("%n%d probed, %d alive (%d by MAC, %d by ICMP) in %d ms%n",
                     s.total(), s.alive(), s.macsResolved(), s.icmpAlive(), s.elapsed().toMillis());
         }
@@ -257,7 +257,7 @@ public final class HostScan {
             return;
         }
         boolean onLink = discovery.perInterface().stream()
-                                  .anyMatch(h -> h.binding().isOnLink(ip));
+                .anyMatch(h -> h.binding().isOnLink(ip));
         if (onLink) {
             return;
         }
@@ -269,7 +269,7 @@ public final class HostScan {
                       Linux and macOS route through the kernel and do not have this
                       limit.
                 """.formatted(ip.getHostAddress(),
-                              discovery.ping().capabilities().backend()));
+                discovery.ping().capabilities().backend()));
     }
 
     private static synchronized void printHost(HostRecord h) {
@@ -306,12 +306,12 @@ public final class HostScan {
     private static void usage() {
         System.out.println("""
                 no-sneak host discovery
-
+                
                   hostscan list                  interfaces, devices, capabilities
                   hostscan resolve <ip>          ARP/NDP lookup
                   hostscan ping    <ip> [count]  ICMP echo (default 4, pipelined)
                   hostscan sweep   <cidr>        ARP + ICMP across a range
-
+                
                 Windows needs Npcap installed (https://npcap.com/).
                 Linux needs root.""");
     }
