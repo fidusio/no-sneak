@@ -15,16 +15,20 @@ Tier-1 probe engine. This module answers the question that comes before them.
 
 | Step | State |
 |---|---|
-| Public API, codecs, cache, ping aggregation | **done**, 180 tests green |
+| Public API, codecs, cache, ping aggregation | **done**, 189 tests green |
 | Windows (Npcap/pcap) backend | **done and verified on live hardware** |
 | Windows off-link routing (`iphlpapi`) | **done and verified against a live internet path** |
 | Factory wiring + `HostScan` CLI | **done and verified on live hardware** |
-| Linux (libc/FFM) backend | **written, never run** — needs the appliance |
+| Linux ICMP (`SOCK_RAW`, v4 + TTL) | **done and verified on live hardware — x86-64 and aarch64** |
+| Linux ARP (`AF_PACKET`) | **done and verified on live hardware — x86-64 and aarch64** |
+| Linux IPv6 / NDP | **written, never exercised on a wire** — no v6 neighbours on the test segment |
 | macOS ICMP | **run once, threw at startup; two all-or-nothing bugs fixed — needs re-test** |
 | macOS ARP/NDP | **deliberately not written** — see *The macOS gate* below |
 
-Everything was developed on a Windows box, which is why Windows is the only backend with runtime
-evidence behind it. **Treat "written" as "implemented per spec", not "works".**
+Windows and Linux both have runtime evidence behind them now, on real segments rather than in
+principle. Three claims still do not, and they are the ones to distrust: **Linux IPv6/NDP** (written,
+never on a wire), **macOS ICMP** (the fixes have not themselves been run on a Mac), and **macOS
+layer-2** (unwritten by design). Everywhere else, "done" means it moved packets.
 
 The first macOS run (2026-07-27) threw before sending a packet, for two reasons that were both
 about *all-or-nothing wiring* rather than ICMP itself: `HostScan` demanded the full L2 wiring for
@@ -33,12 +37,13 @@ whole pinger when the IPv6 socket was refused, taking working IPv4 ICMP with it.
 `ping`/`list` fall back to `openIcmpOnly()`, and the two ICMP families now open independently — but
 **the fix has not itself been run on a Mac.** See `CLAUDE.md` §13.10.1.
 
-**The Linux backend now runs on real hardware.** The §13.1 spike was superseded by the thing it
-existed to de-risk: `HostScan` sweeps and resolves live on a Linux/x86-64 box, so `AF_PACKET` ARP,
-`SOCK_RAW` ICMP with TTL, and the `ALL-UNNAMED` native-access form are all confirmed against the
-wire rather than against a checklist. `LinuxSpike` has been deleted. The **aarch64 appliance** run is
-still owed — every layout is architecture-independent by §2.3, but that is an argument, not a
-measurement.
+**The Linux backend runs on real hardware, on both supported architectures.** The §13.1 spike was
+superseded by the thing it existed to de-risk: `HostScan` lists, resolves, pings and sweeps live on
+**x86-64 and on the aarch64 appliance**, so `AF_PACKET` ARP, `SOCK_RAW` ICMP with TTL, and the
+`ALL-UNNAMED` native-access form under jar-loader are all confirmed against the wire rather than
+against a checklist. `LinuxSpike` has been deleted. §2.3's claim that every layout and constant is
+identical on x86-64 and aarch64 is now a measurement rather than an argument — no arch-specific
+divergence turned up.
 
 One gate remains: **the macOS ABI probe** — see below.
 
@@ -183,7 +188,7 @@ mvn -o -pl no-sneak-net test -DskipTests=false     # the parent pom skips tests 
 The suite is host-independent: codecs, cache, aggregation, and the struct-layout assertions for all
 three platforms all run anywhere. That is deliberate — layout tests caught a wrong `sockaddr_ll`
 offset (`sll_halen` is at byte 11, not 9, because `sll_hatype` is a `short`) on a Windows machine,
-before it could turn into "ARP silently doesn't work" on the appliance.
+before it ever became "ARP silently doesn't work" on the appliance.
 
 ## The macOS gate
 

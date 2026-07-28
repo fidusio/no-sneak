@@ -1599,7 +1599,7 @@ java --enable-native-access=io.xlogistx.nosneak.net ...
 
 Without it: warnings on JDK 25, hard failure in a future release. This is a **JVM module-access check and is orthogonal to OS privilege** — running as root does not satisfy it.
 
-> **jar-loader interaction:** the flag above only applies if this module is genuinely loaded as a named module. If a custom classloader (jar-loader) ends up placing it on the classpath, the correct flag is `--enable-native-access=ALL-UNNAMED`. Confirm which applies during the §12 spike and pin it in the launcher script; do not leave it to chance.
+> **jar-loader interaction:** the flag above only applies if this module is genuinely loaded as a named module. If a custom classloader (jar-loader) ends up placing it on the classpath, the correct flag is `--enable-native-access=ALL-UNNAMED`. **That is the case here, confirmed under jar-loader on both architectures** (§13.6), and it is what the launcher and the Surefire `argLine` both pin.
 >
 > **Current evidence says `ALL-UNNAMED`.** Nothing in no-sneak declares a `module-info.java`, so this module would be loaded from the classpath as an unnamed module and the named form would silently fail to grant access — producing exactly the warning it was meant to suppress. Settle §12.8 before pinning the launcher flag.
 
@@ -1618,7 +1618,7 @@ Without it: warnings on JDK 25, hard failure in a future release. This is a **JV
   Anything beyond these is a design change, not a build tweak. In particular there is **no** Netty, pcap4j, or Guava, and crypto helpers belong in `opsec/OPSecUtil`, not here.
 
 - **Release 25 is already inherited — verified, no action needed.** `xlogistx-mvn` configures `maven-compiler-plugin` with `<release>${jdk.version}</release>` and defaults `jdk.version` to **8**; the no-sneak root pom overrides it to **25**, and `no-sneak-net` has an empty `<properties>` block so it inherits that. Leave it alone: setting `maven.compiler.release` locally would shadow the chain and silently diverge from the rest of the reactor.
-- **Still missing: Surefire `argLine`** — `--enable-native-access=...` is not configured anywhere. Not yet blocking, because §13 steps 1–4 are pure Java and the grandparent sets `<skipTests>true</skipTests>` anyway, but any FFM test will warn without it. Pin the form §12.8 settles on (`ALL-UNNAMED` on current evidence) at the same time as the launcher flag.
+- ~~Still missing: Surefire `argLine`.~~ — **DONE.** `no-sneak-net/pom.xml` line 29 sets `<argLine>--enable-native-access=ALL-UNNAMED</argLine>`, the form §12.8 settled on and §13.6 confirmed under jar-loader. Note the grandparent still sets `<skipTests>true</skipTests>`, so tests need `-DskipTests=false` to run at all.
 - Do not attempt native-image; the closed-world incompatibility is documented in `no-sneak-net/README.md`.
 - The 64-bit-only constraint is documented in `no-sneak-net/README.md` as a **platform** constraint, not a preference: FFM has no 32-bit linker implementation, and the Windows x86-32 port was removed in JDK 24.
 
@@ -1626,7 +1626,9 @@ Without it: warnings on JDK 25, hard failure in a future release. This is a **JV
 
 ## 11. Testing & validation plan  **[IMPLEMENT]**
 
-The appliance (Linux/aarch64) is the gate. macOS and Windows are dev-parity.
+The appliance (Linux/aarch64) **was** the gate, and it has been passed (§13.6) — Linux is verified on
+x86-64 and aarch64, Windows on live hardware. The only gate still standing is the macOS §7.3 ABI
+probe.
 
 1. **Codec unit tests (host-independent, run everywhere).** Build/parse round-trips for ARP, ICMPv4, ICMPv6 echo, NS/NA. Known-good RFC 1071 checksum vectors and an ICMPv6 pseudo-header vector. Solicited-node multicast and `33:33:ff:*` MAC derivation vectors. Gratuitous-ARP classification (SPA == TPA). NS/NA hop-limit-255 validation, both accept and reject cases. `TtlDistance.hopCount` boundary cases (64/128/255, and observed values just below each).
 2. **Layout tests — three targets, not six.** Every layout is selected on `os.name` only (§2.3), so the matrix collapses. Assert: Linux `sockaddr_in`=16, `sockaddr_in6`=28, `sockaddr_ll`=20, `timeval`=16, `packet_mreq`=16; macOS `sockaddr_in`=16 with `sin_family` at offset **1**, `sockaddr_in6`=28, `timeval`=16; Windows `pcap_pkthdr`=16 with `caplen` at offset **8**, `bpf_program`=16.
@@ -1643,7 +1645,7 @@ The appliance (Linux/aarch64) is the gate. macOS and Windows are dev-parity.
    - `NicBinding.LocalAddress.onLink` boundary cases: /31 and /32, /24 first and last address, IPv6 /64 and /128, and a target in a *different* family than the address.
    - Two sockets never share an ICMP identifier (§4.2).
 8. **Live integration (tagged, opt-in).** Ping a known-up host with `count = 4` and assert loss/stats shape; ARP-resolve a host on the same /24; NDP-resolve a link-local neighbour; sweep a small range and assert alive count; assert that an ICMP-filtered host still reports alive via ARP.
-9. **aarch64 appliance spike — do this FIRST (§13).**
+9. ~~**aarch64 appliance spike — do this FIRST (§13).**~~ — **DONE.** Superseded by the backend itself running on the appliance; see §13.6.
 
 ---
 
@@ -1678,7 +1680,7 @@ The appliance (Linux/aarch64) is the gate. macOS and Windows are dev-parity.
 8. **JPMS or classpath — NEW, needs a call (§10.1).**
    The spec assumed a `module-info.java`. Two facts found since: `zoxweb-core` ships **no** `module-info` and **no** `Automatic-Module-Name`, so `requires` would bind to a jar-filename-derived module name; and **no other no-sneak module uses JPMS at all**. Declaring a module here buys compile-time encapsulation of the `platform.*` packages and costs a brittle `requires` plus a launcher flag that must match the actual load mode.
    **RESOLVED: no `module-info.java`.** `platform.*` stays internal by convention, and the flag is `--enable-native-access=ALL-UNNAMED` everywhere — launcher and Surefire `argLine` (§10.3). Confirmed empirically, and then re-confirmed the way that counts: the subsystem runs correctly under **jar-loader** with `--enable-native-access=ALL-UNNAMED` (§13.12), which is the production load path the earlier plain-`-cp` evidence could not reach. The named form would silently fail to grant access and produce the very warning it was meant to suppress.
-   The one residual risk is that jar-loader might load this module as *named* in production, which would flip the correct flag. The spike prints which form applies on every run, so the appliance run re-checks it for free. Revisit only if the rest of no-sneak adopts JPMS.
+   The residual risk — that jar-loader might load this module as *named* in production and flip the correct flag — has been checked and did not materialise: the subsystem runs correctly under jar-loader with `ALL-UNNAMED` on both x86-64 and aarch64 (§13.6). Revisit only if the rest of no-sneak adopts JPMS.
 
 ---
 
@@ -1692,28 +1694,32 @@ The appliance (Linux/aarch64) is the gate. macOS and Windows are dev-parity.
 2. ~~Shared codecs (§5) + full unit tests (§11.1) — entirely host-independent, highest confidence per unit of effort.~~ — **DONE.** Six classes in `io.xlogistx.nosneak.net.codecs`, **94 codec tests** (the suite is larger now). `InternetChecksum`, `ArpPacket`, `Icmp4Echo`, `Icmp6`, `TtlDistance` as specced, plus `Ipv6Header` (see §13.3). Run with `mvn -o -pl no-sneak-net test -DskipTests=false`.
 3. ~~`IpMacCache` (§9) + tests (§11.3).~~ — **DONE.** In `io.xlogistx.nosneak.net.util`, **26 tests**, suite now 120 green. Aging driven by an injected `Clock` so transitions are exact rather than sleep-based. See §13.4.
 4. ~~`PingResult.of` aggregation + tests (§11.4) — still no native.~~ — **DONE.** 18 tests, suite now 138 green. **This is the last step before the §13.1 gate.** See §13.5 for the one case §3.3 did not cover.
-5. ~~**aarch64 appliance spike (§13.1).** Gate: do not proceed past this point.~~ — **SUPERSEDED AND DELETED.** The spike existed to answer three questions before the backend was written; all three have since been answered by the backend itself running on real Linux hardware (§13.12): libc downcalls and `captureCallState("errno")` work, `AF_PACKET`/`SOCK_DGRAM` ARP round-trips with the ethertype read from `sll_protocol`, and `SOCK_RAW` delivers the full IPv4 header with a usable TTL. `LinuxSpike` is gone. **What is still owed is the aarch64 run**, not the spike — §2.3 argues every layout is architecture-independent, and that argument wants one measurement on the appliance.
-6. ~~**Linux `ICMPPing`** — raw ICMP/ICMPv6 (§6.5), process-wide identifier allocation (§4.2), `SO_RCVTIMEO` shutdown (§4.4).~~ — **DONE and VERIFIED on live Linux hardware.** IPv4 echo returns real RTT and TTL; hop counts derive correctly. See §13.9 and §13.12.
-7. ~~**Linux `HostDiscovery`** — `AF_PACKET` ARP (§6.4, bound to ifindex) → NDP → passive observe.~~ — **DONE and VERIFIED on live Linux hardware.** A `/24` sweep resolves every live host. The first run exposed four defects, one of them a property of real segments rather than of the code — see §13.12. IPv6/NDP is still unexercised: this segment has no v6 neighbours.
+5. ~~**aarch64 appliance spike (§13.1).** Gate: do not proceed past this point.~~ — **SUPERSEDED AND DELETED.** The spike existed to answer three questions before the backend was written; all three have since been answered by the backend itself running on real Linux hardware (§13.12): libc downcalls and `captureCallState("errno")` work, `AF_PACKET`/`SOCK_DGRAM` ARP round-trips with the ethertype read from `sll_protocol`, and `SOCK_RAW` delivers the full IPv4 header with a usable TTL. `LinuxSpike` is gone. **The aarch64 appliance run is also done** (§13.6), so §2.3's architecture-independence claim is measured on both architectures rather than argued.
+6. ~~**Linux `ICMPPing`** — raw ICMP/ICMPv6 (§6.5), process-wide identifier allocation (§4.2), `SO_RCVTIMEO` shutdown (§4.4).~~ — **DONE and VERIFIED on live Linux hardware, x86-64 and aarch64.** IPv4 echo returns real RTT and TTL; hop counts derive correctly. See §13.9 and §13.12.
+7. ~~**Linux `HostDiscovery`** — `AF_PACKET` ARP (§6.4, bound to ifindex) → NDP → passive observe.~~ — **DONE and VERIFIED on live Linux hardware, x86-64 and aarch64.** A `/24` sweep resolves every live host. The first run exposed four defects, one of them a property of real segments rather than of the code — see §13.12. IPv6/NDP is still unexercised: this segment has no v6 neighbours.
 8. ~~`HostDiscoveryFactory`: the §3.8 wiring order, set-once injection, capability reporting, the `os.arch` precondition, and `Discovery.close()` ownership.~~ — **DONE and verified on live hardware** (Windows path; Linux/macOS raise a clear "not built yet" error naming the step). See §13.8.
 9. ~~`sweep()` fan-out with bounded in-flight window and pps pacing, **including the no-pinger degraded path**; `discoverIpv6Segment()`.~~ — **DONE** in both backends; Windows verified live (a /27 finds 11 hosts in ~1 s). **`maxPacketsPerSecond` was validated but NOT enforced until a doc audit caught it** — the API accepted a rate cap and silently ignored it, which is worse than not offering one. Now enforced by `util.RateLimiter`; see §13.11.
 10. Shutdown tests (§11.6) — verify before declaring the Linux backend done.
 11. **Ship v1 (Linux).**
 12. **PARTIALLY DONE — split by the §7.3 gate.** ICMP half (§7.5) is **written**: `DarwinIcmpPing`, unprivileged, `openIcmpOnly()` works. L2 half is **deliberately NOT written** — the neighbor-table ABI is `[VERIFY]` and the C probe must run on both Intel and Apple Silicon first. See §13.10.
-13. ~~v1.1: `WindowsPcapBackend` — library lookup and Npcap detection (§8.1) → device enumeration (§8.3) → frame send (§8.4) → capture loop (§8.5) → **dual-interface role and multi-NIC ping selection (§8.6), last**, since it depends on everything above it.~~ — **DONE, built out of order and VERIFIED ON LIVE HARDWARE.** See §13.7. Factory wiring (step 8) still pending.
+13. ~~v1.1: `WindowsPcapBackend` — library lookup and Npcap detection (§8.1) → device enumeration (§8.3) → frame send (§8.4) → capture loop (§8.5) → **dual-interface role and multi-NIC ping selection (§8.6), last**, since it depends on everything above it.~~ — **DONE, built out of order and VERIFIED ON LIVE HARDWARE.** See §13.7.
 14. Full matrix validation.
 
-### 13.1 The aarch64 spike — three items, half a day
+### 13.1 The aarch64 spike — RETIRED, gate passed
 
-Everything about privilege dropped out of this once the process runs as root. What remains:
+**This section is history. It prescribed a `LinuxSpike` class that no longer exists, behind a gate
+that is closed.** It asked three questions before anyone wrote the Linux backend:
 
 1. libc downcalls resolve through `defaultLookup()`, and `Linker.Option.captureCallState("errno")` returns a readable errno on a deliberate `-1`.
 2. `AF_PACKET` + `SOCK_DGRAM` ARP request round-trips against a known on-link host, with the **ethertype read from `sll_protocol` in the `recvfrom` sockaddr** and the source MAC from `sll_addr` (§6.4).
 3. `SOCK_RAW`/`IPPROTO_ICMP` echo returns the **full IPv4 header** with a plausible TTL at offset 8 (§6.5).
 
-Also confirm during this spike which `--enable-native-access` form applies given jar-loader's classloading (§10.2).
+Plus: which `--enable-native-access` form applies given jar-loader's classloading (§10.2).
 
-Each numbered step in §13 is independently compilable and testable. Do not proceed past step 5 without the spike passing.
+All four are now answered by the backend itself running on live hardware — x86-64 and the aarch64
+appliance — which is stronger evidence than a spike would have been. **§13.6 records what was run and
+what it proved.** Each numbered step in §13 remains independently compilable and testable; there is
+no longer any step you must not proceed past.
 
 ### 13.2 What step 1 added beyond §3
 
@@ -1810,10 +1816,14 @@ Two results from the earlier Windows-box run still stand and were re-confirmed: 
 (`sockaddr_in`=16, `sockaddr_ll`=20, `timeval`=16) are pinned by `LinuxLayoutTest`, and `ALL-UNNAMED`
 is the right flag.
 
-**Still owed: the aarch64 appliance run.** §2.3 argues every layout and constant is identical on
-x86-64 and aarch64, and the evidence above is all from x86-64. That is an argument, not a
-measurement. Run `hostscan list`, `resolve`, `ping` and a small `sweep` on the appliance and record
-the result here.
+**The aarch64 appliance run is DONE, 2026-07-27.** `hostscan list`, `resolve`, `ping` and `sweep`
+were all exercised on the appliance and all behave as they do on x86-64 — no arch-specific
+divergence, no layout surprise, no flag difference. §2.3's claim that every constant and struct
+layout in this document is identical on x86-64 and aarch64 is therefore **measured on both
+architectures** rather than argued from LP64 alone, and the `os.name`-only selection rule it licenses
+is safe to keep relying on.
+
+That closes the last Linux gate. The one remaining gate in the module is the macOS §7.3 ABI probe.
 
 ### 13.7 Step 13 — the Windows backend, and what running it taught us
 
@@ -1864,7 +1874,7 @@ Fixed with `NicBinding.isNetworkOrBroadcast`, backed by `LocalAddress.networkAdd
 
 ### 13.9 Steps 6 and 7 — the Linux backend
 
-> **RUN AND VERIFIED ON LIVE HARDWARE, 2026-07-27** (Linux x86-64, under jar-loader, as root). A `/24` sweep finds every live host with its MAC, hop count and RTT; `resolve` and `ping` both work. What that run exposed is in §13.12 — the code was structurally right and still failed on real hosts for a reason no amount of re-reading would have found. **The aarch64 appliance run is still owed** (§13.6).
+> **RUN AND VERIFIED ON LIVE HARDWARE, 2026-07-27** (Linux **x86-64 and aarch64**, under jar-loader, as root). A `/24` sweep finds every live host with its MAC, hop count and RTT; `resolve` and `ping` both work, on both architectures. What that run exposed is in §13.12 — the code was structurally right and still failed on real hosts for a reason no amount of re-reading would have found. The one part of this backend still untested on a wire is **IPv6/NDP**: the test segment has no v6 neighbours.
 
 | Class | Role |
 |---|---|
@@ -1878,7 +1888,7 @@ Fixed with `NicBinding.isNetworkOrBroadcast`, backed by `LocalAddress.networkAdd
 
 `LinuxLayoutTest` now pins all five struct sizes, the `sockaddr_ll` offsets, the platform-varying constants (`AF_INET6` = 10 here, 30 on Darwin, 23 on Windows), the byte-order helpers, and the §4.7 errno mapping — 8 tests that run anywhere. To keep them runnable off-Linux, `Libc`'s downcall handles moved into a lazily-initialised nested `Handles` class; resolving libc symbols in the outer static initialiser would make the constants unreadable on a dev machine.
 
-Design points worth knowing before the first appliance run:
+Design points worth knowing about this backend:
 
 - **The two ICMP families are deliberately asymmetric** (§4.2). IPv4 owns identifier *and* checksum and receives the full IP header, so TTL comes from offset 8 with no `recvmsg`. IPv6 owns the identifier but leaves the checksum **zero** — RFC 3542 makes it the kernel's job — and the kernel strips the IPv6 header, so hop limit is reported `-1`. An `ICMP6_FILTER` passing only type 129 keeps the reader from seeing every router advertisement on the segment.
 - **Both `AF_PACKET` sockets are `bind()`-ed to the ifindex.** Unbound, they receive from every interface, and the eth0 instance would learn eth1's neighbours into a cache that claims to be per-binding.
@@ -2098,7 +2108,7 @@ Result on the same segment: `resolve 10.0.0.108` went from `TIMEOUT` at 3008 ms 
 
 > Two things generalise. First, **the honest-degradation rule has a diagnosability twin**: a failure
 > that cannot be distinguished from a different failure is not honestly reported, however accurate
-> the enum is. Second, and the reason the §13.1 gate mattered even though it was never run: this
+> the enum is. Second, and the reason the §13.6 gate mattered even though its spike was never run: this
 > subsystem's assumptions are about *other people's networks*, and no amount of reading the code
 > tests those. A `/24` sweep on a real segment found in one run what a careful reading had missed
 > twice.
@@ -2123,7 +2133,7 @@ Made after v2 was written, in this order. Anything below in A.1 that contradicts
 - **Dependencies settled and the pom written** (§10.3): `zoxweb-core`, `xlogistx-common`, `xlogistx-core`, JUnit — all parent-version-managed. Release 25 confirmed inherited: `xlogistx-mvn` compiles at `${jdk.version}` which defaults to 8, and the no-sneak root pom overrides it to 25. Do not set `maven.compiler.release` locally.
 - **JPMS resolved** (§12.8): no `module-info.java`; `--enable-native-access=ALL-UNNAMED` everywhere, and the Surefire `argLine` is now set in the pom.
 - **Off-link ICMP on Windows REVERSED and implemented** (§8.7). The v2 draft ruled it out to avoid an `iphlpapi` binding; that binding is one function (`GetBestRoute2`) and one struct field, so §1's non-goal and §12.5's resolution are both superseded. Off-link now works on all three platforms. Verified against a live internet path.
-- **A CLI exists** (§14): `io.xlogistx.nosneak.net.tools.HostScan`, with a `hostscan.cmd` launcher. It is how the Windows backend was verified, and the fastest way to see the subsystem work.
+- **A CLI exists** (§14): `io.xlogistx.nosneak.net.tools.HostScan`. It is how the Windows and Linux backends were verified, and the fastest way to see the subsystem work. (A `hostscan.cmd` launcher existed briefly and was removed as redundant with IDE run configurations — see §14.)
 - **Gaps closed:** ICMP identifiers must be unique per socket **process-wide**, not per instance (§4.2); `AF_PACKET` sockets must be scoped to their ifindex or they receive every interface's traffic (§6.4); link-local IPv6 ping needs a scope id (§3.1); sweep pacing is per-sweep, so N concurrent sweeps through one pinger emit N× the cap (§3.2).
 
 ### A.1 Original v1 → v2 changes

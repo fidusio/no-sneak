@@ -16,7 +16,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * These are pure arithmetic over {@link MemoryLayout}s and run on ANY platform —
  * which is the point. A struct-size or field-offset typo is caught on a developer
  * machine rather than only on the appliance. What they cannot check is that these
- * layouts match the real C structs; that is what the §13.1 spike is for.
+ * layouts match the real C structs — that came from running the backend on live
+ * hardware, x86-64 and aarch64 (§13.6).
  */
 public class LinuxLayoutTest {
 

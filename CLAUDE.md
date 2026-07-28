@@ -8,15 +8,21 @@ Five modules, one-way dependencies (`no-sneak-app → ai-assistant → ai-model`
 | Module | What it is | Orientation |
 |---|---|---|
 | **`no-sneak-core`** | The scanning engine (TLS/PQC + protocol probes + network scanner) | `no-sneak-core/CLAUDE.md` |
-| **`no-sneak-net`** | Host discovery (ICMP/ARP/NDP over FFM) — **spec only, not yet built** | `no-sneak-net/CLAUDE.md` |
+| **`no-sneak-net`** | Host discovery (ICMP/ARP/NDP over FFM) — built; Linux and Windows verified on live hardware | `no-sneak-net/CLAUDE.md` |
 | **`no-sneak-app`** | Swing desktop front-end, session/security layer | `no-sneak-app/CLAUDE.md` |
 | **`ai-assistant`** | Swing window to send network data to third-party AI models and compare | `ai-assistant/CLAUDE.md` |
 | **`ai-model`** | The backend contract (DAOs + service interfaces, no implementations) | `ai-model/CLAUDE.md` |
 
-`no-sneak-net` is the one module whose `CLAUDE.md` describes code that does not exist yet: it is an
-authoritative build spec (base package `io.xlogistx.nosneak.net`, JDK 25 FFM, zero third-party
-dependencies), not a description of the module as it stands. Follow it rather than inferring design
-from the empty `NSNetUtil`.
+`no-sneak-net`'s `CLAUDE.md` is two documents in one: an authoritative build spec (base package
+`io.xlogistx.nosneak.net`, JDK 25 FFM, house libraries only) in §1–§12, and a running verification
+log in §13. The code is real — three backends, a `HostScan` CLI, 189 green tests — so §13 is where
+you learn what has actually touched a wire versus what merely compiles, and it is worth reading
+before trusting any claim in the earlier sections.
+
+**One gap is genuine and deliberate: macOS layer-2.** `HostDiscovery` throws there by design until
+the kernel neighbour-table ABI is measured by the C probe in `no-sneak-net/src/main/c` — §7.3 marks
+it `[VERIFY]` and forbids writing it from memory. macOS ICMP works. Linux IPv6/NDP is written but
+has never been exercised on a wire.
 
 ## The one thing to know before touching `no-sneak-core`
 

@@ -52,10 +52,12 @@ the maintainer merges. Vulnerability scanning, HTTP security-header analysis and
 compliance rules are not implemented yet — see `no-sneak-core/ACTION-PLAN.md`.
 
 `no-sneak-net` is new and **requires JDK 25** (FFM), unlike the rest of the reactor. Its API, codecs,
-cache and Windows backend are done, and the Windows path — including off-link routing through the
-gateway — is verified against live hardware. The Linux backend is written but has never been run,
-and macOS layer-2 is deliberately unwritten pending an ABI probe. `no-sneak-net/hostscan.cmd` is
-the quickest way to see it work; its `README.md` has the per-platform status.
+cache, factory wiring, `HostScan` CLI and both the Windows and Linux backends are done and verified
+against live hardware — the Windows path including off-link routing through the gateway, and the
+Linux path on **x86-64 and the aarch64 appliance**. Linux IPv6/NDP is written but has never been
+exercised on a wire, and macOS layer-2 is deliberately unwritten pending an ABI probe. The quickest
+way to see it work is `io.xlogistx.nosneak.net.tools.HostScan` (`hostscan list | resolve | ping |
+sweep`); its `README.md` has the run recipe and the per-platform status.
 
 External dependencies: zoxweb (`org.zoxweb.*`) and the `io-xlogistx` modules (`common`, `core`,
 `http`, `shiro`, `opsec`, `datastore`). **Bouncy Castle is the only cryptographic library.**
