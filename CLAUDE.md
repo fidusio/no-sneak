@@ -17,9 +17,10 @@ Five modules, one-way dependencies (`no-sneak-app → ai-assistant → ai-model`
 `io.xlogistx.nosneak.net`, JDK 25 FFM, house libraries only) in §1–§12, and a running verification
 log in §13. Anything in this repo that wants host discovery goes through **`HostScanner`** (§14.1) —
 a session you open once and run many pings, resolves and sweeps through; `HostScan` is a CLI over
-it. The code is real — three backends, that CLI, 215 green tests — so §13 is where
+it. The code is real — three backends, that CLI, 260 green tests — so §13 is where
 you learn what has actually touched a wire versus what merely compiles, and it is worth reading
-before trusting any claim in the earlier sections.
+before trusting any claim in the earlier sections. **§13.21 is the open-items list, split per
+platform** — start there if you are picking work up.
 
 **Every platform now has a layer-2 backend**; macOS was the last, and goes through libpcap rather
 than the kernel neighbour table §7.3 gated on — that ABI is retired, not measured (§13.14). macOS was

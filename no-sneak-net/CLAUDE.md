@@ -18,6 +18,13 @@ named subpackage:
 Matches the house layout — `io-xlogistx` uses the same `common` convention. This spec was
 originally written against `io.xlogistx.mgw.netdiscovery`; that name is superseded and must
 not reappear in code, module descriptors, or launch flags.
+
+> **Where to start.** §1–§12 are the build spec; **§13 is the verification log** — what has actually
+> touched a wire, per platform, with the numbers. All three backends are now live-verified (Linux
+> §13.9/§13.12/§13.13, Windows §13.7/§13.16/§13.17/§13.18, macOS §13.20). **§13.21 is the open-items
+> list, split per platform**, and is the right entry point for picking up work or handing it to
+> whoever owns a given machine. Sections §7 and §2.1 predate the macOS redesign — read §13.14 and
+> §13.20 before trusting them.
 **Runtime:** OpenJDK 25 (FFM stable API). Source targets JDK 25.
 **Architectures:** 64-bit only — `x86-64` and `aarch64`/`arm64`. 32-bit is out of scope and unsupported by the platform (FFM has no 32-bit linker implementation; `Linker.nativeLinker()` throws `UnsupportedOperationException`, and the Windows x86-32 port was removed in JDK 24 / JEP 479).
 **Deployment:** ARM aarch64 Ubuntu 20.04 appliance, **running as root** (primary). Dev/secondary: macOS (Intel + Apple Silicon), Windows 10/11 (x86-64 + arm64).
@@ -119,7 +126,7 @@ So: `ICMPPing` is host-scoped and has **no** `binding()`. `HostDiscovery` is per
 
 |                     | Linux (root)              | macOS                     | Windows (Npcap)           |
 |---------------------|---------------------------|---------------------------|---------------------------|
-| Binding             | libc (FFM)                | libc (FFM)                | `wpcap.dll` (FFM)         |
+| Binding             | libc (FFM)                | libc (ICMP) + `libpcap.dylib` (L2), both FFM | `wpcap.dll` (FFM)         |
 | Object model        | 2 objects (§2.0)          | 2 objects (§2.0)          | **1 object, 2 interfaces** (§8.6) |
 | ICMPv4              | `SOCK_RAW`/`IPPROTO_ICMP` | `SOCK_DGRAM`/`IPPROTO_ICMP` | crafted over pcap       |
 | ICMPv6              | `SOCK_RAW`/`IPPROTO_ICMPV6` | `SOCK_DGRAM`/`IPPROTO_ICMPV6` | crafted over pcap   |
@@ -127,7 +134,7 @@ So: `ICMPPing` is host-scoped and has **no** `binding()`. `HostDiscovery` is per
 | NDP                 | `AF_PACKET`, crafted NS   | crafted NS over libpcap   | crafted NS         |
 | Passive observation | yes                       | yes (§13.14)              | yes (promisc)             |
 | TTL available       | **yes** (IPv4 only)       | no                        | **yes**                   |
-| Raw evidence        | yes                       | no                        | yes                       |
+| Raw evidence        | yes                       | yes (§13.14)              | yes                       |
 | Off-link ICMP       | yes (kernel routes)       | yes (kernel routes)       | yes (`GetBestRoute2`, §8.7) |
 | Privilege           | root                      | root for L2, none for ICMP | Npcap install            |
 
@@ -1256,9 +1263,20 @@ The **Owner** column is the §2.0 split made concrete: the two ICMP sockets exis
 
 ## 7. macOS native backend  **[IMPLEMENT]**
 
-Package `io.xlogistx.nosneak.net.platform.darwin`. Binds `libc` via `Linker.nativeLinker().defaultLookup()`. No pcap, no BPF, no `ioctl`.
+Package `io.xlogistx.nosneak.net.platform.darwin`. Binds `libc` via `Linker.nativeLinker().defaultLookup()` **for ICMP**, and libpcap for layer 2.
 
-**This backend is deliberately the least capable of the three.** It provides ICMP liveness and MAC resolution, and nothing else. `capabilities()` must report `passiveObservation == false`, `ttlAvailable == false`, `rawEvidence == false`.
+> **SUPERSEDED IN PART BY §13.14 AND §13.20 — read those before this section.** This section was
+> written for a macOS backend that read the kernel neighbour table via `sysctl` and could not see the
+> wire. That design was replaced: **L2 now goes through libpcap**, so "No pcap, no BPF, no `ioctl`"
+> is no longer true, §7.3's `[VERIFY]` gate is retired rather than passed, and §7.4's provoke-and-poll
+> flow is dead. §7.1, §7.2 and §7.5 (constants, sockaddr layouts, the ICMP path) are still current.
+>
+> The capability line below is also wrong now, and §13.20 measured it: `passiveObservation` and
+> `rawEvidence` are **true** (capture is what pcap is), and only `ttlAvailable` is still false —
+> because the pinger owns ICMP on a datagram socket that strips the IP header, so the capture sees a
+> TTL it has no way to hand over.
+
+~~**This backend is deliberately the least capable of the three.** It provides ICMP liveness and MAC resolution, and nothing else. `capabilities()` must report `passiveObservation == false`, `ttlAvailable == false`, `rawEvidence == false`.~~
 
 ### 7.1 Constants  **[REFERENCE — macOS]**
 
@@ -2774,6 +2792,71 @@ under-report §3.2 documents, not a hang or a fault.
 **Still not exercised on macOS:** anything needing an IPv6 neighbour that answers multicast (none on
 this segment), and the arena-shutdown race under sustained capture (readers were short-lived here).
 The layout was never the risk — the 24-byte `pcap_pkthdr` was already proven on Linux (§8.5).
+
+---
+
+### 13.21 Open items by platform — a code review after the macOS bring-up
+
+Every backend has now touched a wire, so what is left is **drift and diagnosability rather than
+"does it work"**. This section is organised per platform because that is how the work has to be
+handed out: the macOS items need a Mac, the Linux items need the appliance, and the shared ones can
+be done anywhere.
+
+Each item states the evidence (file:line), why it matters, and **how to tell whether it is fixed** —
+because §13's whole discipline is that a claim without a measurement is a claim written as prose.
+
+Nothing here is a regression from §13.20; the numbers in that section stand.
+
+#### macOS — needs a Mac
+
+| # | Item | Evidence | Why it matters | How to verify the fix |
+|---|---|---|---|---|
+| M1 | **BPF filter is missing `ip6`**, so general IPv6 traffic is never captured. `icmp` is also redundant (a subset of `ip`), so the expression is simultaneously longer and narrower than Windows'. | `DarwinPcapBackend:111` = `"arp or icmp or icmp6 or ip"`; `WindowsPcapBackend:56` = `"arp or ip or ip6"` | §13.17 measured this exact gap on Windows: two identical 60 s listens gave **2 neighbours vs 9**, and two of the nine never appeared in a `/24` sweep at all (randomised-MAC phones found only by their announcements). §13.20's two Wi-Fi hosts that answered ICMP with **no MAC** are that same population, and Apple devices announce over IPv6 multicast constantly — so this is the most likely single improvement to macOS MAC coverage. | `observe 60` twice on the same segment within the hour, before and after. Report both counts. **If the number does not move, revert it** — that is what §13.17 did, and the measurement is the deliverable, not the change. |
+| M2 | **Passive-learning guard is inlined and untested**, and is **missing `!source.isMulticastAddress()`**. | Inline at `DarwinPcapBackend:619-623`; Windows has it extracted as `learnable(...)` at `WindowsPcapBackend:873-882`, pinned by `PassiveLearningTest` | §13.17: a passive entry is served back as a `CACHE_HIT`, so a wrong one is a wrong **answer**, not a wasted frame. The decisive guard is **on-link**, because an off-link sender's frames arrive bearing the *router's* MAC. | Extract to one shared static (e.g. `common/PassiveLearning`) used by Windows *and* Darwin, re-point `PassiveLearningTest` at it, add Darwin cases (`fe80::` sender, `169.254/16` sender, the mDNS group address). **Runs on Windows** — no Mac needed for the test, only for M1's measurement. |
+| M3 | **A failed injection is indistinguishable from a silent host.** `handle.send(...)` returns a boolean that is discarded. | `DarwinPcapBackend:373`, `:376`, `:408` discard it (`probeInjection:194` does use it). `PcapHandle.lastError()` exists and is never called by this backend | §13.20 proved injection works on that Mac's Wi-Fi, so this is not urgent — but §13.12's rule stands: *a failure that cannot be distinguished from a different failure is not honestly reported, however accurate the enum is.* Linux fixed this with `lastSendError` + `PendingResolve.sendError`; macOS reproduces the original defect. | On a host that refuses injection (or with injection deliberately broken), `resolve` must report `ResolveOutcome.ERROR` carrying pcap's text, not a bare `TIMEOUT` at the caller's budget. |
+| M4 | **Two capability literals that cannot degrade.** `rawEvidence = true` has **no delivery path** — nothing in `ObservedNeighbor` carries bytes, and `PingProbe.rawReply` is filled with `new byte[0]` by `DarwinIcmpPing`, which honestly reports `rawEvidence == false`. `passiveObservation = true` is weaker than Linux's, because `observe()` can never enable promiscuous mode: the handle opens `promiscuous=false` and `pcap_create`/`pcap_set_promisc`/`pcap_activate` are not bound. | `DarwinPcapBackend` capability block (`:209-210`); `LinuxHostDiscovery:561-573` upgrades on first subscription | Same class as §13.10.1's literal `true` for both ICMP families, in a file whose own javadoc argues literals cannot degrade. The two objects currently contradict each other about `rawEvidence`. | Either wire the capability or report it honestly. Pin it with a pure `capabilitiesOf(canInject, binding, pingerCaps)` unit test — **runs on Windows**. |
+| M5 | **`open()`'s failure message always blames privilege.** Every `DiscoveryException` from `PcapHandle.open` is wrapped in the `/dev/bpf* is mode 0600 … requires root` explanation. | `DarwinPcapBackend:161` | Much less severe since §13.20 filtered tunnels out earlier, but a device-not-up or datalink failure still reads as a privilege problem — and §13.20 records that this exact framing caused a wrong diagnosis once already ("you are root and the message says you need root"). | Prepend the root explanation only when the cause plausibly is privilege ("Permission denied" / "Operation not permitted"); otherwise lead with pcap's own text and the device name. |
+| M6 | **ARP resolve completes on a request or gratuitous ARP, not only a reply**, yet labels the provenance `ACTIVE_ARP`. | `DarwinPcapBackend:592` runs before the `isReply()` classification at `:594-595` | §4.2 explicitly accepts gratuitous satisfaction, so the completion is fine — the **label** is what is dishonest, and `ResolveSource` exists precisely to carry provenance accurately. | A gratuitous ARP satisfying a pending resolve should not report `ACTIVE_ARP`. |
+| M7 | **An IPv6-only interface can never do NDP.** `canInject` gates both `activeArp` and `activeNdp`, and `probeInjection` returns false when the binding has no IPv4 — but NDP needs no IPv4. | `DarwinPcapBackend:179-181`, `:203-207` | Same logic exists on Windows, so it is parity rather than a Darwin regression — but it silently disables a capability the platform has. | Probe injection per family, or gate `activeNdp` on something that is not an IPv4 ARP probe. |
+| M8 | **Handle leak on an unusual failure path.** `open` guards `setFilter` with `handle.close()` but `probeInjection` and `startReader` are unguarded, so a `RuntimeException` from either leaks the open `pcap_t` and its shared arena. | `DarwinPcapBackend:156-167` | Unlikely (both are null-guarded), but the arena is exactly what §13.7 found leaking on Windows. | Wrap the remaining construction stages in the same guard. |
+| M9 | **Not yet exercised on macOS:** an IPv6 neighbour that answers multicast, and the arena-shutdown race under sustained capture. | §13.20 | `discoverIpv6Segment` returning empty in ~3 ms is *correct* on that segment (`ff02::1%<ifIndex>` gets `EHOSTUNREACH`, and macOS's own `ping6 -I en0 ff02::1` fails identically), so this needs a different segment, not a fix. | A segment with a responsive v6 neighbour; and a long `observe` or repeated sweeps to keep readers alive across a `close()`. |
+
+#### Linux — needs the appliance
+
+| # | Item | Evidence | Why it matters |
+|---|---|---|---|
+| L1 | **IPv6/NDP has still never been on a wire.** | §13.9, and §13.20 confirms the Mac segment had no responsive v6 neighbour either | This is now **the module's only remaining unproven claim**. It needs a segment with a v6 neighbour that answers, on any platform — whoever finds one first closes it for everybody. |
+| L2 | **`sweepOne` uses `reachable()`/`avgRtt()` where §13.18 says `measured()`.** | `LinuxHostDiscovery:651-665` (and `DarwinPcapBackend:471-491`) | §13.18 claims *"all three backends use `measured()` before publishing an RTT"* — **that is false; only Windows does.** Harmless today because only Windows manufactures `PingProbe.localInterface` probes, but it is the shape that fabricated `icmp 0.000 ms`, and the doc sentence is the §13.19 prose-decay failure. Fix both backends and correct the sentence. |
+| L3 | **Passive-learning guard inlined**, same as macOS M2. | `LinuxHostDiscovery:848` | Folded into M2 if that becomes one shared static. |
+
+#### Windows — verified, nothing platform-specific outstanding
+
+§13.7, §13.15, §13.16, §13.17 and §13.18 cover it. It is affected only by the shared items below and
+by M2/L2 if those become shared statics.
+
+#### Shared / any platform — can be done on the Windows dev box
+
+| # | Item | Evidence | Why it matters |
+|---|---|---|---|
+| S1 | **`PcapPlatform.current()` maps `"Darwin"` to Windows.** `os.contains("win")` is tested first, and **`"darwin".contains("win")` is true**, so the `darwin` clause is unreachable. Meanwhile `HostDiscoveryFactory.Platform.current()` tests mac/darwin first and would select the macOS backend — **the two dispatchers disagree**. | `PcapPlatform.current()`; `HostDiscoveryFactory.Platform.current()` | Latent, because real macOS JVMs report `Mac OS X` — which is why §13.20 did not hit it. But the author clearly intended `"Darwin"` to work, and the failure mode is telling a Mac user to install Npcap. **Fix:** extract `forOsName(String)` on both and add one test walking `{"Mac OS X", "Darwin", "Windows 11", "Linux"}` asserting **the two agree** for every string. The cross-check is worth more than either assertion alone. |
+| S2 | **One BPF filter constant, not two.** M1 exists because the two backends each hold their own string and drifted. | `DarwinPcapBackend:111`, `WindowsPcapBackend:56` | Hoist to one shared constant in the `pcap` package with §13.17's rationale attached, so this cannot happen a third time. |
+| S3 | **Shared errno capture segment across two send locks.** One `CAPTURE` segment is used under both `v4SendLock` and `v6SendLock`, so a concurrent v4+v6 send can cross-contaminate the errno read. | `DarwinIcmpPing:61`, used at `:235-239` and `:252-256`; `LinuxHostDiscovery.sendPacket` has the same pattern | Module-wide, not macOS-specific. It corrupts exactly the diagnostic §13.12 went to a packet capture to obtain. |
+| S4 | **Spec text still describing the replaced macOS design.** §7's header and capability line (now annotated), §2.1's binding and raw-evidence rows (now corrected), plus still-stale: **§3.7** `passiveObservation // macOS: NO.`; **§3.2** `observe()` "on backends without passive support (macOS) … never fires"; **§4.6** table and point 1 (macOS knows `neighborResolutionPending` "via `sysctl`" — that path is gone and the flag is permanently false); **§7.4** entirely; **§3.4** `ResolveSource.KERNEL_TABLE // (macOS backend)`, now produced by no backend; **§11** and **§13.6** closings ("the only gate still standing is the macOS §7.3 ABI probe"); `DarwinLibc`'s class javadoc, which still argues for the neighbour-table approach; and `HostDiscoveryFactory.Platform.notYetBuilt`, unreferenced with a stale message. | — | §13.19's lesson, verbatim: *"a capability claim written as prose degrades even worse than one written as a literal … when a doc string names a platform, it is an assertion about that platform and needs the same evidence as a test."* |
+| S5 | **Dead surface.** `DarwinLibc.Handles.SYSCTL` and the five route constants (`AF_LINK`, `CTL_NET`, `PF_ROUTE`, `NET_RT_FLAGS`, `RTF_LLINFO`) have no caller in `src/main` — only `DarwinLayoutTest` asserts them. `provokeReply`'s hint check is unreachable (`resolve` already returned `CACHE_HIT` for any target with a cached MAC). | `DarwinLibc:42,48-51,126-128`; `DarwinPcapBackend:303` | Leftovers of the retired §7.3/§7.4 design. Harmless, but they imply a code path that no longer exists. |
+| S6 | **The §13.15 open design question stays open.** Backends complete futures **inline on the reader thread**; a fix that hopped them onto the dispatcher was written and **reverted at the maintainer's request**. | §13.15 | macOS makes the shape slightly worse than either verified platform: a Darwin sweep's `thenAcceptBoth` (`DarwinPcapBackend:471`) has two inputs completing on *different* reader threads — the per-NIC pcap reader and the JVM-wide ICMP reader — so one blocking continuation can stall either that NIC's capture or ICMP for the whole JVM. Worth knowing while diagnosing a hang; **not to be changed as part of this work**, because it changes which thread every measurement is taken on and would make new timings incomparable with §13.12/§13.16/§13.20. |
+
+#### What was predicted and did not happen
+
+Recorded so the next platform bring-up calibrates on it rather than on the fear: §13.14 predicted
+three traps for macOS — the read-timeout RTT floor, an arena closed under an active downcall, and
+silent Wi-Fi injection failure. **None occurred** (§13.20). The two bugs that did occur were both in
+the **shared factory/loader layer**, not in the Darwin backend, and both were of a shape the module
+had already met once: an all-or-nothing open (§13.10.1, here at *interface* scope) and a library
+lookup assumption that held on one OS and not another.
+
+The generalisable version: **the per-platform code was in better shape than the code that chooses
+between platforms.** Two of the four items above (S1, S2) are the same failure waiting to happen
+again.
 
 ---
 
