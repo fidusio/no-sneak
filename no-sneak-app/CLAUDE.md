@@ -22,10 +22,10 @@ scanner and file-sharing screens are still placeholders.
 >
 > **Still stubbed:** passkey (login/register are empty `void` no-ops), the security-manager admin
 > tables, the scanner/file-sharing screens, and — in the AI assistant — the Job-queue and
-> Screen-capture pages, the manual "pick which keys to use" flow (providers are still auto-added),
-> and the multi-model compare path. (The assistant's provider discovery, single-provider chat send
-> **with message persistence**, and full **History + Skills CRUD** are wired now — see
-> `ai-assistant/CLAUDE.md`.)
+> Screen-capture pages, and the multi-model compare path. (The assistant's provider discovery,
+> the user-picked provider flow — keys are enabled per credential via `Session.setAssistantEnabled`
+> / `assistant-enabled`, not auto-added — single-provider chat send **with message persistence**,
+> and full **History + Skills CRUD** are wired now — see `ai-assistant/CLAUDE.md`.)
 
 ## Layout
 

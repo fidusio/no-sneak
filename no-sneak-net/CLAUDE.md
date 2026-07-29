@@ -2364,17 +2364,13 @@ stays unprivileged, which is what keeps §13.10.1's degraded path usable — and
 falls back to it, so an unprivileged `ping` and `list` still work. The open failure names `/dev/bpf`
 explicitly, because "permission denied" on a Mac almost always means exactly that.
 
-> **WRITTEN, NEVER RUN.** No Mac was available. §13.7 found three bugs in the Windows pcap backend
-> that only live hardware could surface — a read timeout acting as an RTT floor, an arena closed under
-> an active downcall, and injection silently failing on Wi-Fi — and §13.12 found a fourth class on
-> Linux. Expect the same here. The read-timeout trap in particular is waiting: BSD BPF buffers until
-> its buffer fills or the timeout expires, which is the exact mechanism behind the 197 ms reading in
-> §13.7, so measure a one-hop RTT early.
->
-> What is *not* guesswork is the layout. Darwin's 24-byte `pcap_pkthdr` with `caplen` at 16 was
-> confirmed by opening a live handle and capturing real frames — on Linux, which shares those offsets
-> (§8.5). The struct most likely to fail silently is already proven; what remains untested is
-> behaviour.
+> **VERIFIED ON HARDWARE (§13.20).** Brought up on Apple Silicon on 2026-07-29. The predicted
+> read-timeout trap did *not* bite — one-hop L2 RTTs were sub-millisecond and sweep timings sane — and
+> Wi-Fi injection was *not* refused (a `/25` sweep resolved 17–19 MACs over en0). Two different
+> live-only bugs surfaced instead, neither in this class: libpcap would not load at all (dyld
+> shared-cache soname, not an on-disk path — §13.20), and one non-Ethernet interface aborted the whole
+> factory open (§13.20). The layout was never the risk — Darwin's 24-byte `pcap_pkthdr` with `caplen`
+> at 16 was already proven on Linux (§8.5) — and behaviour is now proven too.
 
 ---
 
@@ -2727,6 +2723,57 @@ returned even when the streams are redirected, so its presence proves nothing; u
 predicate would restore the hang silently, on headless appliances specifically. Verified all three
 ways on Linux: redirected stdin prints usage and exits 0 with no session line, a real pty (`script
 -qec`) opens the shell, and `shell` with piped commands still reports `FULL` and runs them.
+
+---
+
+### 13.20 macOS brought up on Apple Silicon — two live-only bugs, neither the one predicted
+
+**2026-07-29, Apple Silicon (arm64), macOS 26.5, JDK 25, on a live 10.0.0.0/24.** `DarwinIcmpPing`
+and `DarwinPcapBackend` moved packets end to end for the first time. What actually ran:
+
+- **ICMP (unprivileged, no root).** Gateway one-hop `0.7 ms`, off-link `8.8.8.8` routed by the kernel
+  at `~16 ms`, IPv6 `::1`, and an IPv6 link-local neighbour over `en0` all replied. `ttl` prints
+  `n/a` and sequence-only correlation holds, exactly as §13.10 specifies.
+- **Layer 2 (root).** `resolve 10.0.0.1` → `RESOLVED` via `ACTIVE_ARP` in `15 ms`; a `sweep
+  10.0.0.0/25` found **19 hosts with MACs over the wired en7 and 17–19 over Wi-Fi en0** — so pcap
+  injection is *not* refused on this Mac's Wi-Fi, the case §8.6/§13.14 flagged as the likely trap;
+  `observe` caught **11 ARP requests** once there was traffic; self-address resolved instantly to
+  `LOCAL_INTERFACE`. The two Wi-Fi hosts that came back ICMP-alive without a MAC are the §13.16 DTIM
+  broadcast-suppression case, degrading honestly (`icmpAlive` true, `mac` empty).
+
+The **predicted** bugs did not appear: no read-timeout RTT floor (§13.7), no arena-closed-under-downcall,
+no silent Wi-Fi injection failure. Two *different* live-only bugs did, and both were in the shared
+factory/loader layer rather than in the darwin backend:
+
+1. **libpcap would not load at all.** `PcapPlatform.DARWIN` was constructed as `DARWIN("pcap")` and
+   fell back to on-disk `searchPaths` of `/usr/lib/libpcap.dylib`. On **macOS 11+ the system dylibs
+   have no on-disk file** — they are served from the dyld shared cache — so `Files.isReadable` matched
+   nothing, and the bare-name lookup `libraryLookup("pcap")` fails because macOS `dlopen` does not
+   synthesize the `lib`/`.dylib` affixes the Windows loader adds to `wpcap`. Every L2 open therefore
+   reported "libpcap is not available" instead of the truthful "needs root". **Fix:** the DARWIN
+   soname is now the full `libpcap.dylib`, which resolves through the shared cache (verified: `pcap`
+   fails, `libpcap.dylib` and `libpcap.A.dylib` load). The searchPaths remain for pre-11 systems.
+2. **One non-Ethernet interface aborted the whole factory open.** `usableInterfaces()` returned every
+   up, addressed, non-loopback NIC — including `utun*`/`gif`/`stf` tunnels — and `utun5` sorted first.
+   Its pcap datalink is not `DLT_EN10MB`, so `PcapHandle.open` rejected it, and the factory's open
+   loop rethrew on the first failure, taking en7 and en0 down with it. This is the §13.10.1
+   all-or-nothing trap one level up, at *interface* scope. **Fix, two parts:** `usableInterfaces()`
+   now also requires a hardware address, which excludes the L3-only tunnels (every L2 backend needs
+   the interface's own MAC as the ARP/NDP sender anyway, so a tunnel could never resolve); and the
+   open loop **skips** an interface whose backend will not open, keeping the successes and failing the
+   whole open only when *nothing* opened — aggregating causes so an unprivileged box still surfaces
+   its `/dev/bpf` message to the `ICMP_ONLY` fallback. On this Mac the interface list dropped from 10
+   to 4 (en7, en0, awdl0, llw0) and the session came up `FULL`.
+
+**`discoverIpv6Segment` returns in ~3 ms with nothing found, and that is correct here.** The all-nodes
+multicast echo to `ff02::1%<ifIndex>` gets `EHOSTUNREACH` on this segment — macOS's own `ping6 -I en0
+ff02::1` fails identically — so the active half sends nothing and the method returns the (empty)
+cached neighbour set. Our errno maps cleanly to `HOST_UNREACHABLE`; the fast return is the honest
+under-report §3.2 documents, not a hang or a fault.
+
+**Still not exercised on macOS:** anything needing an IPv6 neighbour that answers multicast (none on
+this segment), and the arena-shutdown race under sustained capture (readers were short-lived here).
+The layout was never the risk — the 24-byte `pcap_pkthdr` was already proven on Linux (§8.5).
 
 ---
 

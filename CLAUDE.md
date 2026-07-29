@@ -22,10 +22,10 @@ you learn what has actually touched a wire versus what merely compiles, and it i
 before trusting any claim in the earlier sections.
 
 **Every platform now has a layer-2 backend**; macOS was the last, and goes through libpcap rather
-than the kernel neighbour table §7.3 gated on — that ABI is retired, not measured (§13.14). Two
-claims still lack runtime evidence and are the ones to distrust: **macOS as a whole** (its L2 backend
-has never run, and the ICMP fixes have not been re-run on a Mac) and **Linux IPv6/NDP** (written,
-never on a wire).
+than the kernel neighbour table §7.3 gated on — that ABI is retired, not measured (§13.14). macOS was
+brought up on Apple Silicon on 2026-07-29 and now has runtime evidence like the others — active ARP,
+sweep over wired and Wi-Fi, and passive observe all moved packets (§13.20). One claim still lacks a
+wire and is the one to distrust: **Linux IPv6/NDP** (written, never on a wire).
 
 ## The one thing to know before touching `no-sneak-core`
 

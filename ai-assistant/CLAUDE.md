@@ -11,14 +11,22 @@ has chosen to use.
 > from it (`AssistantPanel` currently uses **Chat / Capture / Job Queue / History / Skills /
 > Providers** toggle buttons rather than the nav table in §1). What is wired today:
 >
-> - **Providers are real.** `AIAPIProvider` (this module) is a concrete `AIProvider` wrapping
->   `io.xlogistx.api.ai.AIAPI` (built by `AIAPIBuilder`), resolving the provider type from the
->   credential's `provider` property (`openai` / `gemini`+`google` / `anthropic`+`claude` /
->   `grok`+`xai`). `AssistantPanel.reloadProviders()` runs on login (from `no-sneak-app`'s
->   `onAuthChange`), off the EDT, adding a provider **per key** and then discovering each one's
->   models via `AIModelCatalog.refresh()` — i.e. providers are still **auto-added** from all of
->   the subject's keys. The Providers page lists the registered providers with a per-row
->   **Refresh** (`onRefreshProvider`, wired).
+> - **Providers are real, and user-picked.** `AIAPIProvider` (this module) is a concrete
+>   `AIProvider` wrapping `io.xlogistx.api.ai.AIAPI` (built by `AIAPIBuilder`), resolving the
+>   provider type from the credential's `provider` property (`openai` / `gemini`+`google` /
+>   `anthropic`+`claude` / `grok`+`xai`). `AssistantPanel.reloadProviders()` runs on login (from
+>   `no-sneak-app`'s `onAuthChange`), off the EDT, building a provider **per enabled key**
+>   (`AICredentialSource.enabledAPIKeys()`) and discovering each one's models via
+>   `AIModelCatalog.refresh()` — nothing is auto-added; a key is used only once the subject picks
+>   it. The Providers page is a `CardStack` (`list` / `add`): the list has a per-row **Refresh**
+>   (`onRefreshProvider`) and an **✕** that unlinks (`onRemoveProvider` → `setEnabled(key,false)`,
+>   drops it from the registrar, never deletes the credential); **+ Add Key** (`onAddProvider`)
+>   opens the `add` picker (`buildAddProvider`), which lists **all** source credentials not yet
+>   added. Selecting a row enables + discovers it; if the key's `provider` property does not
+>   resolve to a known type (`AIAPIProvider.resolveType`), `onSelectAddKey` first prompts for the
+>   provider type (`promptProviderType`) and writes the choice onto the credential's `provider`
+>   property — the write persists via `setEnabled`'s `updateCredential` (same key object).
+>   Selection persists on each credential's `assistant-enabled` property.
 > - **Model discovery drives the pickers.** A provider→model helper pair (`fillProviders` /
 >   `fillModels` / `bindProviderModels`) populates provider combos from the registrar and model
 >   combos from the selected provider's cached catalog (`models()`, never hardcoded). Used by the
@@ -50,9 +58,8 @@ has chosen to use.
 >
 > **Still target-only / stubbed:** the multi-model **compare** path (`asyncSend` is an empty
 > stub, no `AIRunner`); the **skill→request pipeline** (skills are stored, but nothing yet
-> selects which apply to a chat or assembles them into `AIRequest.skillsPrompt`); manually
-> **picking** which keys the assistant uses (see the rough edges — providers are still all
-> auto-added); the **Job queue** and **Screen capture** pages (all handlers empty).
+> selects which apply to a chat or assembles them into `AIRequest.skillsPrompt`); the **Job queue**
+> and **Screen capture** pages (all handlers empty).
 > `AICredentialSource` and `AIRepository` come from `no-sneak-app` (`SessionAICredentialSource`,
 > `AssistantStorage` over the H2P `APIDataStore`); the DAOs and interfaces live in **`ai-model`**
 > — see its CLAUDE.md. `no-sneak-app` builds
@@ -60,11 +67,8 @@ has chosen to use.
 > `AssistantPanel` on its `ASSISTANT` screen. The dependency is one-way
 > (`no-sneak-app → ai-assistant → ai-model`).
 >
-> **Known rough edges** (see the code, not yet fixed): providers are **auto-added** from every
-> key on login — the "pick a subset" flow (§6) is only **scaffolded** (`providerCards`,
-> `providerAddList`, `buildProviderCardsPanel`, `buildAddProvider`) and **not wired** into the
-> live Providers page, and `onAddProvider` / `onRemoveProvider` are empty (so the ✕ unlink is a
-> no-op); `refreshSkills()` is missing a `return` after its off-EDT `invokeLater`, so it also
+> **Known rough edges** (see the code, not yet fixed):
+> `refreshSkills()` is missing a `return` after its off-EDT `invokeLater`, so it also
 > touches the list once off the EDT; `onSend` silently returns when there is no current chat or
 > selected model (no feedback); a failed send leaves the unanswered `AIMessage` in the in-memory
 > chat (persist happens only on success).
@@ -270,14 +274,15 @@ cleared on logout by `clearProviders()`.
 
 ### Binding notes
 
-- **Providers.** `AssistantPanel.reloadProviders()` builds an `AIAPIProvider` per key on login
-  (off the EDT), discovers its models, and `put`s it in the `AIProviderRegistrar`; `clearProviders()`
-  empties the registrar on logout. `AssistantContext.addProvider(APIKey)` also exists (build +
-  register, **no** discovery) but is currently unused. Every key is still auto-added — the "pick a
-  subset" picker (§6) is only scaffolded (`providerCards` / `buildAddProvider` / empty
-  `onAddProvider` / `onRemoveProvider`), not wired.
+- **Providers.** `AssistantPanel.reloadProviders()` builds an `AIAPIProvider` per **enabled** key
+  on login (off the EDT), discovers its models, and `put`s it in the `AIProviderRegistrar`;
+  `clearProviders()` empties the registrar on logout. The `add` picker (`buildAddProvider` →
+  `availableKeys` / `onSelectAddKey`) enables + discovers a single chosen key; `onRemoveProvider`
+  disables it. `AssistantContext.addProvider(APIKey)` also exists (build + register, **no**
+  discovery) but is currently unused.
 - **Credentials.** `no-sneak-app`'s `SessionAICredentialSource` implements `AICredentialSource`; its
-  `APIKeys()` feeds `reloadProviders` (every API key auto-added).
+  `enabledAPIKeys()` feeds `reloadProviders`, `APIKeys()` feeds the picker, and `setEnabled(key,on)`
+  persists the choice on the credential's `assistant-enabled` property (via `Session`).
 - **Persistence.** `no-sneak-app`'s `AssistantStorage` implements `AIRepository` against the app's
   H2P `APIDataStore`, owner-scoped by subjectGUID. **Chats and skills both persist** — create,
   edit, and delete all round-trip through the store (`saveChat` inserts when there's no

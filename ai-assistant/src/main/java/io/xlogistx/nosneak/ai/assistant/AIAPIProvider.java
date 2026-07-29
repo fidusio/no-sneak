@@ -97,9 +97,9 @@ public class AIAPIProvider implements AIProvider {
         String p = provider.toLowerCase().replaceAll("[^a-z]", "");
         return switch (p) {
             case "openai" -> AIAPIBuilder.AIAPIType.OPEN_AI;
-            case "gemini", "google" -> AIAPIBuilder.AIAPIType.GEMINI;
-            case "anthropic", "claude" -> AIAPIBuilder.AIAPIType.ANTHROPIC;
-            case "grok", "xai" -> AIAPIBuilder.AIAPIType.GROK;
+            case "gemini", "google", "googlegemini" -> AIAPIBuilder.AIAPIType.GEMINI;
+            case "anthropic", "claude", "anthropicclaude" -> AIAPIBuilder.AIAPIType.ANTHROPIC;
+            case "grok", "xai", "grokxai" -> AIAPIBuilder.AIAPIType.GROK;
             default -> null;
         };
     }

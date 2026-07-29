@@ -85,13 +85,20 @@ public enum PcapPlatform {
     },
 
     /**
-     * Darwin's system libpcap, at {@code /usr/lib/libpcap.dylib}. Preinstalled — unlike
-     * Npcap this is not a dependency the operator has to satisfy, which is most of the
-     * argument for using it here at all.
+     * Darwin's system libpcap. Preinstalled — unlike Npcap this is not a dependency the
+     * operator has to satisfy, which is most of the argument for using it here at all.
+     * <p>
+     * The bare name is the full soname {@code libpcap.dylib}, not {@code pcap}: macOS
+     * {@code dlopen} does not synthesize the {@code lib} prefix or {@code .dylib} suffix
+     * the way the Windows loader adds {@code .dll}, so {@code libraryLookup("pcap")}
+     * fails. And on macOS 11+ the library has no on-disk file at all — it is served from
+     * the dyld shared cache — so the {@link #searchPaths()} fallback below never matches
+     * and the soname lookup is the only route that works. The paths remain for pre-11
+     * systems, where the files exist.
      * <p>
      * Capture still needs root: {@code /dev/bpf*} is mode 0600.
      */
-    DARWIN("pcap") {
+    DARWIN("libpcap.dylib") {
         @Override
         public List<Path> searchPaths() {
             return List.of(Path.of("/usr/lib/libpcap.dylib"),

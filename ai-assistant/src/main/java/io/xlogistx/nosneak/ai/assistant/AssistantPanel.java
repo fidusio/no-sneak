@@ -15,7 +15,9 @@ import java.awt.event.ActionEvent;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import static io.xlogistx.nosneak.ai.assistant.AssistantUtil.chatBubble;
 
@@ -52,7 +54,7 @@ public class AssistantPanel extends JPanel {
     private final JComboBox<String> editModelSelector = new JComboBox<>();
 
     private final CardStack providerCards = new CardStack();
-    private ListSection<AIProvider> providerAddList;
+    private ListSection<APIKey<String>> providerAddList;
 
     private final JTextField createPromptName = new JTextField();
     private final JComboBox<String> createProviderSelector = new JComboBox<>();
@@ -83,7 +85,7 @@ public class AssistantPanel extends JPanel {
         cardStack.add(new JScrollPane(buildJobQueuePanel()), "queue");
         cardStack.add(new JScrollPane(buildHistoryCards()), "history");
         cardStack.add(new JScrollPane(buildSkillCards()), "skills");
-        cardStack.add(new JScrollPane(buildProvidersCards()), "providers");
+        cardStack.add(new JScrollPane(buildProviderCardsPanel()), "providers");
         cardStack.add(new JScrollPane(buildScreenCapturePanel()), "capture");
 
         chatButton.addActionListener(_ -> cardStack.show("chat"));
@@ -140,9 +142,14 @@ public class AssistantPanel extends JPanel {
         composer.getInputMap().put(
                 KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.SHIFT_DOWN_MASK), "insert-break");
 
+
         JScrollPane composerScroll = new JScrollPane(composer,
                 JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
         composerScroll.setPreferredSize(new Dimension(0, 44));
+
+        JButton addSkill = new JButton(new IconUtil.PlusIcon(16));
+        JPanel temp = new JPanel();
+        temp.add(addSkill);
 
         sendButton = new JButton("Send");
         sendButton.addActionListener(_ -> onSend());
@@ -302,6 +309,9 @@ public class AssistantPanel extends JPanel {
         });
 
         return PanelBuilder.detail("Skill", () -> skillsCards.show("list"), panel -> {
+            editSkillInstructions.setLineWrap(true);
+            editSkillInstructions.setWrapStyleWord(true);
+
             PanelBuilder.addRow(panel, "Name", editSkillName);
             PanelBuilder.addRow(panel, "Description", editSkillDescription);
             PanelBuilder.addRow(panel, "Skill Instructions", editSkillInstructions);
@@ -330,6 +340,9 @@ public class AssistantPanel extends JPanel {
         });
 
         return PanelBuilder.detail("Skill", () -> skillsCards.show("list"), panel -> {
+            skillInstructions.setLineWrap(true);
+            skillInstructions.setWrapStyleWord(true);
+
             PanelBuilder.addRow(panel, "Name", skillName);
             PanelBuilder.addRow(panel, "Description", skillDescription);
             PanelBuilder.addRow(panel, "Skill Instructions", skillInstructions);
@@ -338,8 +351,8 @@ public class AssistantPanel extends JPanel {
     }
 
     public JPanel buildProviderCardsPanel() {
-        providerCards.add(buildProvidersCards(), "list");
-        providerCards.add(buildSkillEditor(), "editor");
+        providerCards.add(buildProviderPanel(), "list");
+        providerCards.add(buildAddProvider(), "add");
 
         providerCards.show("list");
         JPanel p = new JPanel(new BorderLayout());
@@ -347,7 +360,7 @@ public class AssistantPanel extends JPanel {
         return p;
     }
 
-    public JPanel buildProvidersCards() {
+    public JPanel buildProviderPanel() {
         providerList = ListSection.of(
                         context::getProvidersList
                 )
@@ -355,8 +368,7 @@ public class AssistantPanel extends JPanel {
                 .addButton(" + Add Key", this::onAddProvider)
                 .label(AIProvider::getName)
                 .emptyText("No providers")
-                .action(new ListSection.RowAction<>(new IconUtil.RefreshIcon(16), "Refresh models",
-                        p -> () -> onRefreshProvider(p)))
+                .onEdit(p -> () -> promptProviderType(p.getAPIKey()))
                 .onRemove(p -> () -> onRemoveProvider(p))
                 .build();
 
@@ -364,8 +376,77 @@ public class AssistantPanel extends JPanel {
     }
 
     public JPanel buildAddProvider() {
-        //providerAddList = ListSection.of();
-        return new JPanel();
+        providerAddList = ListSection.of(this::availableKeys)
+                .title("Nickname  *  Provider (if any)")
+                .label(this::keyLabel)
+                .emptyText("No keys available. Add one in NoSneak credentials.")
+                .action(new ListSection.RowAction<>(new IconUtil.PlusIcon(16), "Add to assistant",
+                        k -> () -> onSelectAddKey(k)))
+                .build();
+
+        return PanelBuilder.detail("Add a key", () -> providerCards.show("list"),
+                content -> content.add(providerAddList, "growx"));
+    }
+
+    private List<APIKey<String>> availableKeys() {
+        Set<String> enabled = new HashSet<>();
+        for (APIKey<String> k : context.getCredentials().enabledAPIKeys()) {
+            if (k.getAPIKey() != null) enabled.add(k.getAPIKey());
+        }
+        List<APIKey<String>> out = new ArrayList<>();
+        for (APIKey<String> k : context.getCredentials().APIKeys()) {
+            if (enabled.contains(k.getAPIKey())) continue;
+            out.add(k);
+        }
+        return out;
+    }
+
+    private String keyLabel(APIKey<String> key) {
+        String provider = providerOf(key);
+        if (AIAPIProvider.resolveType(provider) != null) return key.getName() + "  ·  " + provider;
+        return key.getName() + "  ·  choose provider";
+    }
+
+    private String providerOf(APIKey<String> key) {
+        Object v = (key.getProperties() != null) ? key.getProperties().getValue("provider") : null;
+        return v == null ? null : v.toString();
+    }
+
+    private static final String[] PROVIDER_DISPLAY = {"OpenAI", "Anthropic (Claude)", "Google (Gemini)", "Grok (xAI)"};
+    private static final String[] PROVIDER_CANONICAL = {"openai", "anthropic", "gemini", "grok"};
+
+    private String promptProviderType(APIKey<String> key) {
+        JComboBox<String> combo = new JComboBox<>(PROVIDER_DISPLAY);
+        int res = JOptionPane.showConfirmDialog(this, combo, "Provider for " + key.getName(),
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if (res != JOptionPane.OK_OPTION) return null;
+        return PROVIDER_CANONICAL[combo.getSelectedIndex()];
+    }
+
+    private void onSelectAddKey(APIKey<String> key) {
+        if (AIAPIProvider.resolveType(providerOf(key)) == null) {
+            String chosen = promptProviderType(key);
+            if (chosen == null) return;
+            if (key.getProperties() != null) key.getProperties().build("provider", chosen);
+        }
+        BackgroundTask.run(this, null,
+                () -> {
+                    context.getCredentials().setEnabled(key, true);
+                    AIAPIProvider p = AIAPIProvider.create(key);
+                    if (p != null) {
+                        try {
+                            p.getModelCatalog().refresh();
+                        } catch (Exception ignore) {
+                        }
+                    }
+                    return p;
+                },
+                p -> {
+                    if (p != null) context.getProviders().put(p.getName(), p);
+                    if (providerList != null) providerList.refresh();
+                    if (providerAddList != null) providerAddList.refresh();
+                    providerCards.show("list");
+                });
     }
 
     public JPanel buildScreenCapturePanel() {
@@ -562,22 +643,24 @@ public class AssistantPanel extends JPanel {
     }
 
     private void onAddProvider() {
-
+        if (providerAddList != null) providerAddList.refresh();
+        providerCards.show("add");
     }
 
-    private void onRefreshProvider(AIProvider provider) {
+
+    private void onRemoveProvider(AIProvider provider) {
+        if (provider == null) return;
         BackgroundTask.run(this, null,
                 () -> {
-                    provider.getModelCatalog().refresh();
+                    if (provider.getAPIKey() != null)
+                        context.getCredentials().setEnabled(provider.getAPIKey(), false);
                     return null;
                 },
                 r -> {
+                    context.getProviders().getCacheMap().remove(provider.getName());
                     if (providerList != null) providerList.refresh();
+                    if (providerAddList != null) providerAddList.refresh();
                 });
-    }
-
-    private void onRemoveProvider(AIProvider provider) {
-
     }
 
     private void onAddCapture() {
@@ -603,7 +686,7 @@ public class AssistantPanel extends JPanel {
     public void reloadProviders() {
         BackgroundTask.run(this, null, () -> {
             List<AIProvider> built = new ArrayList<>();
-            for (APIKey<String> key : context.getCredentials().APIKeys()) {
+            for (APIKey<String> key : context.getCredentials().enabledAPIKeys()) {
                 AIAPIProvider p = AIAPIProvider.create(key);
                 if (p == null) continue;
                 try {

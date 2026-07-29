@@ -92,9 +92,18 @@ import java.util.function.Consumer;
  * mean correlating captured echo replies against the pinger's in-flight probes across the
  * two objects. Worth doing; not done, and not claimed.
  *
- * <p><b>WRITTEN, NEVER RUN.</b> No Mac was available. Treat every claim here as
- * "implemented per spec", not "verified" — §13.7 and §13.12 are both cautionary tales
- * about what only real hardware finds.
+ * <p><b>VERIFIED ON HARDWARE.</b> 2026-07-29, Apple Silicon (arm64), macOS 26.5, JDK 25,
+ * on a live 10.0.0.0/24 over both a wired NIC (en7) and Wi-Fi (en0): active ARP resolved
+ * the gateway in 15 ms; a {@code /25} sweep found 19 hosts with MACs on both interfaces —
+ * so Wi-Fi injection is NOT refused here — passive {@code observe} caught 11 ARP requests,
+ * and self-address resolve short-circuited to {@code LOCAL_INTERFACE}. The bring-up did
+ * surface two live-only bugs, both outside this class: libpcap loads from the dyld shared
+ * cache by soname, not an on-disk path (see {@link io.xlogistx.nosneak.net.pcap.PcapPlatform}),
+ * and one non-Ethernet interface used to abort the whole factory open (see
+ * {@link io.xlogistx.nosneak.net.common.HostDiscoveryFactory}). IPv6 all-nodes multicast
+ * echo ({@code ff02::1}) is unroutable on this segment — macOS {@code ping6} fails the same
+ * way — so {@code discoverIpv6Segment} returns only cached neighbours, which is the
+ * documented under-report, not a fault.
  */
 public final class DarwinPcapBackend implements HostDiscovery {
 

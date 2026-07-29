@@ -12,4 +12,8 @@ public interface AICredentialSource {
 
     List<APIKey<String>> APIKeys();
 
+    List<APIKey<String>> enabledAPIKeys();
+
+    void setEnabled(APIKey<String> key, boolean enabled);
+
 }

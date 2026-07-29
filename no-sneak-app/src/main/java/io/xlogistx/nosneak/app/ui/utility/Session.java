@@ -53,7 +53,8 @@ public class Session {
         PROVIDER("provider"),
         BASE_URL("base-url"),
         AUTH_SCHEME("auth-type"),
-        HEADER_NAME("header-name");
+        HEADER_NAME("header-name"),
+        ASSISTANT_ENABLED("assistant-enabled");
 
         private final String name;
 
@@ -269,6 +270,20 @@ public class Session {
         NVGenericMap p = key == null ? null : key.getProperties();
         Object v = p == null ? null : p.getValue(APIKeyInfo.PROVIDER);
         return v == null ? null : v.toString();
+    }
+
+    public boolean isAssistantEnabled(APIKey<String> key) {
+        NVGenericMap p = key == null ? null : key.getProperties();
+        Object v = p == null ? null : p.getValue(APIKeyInfo.ASSISTANT_ENABLED);
+        return v != null && Boolean.parseBoolean(v.toString());
+    }
+
+    public void setAssistantEnabled(APIKey<String> key, boolean enabled) throws SecurityException {
+        if (subjectIdentifier == null) throw new SecurityException("Not signed in");
+        if (key == null) throw new SecurityException("Empty Key");
+
+        key.getProperties().build(APIKeyInfo.ASSISTANT_ENABLED, Boolean.toString(enabled));
+        domainSecurityManager.updateCredential(subjectIdentifier, key);
     }
 
     /**

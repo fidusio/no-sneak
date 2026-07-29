@@ -30,4 +30,18 @@ public class SessionAICredentialSource implements AICredentialSource {
         return out;
 
     }
+
+    @Override
+    public List<APIKey<String>> enabledAPIKeys() {
+        List<APIKey<String>> out = new ArrayList<>();
+        for (APIKey<String> k : APIKeys()) {
+            if (session.isAssistantEnabled(k)) out.add(k);
+        }
+        return out;
+    }
+
+    @Override
+    public void setEnabled(APIKey<String> key, boolean enabled) {
+        session.setAssistantEnabled(key, enabled);
+    }
 }

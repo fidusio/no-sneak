@@ -14,8 +14,10 @@ import java.net.NetworkInterface;
 import java.net.SocketException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -75,10 +77,27 @@ public final class HostDiscoveryFactory {
 
         List<HostDiscovery> backends = new ArrayList<>(nics.size());
         try {
-            // 1. per-interface backends
+            // One interface that will not open must not abort the rest (§13.20): keep the
+            // successes, fail the whole open only when nothing opened, and carry the causes
+            // so a no-privilege box still surfaces /dev/bpf to the ICMP-only fallback.
             Object context = platform.newContext();
+            Map<String, List<String>> skipped = new LinkedHashMap<>();
             for (NetworkInterface nif : nics) {
-                backends.add(platform.openBackend(nif, context, scheduler, dispatcher));
+                try {
+                    backends.add(platform.openBackend(nif, context, scheduler, dispatcher));
+                } catch (DiscoveryException | RuntimeException e) {
+                    skipped.computeIfAbsent(rootCause(e), k -> new ArrayList<>())
+                           .add(nif.getName());
+                }
+            }
+            if (backends.isEmpty()) {
+                StringBuilder why = new StringBuilder(
+                        "No interface could be opened for layer-2 discovery (tried "
+                        + nics.size() + "). ");
+                skipped.forEach((cause, ifaces) ->
+                        why.append(String.join(", ", ifaces)).append(": ").append(cause)
+                           .append(". "));
+                throw new DiscoveryException(why.toString().trim());
             }
             // 2. the pinger, over those backends where the platform needs them
             ICMPPing ping = platform.openPinger(backends, scheduler, dispatcher);
@@ -150,14 +169,22 @@ public final class HostDiscoveryFactory {
     }
 
     /**
-     * Every interface that is up, has an address, and is not loopback — the usual
-     * argument to {@link #open(List)}.
+     * Every interface that is up, has an address, is not loopback, and carries a
+     * hardware address — the usual argument to {@link #open(List)}.
+     * <p>
+     * The hardware-address requirement is what excludes L3-only tunnels: on macOS the
+     * enumeration is full of {@code utun}/{@code gif}/{@code stf} interfaces that are up
+     * and addressed but have no MAC, and every L2 backend needs the interface's own MAC
+     * as the ARP/NDP sender, so a backend could never resolve on one. Filtering them here
+     * keeps the factory from wastefully opening — and, when unprivileged, uselessly
+     * failing to open — a capture handle on each.
      */
     public static List<NetworkInterface> usableInterfaces() throws DiscoveryException {
         try {
             List<NetworkInterface> out = new ArrayList<>();
             for (NetworkInterface nif : Collections.list(NetworkInterface.getNetworkInterfaces())) {
-                if (nif.isUp() && !nif.isLoopback() && !nif.getInterfaceAddresses().isEmpty()) {
+                if (nif.isUp() && !nif.isLoopback() && !nif.getInterfaceAddresses().isEmpty()
+                        && nif.getHardwareAddress() != null) {
                     out.add(nif);
                 }
             }
@@ -178,6 +205,16 @@ public final class HostDiscoveryFactory {
                     "Unsupported architecture '" + arch + "': host discovery requires 64-bit "
                     + SUPPORTED_ARCH + ". The FFM API has no 32-bit linker implementation.");
         }
+    }
+
+    /** The deepest cause message, so a wrapped {@code /dev/bpf} reason is not buried. */
+    private static String rootCause(Throwable t) {
+        Throwable c = t;
+        while (c.getCause() != null && c.getCause() != c) {
+            c = c.getCause();
+        }
+        String msg = c.getMessage();
+        return msg != null ? msg : c.getClass().getSimpleName();
     }
 
     private static void closeQuietly(List<HostDiscovery> backends) {

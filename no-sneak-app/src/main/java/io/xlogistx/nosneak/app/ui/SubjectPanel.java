@@ -73,6 +73,9 @@ public class SubjectPanel extends JPanel {
     private static final String A_LABEL = "label", A_STREET = "street", A_CITY = "city",
             A_STATE = "state", A_POSTAL = "postal", A_COUNTRY = "country";
 
+    private static final String[] PROVIDER_DISPLAY = {"OpenAI", "Anthropic (Claude)", "Google (Gemini)", "Grok (xAI)"};
+    private final JComboBox<String> inProvider = new JComboBox<>(PROVIDER_DISPLAY);
+
     // ---- Data-driven sections (refreshed on auth) + detail card switching ----
     private ListSection<PrincipalIdentifier> identifiers;
     private ListSection<NVGenericMap> addressSection;
@@ -457,7 +460,7 @@ public class SubjectPanel extends JPanel {
         JTextField inDomainID = textField("e.g. xlogistx.io");
         JPasswordField inKey = new JPasswordField(28);
         inKey.putClientProperty("JTextField.placeholderText", "Your API key");
-        JComboBox<AIAPIBuilder.AIAPIType> inProvider = new JComboBox<>(AIAPIBuilder.AIAPIType.values());
+
         inProvider.setEditable(true);
         inProvider.setSelectedItem(null);
         JTextField inBaseURI = textField("e.g. https://api.anthropic.com");
@@ -633,7 +636,7 @@ public class SubjectPanel extends JPanel {
                     PanelBuilder.addRow(panel, "Domain ID", keyDomainID);
 
                     PanelBuilder.addSection(panel, "PROVIDER ENDPOINT");
-                    PanelBuilder.addRow(panel, "Provider", keyProvider);
+                    PanelBuilder.addRow(panel, "Provider", inProvider);
                     PanelBuilder.addRow(panel, "Base URL", keyURI);
 
                     PanelBuilder.addRow(panel, "", submit);
@@ -695,7 +698,7 @@ public class SubjectPanel extends JPanel {
 
         String appID = keyAppID.getText().trim();
         String domainID = keyDomainID.getText().trim();
-        String provider = keyProvider.getText();
+        String provider = Objects.requireNonNull(inProvider.getSelectedItem()).toString();
         String uri = keyURI.getText();
         String scheme = authScheme.getText();
         String header = headerName.getText();

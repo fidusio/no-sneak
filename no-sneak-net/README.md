@@ -13,26 +13,25 @@ Tier-1 probe engine. This module answers the question that comes before them.
 
 ## Status
 
-| Step | State |
-|---|---|
-| Public API, codecs, cache, ping aggregation | **done**, 192 tests green |
-| Windows (Npcap/pcap) backend | **done and verified on live hardware** |
-| Windows off-link routing (`iphlpapi`) | **done and verified against a live internet path** |
-| Factory wiring + `HostScan` CLI | **done and verified on live hardware** |
-| Linux ICMP (`SOCK_RAW`, v4 + TTL) | **done and verified on live hardware — x86-64 and aarch64** |
-| Linux ARP (`AF_PACKET`) | **done and verified on live hardware — x86-64 and aarch64** |
-| Linux passive IPv4 learning (`ETH_P_IP`) | **done and verified** — resolves hosts the kernel itself cannot reach |
-| Windows unicast-ARP retry + `GetIpNetEntry2` hint | **done and verified on live hardware** — resolves a host that ignores broadcast ARP (§13.16) |
-| Windows passive learning (`ip`/`ip6` + NDP NS) | **done and verified on live hardware** — finds hosts no sweep reaches (§13.17) |
-| Linux IPv6 / NDP | **written, never exercised on a wire** — no v6 neighbours on the test segment |
-| macOS ICMP | **run once, threw at startup; two all-or-nothing bugs fixed — needs re-test** |
-| macOS ARP/NDP | **written over libpcap, never run** — needs a Mac; §7.3's ABI gate is retired, not passed |
+| Step                                              | State                                                                                                                               |
+|---------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------|
+| Public API, codecs, cache, ping aggregation       | **done**, 192 tests green                                                                                                           |
+| Windows (Npcap/pcap) backend                      | **done and verified on live hardware**                                                                                              |
+| Windows off-link routing (`iphlpapi`)             | **done and verified against a live internet path**                                                                                  |
+| Factory wiring + `HostScan` CLI                   | **done and verified on live hardware**                                                                                              |
+| Linux ICMP (`SOCK_RAW`, v4 + TTL)                 | **done and verified on live hardware — x86-64 and aarch64**                                                                         |
+| Linux ARP (`AF_PACKET`)                           | **done and verified on live hardware — x86-64 and aarch64**                                                                         |
+| Linux passive IPv4 learning (`ETH_P_IP`)          | **done and verified** — resolves hosts the kernel itself cannot reach                                                               |
+| Windows unicast-ARP retry + `GetIpNetEntry2` hint | **done and verified on live hardware** — resolves a host that ignores broadcast ARP (§13.16)                                        |
+| Windows passive learning (`ip`/`ip6` + NDP NS)    | **done and verified on live hardware** — finds hosts no sweep reaches (§13.17)                                                      |
+| Linux IPv6 / NDP                                  | **written, never exercised on a wire** — no v6 neighbours on the test segment                                                       |
+| macOS ICMP                                        | **done and verified on live hardware — Apple Silicon (arm64)** — on/off-link v4, v6, link-local                                     |
+| macOS ARP/NDP                                     | **done and verified on live hardware — Apple Silicon (arm64)** — ARP, sweep, passive observe over libpcap, wired and Wi-Fi (§13.20) |
 
-Windows and Linux both have runtime evidence behind them now, on real segments rather than in
-principle. Three claims still do not, and they are the ones to distrust: **Linux IPv6/NDP** (written,
-never on a wire), **macOS ICMP** (the fixes have not themselves been run on a Mac), and **macOS
-layer-2** (written over libpcap, never run — see `CLAUDE.md` §13.14). Everywhere else, "done" means it
-moved packets.
+Windows, Linux **and now macOS** all have runtime evidence behind them, on real segments rather than
+in principle — macOS was brought up on Apple Silicon on 2026-07-29 (§13.20), which found and fixed the
+last two live-only bugs. One claim still lacks a wire: **Linux IPv6/NDP** (written, never on a wire —
+no v6 neighbours on the test segment). Everywhere else, "done" means it moved packets.
 
 **Broadcast ARP is not universally delivered, on either platform.** Wi-Fi access points buffer
 broadcast against the DTIM interval and commonly suppress it, so a station can be fully reachable by
@@ -47,10 +46,13 @@ wire. On Windows this took the host from a 3006 ms timeout and `HOST_UNREACHABLE
 The first macOS run (2026-07-27) threw before sending a packet, for two reasons that were both
 about *all-or-nothing wiring* rather than ICMP itself: `HostScan` demanded the full L2 wiring for
 every command, so the §7.3 gate exception killed even `ping`; and `DarwinIcmpPing.open` aborted the
-whole pinger when the IPv6 socket was refused, taking working IPv4 ICMP with it. Both are fixed —
-the fallback to `openIcmpOnly()` now lives in `HostScanner`, so every command degrades to
-`ICMP_ONLY` together rather than one at a time, and the two ICMP families open independently — but
-**the fix has not itself been run on a Mac.** See `CLAUDE.md` §13.10.1.
+whole pinger when the IPv6 socket was refused, taking working IPv4 ICMP with it. Both were fixed —
+the fallback to `openIcmpOnly()` lives in `HostScanner`, so every command degrades to `ICMP_ONLY`
+together rather than one at a time, and the two ICMP families open independently. See `CLAUDE.md`
+§13.10.1. The **2026-07-29 bring-up on Apple Silicon** (§13.20) then confirmed the whole platform on
+a wire and found the same *all-or-nothing* pattern one level up — a single non-Ethernet interface
+(`utun`) was aborting the entire factory open — plus a libpcap loader that could not find the
+dyld-cached library at all. Both are fixed and macOS now moves packets end to end.
 
 **The Linux backend runs on real hardware, on both supported architectures.** The §13.1 spike was
 superseded by the thing it existed to de-risk: `HostScan` lists, resolves, pings and sweeps live on
@@ -312,8 +314,10 @@ hardcoded false as a consequence of the neighbour-table design rather than of th
 stays false, because TTL reaches callers through `PingProbe` and the unprivileged datagram ICMP
 socket strips the IP header.
 
-**None of it has run on a Mac.** The 24-byte `pcap_pkthdr` it depends on was confirmed against live
-frames on Linux, which shares those offsets, so the layout is settled — but behaviour is not. Expect
-the BSD read-timeout trap in particular: BPF buffers until its buffer fills or the timeout expires,
-the same mechanism that made a 2 ms hop measure 197 ms on Windows, so check a one-hop RTT early.
+**It has now run on a Mac** (Apple Silicon, 2026-07-29 — §13.20). The 24-byte `pcap_pkthdr` it depends
+on was already settled against live frames on Linux, and behaviour is settled too: active ARP, sweep
+over wired and Wi-Fi, and passive observe all moved packets. The feared BSD read-timeout trap did not
+appear — one-hop L2 RTTs were sub-millisecond — and Wi-Fi injection was not refused. The two bugs the
+bring-up did find were elsewhere (a dyld-cache libpcap loader and an all-or-nothing factory open),
+both fixed.
 

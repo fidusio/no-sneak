@@ -73,6 +73,31 @@ public class APIKeyRoundTripTest {
     }
 
     @Test
+    public void assistantEnabledFlagRoundTrips() {
+        Session s = mockSession();
+        s.loginUsernamePassword("kailen", "Password1!".toCharArray());
+        assertDoesNotThrow(() -> s.storeAPIKey("ai-key", "desc", null, null, s.generateAPIKey().getAPIKey(), "openai", null, null, null, false));
+
+        SubjectAPIKey stored = firstApiKey(s);
+        assertNotNull(stored);
+        assertFalse(s.isAssistantEnabled(stored), "keys start disabled for the assistant");
+
+        assertDoesNotThrow(() -> s.setAssistantEnabled(stored, true), "enabling should succeed");
+        assertTrue(s.isAssistantEnabled(firstApiKey(s)), "enabled flag must round-trip");
+
+        assertDoesNotThrow(() -> s.setAssistantEnabled(firstApiKey(s), false), "disabling should succeed");
+        assertFalse(s.isAssistantEnabled(firstApiKey(s)), "disabled flag must round-trip");
+    }
+
+    @Test
+    public void setAssistantEnabledRejectedWhenSignedOut() {
+        Session s = mockSession();
+        SecurityException ex = assertThrows(SecurityException.class,
+                () -> s.setAssistantEnabled(new SubjectAPIKey(), true));
+        assertEquals("Not signed in", ex.getMessage());
+    }
+
+    @Test
     public void changeApiDetailsUpdatesLabelAndDescription() {
         Session s = mockSession();
         s.loginUsernamePassword("kailen", "Password1!".toCharArray());

@@ -12,18 +12,47 @@ import org.zoxweb.shared.security.SubjectAPIKey;
 
 import javax.swing.*;
 import java.awt.*;
-import java.util.Collections;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 class AssistantPanelTest {
 
     private static class credentials implements AICredentialSource {
 
+        private final List<APIKey<String>> keys = new ArrayList<>();
+        private final Set<String> enabled = new HashSet<>();
+
+        credentials() {
+            keys.add(newKey("openai-key", "openai"));
+            keys.add(newKey("claude-key", "anthropic"));
+        }
+
+        private static APIKey<String> newKey(String secret, String provider) {
+            SubjectAPIKey key = new SubjectAPIKey();
+            key.setName(secret);
+            key.setAPIKey(secret);
+            key.getProperties().build("provider", provider);
+            return key;
+        }
+
         @Override
         public List<APIKey<String>> APIKeys() {
-            SubjectAPIKey key = new SubjectAPIKey();
-            key.setAPIKey("Asdf");
-            return Collections.singletonList(key);
+            return new ArrayList<>(keys);
+        }
+
+        @Override
+        public List<APIKey<String>> enabledAPIKeys() {
+            List<APIKey<String>> out = new ArrayList<>();
+            for (APIKey<String> k : keys) if (enabled.contains(k.getAPIKey())) out.add(k);
+            return out;
+        }
+
+        @Override
+        public void setEnabled(APIKey<String> key, boolean on) {
+            if (on) enabled.add(key.getAPIKey());
+            else enabled.remove(key.getAPIKey());
         }
     }
 
