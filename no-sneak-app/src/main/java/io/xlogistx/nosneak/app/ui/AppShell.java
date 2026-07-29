@@ -40,9 +40,14 @@ public class AppShell extends JPanel {
             if ((boolean) e.getNewValue()) {
                 ctx.nav().show(Navigator.Screen.SUBJECT);
                 assistantPanel.reloadProviders();
-                assistantPanel.clearProviders();
+                assistantPanel.refreshHistory();
+                assistantPanel.refreshSkills();
             } else {
                 ctx.nav().show(Navigator.Screen.LOGIN);
+                assistantPanel.refreshHistory();
+                assistantPanel.refreshSkills();
+                assistantPanel.clearProviders();
+                assistantPanel.resetPanel();
             }
         });
 

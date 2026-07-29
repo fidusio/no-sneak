@@ -21,9 +21,10 @@ scanner and file-sharing screens are still placeholders.
 > `BackgroundTask.runCatching` (failures surface as a dialog from the thrown `SecurityException`).
 >
 > **Still stubbed:** passkey (login/register are empty `void` no-ops), the security-manager admin
-> tables, the scanner/file-sharing screens, and — in the AI assistant — the Job-queue, Skills, and
-> Screen-capture pages, chat message persistence, and the multi-model compare path. (The
-> assistant's provider discovery and single-provider chat send **are** wired now — see
+> tables, the scanner/file-sharing screens, and — in the AI assistant — the Job-queue and
+> Screen-capture pages, the manual "pick which keys to use" flow (providers are still auto-added),
+> and the multi-model compare path. (The assistant's provider discovery, single-provider chat send
+> **with message persistence**, and full **History + Skills CRUD** are wired now — see
 > `ai-assistant/CLAUDE.md`.)
 
 ## Layout
@@ -42,7 +43,7 @@ io.xlogistx.nosneak.app
     ├── MenuBarFactory.java        ← builds the application menu bar
     ├── assistant/                 ← app-side bindings for the ai-assistant module
     │   ├── SessionAICredentialSource.java ← exposes the subject's API keys (implements AICredentialSource.APIKeys())
-    │   └── AssistantStorage.java  ← AIChatRepository impl, datastore-backed over the H2P APIDataStore
+    │   └── AssistantStorage.java  ← AIRepository impl (chats + skills), datastore-backed over the H2P APIDataStore
     └── utility/
         ├── AppContext.java        ← per-app service locator (Session + Navigator)
         ├── Session.java           ← auth + identifiers + credentials + profile + addresses (over DomainSecurityManager)
@@ -72,7 +73,10 @@ Two entry paths, chosen by whether a manager was built from the params:
 `launchApp(DomainSecurityManager)` opens `Main.AppFrame` (a `JFrame`, 800×600, title "NoSneak"),
 which creates the single `AppContext` from the manager, builds the menu bar via `MenuBarFactory`,
 and installs `AppShell` as the content pane. The menu bar starts hidden and is toggled by
-`session().onAuthChange(...)` — it only appears once authenticated.
+`session().onAuthChange(...)` — it only appears once authenticated. `AppFrame` is `EXIT_ON_CLOSE`
+and adds a `windowClosing` handler that calls `domainSecurityManager.getDataStore().close()`, so the
+encrypted H2 store is flushed/closed on exit rather than left to the JVM teardown. (The datastore is
+closed on **app close only**, not on logout — logout keeps it open for the next sign-in.)
 
 > Passing secrets via `ds.*` on the command line exposes them (process list, shell history,
 > run-config files), so treat that path as a dev convenience and prefer the setup screen.
@@ -86,14 +90,18 @@ The root panel (`BorderLayout`). Hosts a `CardLayout` content area registering o
 `Navigator.Screen` (`LOGIN`, `MAIN`, `SUBJECT`, `SCAN`, `MANAGER`, `ASSISTANT`) plus a footer
 status bar. On construction it builds the `Navigator`, registers it on the `AppContext`, and
 wires `session().onAuthChange(...)` so a successful auth navigates to `SUBJECT` and a logout back
-to `LOGIN`. The footer (left: `session: … | subject: …`, right: status) also subscribes to auth
-changes. Starts on `LOGIN`.
+to `LOGIN`. The same handler also drives the assistant across the auth boundary: on **login** it
+calls `assistantPanel.reloadProviders()` + `refreshHistory()` + `refreshSkills()`; on **logout**
+`refreshHistory()` + `refreshSkills()` (empty-owner → cleared) + `clearProviders()` + `resetPanel()`
+(blanks the composer/transcript and drops the previous subject's selection). The footer (left:
+`session: … | subject: …`, right: status) also subscribes to auth changes. Starts on `LOGIN`.
 
 The `ASSISTANT` card is the `ai-assistant` module's
 `io.xlogistx.nosneak.ai.assistant.AssistantPanel`, constructed with an `AssistantContext`:
 `new AssistantPanel(new AssistantContext(new SessionAICredentialSource(ctx.session()), new
-AssistantStorage(ctx.session().getDomainSecurityManager().getDataStore())))`. The context holds
-the credential source, the chat repository (`AssistantStorage`, over the same H2P `APIDataStore`
+AssistantStorage(ctx.session())))` (`AssistantStorage` takes the `Session` and reads the H2P
+`APIDataStore` off it). The context holds
+the credential source, the chat/skill repository (`AssistantStorage`, over the same H2P `APIDataStore`
 the security manager uses), an internally built `AIProviderRegistrar`, and the current
 chat/credential/model selection. This is the **only** coupling point — the dependency runs
 `no-sneak-app → ai-assistant`, never the reverse.

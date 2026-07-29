@@ -2,7 +2,7 @@
 
 The backend **contract** the AI assistant binds to: the value DAOs plus the service
 interfaces, with **no provider or store implementations**. `ai-assistant` (the Swing UI) and
-`no-sneak-app` (the concrete `AICredentialSource` / `AIChatRepository`) depend on this module;
+`no-sneak-app` (the concrete `AICredentialSource` / `AIRepository`) depend on this module;
 it depends on neither. The dependency is one-way: `no-sneak-app → ai-assistant → ai-model`.
 
 Two packages:
@@ -16,7 +16,7 @@ Two packages:
 > invariants. The concrete implementations all live **outside** this module: `ai-assistant`'s
 > **`AIAPIProvider`** (an `AIProvider` + inner `AIModelCatalog`, wrapping
 > `io.xlogistx.api.ai.AIAPI` built by `AIAPIBuilder`, resolving provider type from the key's
-> `provider` property) and `no-sneak-app`'s **`AssistantStorage`** (an `AIChatRepository` over
+> `provider` property) and `no-sneak-app`'s **`AssistantStorage`** (an `AIRepository` over
 > the app's H2P `APIDataStore`). There is still **no** `AIRunner` implementation (the compare
 > fan-out). Providers register into an `AIProviderRegistrar` keyed by `AIProvider::getName`
 > (which returns the credential's name).
@@ -34,7 +34,7 @@ AIChat  ──has many──▶  AIMessage  ──is──▶  { AIRequest, AIRe
 - **`AIChat`** — one conversation. Holds an ordered list of `AIMessage`, a default `model`, the
   bound `provider` (the provider/key name it is locked to), a `systemPrompt` (the assistant's
   persistent identity), and a `providerSessionID`. Its own identity is the inherited
-  `referenceID` (what `AIChatRepository` keys on) — **not** a hand-rolled id. Helpers:
+  `referenceID` (what `AIRepository` keys on) — **not** a hand-rolled id. Helpers:
   `startTurn(userInput, maxTokens)` (appends a request-only message), `addMessage(AIMessage)`,
   and `toRequest(userInput, maxTokens)`.
 - **`AIMessage`** — one exchange = one provider round-trip: an `AIRequest` plus the
@@ -83,14 +83,16 @@ drops the nested entity on JSON round-trip.
   picker lists. `no-sneak-app`'s `SessionAICredentialSource` implements it.
 - **`AIModelCatalog`** — each key's discovered models (`models()`), `refresh()` (the Refresh
   button), and `lastSynced()` (the "Last sync" line).
-- **`AIChatRepository`** — chat persistence (`save`, `getChat(refID)`, `getAllChats`,
-  `delete(AIChat)`), keyed by the chat's `referenceID`. `no-sneak-app`'s `AssistantStorage`
-  implements it against the H2P `APIDataStore`.
+- **`AIRepository`** — persistence for **both** chats and skills, keyed by `referenceID`:
+  `saveChat` / `deleteChat` / `getChat(refID)` / `getAllChats`, and
+  `saveSkill` / `deleteSkill` / `getSkill(refID)` / `getAllSkills`. `no-sneak-app`'s
+  `AssistantStorage` implements it against the H2P `APIDataStore` (owner-scoped by subjectGUID).
 - **`AIException`** — checked, with a `Kind` (`AUTH`, `RATE_LIMIT`, `CONTEXT_OVERFLOW`,
   `TIMEOUT`, `NETWORK`, `PROVIDER`).
 
-> Skills persistence (`AISkillStore`) has been **removed for now** — the `AISkill` DAO remains,
-> but there is no store interface. It returns when the Skills page is built.
+> Skill persistence is now part of `AIRepository` (the earlier standalone `AISkillStore` idea was
+> folded in). The `AISkill` DAO carries `name` / `description` / `content` — the instruction text
+> is a plain `String`, so markdown is stored as-is; there is no skill-scope/data-access field yet.
 >
 > The UI-side state holder `AssistantContext` lives in the **`ai-assistant`** module
 > (`io.xlogistx.nosneak.ai.assistant`), not here — it bundles these injected services plus the

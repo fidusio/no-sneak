@@ -19,6 +19,10 @@ import org.zoxweb.shared.util.ParamUtil;
 
 import javax.swing.*;
 import java.awt.*;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
+import java.awt.event.WindowFocusListener;
+import java.awt.event.WindowListener;
 import java.util.function.Consumer;
 
 public class Main {
@@ -64,6 +68,13 @@ public class Main {
             setLocationRelativeTo(null);
 
             AppContext ctx = new AppContext(domainSecurityManager);
+
+            addWindowListener(new WindowAdapter() {
+                @Override
+                public void windowClosing(WindowEvent e) {
+                    domainSecurityManager.getDataStore().close();
+                }
+            });
 
             JMenuBar menuBar = new MenuBarFactory().buildMenu(ctx);
             menuBar.setVisible(false);
