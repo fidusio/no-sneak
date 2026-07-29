@@ -3,7 +3,6 @@ package io.xlogistx.nosneak.v2.runtime;
 import org.zoxweb.server.logging.LogWrapper;
 import org.zoxweb.server.net.DataPacket;
 import org.zoxweb.server.net.common.UDPSessionCallback;
-import org.zoxweb.server.task.TaskUtil;
 
 import java.nio.ByteBuffer;
 
@@ -12,8 +11,10 @@ import java.nio.ByteBuffer;
  * context {@code send}s a request datagram to the target and the response arrives via
  * {@link #accept(DataPacket)}, which forwards the decoded bytes to the context's
  * {@code expect} matcher. Inbound datagrams are dispatched on
- * {@link TaskUtil#defaultTaskProcessor()}; the context serialises ingress.
+ * the executor supplied by the context; the context serialises ingress.
  */
+import java.util.concurrent.Executor;
+
 public class ProbeUDPCallback extends UDPSessionCallback {
 
     public static final LogWrapper log = new LogWrapper(ProbeUDPCallback.class).setEnabled(false);
@@ -21,10 +22,10 @@ public class ProbeUDPCallback extends UDPSessionCallback {
     private final ProbeContext context;
     private final int connectionIndex;
 
-    public ProbeUDPCallback(ProbeContext context, int port, int connectionIndex) {
+    public ProbeUDPCallback(Executor executor, ProbeContext context, int port, int connectionIndex) {
         // Executor for inbound dispatch; `port` is a valid placeholder — the socket binds to an
         // ephemeral local port via NIOSocket.addDatagramSocket(new InetSocketAddress(0), this).
-        super(TaskUtil.defaultTaskProcessor(), port);
+        super(executor, port);
         this.context = context;
         this.connectionIndex = connectionIndex;
     }

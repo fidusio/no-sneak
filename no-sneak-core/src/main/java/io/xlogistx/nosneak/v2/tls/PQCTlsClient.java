@@ -372,39 +372,35 @@ public class PQCTlsClient extends DefaultTlsClient {
     // ==================== Helper Methods ====================
 
     /**
+     * Every cipher-suite code point Bouncy Castle knows, mapped to its IANA name. Built by
+     * reflection over {@link CipherSuite}'s constants so the table cannot fall behind the BC
+     * version on the classpath: a hand-written switch silently rendered the static-RSA suites
+     * as {@code CIPHER_0x9d}, which hid them from {@code Grade}'s weak-cipher rule and made
+     * {@link #getKeyExchangeAlgorithm()} report UNKNOWN.
+     */
+    private static final java.util.Map<Integer, String> CIPHER_SUITE_NAMES = buildCipherSuiteNames();
+
+    private static java.util.Map<Integer, String> buildCipherSuiteNames() {
+        java.util.Map<Integer, String> names = new java.util.HashMap<>();
+        for (java.lang.reflect.Field f : CipherSuite.class.getFields()) {
+            if (f.getType() != int.class || !java.lang.reflect.Modifier.isStatic(f.getModifiers())) {
+                continue;
+            }
+            try {
+                names.putIfAbsent(f.getInt(null), f.getName());
+            } catch (IllegalAccessException e) {
+                // A non-readable constant simply falls back to the hex rendering below.
+            }
+        }
+        return java.util.Collections.unmodifiableMap(names);
+    }
+
+    /**
      * Get human-readable name for a cipher suite
      */
     public static String getCipherSuiteName(int cipherSuite) {
-        switch (cipherSuite) {
-            // TLS 1.3
-            case CipherSuite.TLS_AES_128_GCM_SHA256:
-                return "TLS_AES_128_GCM_SHA256";
-            case CipherSuite.TLS_AES_256_GCM_SHA384:
-                return "TLS_AES_256_GCM_SHA384";
-            case CipherSuite.TLS_CHACHA20_POLY1305_SHA256:
-                return "TLS_CHACHA20_POLY1305_SHA256";
-            case CipherSuite.TLS_AES_128_CCM_SHA256:
-                return "TLS_AES_128_CCM_SHA256";
-            case CipherSuite.TLS_AES_128_CCM_8_SHA256:
-                return "TLS_AES_128_CCM_8_SHA256";
-
-            // TLS 1.2 ECDHE
-            case CipherSuite.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256:
-                return "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256";
-            case CipherSuite.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384:
-                return "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384";
-            case CipherSuite.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256:
-                return "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256";
-            case CipherSuite.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384:
-                return "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384";
-            case CipherSuite.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256:
-                return "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256";
-            case CipherSuite.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256:
-                return "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256";
-
-            default:
-                return "CIPHER_0x" + Integer.toHexString(cipherSuite);
-        }
+        String name = CIPHER_SUITE_NAMES.get(cipherSuite);
+        return name != null ? name : "CIPHER_0x" + Integer.toHexString(cipherSuite);
     }
 
     /**
@@ -451,7 +447,11 @@ public class PQCTlsClient extends DefaultTlsClient {
                 return "ffdhe8192";
 
             default:
-                return "GROUP_0x" + Integer.toHexString(namedGroup);
+                // Anything the explicit table above does not pin down still has a name in BC.
+                String bc = NamedGroup.getName(namedGroup);
+                return bc != null && !bc.isEmpty() && !"UNKNOWN".equalsIgnoreCase(bc)
+                        ? bc
+                        : "GROUP_0x" + Integer.toHexString(namedGroup);
         }
     }
 

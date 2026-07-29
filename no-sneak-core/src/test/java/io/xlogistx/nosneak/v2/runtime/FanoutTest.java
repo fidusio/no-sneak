@@ -1,6 +1,7 @@
 package io.xlogistx.nosneak.v2.runtime;
 
 import org.junit.jupiter.api.Test;
+import org.zoxweb.server.task.TaskUtil;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -99,7 +100,7 @@ public class FanoutTest {
                 join.childDone();
             });
         }
-        Fanout.run(children, joined::countDown);
+        Fanout.run(children, joined::countDown, TaskUtil.defaultTaskProcessor());
         assertTrue(joined.await(15, TimeUnit.SECONDS), "the join barrier never fired");
         assertEquals(n, completions.get());
     }
@@ -128,7 +129,7 @@ public class FanoutTest {
                 join.childDone();
             });
         }
-        Fanout.run(children, joined::countDown);
+        Fanout.run(children, joined::countDown, TaskUtil.defaultTaskProcessor());
         assertTrue(joined.await(20, TimeUnit.SECONDS),
                 "children did not run concurrently - the fan-out serialised");
         assertTrue(threads.size() > 1, "expected multiple pool threads, saw " + threads);
@@ -147,14 +148,14 @@ public class FanoutTest {
             }
         });
         children.add(ParallelJoin::childDone);
-        Fanout.run(children, joined::countDown);
+        Fanout.run(children, joined::countDown, TaskUtil.defaultTaskProcessor());
         assertTrue(joined.await(15, TimeUnit.SECONDS));
     }
 
     @Test
     public void fanoutWithNoChildrenFiresImmediately() throws Exception {
         CountDownLatch joined = new CountDownLatch(1);
-        Fanout.run(Collections.emptyList(), joined::countDown);
+        Fanout.run(Collections.emptyList(), joined::countDown, TaskUtil.defaultTaskProcessor());
         assertTrue(joined.await(5, TimeUnit.SECONDS));
     }
 
@@ -166,13 +167,13 @@ public class FanoutTest {
         for (int i = 0; i < n; i++) {
             tasks.add(ran::countDown);
         }
-        Fanout.dispatch(tasks);
+        Fanout.dispatch(tasks, TaskUtil.defaultTaskProcessor());
         assertTrue(ran.await(15, TimeUnit.SECONDS), "not every dispatched task ran");
     }
 
     @Test
     public void dispatchToleratesEmptyAndNull() {
-        Fanout.dispatch(Collections.emptyList());
-        Fanout.dispatch(null);
+        Fanout.dispatch(Collections.emptyList(), TaskUtil.defaultTaskProcessor());
+        Fanout.dispatch(null, TaskUtil.defaultTaskProcessor());
     }
 }

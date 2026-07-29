@@ -184,7 +184,7 @@ public class ProbeChecker {
                     starts.add(() -> onResolve(idx, null)); // launch failure = incomplete resolution
                 }
             }
-            Fanout.dispatch(starts);
+            Fanout.dispatch(starts, nioSocket.getExecutor());
         }
 
         private void onResolve(int i, ProbeResult r) {
@@ -267,7 +267,7 @@ public class ProbeChecker {
                     }
                 });
             }
-            Fanout.run(children, this::deliverAll);
+            Fanout.run(children, this::deliverAll, nioSocket.getExecutor());
         }
 
         private void deliverAll() {
@@ -417,6 +417,8 @@ public class ProbeChecker {
                     + (explicitFiles ? probeFiles : "bundled"));
 
             // Non-blocking NIO stack wired to the shared processor + scheduler.
+            // Composition root: the CLI is the one place the process-wide pools are chosen;
+            // the checker and every probe take theirs from this socket.
             nioSocket = new NIOSocket(TaskUtil.defaultTaskProcessor(), TaskUtil.defaultTaskScheduler());
             ProbeChecker checker = new ProbeChecker(nioSocket, probes)
                     .timeoutInSec(timeoutSec)

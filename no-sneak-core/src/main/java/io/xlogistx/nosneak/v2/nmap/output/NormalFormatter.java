@@ -20,7 +20,7 @@ public final class NormalFormatter implements OutputFormatter {
     @Override
     public String render(ScanReport r) {
         StringBuilder sb = new StringBuilder();
-        sb.append("XNMap scan report - ").append(r.hosts.size()).append(" target(s), ")
+        sb.append("NMap scan report - ").append(r.hosts.size()).append(" target(s), ")
           .append(r.hostsUp()).append(" up");
         if (r.durationMs() > 0) sb.append(", ").append(r.durationMs() / 1000.0).append("s");
         sb.append('\n');
@@ -59,6 +59,36 @@ public final class NormalFormatter implements OutputFormatter {
         for (String w : r.warnings) {
             sb.append("Warning: ").append(w).append('\n');
         }
+        sb.append('\n').append(summary(r)).append('\n');
+        return sb.toString();
+    }
+
+    /** Closing stats line: what was scanned, what answered, and how long it took. */
+    static String summary(ScanReport r) {
+        int openPorts = 0;
+        int hostsWithOpen = 0;
+        int macs = 0;
+        for (HostReport h : r.hosts) {
+            int open = h.openPorts().size();
+            openPorts += open;
+            if (open > 0) {
+                hostsWithOpen++;
+            }
+            if (h.mac != null) {
+                macs++;
+            }
+        }
+        StringBuilder sb = new StringBuilder("NMap done: ");
+        sb.append(r.hosts.size()).append(" target(s) scanned, ")
+          .append(r.hostsUp()).append(" host(s) up");
+        if (macs > 0) {
+            sb.append(" (").append(macs).append(" with MAC)");
+        }
+        if (openPorts > 0) {
+            sb.append(", ").append(openPorts).append(" open port(s) on ")
+              .append(hostsWithOpen).append(" host(s)");
+        }
+        sb.append(" in ").append(String.format("%.2f", r.durationMs() / 1000.0)).append(" seconds");
         return sb.toString();
     }
 

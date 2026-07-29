@@ -20,7 +20,6 @@ import org.bouncycastle.tls.crypto.TlsCertificate;
 import org.zoxweb.server.io.ByteBufferUtil;
 import org.zoxweb.server.logging.LogWrapper;
 import org.zoxweb.server.net.NIOSocket;
-import org.zoxweb.server.task.TaskUtil;
 import org.zoxweb.shared.io.SharedIOUtil;
 import org.zoxweb.shared.net.IPAddress;
 import org.zoxweb.shared.util.SharedBase64;
@@ -38,6 +37,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -53,7 +54,7 @@ import java.util.regex.Matcher;
  * <p>
  * <b>Fully non-blocking.</b> Connections are opened on the shared {@link NIOSocket};
  * every asynchronous wait (connect / expect / overall) is bounded by a task on
- * {@link TaskUtil#defaultTaskScheduler()}. All transitions run on the selector or
+ * the scheduler taken from that socket. All transitions run on the selector or
  * scheduler thread and are serialised through {@link #fire(String)} /
  * {@link #deliver(boolean, String)} (both synchronized). Each wait is guarded by a
  * single {@code armed} token plus an {@code armGen} epoch so an inbound event and
@@ -71,6 +72,10 @@ public class ProbeContext {
     private final ProbeDefinition definition;
     private final int timeoutSec;
     private final Consumer<ProbeResult> userCallback;
+    /** Arms every wait guard; taken from the {@link NIOSocket} this probe rides on. */
+    private final ScheduledExecutorService scheduler;
+    /** Parallel dispatch for fan-out children; taken from the same {@link NIOSocket}. */
+    private final Executor executor;
 
     private final ProbeEngine engine;
     private final ProbeResult.Builder result;
@@ -112,6 +117,13 @@ public class ProbeContext {
     public ProbeContext(NIOSocket nioSocket, IPAddress target, ProbeDefinition definition,
                         int timeoutSec, Consumer<ProbeResult> userCallback) {
         this.nioSocket = nioSocket;
+        // Every wait this probe arms runs on the pools the NIOSocket was constructed with, rather
+        // than the process-wide defaults, so an embedder that supplied its own executor and
+        // scheduler gets the whole probe — connect, expect, handshake and overall deadlines — on
+        // them. Taking them from the socket also makes it impossible to arm a timeout on one pool
+        // while the I/O it guards runs on another.
+        this.scheduler = nioSocket.getScheduler();
+        this.executor = nioSocket.getExecutor();
         this.target = target;
         this.definition = definition;
         this.timeoutSec = timeoutSec > 0 ? timeoutSec : 5;
@@ -128,7 +140,7 @@ public class ProbeContext {
     /** Arm the overall watchdog and enter the start state. */
     public void start() {
         int overall = Math.max(timeoutSec * 4, 30);
-        overallDeadline = TaskUtil.defaultTaskScheduler()
+        overallDeadline = scheduler
                 .schedule(() -> deliver(false, "overall-timeout"), overall, TimeUnit.SECONDS);
         engine.start();
     }
@@ -187,7 +199,7 @@ public class ProbeContext {
         long gen = armGen.incrementAndGet();
         armed.set(true);
         cancelWaitTimeout();
-        waitTimeout = TaskUtil.defaultTaskScheduler()
+        waitTimeout = scheduler
                 .schedule(() -> fireArmedGen("timeout", gen), timeoutSec, TimeUnit.SECONDS);
     }
 
@@ -300,7 +312,7 @@ public class ProbeContext {
         accumulator.reset();
         arm();
         try {
-            ProbeUDPCallback cb = new ProbeUDPCallback(this, port, connectionIndex);
+            ProbeUDPCallback cb = new ProbeUDPCallback(executor, this, port, connectionIndex);
             currentUDPCallback = cb;
             currentKey = nioSocket.addDatagramSocket(new InetSocketAddress(0), cb); // ephemeral local bind
             fireArmed("connected"); // ready immediately
@@ -665,7 +677,7 @@ public class ProbeContext {
             children.add(join -> {
                 try {
                     VersionProbeCallback probe = new VersionProbeCallback(
-                            new IPAddress(target.getInetAddress(), port), hostname(), ver,
+                            scheduler, new IPAddress(target.getInetAddress(), port), hostname(), ver,
                             (name, supported) -> {
                                 results.put(name, supported);
                                 join.childDone();
@@ -677,7 +689,7 @@ public class ProbeContext {
                 }
             });
         }
-        Fanout.run(children, () -> onVersionsDone(results));
+        Fanout.run(children, () -> onVersionsDone(results), executor);
     }
 
     private synchronized void onVersionsDone(Map<String, Boolean> results) {
@@ -721,7 +733,7 @@ public class ProbeContext {
         final int[] ordered = new int[TLS13_CIPHERS.length + TLS12_CIPHERS.length];
         System.arraycopy(TLS13_CIPHERS, 0, ordered, 0, TLS13_CIPHERS.length);
         System.arraycopy(TLS12_CIPHERS, 0, ordered, TLS13_CIPHERS.length, TLS12_CIPHERS.length);
-        Fanout.run(children, () -> onCiphersDone(accepted, ordered));
+        Fanout.run(children, () -> onCiphersDone(accepted, ordered), executor);
     }
 
     private void cipherChildren(List<Consumer<ParallelJoin>> children, Map<Integer, Boolean> accepted,
@@ -731,7 +743,8 @@ public class ProbeContext {
             children.add(join -> {
                 try {
                     CipherProbeCallback probe = new CipherProbeCallback(
-                            new IPAddress(target.getInetAddress(), port), hostname(), ver, new int[]{cipher},
+                            scheduler, new IPAddress(target.getInetAddress(), port), hostname(), ver,
+                            new int[]{cipher},
                             (v, cipherId) -> {
                                 if (cipherId != null && cipherId != 0) {
                                     accepted.put(cipherId, Boolean.TRUE);

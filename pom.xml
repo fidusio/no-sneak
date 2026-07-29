@@ -67,6 +67,11 @@
                 <version>${zoxweb-core.version}</version>
             </dependency>
             <dependency>
+                <groupId>io.xlogistx</groupId>
+                <artifactId>no-sneak-net</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
                 <groupId>org.apache.sshd</groupId>
                 <artifactId>sshd-core</artifactId>
                 <version>${apache-ssh.version}</version> <!-- or latest -->

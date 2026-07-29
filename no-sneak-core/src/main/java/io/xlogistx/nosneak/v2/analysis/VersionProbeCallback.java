@@ -9,6 +9,7 @@ import org.zoxweb.shared.net.IPAddress;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.Vector;
 
 /**
@@ -30,10 +31,10 @@ public class VersionProbeCallback extends TLSProbeCallback {
     private final String versionName;
     private final VersionProbeListener listener;
 
-    public VersionProbeCallback(IPAddress address, String hostname,
+    public VersionProbeCallback(ScheduledExecutorService scheduler, IPAddress address, String hostname,
                                 ProtocolVersion targetVersion,
                                 VersionProbeListener listener) {
-        super(address);
+        super(scheduler, address);
         this.hostname = hostname;
         this.targetVersion = targetVersion;
         this.versionName = getVersionName(targetVersion);

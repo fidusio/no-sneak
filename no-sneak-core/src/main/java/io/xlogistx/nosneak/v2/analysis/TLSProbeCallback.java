@@ -6,7 +6,6 @@ import org.bouncycastle.tls.TlsFatalAlert;
 import org.zoxweb.server.io.ByteBufferUtil;
 import org.zoxweb.server.logging.LogWrapper;
 import org.zoxweb.server.net.common.TCPSessionCallback;
-import org.zoxweb.server.task.TaskUtil;
 import org.zoxweb.shared.io.SharedIOUtil;
 import org.zoxweb.shared.net.IPAddress;
 
@@ -14,6 +13,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.SocketChannel;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -53,8 +53,12 @@ public abstract class TLSProbeCallback extends TCPSessionCallback {
     private volatile SelectionKey selectionKey;
     private volatile ScheduledFuture<?> timeoutAppointment;
 
-    protected TLSProbeCallback(IPAddress address) {
+    /** Arms the post-connect handshake deadline; supplied by the caller, not looked up. */
+    private final ScheduledExecutorService scheduler;
+
+    protected TLSProbeCallback(ScheduledExecutorService scheduler, IPAddress address) {
         super(address);
+        this.scheduler = scheduler;
         closeableDelegate.setDelegate(()->{
             cancelTimeout();
             if (selectionKey != null) {
@@ -187,7 +191,7 @@ public abstract class TLSProbeCallback extends TCPSessionCallback {
      * Event-driven (no blocking thread), consistent with the pure-NIO design.
      */
     private void armTimeout() {
-        timeoutAppointment = TaskUtil.defaultTaskScheduler().schedule(() -> {
+        timeoutAppointment = scheduler.schedule(() -> {
             if (complete()) {
                 onProbeFailure(new IOException(
                         "TLS probe handshake timeout after " + timeoutInSec() + "s (no usable server response)"));

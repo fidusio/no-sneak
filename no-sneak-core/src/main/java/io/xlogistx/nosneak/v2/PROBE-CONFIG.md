@@ -4,6 +4,14 @@ Reference for the `io.xlogistx.nosneak.v2` probe framework: the JSON probe DSL, 
 library, candidate selection, the bundled probes, and the result fields. (Migration status and
 design rationale live in `PLAN.md`.)
 
+> **Current as of 2026-07-29.** Since the last revision: cipher-suite names now come from Bouncy
+> Castle's own constants rather than a hand-written switch; `Grade`'s weak-cipher rule was
+> corrected and a letter is no longer awarded without enumeration evidence; the executor and
+> scheduler are injected throughout; nmap host discovery moved onto **`no-sneak-net`** (ICMP echo,
+> ARP/NDP MACs, and `HostScanner.sweep` for on-link ranges — a `/24` went 55 s → 1.6 s); the REST
+> `/check-qdz` endpoint is fully asynchronous and runtime-tested for the first time; and
+> `Checker.checkQDZDirect` gives a server-free entry point. Tests 79 → 88.
+
 ## Core objective
 
 For a TLS endpoint, report **how valid it is and whether it is PQC-compliant / PQC-ready** —
@@ -144,6 +152,18 @@ which exposes `letter()` (A/B/C/F/**T** for a trust failure), `pqc()`, and:
   consumer reads one value instead of re-deriving trust from four facts). A trust failure
   outranks protocol/cipher posture and grades **T** (`REVOKED` grades **F**).
 - **`reason()`** — the human-readable explanation.
+- **`letter()` is only awarded on evidence.** `A` requires that `enumerate-versions` actually ran.
+  A shallow probe that merely negotiated TLSv1.3 grades `null`, not `A`: one negotiation cannot
+  show whether the server still accepts TLSv1.0, and a false clean bill of health is the worst
+  failure mode this tool has. A *negotiated deprecated* version still downgrades (`TLSv1.0` → `C`),
+  since that is positive evidence of a bad posture.
+- **Weak-cipher detection is anchored, not a substring match.** `TLS_RSA_WITH_*` is static RSA (no
+  forward secrecy) and caps at `B`; `TLS_ECDHE_RSA_WITH_*` is a healthy ephemeral suite that merely
+  authenticates with an RSA certificate. The earlier `contains("_RSA_WITH")` test matched both, so
+  it capped every modern ECDHE server at B while the genuinely weak suites went unflagged — they
+  were rendered as `CIPHER_0x9d` because the cipher-name table was a hand-written 11-entry switch.
+  `PQCTlsClient.getCipherSuiteName` now maps every code point Bouncy Castle knows (reflected over
+  `CipherSuite`'s 328 constants), so the table cannot fall behind the BC version on the classpath.
 - **`advisories()`** — report-only findings that never change the verdict: a **hostname
   mismatch** (per the recorded design decision) and a PQC-hybrid key exchange under a classical
   certificate signature.
@@ -170,25 +190,157 @@ java io.xlogistx.nosneak.v2.ProbeChecker <host> <port> [timeoutSec] [--all|--fir
 
 ## Executor / concurrency
 
-`TaskUtil.defaultTaskProcessor()` (parallel `publish`) and `TaskUtil.defaultTaskScheduler()`
-(timeouts). No `MonoStateMachine`. Superseded probes are aborted immediately
+**The executor and scheduler are injected, never looked up statically.** Everything downstream
+takes them from the `NIOSocket` it is handed — `ProbeContext` reads `nio.getExecutor()` /
+`nio.getScheduler()` in its constructor and passes them on to `Fanout.run`/`Fanout.dispatch`, the
+version/cipher probe callbacks, `RateLimiter` and `PortScanCallback`. So a timeout can never be
+armed on one pool while the I/O it guards runs on another, and an embedder that builds its
+`NIOSocket` with its own pools gets the whole pipeline on them.
+
+The only places that name `TaskUtil.defaultTaskProcessor()` / `defaultTaskScheduler()` are the
+composition roots that own the process: the `ProbeChecker` and `NMap` CLI `main` methods, and
+`Checker.checkQDZDirect` (which builds its own `NIOSocket` precisely because no server supplied
+one).
+
+Parallel dispatch is the native trigger-`StateMachine` `publish`; `publishSync` is the inline
+sequential path. No `MonoStateMachine`, no hand-rolled threads (`new Thread` / `Executors.new`
+appear nowhere in v2). Superseded probes are aborted immediately
 (`NIOSocket.abortClientSocket`) so no connection or scheduler appointment lingers.
+
+**`ParallelJoin` is the completion barrier for callback-driven fan-outs** — the children of
+`Fanout.run` are `TriggerConsumer`s that report from a NIO/selector/scheduler callback and have no
+future to compose on, so a one-shot counting barrier is the right primitive. That covers
+`ProbeContext`'s version/cipher enumeration, `ProbeChecker`'s `AllSweep`, and the nmap stages,
+whose `PortScanCallback` likewise reports through a callback. Where an operation already returns a
+`CompletableFuture` (`HostScanner.sweep`/`ping`/`resolve`), it is composed on directly rather than
+wrapped in a barrier.
+
+**Nothing blocks on a live path.** `future.get` survives in exactly three deliberate places, all
+documented as such: `ProbeChecker.checkBlocking`/`checkBlockingAll` (CLI/test convenience), the two
+CLI `main` methods, and `Checker.checkQDZDirect`. The REST endpoint has none — see below for why
+blocking there deadlocks the server rather than merely slowing it.
+
+## REST endpoint (`/check-qdz/{domain}/{detailed}`)
+
+`service/Checker` is **fully asynchronous**: the handler starts the sweep and returns without
+waiting, and the response is written from the probe's completion callback.
+
+This is a correctness requirement, not a style choice. `NIOHTTPServer` builds its `NIOSocket` on
+`TaskUtil.defaultTaskProcessor()` and dispatches inbound request data to that executor, so the
+handler already runs on one of those workers — while the probe sweep it would wait for needs the
+*same* pool (`Fanout.dispatch` publishes candidate starts onto the socket's executor, and probe
+reads are re-dispatched through it). A blocking `future.get` here therefore starves the pool:
+enough concurrent requests and no worker is left to run the probes, so every request can only end
+in `checker-timeout` while the rest of the server stalls behind it. Bounding the wait hides the
+hang; it does not remove the starvation.
+
+The async handshake with `NIOHTTPServer` has **two** halves and both are required:
+
+1. **Return `Boolean.FALSE`** — the server then skips writing a response (`NIOHTTPServer:538`);
+   the endpoint owns it.
+2. **Install a `ProtoSession` via `hph.setConnectionSession(...)` whose `canClose()` is false**
+   until the response has been written. Without it the server treats the request as finished the
+   instant the method returns: `hph.reset()` (`NIOHTTPServer:587`) is skipped only when a
+   connection session exists, and the `finally` block closes the connection as soon as
+   `canClose()` is true. Once the response is written the session is marked responded and closed,
+   releasing the connection.
+
+A scheduled backstop answers `504` if the sweep never calls back, so a stuck candidate cannot hold
+a connection open indefinitely. The body is rendered with the include-defaults renderer, because
+the framework's JSON path uses `toJSONDefault` and would drop `complete:false`, a chain link's
+`time-valid:false`, and a connection's `index:0`. Note the response must be built with the
+status/headers-only `buildResponse` overload — the `(contentType, result, …)` one re-serializes an
+already-rendered JSON document into a JSON *string*.
+
+**Runtime-verified** (this path had never been exercised before): a single scan returns `200` with
+the full fact set plus the `Grade` block, and **32 concurrent requests against an 8-thread pool all
+returned `200` in ~6 s wall** — far more scans in flight than there are workers, which the blocking
+version could not do.
+
+### Server configuration
+
+**Nothing special.** `keep-alive.time_out` does not have to accommodate the scan: it bounds the
+*idle* gap between completed request/response cycles, not the time the server spends producing a
+response, and the client has not received anything to act on yet. Verified — a **5.2 s** scan
+returns `200` under a **1 s** keep-alive. An 8-thread pool serves 24–32 concurrent scans fine.
+
+### Server-free entry point
+
+`Checker.checkQDZDirect("google.com:443")` runs the whole check — target parsing, probe selection,
+sweep, facts + verdict — with **no HTTP server, no `ResourceManager`, no Shiro**: just an
+`NIOSocket` it owns and closes. It blocks by design, so it is safe from a `main` or a test but must
+not be called from a worker of the pool the probes run on (that is what the REST path's async
+handshake exists to avoid). `Checker.main` is a harness that prints the result and its timing.
+
+Measured standalone (cold JVM, one process per run):
+
+| Target | Result | Time |
+|---|---|---|
+| `google.com:443` | https, PQC_READY | 4542 ms |
+| `google.com:443` detailed | + version/cipher enumeration | 3915 ms |
+| `example.com:443` | https | 4518–4815 ms |
+| `example.com:80` | http | 817 ms |
+| `example.com:81` (nothing listening) | no-probe-identified, 14 probes tried | 10370 ms |
+
+Over HTTP with the settings above and warm pools, real targets answer far quicker — 123 ms
+(`example.com:80`) to 1825 ms (`github.com:443`) — and **24 concurrent requests all returned `200`
+in 4.7 s**. The ~10 s figure is the worst case for a port with nothing listening, where every
+candidate must run to its timeout.
 
 ## Network scan (nmap)
 
 Staged, fully non-blocking scanner in `v2/nmap/` — embeddable (`NMapScanner.scan(NIOSocket,
 NMapConfig, CallableConsumer<ScanReport>)`) and CLI (`NMap`):
 
-1. **host discovery** (optional) over the target range — TCP-ping (up if a discovery port
-   connects or is refused) + optional ICMP (`InetAddress.isReachable`, best-effort);
+1. **host discovery** (optional), which takes one of two routes per target:
+   - **On-link CIDR → one `HostScanner.sweep()` per range.** This is no-sneak-net's purpose-built
+     range sweep: ARP + ICMP per host, the on-link interface chosen for you, `HostRecord`s streamed
+     as they arrive. Its `SweepOptions.defaults()` are tuned for exactly this — 256 in flight, a
+     1 s per-host timeout, and a **single** ping probe, because ARP is the liveness oracle and
+     extra probes only multiply wall time.
+   - **Everything else** (hostnames, off-link IPs, dash-ranges) → the per-host path, running
+     TCP-ping, `HostScanner.ping` and `HostScanner.resolve` concurrently; any one marks the host
+     up. ICMP uses `observedOnWire()` rather than `reachable()`, so pinging one of our own
+     addresses — answered from local configuration with no packet sent — does not count as a wire
+     observation. ARP/NDP is attempted only for on-link addresses: it is link-local by definition,
+     so asking beyond the segment would only return the router's MAC.
 2. **port scan** of the selected ports on each live host (`PortScanCallback`, OPEN/CLOSED/FILTERED);
 3. **probe scan** (optional, `-sV`) — runs the probe engine on open ports to identify
    service/version/TLS/PQC (all bundled probes, or a named subset via `--probes`).
 
-Paced by a non-blocking `RateLimiter` (`--max-inflight` concurrency cap + `--max-rate`
-per-second). Targets accept host / IP / CIDR (`10.0.0.0/24`) / range (`10.0.0.1-50`). CLI flags:
-`-p`, `-sV`, `--probes a,b`, `-Pn` (skip discovery), `-sn` (discovery only), `--no-icmp`,
-`--max-inflight N`, `--max-rate N`, `-t <sec>`. TLS ports render inline with state/PQC/validity/
+> **Use the sweep for ranges — the per-host path is 25× slower.** Doing a `/24` host-by-host meant
+> a `resolve()` at the 3 s default, a 2-probe `ping()`, and five TCP-connects per target, all
+> funnelled through nmap's own limiter: **55 s**, where the sweep does the same work in **1.6 s**
+> and finds the identical hosts. On-link, the TCP-connects add nothing at all — ARP already
+> answered. `--max-inflight` is deliberately **not** forwarded to `SweepOptions`: that flag caps
+> concurrent TCP connections in the port-scan stage, and forcing it onto the sweep's packet window
+> throttled a `/24` to the point of not finishing in 100 s. `--max-rate` *is* forwarded, since it
+> is a packet-rate policy.
+
+The `HostScanner` session is opened **once per scan** and closed at the end — `open()` costs a pcap
+handle or raw socket plus reader threads per interface, so per-host opening would be wrong. It
+borrows the injected pools and never shuts them down, and it *never fails to open*: a box without
+Npcap or root yields a usable session in a degraded `Mode` (`ICMP_ONLY` / `UNAVAILABLE`), which is
+recorded in `ScanReport.warnings` so a silently ICMP-less or MAC-less scan is visible rather than
+looking like a clean result.
+
+The port and probe stages are paced by a non-blocking `RateLimiter` (`--max-inflight` concurrency
+cap + `--max-rate` per-second). Targets accept host / IP / CIDR (`10.0.0.0/24`) / range
+(`10.0.0.1-50`). CLI flags: `-p`, `-sV`, `--probes a,b`, `-Pn` (skip discovery), `-sn` (discovery
+only), `-PR` (ARP/NDP only), `-PE` (ICMP only), `--no-icmp` / `--no-arp` / `--no-tcp-ping`,
+`--icmp-probes N`, `--max-inflight N`, `--max-rate N`, `-t <sec>`. A missing or non-numeric flag
+value is a clear error plus usage and exit 2, not a stack trace; a failed run exits 1.
+
+Every run ends with a stats line:
+
+```
+NMap done: 254 target(s) scanned, 22 host(s) up (22 with MAC) in 1.56 seconds
+NMap done: 1 target(s) scanned, 1 host(s) up (1 with MAC), 3 open port(s) on 1 host(s) in 6.43 seconds
+```
+
+Verified live on a `10.0.0.0/24` LAN: 254 targets → 22 up in **1.6 s**, **every live host with a
+MAC address**. `-PR` and `-PE` each resolve two hosts in ~0.5 s; an off-link target (example.com)
+reports its resolved IP and no MAC, as it must. TLS ports render inline with state/PQC/validity/
 trust/grade (e.g. `443 open https [DIRECT_TLS pqc=PQC cert=VALID/TRUSTED grade=C]`).
 
 **Output formats.** Five renderers in `v2/nmap/output/` — `NormalFormatter`, `JSONFormatter`,
@@ -209,17 +361,30 @@ subsystems and `raw/` SYN/FIN/… engines were dead/stub code. v2 decisions:
   come later via a native raw-socket layer (JDK 25 Panama FFM, no external lib).
 - **OS detection** (`-O`): open-port **heuristic only** (best-effort, low confidence). True
   TCP/IP-stack fingerprinting needs raw packets → same FFM layer.
-- **ARP ping / remote MAC**: **deferred to the FFM native layer** (with `-sS`). Rationale: no JDK
-  API (through JDK 25) exposes a remote host's MAC — MAC is layer-2/ARP; `NetworkInterface.
-  getHardwareAddress()` is local-NIC only. The only paths are the OS `arp` command (external
-  process, platform-specific) or native raw ARP. Decided NOT to ship the `arp`-command shell-out;
-  discovery stays pure-NIO (TCP-ping ± ICMP, no MAC) until the FFM ARP work.
+- **ARP ping / remote MAC**: **DONE — no longer deferred.** The old reasoning was right about the
+  JDK (no API through JDK 25 exposes a remote host's MAC; `NetworkInterface.getHardwareAddress()`
+  is local-NIC only, and the `arp`-command shell-out was correctly refused), but the conclusion is
+  obsolete: **`no-sneak-net` shipped the FFM layer-2 backend**, so `HostScanner.sweep`/`resolve`
+  give a real ARP/NDP MAC and `HostScanner.ping` a real ICMP echo. nmap discovery calls them
+  directly — see the discovery stage above. `ScanReport.HostReport.mac` was declared and never
+  populated until this landed.
+- **Host discovery is no-sneak-net's job, not nmap's.** When that module offers a primitive, use
+  it rather than reimplementing it out of its lower-level calls — the 25× regression above came
+  entirely from hand-rolling a range sweep out of per-host `resolve`/`ping`.
 
 ## Tests
 
-79 pure, no-network tests under `src/test/java/io/xlogistx/nosneak/v2/` — `model/
-ProbeDefinitionLoaderTest`, `grade/GradeTest`, `result/ProbeResultTest`, `runtime/FanoutTest`,
-`nmap/NMapScannerTest`.
+88 pure, no-network tests under `src/test/java/io/xlogistx/nosneak/v2/` — `model/
+ProbeDefinitionLoaderTest` (16), `grade/GradeTest` (25), `result/ProbeResultTest` (12),
+`runtime/FanoutTest` (11), `nmap/NMapScannerTest` (19), `nmap/RateLimiterTest` (5).
+
+The newer ones pin defects that were silent in production:
+- `GradeTest` — an ECDHE suite that merely *authenticates* with RSA is not weak (only
+  `TLS_RSA_WITH_*` static key exchange is), and a scan that never enumerated versions gets no
+  letter rather than an unearned `A`.
+- `RateLimiterTest` — the in-flight counter can never go negative (once negative, `--max-inflight`
+  silently stops capping), and 20 000 synchronously-completing launches must not recurse the drain
+  loop into a `StackOverflowError` (what a loopback scan does).
 
 ```
 MAVEN_OPTS="-Djavax.net.ssl.trustStore=<store>.jks -Djavax.net.ssl.trustStorePassword=changeit" \
@@ -246,12 +411,21 @@ STARTTLS upgrade, reconnect — can be asserted without a live server.
 - **Port-spec richness** — `T:`/`U:` protocol prefixes, `--top-ports` (data exists in `WellKnownPorts`).
 - **Raw-scan rejection** wiring (`-sS` etc. → clear "not supported / planned" error).
 - **OS-detection heuristic** (`-O`) — open-port/service-based guess.
-- **Native raw-socket layer (Panama FFM)** — real SYN/FIN/… scans, TCP/IP OS fingerprinting, and
-  **ARP → remote MAC** (all gated on privileges). Replaces the deferred ARP-command approach.
+- **Native raw-socket layer (Panama FFM)** — real SYN/FIN/… scans and TCP/IP OS fingerprinting
+  (gated on privileges). **ARP → remote MAC is no longer part of this deferral**: it shipped in
+  `no-sneak-net` and nmap discovery uses it.
 
 **Other:**
 - Active/network OCSP (only stapled-OCSP is implemented).
-- Weak-cipher enumeration/grading (only TLS1.2/1.3 suite sets are swept).
-- End-to-end runtime testing of the REST endpoint (`/check-qdz`) and Mongo/DM tools.
+- `Checker`'s private-IP guard is weak (`isPrivateIP` string-matches literal `10.`/`192.168.`/
+  `172.16-31.` prefixes only), so `127.0.0.1`, `169.254.169.254`, `[::1]` and any hostname that
+  resolves inward still pass. The endpoint chooses the port too, so it remains an unauthenticated
+  internal prober — **fix before exposing it**.
+- Weak-cipher enumeration (only the TLS1.2/1.3 suite sets are swept). *Weak-cipher grading itself
+  is implemented* — see the `Grade` note below.
+- End-to-end runtime testing of the Mongo/DM tools. (`/check-qdz` **is** now runtime-tested — see
+  *REST endpoint* below.)
 - zoxweb-core additions this line of work depends on: `SSLSessionConfig.getSSLSession()`,
-  `NIOSocket.abortClientSocket(SelectionKey)`.
+  `NIOSocket.abortClientSocket(SelectionKey)`, `NIOSocket.getExecutor()/getScheduler()`.
+- Cross-module dependency: `no-sneak-core` now depends on **`no-sneak-net`** (managed in the root
+  pom) for ICMP and layer-2 discovery.

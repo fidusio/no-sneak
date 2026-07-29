@@ -20,8 +20,15 @@ public final class NMapConfig {
     public boolean discovery = true;
     /** Discovery via TCP-connect ping (up if a discovery port connects or is refused). */
     public boolean discoveryTcp = true;
-    /** Discovery via ICMP echo ({@code InetAddress.isReachable}, best-effort; often blocked). */
+    /** Discovery via real ICMP echo (no-sneak-net); needs a privileged/Npcap-capable session. */
     public boolean discoveryIcmp = true;
+    /**
+     * Discovery via ARP/NDP for on-link targets (no-sneak-net layer 2). Also fills in
+     * {@link ScanReport.HostReport#mac}. A host that answers ARP but not ICMP is still alive.
+     */
+    public boolean discoveryArp = true;
+    /** Echo requests per ICMP discovery probe; pipelined, so more probes cost no extra wall time. */
+    public int icmpProbes = 2;
     /** Ports used for TCP-ping discovery; {@code null} → a small common subset. */
     public int[] discoveryPorts;
 
@@ -41,7 +48,10 @@ public final class NMapConfig {
     public NMapConfig target(String t) { if (t != null && !t.isEmpty()) targets.add(t); return this; }
     public NMapConfig ports(int[] p) { this.ports = p; return this; }
     public NMapConfig discovery(boolean b) { this.discovery = b; return this; }
+    public NMapConfig discoveryTcp(boolean b) { this.discoveryTcp = b; return this; }
     public NMapConfig discoveryIcmp(boolean b) { this.discoveryIcmp = b; return this; }
+    public NMapConfig discoveryArp(boolean b) { this.discoveryArp = b; return this; }
+    public NMapConfig icmpProbes(int n) { this.icmpProbes = n > 0 ? n : 1; return this; }
     public NMapConfig probeScan(boolean b) { this.probeScan = b; return this; }
     public NMapConfig probe(String name) { if (name != null && !name.isEmpty()) probeNames.add(name); return this; }
     public NMapConfig rate(int maxInFlight, int maxPerSec) { this.maxInFlight = maxInFlight; this.maxPerSec = maxPerSec; return this; }

@@ -9,6 +9,7 @@ import org.zoxweb.shared.net.IPAddress;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.Vector;
 
 /**
@@ -32,10 +33,10 @@ public class CipherProbeCallback extends TLSProbeCallback {
     private final CipherProbeListener listener;
     private volatile int selectedCipherSuite;
 
-    public CipherProbeCallback(IPAddress address, String hostname,
+    public CipherProbeCallback(ScheduledExecutorService scheduler, IPAddress address, String hostname,
                                ProtocolVersion targetVersion, int[] ciphers,
                                CipherProbeListener listener) {
-        super(address);
+        super(scheduler, address);
         this.hostname = hostname;
         this.targetVersion = targetVersion;
         this.ciphersToOffer = ciphers;

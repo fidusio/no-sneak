@@ -184,6 +184,60 @@ public class GradeTest {
         assertEquals("B", g.letter());
     }
 
+    /**
+     * The suites the enumerator really emits. An ECDHE suite that authenticates with an RSA
+     * certificate is healthy — only static-RSA key exchange is weak — so a modern server must
+     * not be capped at B by the mere presence of "RSA" in the suite name.
+     */
+    @Test
+    public void ephemeralRsaAuthenticatedSuitesAreNotWeak() {
+        Grade g = Grade.of(healthy()
+                .addCipherSuite("TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384")
+                .addCipherSuite("TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256")
+                .addCipherSuite("TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256")
+                .build());
+        assertEquals("A", g.letter(), "ECDHE_RSA is forward-secret and must not be graded weak");
+    }
+
+    @Test
+    public void staticRsaKeyExchangeIsWeak() {
+        Grade g = Grade.of(healthy().addCipherSuite("TLS_RSA_WITH_AES_256_GCM_SHA384").build());
+        assertEquals("B", g.letter(), "static-RSA key exchange has no forward secrecy");
+    }
+
+    /**
+     * A shallow probe records the negotiated version but never runs the enumeration sweep, so
+     * there is no evidence that weak versions are disabled. It must not be handed an A.
+     */
+    @Test
+    public void shallowProbeWithoutEnumerationGetsNoLetter() {
+        ProbeResult r = ProbeResult.builder("example.com", 443, "tcp")
+                .service("https")
+                .tlsState(ProbeResult.TlsState.DIRECT_TLS)
+                .pqcStatus(ProbeResult.PqcStatus.PQC)
+                .tlsVersion("TLSv1.3")
+                .certValidity("VALID")
+                .certChainTrust("TRUSTED", "ok")
+                .complete(true)
+                .build();
+        assertNull(Grade.of(r).letter(), "an unenumerated scan has not earned a letter");
+        assertEquals(Grade.TrustVerdict.TRUSTED, Grade.of(r).verdict());
+    }
+
+    /** A negotiated deprecated version is positive evidence of a bad posture, so it still grades. */
+    @Test
+    public void negotiatedDeprecatedVersionStillDowngradesWithoutEnumeration() {
+        ProbeResult r = ProbeResult.builder("legacy.example.com", 443, "tcp")
+                .service("https")
+                .tlsState(ProbeResult.TlsState.DIRECT_TLS)
+                .tlsVersion("TLSv1.0")
+                .certValidity("VALID")
+                .certChainTrust("TRUSTED", "ok")
+                .complete(true)
+                .build();
+        assertEquals("C", Grade.of(r).letter());
+    }
+
     @Test
     public void weakCipherCannotImproveAWorseLetter() {
         Grade g = Grade.of(healthy()

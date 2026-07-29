@@ -1,10 +1,85 @@
 # no-sneak-core v2 — Plan of Action
 
+> ## 2026-07-29 — no-sneak-net discovery, pool injection, async REST, defect pass
+>
+> **1. nmap host discovery now goes through `no-sneak-net`.** An **on-link CIDR** is handed to
+> **`HostScanner.sweep()`** — that module's purpose-built range sweep (ARP + ICMP per host, on-link
+> interface chosen for you, `HostRecord`s streamed, its own tuned pacing: 256 in flight, 1 s
+> per-host timeout, a single ping probe because ARP is the liveness oracle). Everything else —
+> hostnames, off-link IPs, dash-ranges — keeps a per-host path (TCP-ping + `ping` + `resolve`),
+> since ARP cannot apply beyond the segment. Either way **`HostReport.mac` is populated**, closing
+> the old "no JDK API exposes a remote MAC" deferral rather than working around it. The session is
+> opened once per scan, borrows the injected pools, and degrades honestly — no Npcap/root still
+> yields a usable session with the lost capability recorded in `ScanReport.warnings`.
+> New flags `-PR` / `-PE` / `--no-arp` / `--no-tcp-ping` / `--icmp-probes N`, and every run now ends
+> with a `NMap done: … host(s) up … in N.NN seconds` stats line.
+> Verified live: `10.0.0.0/24` → 254 targets, **22 up, all 22 with a MAC, in 1.6 s**.
+>
+> > **The 25× lesson.** First implementation hand-rolled the sweep out of per-host `resolve`/`ping`
+> > calls plus five TCP-connects: **55 s** for the identical result, because it used a 3 s resolve
+> > timeout instead of 1 s, 2 ping probes instead of 1, a quarter of the intended concurrency, and
+> > TCP-connects that on-link tell you nothing ARP has not already answered. Forwarding
+> > `--max-inflight` into `SweepOptions` made it worse still (a `/24` did not finish in 100 s) —
+> > that flag caps concurrent TCP connections in the *port-scan* stage, not the sweep's packet
+> > window. **When `no-sneak-net` offers a primitive, use it; do not rebuild it from its
+> > lower-level calls.**
+>
+> **2. The executor and scheduler are injected, not looked up.** Every v2 class takes them from the
+> `NIOSocket` it rides on (`getExecutor()` / `getScheduler()`) or as an explicit constructor
+> argument — `ProbeContext`, `Fanout.run`/`dispatch`, `Version`/`CipherProbeCallback`,
+> `ProbeUDPCallback`, `RateLimiter`, `PortScanCallback`. `TaskUtil.default*` survives only in the
+> composition roots that own the process: the `ProbeChecker` and `NMap` CLI `main` methods and
+> `Checker.checkQDZDirect`. It is now structurally impossible to arm a timeout on one pool while
+> the I/O it guards runs on another.
+>
+> **3. REST `/check-qdz` is fully asynchronous.** It blocked on `checkBlocking` → `future.get` from
+> a thread belonging to the very pool the sweep needs (`NIOHTTPServer` builds its `NIOSocket` on
+> `TaskUtil.defaultTaskProcessor()` and dispatches request data to it, while `Fanout.dispatch`
+> publishes candidate starts onto the same one) — enough concurrent requests and no worker was left
+> to run the probes. The handler now returns `Boolean.FALSE` so the server writes no response,
+> **and** installs a `ProtoSession` whose `canClose()` stays false until the response is written;
+> both halves are required. A scheduled backstop answers 504 if the sweep never calls back.
+> **This endpoint had never been runtime-tested.** Now: `example.com:80` 123 ms, `google.com:443`
+> 371 ms, `github.com:443` 1825 ms, and **24–32 concurrent requests all 200 on an 8-thread pool**.
+> Keep-alive needs no special value — it bounds the *idle* gap between exchanges, not the time
+> spent producing a response, so a 5.2 s scan answers fine under a 1 s keep-alive. Running it
+> caught one defect nothing else would: `buildResponse(contentType, result, …)` re-serializes an
+> already-rendered JSON document into a JSON *string*; use the status/headers-only overload.
+>
+> **4. `Checker.checkQDZDirect(String hostPort)`** runs the same check **server-free** (no
+> `NIOHTTPServer`, no `ResourceManager`, no Shiro — just an `NIOSocket` it owns and closes), with
+> `Checker.main` as a timing harness: google.com:443 4.5 s, example.com:443 4.5–4.8 s,
+> example.com:80 0.8 s cold. Use it to embed or test the check, and to tell a scanner problem apart
+> from a transport problem — isolating it this way is what localised (1)'s regression.
+>
+> **5. Defect pass**, each verified: cipher suites rendered as raw hex (`CIPHER_0x9d`) because the
+> name table was a hand-written 11-entry switch — now reflected over Bouncy Castle's 328
+> `CipherSuite` constants; `Grade`'s weak-cipher rule matched `_RSA_WITH` as a substring, capping
+> every healthy `TLS_ECDHE_RSA_*` server at B while the static-RSA suites went unnamed and
+> unflagged; `Grade` awarded **A** to any scan that never ran the version enumeration — a false
+> clean bill of health for every shallow probe; `NMapScanner`'s catch blocks double-counted a scan
+> unit (`NIOSocket.addClientSocket` delivers `exception()` to the callback *and* rethrows), firing
+> the stage barrier early and rendering reports mid-scan; `RateLimiter.release` drove `inFlight`
+> negative, after which `--max-inflight` could never trip again, and `drain()` recursed once per
+> queued unit on synchronously-completing (loopback) launches. Also: nmap CLI no longer dies with
+> an `ArrayIndexOutOfBoundsException` on a flag with no value, no longer exits 0 on failure, and
+> `-p 1-2000000000` no longer looks like a hang. Tests **79 → 88**.
+>
+> **Testing note, learned the hard way:** do not benchmark against a port with nothing listening
+> (e.g. `example.com:81`). The connect is black-holed rather than refused, so every candidate probe
+> runs to its full timeout and the scan takes ~10 s — our own timeout budget, not a defect, and it
+> makes a healthy endpoint look broken.
+>
+> **Build note:** the working tree's `no-sneak-core/pom.xml` added a `no-sneak-net` dependency with
+> no version and nothing managing it, so Maven could not read the project at all; the root pom now
+> manages it at `${project.version}`.
+
 > **Status: ALL PHASES (0–10) DONE — v2 meets-or-exceeds v1, ready for the maintainer's merge.**
-> Non-blocking on `NIOSocket` + trigger `StateMachine` (no `MonoStateMachine`), executor
-> `TaskUtil.defaultTaskProcessor()`, scheduler `TaskUtil.defaultTaskScheduler()`. v1 untouched
-> throughout. Remaining items are polish/deferrals noted per phase (active OCSP, nmap
-> formatters/discovery, REST/tools runtime testing). Detail below.
+> Non-blocking on `NIOSocket` + trigger `StateMachine` (no `MonoStateMachine`); the executor and
+> scheduler are injected from the `NIOSocket` rather than looked up (see the 2026-07-29 entry
+> above). v1 untouched throughout. Of the deferrals this section originally listed, **nmap
+> discovery and REST runtime testing are now done**; active OCSP and Mongo/DM-tool runtime testing
+> remain. Detail below.
 >
 > **v2 test suite added (2026-07-26) — 79 tests, no network, all green.** Previously v2 had
 > **zero** tests while the only four test classes in the module targeted v1, so the merge would

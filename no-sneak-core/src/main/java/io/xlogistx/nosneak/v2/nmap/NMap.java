@@ -30,7 +30,10 @@ import java.util.concurrent.TimeUnit;
  *   --probes a,b  restrict the probe scan to named probes
  *   -Pn           skip host discovery (treat every target as up)
  *   -sn           discovery only (no port scan)
- *   --no-icmp     TCP-ping discovery only
+ *   -PR           ARP/NDP discovery only (on-link; yields the remote MAC)
+ *   -PE           ICMP-echo discovery only
+ *   --no-icmp / --no-arp / --no-tcp-ping   turn one discovery method off
+ *   --icmp-probes N   echo requests per host (pipelined; default 2)
  *   --max-inflight N / --max-rate N   rate limits
  *   -t &lt;sec&gt;      per-connection timeout (default 5)
  *   -oN/-oX/-oG/-oJ/-oC &lt;file&gt;   write Normal/XML/Grepable/JSON/CSV
@@ -58,19 +61,49 @@ public final class NMap {
             if (token.isEmpty()) continue;
             int dash = token.indexOf('-');
             if (dash > 0) {
-                int lo = Integer.parseInt(token.substring(0, dash).trim());
-                int hi = Integer.parseInt(token.substring(dash + 1).trim());
-                for (int p = Math.min(lo, hi); p <= Math.max(lo, hi); p++) {
-                    if (p >= 1 && p <= 65535) ports.add(p);
+                int lo = port(token.substring(0, dash), spec);
+                int hi = port(token.substring(dash + 1), spec);
+                // Clamp to the legal range before iterating: "-p 1-2000000000" would otherwise
+                // spin through two billion values appending nothing and look like a hang.
+                int from = Math.max(1, Math.min(lo, hi));
+                int upto = Math.min(65535, Math.max(lo, hi));
+                for (int p = from; p <= upto; p++) {
+                    ports.add(p);
                 }
             } else {
-                int p = Integer.parseInt(token);
+                int p = port(token, spec);
                 if (p >= 1 && p <= 65535) ports.add(p);
             }
         }
         int[] out = new int[ports.size()];
         for (int i = 0; i < out.length; i++) out[i] = ports.get(i);
         return out;
+    }
+
+    private static int port(String token, String spec) {
+        try {
+            return Integer.parseInt(token.trim());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("bad port spec '" + spec + "': '" + token.trim()
+                    + "' is not a number");
+        }
+    }
+
+    /** The value after a flag, or a clear error instead of an ArrayIndexOutOfBoundsException. */
+    private static String argOf(String[] args, int i, String flag) {
+        if (i >= args.length) {
+            throw new IllegalArgumentException(flag + " requires a value");
+        }
+        return args[i];
+    }
+
+    private static int intArg(String[] args, int i, String flag) {
+        String v = argOf(args, i, flag);
+        try {
+            return Integer.parseInt(v.trim());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(flag + " expects a number, got '" + v + "'");
+        }
     }
 
     public static void main(String... args) {
@@ -81,40 +114,52 @@ public final class NMap {
         NMapConfig cfg = new NMapConfig();
         boolean discoveryOnly = false;
         Map<OutputFormat, String> outputs = new LinkedHashMap<>();
-        for (int i = 0; i < args.length; i++) {
-            String a = args[i];
-            switch (a) {
-                case "-p":             cfg.ports(parsePorts(args[++i])); break;
-                case "-sV":            cfg.probeScan(true); break;
-                case "--probes":       for (String n : args[++i].split(",")) cfg.probe(n.trim()); break;
-                case "-Pn":            cfg.discovery(false); break;
-                case "-sn":            discoveryOnly = true; break;
-                case "--no-icmp":      cfg.discoveryIcmp(false); break;
-                case "--max-inflight": cfg.maxInFlight = Integer.parseInt(args[++i]); break;
-                case "--max-rate":     cfg.maxPerSec = Integer.parseInt(args[++i]); break;
-                case "-t":             cfg.timeoutInSec(Integer.parseInt(args[++i])); break;
-                case "-oN":            outputs.put(OutputFormat.NORMAL, args[++i]); break;
-                case "-oX":            outputs.put(OutputFormat.XML, args[++i]); break;
-                case "-oG":            outputs.put(OutputFormat.GREPABLE, args[++i]); break;
-                case "-oJ":            outputs.put(OutputFormat.JSON, args[++i]); break;
-                case "-oC":            outputs.put(OutputFormat.CSV, args[++i]); break;
-                case "-oA": {
-                    String base = args[++i];
-                    for (OutputFormat f : OutputFormat.values()) {
-                        outputs.put(f, base + "." + f.extension());
+        try {
+            for (int i = 0; i < args.length; i++) {
+                String a = args[i];
+                switch (a) {
+                    case "-p":             cfg.ports(parsePorts(argOf(args, ++i, a))); break;
+                    case "-sV":            cfg.probeScan(true); break;
+                    case "--probes":       for (String n : argOf(args, ++i, a).split(",")) cfg.probe(n.trim()); break;
+                    case "-Pn":            cfg.discovery(false); break;
+                    case "-sn":            discoveryOnly = true; break;
+                    case "--no-icmp":      cfg.discoveryIcmp(false); break;
+                    case "--no-arp":       cfg.discoveryArp(false); break;
+                    case "--no-tcp-ping":  cfg.discoveryTcp(false); break;
+                    case "-PR":            cfg.discoveryTcp(false).discoveryIcmp(false).discoveryArp(true); break;
+                    case "-PE":            cfg.discoveryTcp(false).discoveryArp(false).discoveryIcmp(true); break;
+                    case "--icmp-probes":  cfg.icmpProbes(intArg(args, ++i, a)); break;
+                    case "--max-inflight": cfg.maxInFlight = intArg(args, ++i, a); break;
+                    case "--max-rate":     cfg.maxPerSec = intArg(args, ++i, a); break;
+                    case "-t":             cfg.timeoutInSec(intArg(args, ++i, a)); break;
+                    case "-oN":            outputs.put(OutputFormat.NORMAL, argOf(args, ++i, a)); break;
+                    case "-oX":            outputs.put(OutputFormat.XML, argOf(args, ++i, a)); break;
+                    case "-oG":            outputs.put(OutputFormat.GREPABLE, argOf(args, ++i, a)); break;
+                    case "-oJ":            outputs.put(OutputFormat.JSON, argOf(args, ++i, a)); break;
+                    case "-oC":            outputs.put(OutputFormat.CSV, argOf(args, ++i, a)); break;
+                    case "-oA": {
+                        String base = argOf(args, ++i, a);
+                        for (OutputFormat f : OutputFormat.values()) {
+                            outputs.put(f, base + "." + f.extension());
+                        }
+                        break;
                     }
-                    break;
-                }
-                default:
-                    if (a.startsWith("-")) {
-                        System.err.println("unknown option: " + a);
-                    } else {
+                    default:
+                        if (a.startsWith("-")) {
+                            throw new IllegalArgumentException("unknown option: " + a);
+                        }
                         cfg.target(a);
-                    }
+                }
             }
+        } catch (IllegalArgumentException e) {
+            System.err.println(e.getMessage());
+            usage();
+            System.exit(2);
+            return;
         }
         if (cfg.targets.isEmpty()) {
             usage();
+            System.exit(2);
             return;
         }
         if (discoveryOnly) {
@@ -122,7 +167,10 @@ public final class NMap {
         }
 
         NIOSocket nio = null;
+        int exitCode = 0;
         try {
+            // Composition root: this is the one place the process-wide pools are chosen. Everything
+            // downstream takes the executor/scheduler from the NIOSocket it is handed.
             nio = new NIOSocket(TaskUtil.defaultTaskProcessor(), TaskUtil.defaultTaskScheduler());
             CompletableFuture<ScanReport> future = new CompletableFuture<>();
             NMapScanner.scan(nio, cfg,
@@ -138,15 +186,16 @@ public final class NMap {
                     System.out.println("Wrote " + e.getKey() + " -> " + e.getValue());
                 } catch (Exception w) {
                     System.err.println("Failed writing " + e.getValue() + ": " + w.getMessage());
+                    exitCode = 1; // an unwritten output file must not report success
                 }
             }
         } catch (Exception e) {
-            System.err.println("Error: " + e.getMessage());
-            e.printStackTrace();
+            System.err.println("Error: " + e);
+            exitCode = 1;
         } finally {
             SharedIOUtil.close(nio);
         }
-        System.exit(0);
+        System.exit(exitCode);
     }
 
     /** Generous upper bound: (waves through the rate/parallelism cap) × per-connection budget. */
@@ -171,7 +220,10 @@ public final class NMap {
         System.out.println("  --probes a,b   restrict probe scan to named probes");
         System.out.println("  -Pn            skip host discovery (all targets up)");
         System.out.println("  -sn            discovery only (no port scan)");
-        System.out.println("  --no-icmp      TCP-ping discovery only");
+        System.out.println("  -PR            ARP/NDP discovery only (on-link; yields remote MAC)");
+        System.out.println("  -PE            ICMP-echo discovery only");
+        System.out.println("  --no-icmp / --no-arp / --no-tcp-ping   turn one method off");
+        System.out.println("  --icmp-probes N   echo requests per host (pipelined; default 2)");
         System.out.println("  --max-inflight N / --max-rate N   rate limits");
         System.out.println("  -t <sec>       per-connection timeout (default 5)");
         System.out.println("  -oN/-oX/-oG/-oJ/-oC <file>   write Normal/XML/Grepable/JSON/CSV");

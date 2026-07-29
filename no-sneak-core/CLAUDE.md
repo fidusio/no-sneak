@@ -143,4 +143,21 @@ deliberately touch no sockets.
 5. **Smaller open items** — named-group enumeration (A12), active/network OCSP (only stapled is
    implemented), weak-cipher candidates in the enumeration sweep, `DMTool`'s stale hardcoded Mongo
    URL (C1), and the nmap parity list (UDP scan, timing templates, `--top-ports`, `-O`, the
-   Panama-FFM raw-socket layer).
+   Panama-FFM raw-socket layer for SYN scans and OS fingerprinting).
+
+> **Host discovery is no longer nmap's gap (2026-07-29).** `no-sneak-core` depends on
+> **`no-sneak-net`**. An on-link CIDR goes through **`HostScanner.sweep()`** — the module's
+> purpose-built range sweep (ARP + ICMP per host, its own tuned pacing); everything else
+> (hostnames, off-link IPs, dash-ranges) takes a per-host path of TCP-ping + `ping` + `resolve`.
+> Either way a scan reports the remote **MAC address**, which no JDK API can provide and which
+> `HostReport.mac` had declared but never populated. `-PR` is ARP-only, `-PE` ICMP-only. Verified
+> on a live `/24`: 254 targets, 22 up, all with MACs, in **1.6 s**.
+>
+> The lesson worth keeping: hand-rolling that sweep out of per-host `resolve`/`ping` calls cost
+> **55 s** for the same result. When `no-sneak-net` offers a primitive, use it rather than
+> rebuilding it from its lower-level calls.
+>
+> Related: the executor and scheduler are **injected everywhere** (taken from the `NIOSocket`, or
+> passed explicitly); only the CLI `main` methods and `Checker.checkQDZDirect` name
+> `TaskUtil.default*`. The REST `/check-qdz` endpoint is fully async and has no blocking call.
+> See `v2/PLAN.md` for the accompanying defect pass.

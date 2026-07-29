@@ -14,9 +14,15 @@ import java.util.List;
  * to feed — it makes no network calls, only interprets recorded facts.
  * <p>
  * Grading (simplified): {@code T} for a chain-trust failure; {@code F} for a revoked cert or
- * SSLv3; {@code C}/{@code B} when deprecated TLS 1.0/1.1 are accepted; a weak-cipher (RSA-kx,
- * CBC, 3DES, RC4, NULL/EXPORT) presence caps at {@code B}; otherwise {@code A}. Non-TLS
- * services grade {@code null} (not applicable).
+ * SSLv3; {@code C}/{@code B} when deprecated TLS 1.0/1.1 are accepted; a weak-cipher
+ * (static-RSA kx, anonymous kx, CBC, 3DES/DES, RC4, NULL/EXPORT) presence caps at {@code B};
+ * otherwise {@code A}.
+ * <p>
+ * A letter is only awarded on evidence. {@code A} requires that the protocol-version
+ * enumeration actually ran ({@code enumerate-versions}); a shallow probe that merely
+ * negotiated TLSv1.3 grades {@code null}, because a single negotiation cannot show whether
+ * the server still accepts TLSv1.0. A negotiated *deprecated* version does downgrade, since
+ * that is positive evidence of a bad posture. Non-TLS services also grade {@code null}.
  */
 public final class Grade {
 
@@ -105,18 +111,28 @@ public final class Grade {
         }
 
         List<String> versions = r.getSupportedProtocolVersions();
+        boolean enumerated = versions != null && !versions.isEmpty();
+        // Without the enumeration sweep the only protocol evidence is the version that was
+        // actually negotiated. That can prove a bad posture (a server that negotiates TLSv1.0)
+        // but never a good one — negotiating TLSv1.3 says nothing about whether TLSv1.0 is
+        // still accepted — so a shallow probe gets no letter rather than an unearned A.
+        List<String> evidence = enumerated
+                ? versions
+                : (r.getTlsVersion() != null
+                        ? Collections.singletonList(r.getTlsVersion())
+                        : Collections.<String>emptyList());
         String letter;
-        if (contains(versions, "SSLv3")) {
+        if (contains(evidence, "SSLv3")) {
             letter = "F";
-        } else if (contains(versions, "TLSv1.0")) {
+        } else if (contains(evidence, "TLSv1.0")) {
             letter = "C";
-        } else if (contains(versions, "TLSv1.1")) {
+        } else if (contains(evidence, "TLSv1.1")) {
             letter = "B";
         } else {
-            letter = "A";
+            letter = enumerated ? "A" : null;
         }
         if (hasWeakCipher(r.getSupportedCipherSuites())) {
-            letter = worseOf(letter, "B");
+            letter = letter == null ? "B" : worseOf(letter, "B");
         }
         boolean anchored = "TRUSTED".equalsIgnoreCase(r.getCertChainTrust());
         return new Grade(letter, pqc,
@@ -193,12 +209,23 @@ public final class Grade {
         return list != null && list.contains(v);
     }
 
+    /**
+     * True when any accepted suite is weak. The key-exchange test is deliberately anchored:
+     * {@code TLS_RSA_WITH_*} is static RSA (no forward secrecy), whereas
+     * {@code TLS_ECDHE_RSA_WITH_*} is a healthy ephemeral suite that merely authenticates with
+     * an RSA certificate. A substring test for {@code _RSA_WITH} flags both, which capped
+     * every modern ECDHE server at B while the genuinely weak suites went unnoticed.
+     */
     private static boolean hasWeakCipher(List<String> ciphers) {
         if (ciphers == null) return false;
         for (String c : ciphers) {
+            if (c == null) continue;
             String u = c.toUpperCase();
-            if (u.contains("_RSA_WITH") || u.contains("CBC") || u.contains("3DES")
-                    || u.contains("RC4") || u.contains("NULL") || u.contains("EXPORT")) {
+            boolean staticRsaKx = u.startsWith("TLS_RSA_WITH") || u.startsWith("SSL_RSA_WITH");
+            boolean anonymousKx = u.contains("_ANON_");
+            if (staticRsaKx || anonymousKx || u.contains("CBC") || u.contains("3DES")
+                    || u.contains("DES_") || u.contains("RC4") || u.contains("NULL")
+                    || u.contains("EXPORT")) {
                 return true;
             }
         }

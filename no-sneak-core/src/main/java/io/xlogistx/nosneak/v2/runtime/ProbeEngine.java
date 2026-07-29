@@ -22,7 +22,7 @@ import java.util.Map;
  * <p>
  * An <em>inline executor</em> keeps sequential transitions on the calling thread (the
  * selector / scheduler thread that {@link ProbeContext} already serialises). Parallel
- * fan-out states (added later) dispatch through {@code TaskUtil.defaultTaskProcessor()}.
+ * fan-out states dispatch through the executor of the {@code NIOSocket} the probe rides on.
  * No {@code MonoStateMachine} is used anywhere.
  */
 public class ProbeEngine {

@@ -2,13 +2,13 @@ package io.xlogistx.nosneak.v2.nmap;
 
 import org.zoxweb.server.logging.LogWrapper;
 import org.zoxweb.server.net.common.TCPSessionCallback;
-import org.zoxweb.server.task.TaskUtil;
 import org.zoxweb.shared.io.SharedIOUtil;
 import org.zoxweb.shared.net.IPAddress;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.SelectionKey;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -19,7 +19,7 @@ import java.util.function.Consumer;
  * connect ⇒ {@link PortState#OPEN}, a refused connection ⇒ {@link PortState#CLOSED}, no
  * response within the deadline ⇒ {@link PortState#FILTERED}. Reports its state exactly once.
  * Fully event-driven — no blocking sockets, its own deadline armed on
- * {@link TaskUtil#defaultTaskScheduler()}.
+ * the scheduler it is handed.
  */
 public class PortScanCallback extends TCPSessionCallback {
 
@@ -29,11 +29,16 @@ public class PortScanCallback extends TCPSessionCallback {
     private final AtomicBoolean done = new AtomicBoolean(false);
     private volatile ScheduledFuture<?> deadline;
 
-    public PortScanCallback(IPAddress address, int timeoutSec, Consumer<PortState> onResult) {
+    /**
+     * @param scheduler arms the FILTERED deadline — injected rather than looked up statically, so
+     *                  the probe times out on the same pools its {@code NIOSocket} was built with
+     */
+    public PortScanCallback(ScheduledExecutorService scheduler, IPAddress address, int timeoutSec,
+                            Consumer<PortState> onResult) {
         super(address);
         this.onResult = onResult;
         // FILTERED deadline: fires if neither connect nor refusal arrives.
-        this.deadline = TaskUtil.defaultTaskScheduler().schedule(
+        this.deadline = scheduler.schedule(
                 () -> finish(PortState.FILTERED), Math.max(timeoutSec, 1), TimeUnit.SECONDS);
     }
 

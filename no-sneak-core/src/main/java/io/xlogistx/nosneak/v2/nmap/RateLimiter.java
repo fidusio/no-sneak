@@ -1,9 +1,8 @@
 package io.xlogistx.nosneak.v2.nmap;
 
-import org.zoxweb.server.task.TaskUtil;
-
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -31,16 +30,31 @@ public final class RateLimiter {
     private final Queue<Runnable> pending = new ConcurrentLinkedQueue<>();
     private final AtomicInteger inFlight = new AtomicInteger(0);
     private final Object lock = new Object();
+    /**
+     * Set while this thread is inside {@link #drain()}. A launch can complete synchronously —
+     * a loopback connect finishes inside {@code addClientSocket}, which calls back into
+     * {@link #release()} → {@code drain()} — so without this guard the drain recurses once per
+     * queued unit and a large localhost scan dies with a StackOverflowError. Re-entering simply
+     * returns; the outer loop is still running and picks the next unit up.
+     */
+    private static final ThreadLocal<Boolean> DRAINING = ThreadLocal.withInitial(() -> Boolean.FALSE);
     private double tokens;
-    private ScheduledFuture<?> ticker;
+    private volatile ScheduledFuture<?> ticker;
 
-    public RateLimiter(int maxInFlight, int maxPerSec) {
+    /**
+     * @param scheduler the scheduler the refill tick runs on — injected rather than looked up
+     *                  statically, so an embedder's pools (and the ones the owning
+     *                  {@link org.zoxweb.server.net.NIOSocket} was built with) are the ones used
+     * @param maxInFlight at most N units launched-but-unfinished at once; {@code <= 0} unlimited
+     * @param maxPerSec token-bucket pacing of new launches; {@code <= 0} unpaced
+     */
+    public RateLimiter(ScheduledExecutorService scheduler, int maxInFlight, int maxPerSec) {
         this.maxInFlight = maxInFlight;
         this.maxPerSec = maxPerSec;
         this.tokens = maxPerSec > 0 ? maxPerSec : 0;
         if (maxPerSec > 0) {
-            this.ticker = TaskUtil.defaultTaskScheduler()
-                    .scheduleAtFixedRate(this::tick, TICK_MS, TICK_MS, TimeUnit.MILLISECONDS);
+            this.ticker = scheduler.scheduleAtFixedRate(
+                    this::tick, TICK_MS, TICK_MS, TimeUnit.MILLISECONDS);
         }
     }
 
@@ -50,10 +64,26 @@ public final class RateLimiter {
         drain();
     }
 
-    /** Signal that one launched unit finished — frees an in-flight slot. */
+    /**
+     * Signal that one launched unit finished — frees an in-flight slot. Never lets the counter
+     * go below zero: a single stray release would otherwise leave {@code inFlight} permanently
+     * short and, once negative, the max-in-flight test at {@link #drain()} could never trip
+     * again — silently turning the concurrency cap off for the rest of the scan.
+     */
     public void release() {
-        inFlight.decrementAndGet();
+        int cur;
+        do {
+            cur = inFlight.get();
+            if (cur <= 0) {
+                break;
+            }
+        } while (!inFlight.compareAndSet(cur, cur - 1));
         drain();
+    }
+
+    /** @return units currently launched but not yet finished (never negative). */
+    public int inFlight() {
+        return inFlight.get();
     }
 
     private void tick() {
@@ -64,6 +94,18 @@ public final class RateLimiter {
     }
 
     private void drain() {
+        if (DRAINING.get()) {
+            return; // re-entered from a synchronously-completing launch; the outer loop continues
+        }
+        DRAINING.set(Boolean.TRUE);
+        try {
+            drainLoop();
+        } finally {
+            DRAINING.set(Boolean.FALSE);
+        }
+    }
+
+    private void drainLoop() {
         while (true) {
             Runnable r;
             synchronized (lock) {
