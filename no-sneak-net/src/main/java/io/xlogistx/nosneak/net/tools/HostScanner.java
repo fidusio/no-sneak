@@ -40,7 +40,10 @@ import java.util.function.Consumer;
  * close it.
  * <p>
  * This is the embedding surface — {@link HostScan} is just a command line over
- * it, and the desktop application drives the same object. It exists because the
+ * it, and applications drive the same object. Note the shape that implies: callers
+ * are ordinary code that runs a scan and keeps the result, and a GUI displays that
+ * result afterwards; nothing is expected to drive this from an event thread. It
+ * exists because the
  * factory hands back wiring, not a workflow: {@link HostDiscoveryFactory#open}
  * costs a pcap handle or a raw socket plus two reader threads <em>per
  * interface</em>, so opening and closing it around every single ping — which is
@@ -49,16 +52,34 @@ import java.util.function.Consumer;
  * <p>
  * <b>Nothing here blocks the calling thread</b> except {@link #open}, {@link #reopen}
  * and {@link #close}. Every operation returns a {@link CompletableFuture}, and even
- * hostname lookup is pushed onto the dispatcher, so a Swing action listener can call
- * these directly from the event thread and complete the UI update in
- * {@code whenComplete}. Sweep results stream to the caller's {@link Consumer} on a
- * dispatcher thread, never on a reader thread — a Swing consumer should hop through
- * {@code SwingUtilities.invokeLater}.
+ * hostname lookup is pushed onto the dispatcher rather than run on the caller.
+ * <p>
+ * <b>A returned future completes on a backend READER thread</b>, so anything chained
+ * onto it runs there unless you ask otherwise. Keep that work short — take the result,
+ * hand it off, return — and push anything slower onto an executor of your own with the
+ * {@code *Async} forms. This bites harder on Linux than anywhere else: its ICMP readers
+ * are two threads for the WHOLE JVM (§4.4), not one per NIC as on Windows, so a
+ * continuation that blocks stalls reception for every concurrent ping and for the ICMP
+ * half of every running sweep — which then report timeouts this session inflicted on
+ * itself. <b>Do not render from a continuation.</b> Give the result to whatever owns the
+ * display and let it draw on its own thread, which for Swing means
+ * {@code SwingUtilities.invokeLater} on that side rather than UI work on this one.
+ * <p>
+ * Sweep results are the exception and are already safe: {@code onHost} is dispatched on
+ * a dispatcher thread, never on a reader thread.
+ * <p>
+ * Whether this class should hop returned futures onto the dispatcher itself is an
+ * <b>open decision</b> (§13.15) — a change that did exactly that was written and then
+ * reverted. Until it is settled, the contract is the paragraph above: the reader thread
+ * is where a continuation lands, and callers are what keep it moving.
  * <p>
  * <b>It never fails to open.</b> A machine without Npcap, or a Linux box without
- * root, still yields a usable object in a degraded {@link Mode}; ask {@link #mode()}
- * and {@link #diagnostic()} and disable the controls that cannot work. An operation
- * the current mode cannot perform completes exceptionally with a
+ * root, still yields an object you can question rather than an exception; ask
+ * {@link #mode()} and {@link #diagnostic()} and disable the controls that cannot
+ * work. How degraded that mode is varies by platform, and Linux is the harsh case —
+ * without root it is {@link Mode#UNAVAILABLE}, ping included, because its ICMP is
+ * {@code SOCK_RAW}. Do not assume a session can ping just because it opened. An
+ * operation the current mode cannot perform completes exceptionally with a
  * {@link DiscoveryException} that says why, rather than silently returning nothing.
  * Note the distinction the whole subsystem rests on: an unreachable <em>host</em> is
  * a normal result ({@code received == 0}), not an exception. Only an unusable
@@ -89,7 +110,15 @@ public final class HostScanner implements Closeable {
         /**
          * ICMP only — the layer-2 backend would not open. Ping works because the
          * kernel routes it; resolve, sweep and observe do not, since ARP and NDP
-         * have no kernel path. This is the unprivileged Linux and macOS shape.
+         * have no kernel path. This is the unprivileged <b>macOS</b> shape, where
+         * ICMP is an unprivileged {@code SOCK_DGRAM} socket.
+         * <p>
+         * <b>Not reachable on Linux by dropping privilege.</b> Linux ICMP is
+         * {@code SOCK_RAW} and wants {@code CAP_NET_RAW} exactly like
+         * {@code AF_PACKET}, so whatever denies layer 2 denies ping in the same
+         * breath and an unprivileged Linux box lands in {@link #UNAVAILABLE}, not
+         * here. Reaching this mode on Linux means layer 2 failed for some reason
+         * OTHER than privilege.
          */
         ICMP_ONLY,
         /** Nothing opened. Every operation fails with the reason in {@link #diagnostic()}. */
@@ -186,9 +215,17 @@ public final class HostScanner implements Closeable {
      * Tries full wiring, falls back to ICMP, and reports rather than throws.
      * <p>
      * The fallback is not a nicety: ICMP does not need layer 2 wherever the kernel
-     * routes, so demanding the full wiring would make ping fail on every platform
-     * where it works perfectly — an unprivileged Linux shell, or a Mac where
-     * {@code /dev/bpf*} is root-only.
+     * routes, so demanding the full wiring would make ping fail on a platform where
+     * it works perfectly — a Mac where {@code /dev/bpf*} is root-only but ICMP is an
+     * unprivileged {@code SOCK_DGRAM} socket.
+     * <p>
+     * <b>It cannot rescue an unprivileged Linux box</b>, and the diagnostic must not
+     * imply otherwise. Linux ICMP is {@code SOCK_RAW}, so the second attempt fails on
+     * the same {@code EPERM} as the first and the session is {@link Mode#UNAVAILABLE}.
+     * The attempt is still made rather than skipped, because the failure is what puts
+     * BOTH errnos in {@link #diagnostic()} — one saying layer 2 was refused and the
+     * other saying ICMP was too, which is what tells an operator this is privilege
+     * and not a missing NIC.
      */
     private static Session openSession(ScheduledExecutorService scheduler, ExecutorService dispatcher) {
         String layer2Failure;

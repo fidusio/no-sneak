@@ -2407,8 +2407,22 @@ executor, so nothing reaches `ForkJoinPool.commonPool()`. But the backends compl
 `HostScanner` composes with the no-executor `thenCompose`/`thenApply` forms, so an embedder's plain
 `thenAccept` runs on a reader thread and stalls reception for that NIC while it runs. A fix that
 hopped every returned future onto the dispatcher was written and **reverted at the maintainer's
-request** — the design question is undecided, not the mechanism. Decide it before the app attaches
-UI callbacks.
+request** — the design question is undecided, not the mechanism.
+
+**Still open, and less urgent than it looked.** `HostScanner`'s javadoc had meanwhile gone the other
+way and promised the opposite of this paragraph — that "a Swing action listener can call these
+directly from the event thread and complete the UI update in `whenComplete`" — which is the one
+usage that makes the reader-thread landing bite hardest, and on Linux bites JVM-wide because its two
+ICMP readers are not per-NIC (§4.4). **That claim is corrected, not implemented:** the class now
+documents where a continuation actually lands and tells callers to hand off rather than render
+there, and it points here for the decision itself.
+
+The urgency drops because the intended shape is not the one the javadoc described. Callers are
+ordinary application code that runs a scan and keeps the result; the GUI renders afterwards, off its
+own thread. Nothing is meant to drive this from an event thread, so the dispatcher hop is a
+robustness question about hostile embedders rather than a prerequisite for the app. Decide it if a
+caller ever does real work in a continuation — the sweep `onHost` path is already dispatched and is
+the model to copy if so.
 
 > Also worth keeping: the shell strips a leading BOM before dispatching. Piping a command file into
 > it on Windows prepends one, and the resulting `Unknown command: status` is unreadable, because the
@@ -2646,6 +2660,73 @@ an RTT. `10.0.0.61` is back to `arp` with no RTT, and the ICMP tally counts wire
 > 7. For our own address the right answer needed no probe of any kind. Ask what the question *is*
 > before choosing an instrument: liveness of a local address is a fact about configuration, and
 > `NetworkInterface` is its authoritative source.
+
+---
+
+### 13.19 The unprivileged-Linux fallback that never existed
+
+The tools layer shipped claiming a degraded mode Linux cannot reach. Four places said, in
+substance, *"without root you still get ping"*:
+
+| Where | Claim |
+|---|---|
+| `HostScanner`, class javadoc | "a Linux box without root, still yields a usable object in a degraded `Mode`" |
+| `HostScanner`, `Mode.ICMP_ONLY` | "This is the unprivileged Linux and macOS shape." |
+| `HostScanner.openSession` | the fallback exists for "an unprivileged Linux shell, or a Mac…" |
+| `HostScan` usage text | "Linux needs root for layer 2; ICMP alone does not." |
+
+**All four are false here, and the last one is worse than false — HEAD said `"Linux needs root."`
+and this replaced a correct sentence with its opposite.** Measured as uid 1000 on the appliance
+segment:
+
+```
+session : UNAVAILABLE - no backend opened.
+  Layer 2: socket(17,2,1544) failed: EPERM - raw and AF_PACKET sockets require root or CAP_NET_RAW.
+  ICMP:    socket(2,3,1)    failed: EPERM - raw and AF_PACKET sockets require root or CAP_NET_RAW
+```
+
+`ICMP_ONLY` is not reachable on Linux by dropping privilege. §6.5 puts Linux IPv4 ICMP on
+`SOCK_RAW` — deliberately, because that is what delivers the full IP header and makes
+`ttlAvailable` true (§13.9) — and `SOCK_RAW` wants `CAP_NET_RAW` exactly like `AF_PACKET`. So
+whatever refuses layer 2 refuses ping in the same breath. The shape being described is **macOS**,
+whose ICMP is an unprivileged `SOCK_DGRAM` socket (§7.5); it was copied onto Linux by a session
+working on the Windows and macOS backends.
+
+The `openIcmpOnly` fallback is **kept, not skipped**, even though on Linux it can only fail: the
+second `EPERM` is what puts *both* errnos in `diagnostic()`, and one line saying layer 2 was
+refused next to another saying ICMP was too is what tells an operator this is privilege rather
+than a missing NIC. That is §13.12's diagnosability twin — a failure indistinguishable from a
+different failure is not honestly reported.
+
+Corrected in place; no behaviour changed, because the behaviour was already right. 260 tests
+green, and the four commands re-verified as root against the live `/24` with the same results as
+before the merge (18 alive, 18 by MAC, 18 by ICMP, ~1.39 s).
+
+> Worth generalising, and it is the third time this section has said it: **a capability claim
+> written as prose degrades even worse than one written as a literal** (§13.10.1). `capabilities()`
+> at least gets recomputed; a javadoc sentence is true on the platform whoever wrote it was sitting
+> at, and silently wrong everywhere else. When a doc string names a platform, it is an assertion
+> about that platform and needs the same evidence as a test.
+
+#### `hostscan` with no arguments hung instead of explaining itself
+
+The same change made the shell the no-argument default (§13.15), which is right at a terminal and
+wrong everywhere else: `ssh appliance hostscan` has a stdin that is **connected but idle**, so the
+read never returns and the command hangs forever — after opening raw sockets and `2+3N` reader
+threads as the side effect of asking the tool what it does. Any wrapper running bare `hostscan` as
+an availability probe hit the same wall. Before the rewrite this printed usage and returned without
+touching the factory.
+
+`main` now asks whether an operator is actually there, and prints usage and exits when not,
+**before** `HostScanner.open()` rather than after. `hostscan shell` still forces the shell, which is
+what a script piping commands into one session wants — and is how the shell gets exercised in
+testing, since redirected stdin is exactly the case the guard now excludes.
+
+The test is `Console.isTerminal()`, **not** `System.console() != null`. Since Java 22 a `Console` is
+returned even when the streams are redirected, so its presence proves nothing; using it as the
+predicate would restore the hang silently, on headless appliances specifically. Verified all three
+ways on Linux: redirected stdin prints usage and exits 0 with no session line, a real pty (`script
+-qec`) opens the shell, and `shell` with piped commands still reports `FULL` and runs them.
 
 ---
 

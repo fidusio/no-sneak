@@ -17,6 +17,7 @@ import io.xlogistx.nosneak.net.util.NSNetUtil;
 import org.zoxweb.shared.util.SUS;
 
 import java.io.BufferedReader;
+import java.io.Console;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintStream;
@@ -74,9 +75,21 @@ public final class HostScan {
             usage(System.out);
             return;
         }
+        boolean explicitShell = args.length > 0 && args[0].equalsIgnoreCase("shell");
+        if (args.length == 0 && !interactiveTerminal()) {
+            // No arguments AND nobody there to type: print what the tool does and
+            // leave. Opening the session first would be the wrong order even if the
+            // read returned - `ssh appliance hostscan` blocks forever on a stdin that
+            // is connected but idle, having already taken raw sockets and 2+3N reader
+            // threads (§4.4) as the side effect of asking the tool what it does.
+            // `hostscan shell` still forces the shell when a script genuinely wants
+            // to pipe commands into one session.
+            usage(System.out);
+            return;
+        }
         int exit = 0;
         try (HostScanner scanner = HostScanner.open()) {
-            if (args.length == 0 || args[0].equalsIgnoreCase("shell")) {
+            if (args.length == 0 || explicitShell) {
                 System.out.println("session : " + scanner.mode() + " - " + scanner.diagnostic());
                 shell(scanner, System.out);
             } else {
@@ -421,6 +434,22 @@ public final class HostScan {
     }
 
     /**
+     * Whether an operator is actually sitting at this process — the difference
+     * between someone typing {@code hostscan} and a script running it.
+     * <p>
+     * {@code System.console() != null} is NOT that test on a current JDK. Since
+     * Java 22 a {@link Console} is handed back even when the streams are
+     * redirected, so its presence proves nothing and {@code isTerminal()} is the
+     * question that has to be asked instead. Getting this backwards would restore
+     * the hang it exists to prevent, silently, on the machines that matter most —
+     * headless appliances.
+     */
+    private static boolean interactiveTerminal() {
+        Console console = System.console();
+        return console != null && console.isTerminal();
+    }
+
+    /**
      * Splits a shell line. Strips a leading byte-order mark: piping a command file
      * into the shell on Windows routinely prepends one, and it would otherwise turn
      * {@code status} into an unknown command whose name looks identical to the real
@@ -451,7 +480,8 @@ public final class HostScan {
         out.println("""
                 no-sneak host discovery
 
-                  hostscan                        interactive shell (one session, many commands)
+                  hostscan                        interactive shell at a terminal; this help otherwise
+                  hostscan shell                  force the shell, e.g. to pipe commands into one session
                   hostscan list                   interfaces, devices, capabilities
                   hostscan status                 backend mode and why it is what it is
                   hostscan resolve <ip> [ip...]   ARP/NDP lookup, targets run concurrently
@@ -468,7 +498,9 @@ public final class HostScan {
                   A bare trailing number still means the ping count: 'ping 10.0.0.1 4'.
 
                 Windows needs Npcap installed (https://npcap.com/).
-                Linux needs root for layer 2; ICMP alone does not.""");
+                Linux needs root for everything, ping included: its ICMP is SOCK_RAW,
+                which wants CAP_NET_RAW exactly like AF_PACKET does.
+                macOS needs root for layer 2 only; its ICMP is unprivileged.""");
     }
 
     /**
