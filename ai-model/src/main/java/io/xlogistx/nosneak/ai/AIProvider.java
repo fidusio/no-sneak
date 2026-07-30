@@ -27,7 +27,7 @@ public interface AIProvider extends GetName, GetDescription {
 
     AIAPI getHTTPAPICaller();
 
-    AIResponse send(AIRequest req) throws AIException;
+    AIResponse send(AIRequest req, String skill) throws AIException;
 
     // async should return a reference or identifier in case we want to cancel it AIRequestStatus
     void asyncSend(AIRequest req, AICallback callback) throws AIException;

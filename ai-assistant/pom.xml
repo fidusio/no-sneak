@@ -28,6 +28,12 @@
             <version>${no-sneak.version}</version>
             <scope>compile</scope>
         </dependency>
+        <dependency>
+            <groupId>org.commonmark</groupId>
+            <artifactId>commonmark</artifactId>
+            <version>0.28.0</version>
+            <scope>compile</scope>
+        </dependency>
     </dependencies>
 
 </project>

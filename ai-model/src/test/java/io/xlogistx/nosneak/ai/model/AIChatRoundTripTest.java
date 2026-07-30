@@ -32,7 +32,7 @@ public class AIChatRoundTripTest {
     private static AIChat sampleChat() {
         AIChat c = new AIChat("planning chat");
         c.setModel(MODEL);
-        c.setSystemPrompt("You are helpful.");
+        c.addSkill(new AISkill("helpful", "tone", "You are helpful."));
 
         AIMessage turn = c.startTurn("what is 2+2?", 4096);
         AIResponse resp = new AIResponse();
@@ -127,7 +127,8 @@ public class AIChatRoundTripTest {
 
         assertEquals(original.getTitle(), restored.getTitle());
         assertEquals(original.getModel(), restored.getModel());
-        assertEquals(original.getSystemPrompt(), restored.getSystemPrompt());
+        assertEquals(original.getSkills().size(), restored.getSkills().size());
+        assertEquals("You are helpful.", ((AISkill) restored.getSkills().values()[0]).getContent());
         assertEquals(original.getCreationTime(), restored.getCreationTime());
         assertEquals(1, restored.getMessages().size());
 
@@ -146,7 +147,6 @@ public class AIChatRoundTripTest {
         AIRequest req = new AIRequest();
         req.setModel(MODEL);
         req.setContent("hi");
-        req.setSkillsPrompt("be terse");
         req.setCorrelationID("corr-1");
         req.setProviderSessionID("sess-9");
         req.setMaxTokens(42);
@@ -154,7 +154,6 @@ public class AIChatRoundTripTest {
         AIRequest rReq = GSONUtil.fromJSONDefault(GSONUtil.toJSONDefault(req, false), AIRequest.class);
         assertEquals(MODEL, rReq.getModel());
         assertEquals("hi", rReq.getContent());
-        assertEquals("be terse", rReq.getSkillsPrompt());
         assertEquals("corr-1", rReq.getCorrelationID());
         assertEquals("sess-9", rReq.getProviderSessionID());
         assertEquals(42, rReq.getMaxTokens());

@@ -19,6 +19,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+
 import static io.xlogistx.nosneak.ai.assistant.AssistantUtil.chatBubble;
 
 public class AssistantPanel extends JPanel {
@@ -146,17 +147,73 @@ public class AssistantPanel extends JPanel {
         JScrollPane composerScroll = new JScrollPane(composer,
                 JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
         composerScroll.setPreferredSize(new Dimension(0, 44));
+        composerScroll.setBorder(BorderFactory.createEmptyBorder());
+        composerScroll.setOpaque(false);
+        composerScroll.getViewport().setOpaque(false);
 
         JButton addSkill = new JButton(new IconUtil.PlusIcon(16));
-        JPanel temp = new JPanel();
-        temp.add(addSkill);
+
+        addSkill.addActionListener(_ -> {
+            AIChat target = context.currentChat();
+            if (target == null) {
+                JOptionPane.showMessageDialog(this, "Open a chat first", "Add skill",
+                        JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+
+            List<AISkill> skills = context.getAllSkills();
+            if (skills.isEmpty()) {
+                JOptionPane.showMessageDialog(this, "No skills yet", "Add skill",
+                        JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+
+            JComboBox<AISkill> combo = new JComboBox<>(skills.toArray(new AISkill[0]));
+            combo.setRenderer(new DefaultListCellRenderer() {
+                public Component getListCellRendererComponent(JList<?> list, Object value, int index,
+                                                              boolean selected, boolean focused) {
+                    super.getListCellRendererComponent(list, value, index, selected, focused);
+                    if (value instanceof AISkill s) setText(s.getName());
+                    return this;
+                }
+            });
+
+            int res = JOptionPane.showConfirmDialog(this, combo, "Select skill",
+                    JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+            if (res != JOptionPane.OK_OPTION) return;
+
+            AISkill skill = (AISkill) combo.getSelectedItem();
+            if (skill == null) return;
+
+            target.addSkill(skill);
+            BackgroundTask.runCatching(this, addSkill, () -> context.saveChat(target), () -> {
+            });
+        });
+
+        addSkill.putClientProperty("JButton.buttonType", "toolBarButton");
+        addSkill.setFocusable(false);
+        addSkill.setToolTipText("Attach queue items or skills");
+        addSkill.setMargin(new Insets(0, 0, 0, 0));
+        addSkill.setPreferredSize(new Dimension(28, 28));
+
+        JPanel addSkillHolder = new JPanel(new BorderLayout());
+        addSkillHolder.setOpaque(false);
+        addSkillHolder.add(addSkill, BorderLayout.NORTH);
+
+        JPanel inputBox = new JPanel(new BorderLayout(4, 0));
+        inputBox.setBackground(composer.getBackground());
+        inputBox.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(UIManager.getColor("Component.borderColor")),
+                BorderFactory.createEmptyBorder(4, 6, 4, 4)));
+        inputBox.add(addSkillHolder, BorderLayout.WEST);
+        inputBox.add(composerScroll, BorderLayout.CENTER);
 
         sendButton = new JButton("Send");
         sendButton.addActionListener(_ -> onSend());
 
         JPanel composerBar = new JPanel(new BorderLayout(8, 0));
         composerBar.setBorder(BorderFactory.createEmptyBorder(8, 14, 12, 14));
-        composerBar.add(composerScroll, BorderLayout.CENTER);
+        composerBar.add(inputBox, BorderLayout.CENTER);
         composerBar.add(sendButton, BorderLayout.EAST);
 
         JPanel panel = new JPanel(new BorderLayout());
@@ -533,7 +590,19 @@ public class AssistantPanel extends JPanel {
 
         // flattened context to send to the AI
 
+        StringBuilder skillSb = new StringBuilder();
+
+        for (NVEntity e : chat.getSkills().values()) {
+            AISkill s = (AISkill) e;
+            if (s == null || s.getContent() == null || s.getContent().isEmpty()) continue;
+            if (!skillSb.isEmpty()) skillSb.append("\n\n");
+            skillSb.append("<skill>");
+            skillSb.append(s.getContent());
+            skillSb.append("</skill>");
+        }
+
         StringBuilder sb = new StringBuilder();
+
         for (NVEntity e : chat.getMessages().values()) {
             AIMessage m = (AIMessage) e;
             AIRequest req = m.getAIRequest();
@@ -550,10 +619,12 @@ public class AssistantPanel extends JPanel {
         wire.setProviderSessionID(chat.getProviderSessionID());
         wire.setContent(sb.toString());
 
+        //System.out.println(wire.getContent());
+
         final AIChat sending = chat;
         BackgroundTask.run(this, sendButton,
                 () -> {
-                    AIResponse resp = p.send(wire);
+                    AIResponse resp = p.send(wire, skillSb.toString());
                     msg.setAIResponse(resp);
                     if (resp.getProviderSessionID() != null) sending.setProviderSessionID(resp.getProviderSessionID());
                     context.saveChat(sending);

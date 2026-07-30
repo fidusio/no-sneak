@@ -10,7 +10,6 @@ public class AIRequest extends PropertyDAO {
 
     public enum Param implements GetNVConfig {
         MODEL(NVConfigManager.createNVConfig("model", "the ai model for the request", "Model", false, false, String.class)),
-        SKILLS_PROMPT(NVConfigManager.createNVConfig("skills_prompt", "skills specific to the request", "SkillsPrompt", false, false, String.class)),
         CONTENT(NVConfigManager.createNVConfig("content", "content to send to an ai", "Content", false, false, String.class)),
         CORRELATION_ID(NVConfigManager.createNVConfig("correlation_id", "id to connect request with responses", "CorrelationID", false, false, String.class)),
         PROVIDER_SESSION_ID(NVConfigManager.createNVConfig("provider_session_id", "id to send to stateful ai for context", "ProviderSessionID", false, false, String.class)),
@@ -37,10 +36,9 @@ public class AIRequest extends PropertyDAO {
         super(NVC_AI_REQUEST);
     }
 
-    public AIRequest(String model, String skills, String content, Integer maxTokens) {
+    public AIRequest(String model, String content, Integer maxTokens) {
         this();
         setModel(model);
-        setSkillsPrompt(skills);
         setContent(content);
         setMaxTokens(maxTokens);
     }
@@ -53,13 +51,6 @@ public class AIRequest extends PropertyDAO {
         setValue(Param.MODEL, model);
     }
 
-    public String getSkillsPrompt() {
-        return lookupValue(Param.SKILLS_PROMPT);
-    }
-
-    public void setSkillsPrompt(String skills) {
-        setValue(Param.SKILLS_PROMPT, skills);
-    }
 
     public String getContent() {
         return lookupValue(Param.CONTENT);

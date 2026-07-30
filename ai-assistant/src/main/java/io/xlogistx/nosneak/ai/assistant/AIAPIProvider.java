@@ -54,12 +54,14 @@ public class AIAPIProvider implements AIProvider {
     }
 
     @Override
-    public AIResponse send(AIRequest req) throws AIException {
+    public AIResponse send(AIRequest req, String skill) throws AIException {
         AIResponse response = new AIResponse();
 
         try {
             int maxTokens = (req.getMaxTokens() != null) ? req.getMaxTokens() : 1024;
-            String res = api.completion(req.getModel(), req.getContent(), maxTokens);
+            String tempSkill = "";
+            if(skill != null && !skill.isEmpty()) tempSkill = skill;
+            String res = api.completion(req.getModel(), tempSkill, req.getContent(), maxTokens);
             response.setContent(res);
 
         } catch (IOException e) {
