@@ -59,9 +59,8 @@ public class AIAPIProvider implements AIProvider {
 
         try {
             int maxTokens = (req.getMaxTokens() != null) ? req.getMaxTokens() : 1024;
-            String tempSkill = "";
-            if(skill != null && !skill.isEmpty()) tempSkill = skill;
-            String res = api.completion(req.getModel(), tempSkill, req.getContent(), maxTokens);
+
+            String res = api.completion(req.getModel(),  req.getContent(), maxTokens, skill);
             response.setContent(res);
 
         } catch (IOException e) {
