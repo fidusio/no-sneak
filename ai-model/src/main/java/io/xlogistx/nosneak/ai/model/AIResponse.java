@@ -71,7 +71,8 @@ public class AIResponse extends PropertyDAO {
     }
 
     public int getTokens() {
-        return lookupValue(Param.TOKENS);
+        Integer tokens = lookupValue(Param.TOKENS);
+        return tokens == null ? 0 : tokens;
     }
 
     public void setTokens(int tokens) {
@@ -79,7 +80,8 @@ public class AIResponse extends PropertyDAO {
     }
 
     public long getLatency() {
-        return lookupValue(Param.LATENCY);
+        Long latency = lookupValue(Param.LATENCY);
+        return latency == null ? 0 : latency;
     }
 
     public void setLatency(long latency) {

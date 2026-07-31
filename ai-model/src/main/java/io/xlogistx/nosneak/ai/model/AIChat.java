@@ -9,7 +9,6 @@ public class AIChat extends PropertyDAO {
         PROVIDER_SESSION_ID(NVConfigManager.createNVConfig("provider_session_id", "provider-issued handle to resume server-side context on a stateful api; null until a response supplies it", "ProviderSessionID", false, true, String.class)),
         MODEL(NVConfigManager.createNVConfig("model", "default model id", "Model", false, true, String.class)),
         PROVIDER(NVConfigManager.createNVConfig("provider", "bound provider", "Provider", false, true, String.class)),
-        SKILLS(NVConfigManager.createNVConfigEntity("skills", "skills active for the whole conversation", "Skills", false, true, AISkill[].class, NVConfigEntity.ArrayType.LIST)),
         MESSAGES(NVConfigManager.createNVConfigEntity("messages", "the chat history", "Messages",
                 false, true, AIMessage[].class, NVConfigEntity.ArrayType.LIST));
 
@@ -72,25 +71,6 @@ public class AIChat extends PropertyDAO {
 
     public void setProvider(String provider) {
         setValue(Param.PROVIDER, provider);
-    }
-
-    public ArrayValues<NVEntity> getSkills() {
-        return lookup(Param.SKILLS);
-    }
-
-    public AIChat addSkill(AISkill skill) {
-        if (skill != null) {
-            getSkills().add(skill);
-            setLastTimeUpdated(System.currentTimeMillis());
-        }
-        return this;
-    }
-
-    public void removeSkill(AISkill skill) {
-        if (skill != null) {
-            getSkills().remove(skill);
-            setLastTimeUpdated(System.currentTimeMillis());
-        }
     }
 
     public ArrayValues<NVEntity> getMessages() {

@@ -4,8 +4,10 @@ import io.xlogistx.api.ai.AIAPI;
 import io.xlogistx.nosneak.ai.model.AIRequest;
 import io.xlogistx.nosneak.ai.model.AIResponse;
 import org.zoxweb.shared.security.APIKey;
+import org.zoxweb.shared.task.ConsumerCallback;
 import org.zoxweb.shared.util.GetDescription;
 import org.zoxweb.shared.util.GetName;
+import org.zoxweb.shared.util.NVGenericMap;
 
 
 /**
@@ -29,7 +31,5 @@ public interface AIProvider extends GetName, GetDescription {
 
     AIResponse send(AIRequest req, String skill) throws AIException;
 
-    // async should return a reference or identifier in case we want to cancel it AIRequestStatus
-    void asyncSend(AIRequest req, AICallback callback) throws AIException;
-
+    void asyncSend(AIRequest req, String skill, ConsumerCallback<NVGenericMap> callback) throws AIException;
 }

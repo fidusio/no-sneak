@@ -2,13 +2,16 @@ package io.xlogistx.nosneak.ai.assistant;
 
 import io.xlogistx.api.ai.AIAPI;
 import io.xlogistx.api.ai.AIAPIBuilder;
-import io.xlogistx.nosneak.ai.AICallback;
 import io.xlogistx.nosneak.ai.AIException;
 import io.xlogistx.nosneak.ai.AIModelCatalog;
 import io.xlogistx.nosneak.ai.AIProvider;
 import io.xlogistx.nosneak.ai.model.AIRequest;
 import io.xlogistx.nosneak.ai.model.AIResponse;
+import org.zoxweb.server.http.HTTPAPIEndPoint;
+import org.zoxweb.server.task.TaskUtil;
 import org.zoxweb.shared.security.APIKey;
+import org.zoxweb.shared.task.ConsumerCallback;
+import org.zoxweb.shared.util.NVGenericMap;
 
 import java.io.IOException;
 import java.time.Instant;
@@ -25,6 +28,7 @@ public class AIAPIProvider implements AIProvider {
         this.type = type;
 
         api = AIAPIBuilder.createAIAPI(type, null, key.getAPIKey());
+        api.updateExecutor(TaskUtil.defaultTaskProcessor());
         modelCatalog = new ModelCatalog();
     }
 
@@ -53,6 +57,15 @@ public class AIAPIProvider implements AIProvider {
         return api;
     }
 
+    private AIAPI bound() {
+        api.updateURL(type.getURL());
+        api.lookupEndPoint(AIAPIBuilder.Command.MODELS.getName()).setAuthorizationEncoder(
+                type == AIAPIBuilder.AIAPIType.ANTHROPIC
+                        ? AIAPIBuilder.ANTHROPIC_AUTHORIZATION
+                        : HTTPAPIEndPoint.DEFAULT_AUTHORIZATION_ENCODER);
+        return api;
+    }
+
     @Override
     public AIResponse send(AIRequest req, String skill) throws AIException {
         AIResponse response = new AIResponse();
@@ -60,7 +73,7 @@ public class AIAPIProvider implements AIProvider {
         try {
             int maxTokens = (req.getMaxTokens() != null) ? req.getMaxTokens() : 1024;
 
-            String res = api.completion(req.getModel(),  req.getContent(), maxTokens, skill);
+            String res = bound().completion(req.getModel(), req.getContent(), maxTokens, skill);
             response.setContent(res);
 
         } catch (IOException e) {
@@ -71,8 +84,9 @@ public class AIAPIProvider implements AIProvider {
     }
 
     @Override
-    public void asyncSend(AIRequest req, AICallback callback) throws AIException {
-
+    public void asyncSend(AIRequest req, String skill, ConsumerCallback<NVGenericMap> callback) throws AIException {
+        int maxTokens = (req.getMaxTokens() != null) ? req.getMaxTokens() : 1024;
+        bound().asyncCompletion(req.getModel(), req.getContent(), maxTokens, skill, callback);
     }
 
     @Override
@@ -119,7 +133,7 @@ public class AIAPIProvider implements AIProvider {
         public String[] refresh() throws AIException {
             String[] newList;
             try {
-                newList = api.availableModels();
+                newList = bound().availableModels();
                 lastSynced = Instant.now();
             } catch (IOException e) {
                 throw new AIException(AIException.Kind.PROVIDER, e);

@@ -93,7 +93,7 @@ public class AssistantContext {
 
     private AISkill canonicalSkill(AISkill s) {
         if(s == null) return null;
-        String id = s.getReferenceID();
+        String id = s.getGUID();
         if(id == null) return s;
         return skillCache.merge(id, s, (existing, incoming) -> existing);
     }
@@ -111,12 +111,12 @@ public class AssistantContext {
     public void deleteSkill(AISkill skill) {
         if(skill == null) return;
         repository.deleteSkill(skill);
-        if(skill.getReferenceID() != null) skillCache.remove(skill.getReferenceID());
+        if(skill.getGUID() != null) skillCache.remove(skill.getGUID());
     }
 
     private AIChat canonicalChat(AIChat c) {
         if (c == null) return null;
-        String id = c.getReferenceID();
+        String id = c.getGUID();
         if (id == null) return c;
         return chatCache.merge(id, c, (existing, incoming) -> existing);
     }
@@ -134,8 +134,10 @@ public class AssistantContext {
     public void deleteChat(AIChat chat) {
         if (chat == null) return;
         repository.deleteChat(chat);
-        if (chat.getReferenceID() != null) chatCache.remove(chat.getReferenceID());
-        if (chat == currentChat) {
+        if (chat.getGUID() != null) chatCache.remove(chat.getGUID());
+        if (currentChat != null
+                && (chat == currentChat
+                || (chat.getGUID() != null && chat.getGUID().equals(currentChat.getGUID())))) {
             AIChat old = currentChat;
             currentChat = null;
             pcs.firePropertyChange("currentChat", old, null);

@@ -39,6 +39,8 @@ public class AssistantPanel extends JPanel {
     private JScrollPane transcriptScroll;
     private JTextArea composer;
 
+    private final CardStack promptCards = new CardStack();
+
     private final CardStack skillsCards = new CardStack();
     private final JTextField skillName = new JTextField(20);
     private final JTextField skillDescription = new JTextField(20);
@@ -65,6 +67,10 @@ public class AssistantPanel extends JPanel {
     private JLabel chatTitle;
 
     private JButton sendButton;
+    private JButton attachSkillButton;
+    private final List<AISkill> pendingSkills = new ArrayList<>();
+
+    private final JCheckBox sendFullHistory = new JCheckBox("Send history", true);
 
     private JComboBox<String> modelSelector;
 
@@ -82,7 +88,7 @@ public class AssistantPanel extends JPanel {
 
         setLayout(new BorderLayout());
 
-        cardStack.add(buildPromptPanel(), "chat");
+        cardStack.add(buildPromptCards(), "chat");
         cardStack.add(new JScrollPane(buildJobQueuePanel()), "queue");
         cardStack.add(new JScrollPane(buildHistoryCards()), "history");
         cardStack.add(new JScrollPane(buildSkillCards()), "skills");
@@ -110,6 +116,23 @@ public class AssistantPanel extends JPanel {
         context.onChange("currentChat", e -> refreshPrompt());
     }
 
+    public JPanel buildPromptCards() {
+        promptCards.add(buildEmptyChat(), "empty");
+        promptCards.add(buildPromptPanel(), "prompt");
+
+        promptCards.show("empty");
+        JPanel p = new JPanel(new BorderLayout());
+        p.add(promptCards.view(), BorderLayout.CENTER);
+        return p;
+    }
+
+    public JPanel buildEmptyChat() {
+        JPanel out = new JPanel();
+        out.add(new JLabel("No chat selected, create one in the history tab"));
+
+        return out;
+    }
+
     public JPanel buildPromptPanel() {
         transcript = new JPanel(new MigLayout("wrap 1, insets 14, gapy 10", "[grow]"));
 
@@ -120,9 +143,13 @@ public class AssistantPanel extends JPanel {
         modelSelector = new JComboBox<>();
         modelSelector.setEditable(true);
 
+        sendFullHistory.setToolTipText(
+                "Checked: each request carries the whole conversation. Unchecked: only the new message is sent.");
+
         JPanel titlePanel = new JPanel(new FlowLayout());
         titlePanel.add(chatTitle);
         titlePanel.add(modelSelector);
+        titlePanel.add(sendFullHistory);
 
         transcriptScroll = new JScrollPane(transcript,
                 JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
@@ -151,54 +178,19 @@ public class AssistantPanel extends JPanel {
         composerScroll.setOpaque(false);
         composerScroll.getViewport().setOpaque(false);
 
-        JButton addSkill = new JButton(new IconUtil.PlusIcon(16));
+        attachSkillButton = new JButton(new IconUtil.PlusIcon(16));
 
-        addSkill.addActionListener(_ -> {
-            AIChat target = context.currentChat();
-            if (target == null) {
-                JOptionPane.showMessageDialog(this, "Open a chat first", "Add skill",
-                        JOptionPane.INFORMATION_MESSAGE);
-                return;
-            }
+        attachSkillButton.addActionListener(_ -> showAttachPopup());
 
-            List<AISkill> skills = context.getAllSkills();
-            if (skills.isEmpty()) {
-                JOptionPane.showMessageDialog(this, "No skills yet", "Add skill",
-                        JOptionPane.INFORMATION_MESSAGE);
-                return;
-            }
-
-            JComboBox<AISkill> combo = new JComboBox<>(skills.toArray(new AISkill[0]));
-            combo.setRenderer(new DefaultListCellRenderer() {
-                public Component getListCellRendererComponent(JList<?> list, Object value, int index,
-                                                              boolean selected, boolean focused) {
-                    super.getListCellRendererComponent(list, value, index, selected, focused);
-                    if (value instanceof AISkill s) setText(s.getName());
-                    return this;
-                }
-            });
-
-            int res = JOptionPane.showConfirmDialog(this, combo, "Select skill",
-                    JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
-            if (res != JOptionPane.OK_OPTION) return;
-
-            AISkill skill = (AISkill) combo.getSelectedItem();
-            if (skill == null) return;
-
-            target.addSkill(skill);
-            BackgroundTask.runCatching(this, addSkill, () -> context.saveChat(target), () -> {
-            });
-        });
-
-        addSkill.putClientProperty("JButton.buttonType", "toolBarButton");
-        addSkill.setFocusable(false);
-        addSkill.setToolTipText("Attach queue items or skills");
-        addSkill.setMargin(new Insets(0, 0, 0, 0));
-        addSkill.setPreferredSize(new Dimension(28, 28));
+        attachSkillButton.putClientProperty("JButton.buttonType", "toolBarButton");
+        attachSkillButton.setFocusable(false);
+        refreshSkillTooltip();
+        attachSkillButton.setMargin(new Insets(0, 0, 0, 0));
+        attachSkillButton.setPreferredSize(new Dimension(28, 28));
 
         JPanel addSkillHolder = new JPanel(new BorderLayout());
         addSkillHolder.setOpaque(false);
-        addSkillHolder.add(addSkill, BorderLayout.NORTH);
+        addSkillHolder.add(attachSkillButton, BorderLayout.NORTH);
 
         JPanel inputBox = new JPanel(new BorderLayout(4, 0));
         inputBox.setBackground(composer.getBackground());
@@ -266,6 +258,8 @@ public class AssistantPanel extends JPanel {
 
     public JPanel buildChatEditor() {
         JButton save = new JButton("Save", new IconUtil.SaveIcon(16));
+        editProviderSelector.setEditable(true);
+        editModelSelector.setEditable(true);
         bindProviderModels(editProviderSelector, editModelSelector);
 
         save.addActionListener(e -> {
@@ -310,6 +304,7 @@ public class AssistantPanel extends JPanel {
                 context.setCurrentChat(temp);
                 refreshHistory();
                 historyCards.show("list");
+                promptCards.show("prompt");
                 cardStack.show("chat");
                 chatButton.setSelected(true);
             });
@@ -425,7 +420,7 @@ public class AssistantPanel extends JPanel {
                 .addButton(" + Add Key", this::onAddProvider)
                 .label(AIProvider::getName)
                 .emptyText("No providers")
-                .onEdit(p -> () -> promptProviderType(p.getAPIKey()))
+                .onEdit(p -> () -> onEditProvider(p))
                 .onRemove(p -> () -> onRemoveProvider(p))
                 .build();
 
@@ -544,6 +539,7 @@ public class AssistantPanel extends JPanel {
         }
 
         AIChat chat = context.currentChat();
+        promptCards.show(chat == null ? "empty" : "prompt");
         chatTitle.setText(chat != null && chat.getTitle() != null ? chat.getTitle() : "Default chat");
         fillModels(modelSelector, chat != null ? chat.getProvider() : null);
 
@@ -553,9 +549,10 @@ public class AssistantPanel extends JPanel {
             for (NVEntity e : chat.getMessages().values()) {
                 AIMessage m = (AIMessage) e;
                 AIRequest req = m.getAIRequest();
-                if (req != null && req.getContent() != null) addMessage(req.getContent(), true);
+                if (req != null && req.getContent() != null) addMessage(req.getContent(), true, null, null);
                 AIResponse res = m.getAIResponse();
-                if (res != null && res.getContent() != null) addMessage(res.getContent(), false);
+                if (res != null && res.getContent() != null)
+                    addMessage(res.getContent(), false, latencyOf(res), tokensOf(res));
             }
         }
         transcript.revalidate();
@@ -569,49 +566,55 @@ public class AssistantPanel extends JPanel {
         String text = composer.getText().trim();
         if (text.isEmpty()) return;
 
+        AIChat chat = context.currentChat();
+        if (chat == null) {
+            JOptionPane.showMessageDialog(this, "Open a chat first (History > + New Prompt)",
+                    "Send", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        Object sel = modelSelector.getSelectedItem();
+        if (sel == null || sel.toString().isBlank()) {
+            JOptionPane.showMessageDialog(this, "Pick a model first",
+                    "Send", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        AIProvider p = context.getProviders().lookup(chat.getProvider());
+        if (p == null) {
+            JOptionPane.showMessageDialog(this,
+                    "Provider \"" + chat.getProvider() + "\" is not linked. Add its key on the Providers page.",
+                    "Send", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
         AIRequest request = new AIRequest();
         request.setContent(text);
         request.setMaxTokens(1024);
-
-        AIChat chat = context.currentChat();
-        if (chat == null) return;
-        Object sel = modelSelector.getSelectedItem();
-        if (sel == null) return;
         request.setModel(sel.toString());
         chat.setModel(sel.toString());
 
-        AIProvider p = context.getProviders().lookup(chat.getProvider());
-        if (p == null) return;
         AIMessage msg = new AIMessage(request);
         chat.addMessage(msg);
-        addMessage(text, true);
+        addMessage(text, true, null, null);
         composer.setText("");
         composer.requestFocusInWindow();
 
-        // flattened context to send to the AI
-
-        StringBuilder skillSb = new StringBuilder();
-
-        for (NVEntity e : chat.getSkills().values()) {
-            AISkill s = (AISkill) e;
-            if (s == null || s.getContent() == null || s.getContent().isEmpty()) continue;
-            if (!skillSb.isEmpty()) skillSb.append("\n\n");
-            skillSb.append("<skill>");
-            skillSb.append(s.getContent());
-            skillSb.append("</skill>");
-        }
-
         StringBuilder sb = new StringBuilder();
 
-        for (NVEntity e : chat.getMessages().values()) {
-            AIMessage m = (AIMessage) e;
-            AIRequest req = m.getAIRequest();
-            AIResponse res = m.getAIResponse();
-            if (req != null && req.getContent() != null) sb.append("Human: ").append(req.getContent()).append("\n\n");
-            if (res != null && res.getContent() != null)
-                sb.append("Assistant: ").append(res.getContent()).append("\n\n");
+        if (sendFullHistory.isSelected()) {
+
+            for (NVEntity e : chat.getMessages().values()) {
+                AIMessage m = (AIMessage) e;
+                AIRequest req = m.getAIRequest();
+                AIResponse res = m.getAIResponse();
+                if (req != null && req.getContent() != null)
+                    sb.append("Human: ").append(req.getContent()).append("\n\n");
+                if (res != null && res.getContent() != null)
+                    sb.append("Assistant: ").append(res.getContent()).append("\n\n");
+            }
+            sb.append("Assistant:");
+        } else {
+            sb.append(text);
         }
-        sb.append("Assistant:");
 
         AIRequest wire = new AIRequest();
         wire.setModel(request.getModel());
@@ -619,25 +622,108 @@ public class AssistantPanel extends JPanel {
         wire.setProviderSessionID(chat.getProviderSessionID());
         wire.setContent(sb.toString());
 
-        //System.out.println(wire.getContent());
+        StringBuilder skillSb = new StringBuilder();
+        for (AISkill s : pendingSkills) {
+            if (s.getContent() == null || s.getContent().isEmpty()) continue;
+            if (!skillSb.isEmpty()) skillSb.append("\n\n");
+            skillSb.append("<skill>").append(s.getContent()).append("</skill>");
+        }
 
         final AIChat sending = chat;
-        BackgroundTask.run(this, sendButton,
-                () -> {
-                    AIResponse resp = p.send(wire, skillSb.toString());
-                    msg.setAIResponse(resp);
-                    if (resp.getProviderSessionID() != null) sending.setProviderSessionID(resp.getProviderSessionID());
-                    context.saveChat(sending);
-                    return resp;
-                },
-                resp -> {
-                    if (sending == context.currentChat() && resp.getContent() != null && !resp.getContent().isEmpty())
-                        addMessage(resp.getContent(), false);
-                });
+        sendButton.setEnabled(false);
+        try {
+            p.asyncSend(wire, skillSb.toString(), new AssistantCallback(context, sending, msg,
+                    resp -> {
+                        sendButton.setEnabled(true);
+                        if (sending == context.currentChat() && resp.getContent() != null && !resp.getContent().isEmpty())
+                            addMessage(resp.getContent(), false, latencyOf(resp), tokensOf(resp));
+                    }, err -> {
+                sendButton.setEnabled(true);
+                if (sending == context.currentChat()) {
+                    refreshPrompt();
+                    if (composer.getText().isBlank()) composer.setText(text);
+                }
+                JOptionPane.showMessageDialog(this, "Send failed: " + err.getMessage(), "Send", JOptionPane.ERROR_MESSAGE);
+            }));
+        } catch (Exception e) {
+            sendButton.setEnabled(true);
+            sending.getMessages().remove(msg);
+            if (sending == context.currentChat()) {
+                refreshPrompt();
+                if (composer.getText().isBlank()) composer.setText(text);
+            }
+            JOptionPane.showMessageDialog(this, "Send failed: " + e.getMessage(),
+                    "Send", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        pendingSkills.clear();
+        refreshSkillTooltip();
     }
 
-    private void addMessage(String text, boolean user) {
-        JComponent bubble = chatBubble(text, user);
+    private void showAttachPopup() {
+        JPopupMenu popup = new JPopupMenu();
+        JPanel content = new JPanel(new MigLayout("wrap 1, insets 10 12 10 12, gapy 4", "[grow]"));
+        content.setOpaque(false);
+
+        content.add(sectionLabel("Skills for this message"));
+        List<AISkill> skills = context.getAllSkills();
+        if (skills.isEmpty()) {
+            JLabel none = new JLabel("No skills yet");
+            none.setEnabled(false);
+            content.add(none);
+        } else {
+            for (AISkill skill : skills) {
+                JCheckBox box = new JCheckBox(skill.getName(), pendingSkills.contains(skill));
+                box.setOpaque(false);
+                if (skill.getDescription() != null && !skill.getDescription().isEmpty())
+                    box.setToolTipText(skill.getDescription());
+                box.addActionListener(_ -> {
+                    if (box.isSelected()) {
+                        if (!pendingSkills.contains(skill)) pendingSkills.add(skill);
+                    } else {
+                        pendingSkills.remove(skill);
+                    }
+                    refreshSkillTooltip();
+                });
+                content.add(box);
+            }
+        }
+
+        popup.add(content);
+        popup.show(attachSkillButton, 0, -popup.getPreferredSize().height);
+    }
+
+    private static JLabel sectionLabel(String text) {
+        JLabel label = new JLabel(text.toUpperCase());
+        label.setFont(label.getFont().deriveFont(Font.BOLD, label.getFont().getSize2D() - 2f));
+        label.setForeground(UIManager.getColor("Label.disabledForeground"));
+        return label;
+    }
+
+    private void refreshSkillTooltip() {
+        if (attachSkillButton == null) return;
+        if (pendingSkills.isEmpty()) {
+            attachSkillButton.setToolTipText("Attach skills to the next message");
+            return;
+        }
+        StringBuilder names = new StringBuilder();
+        for (AISkill s : pendingSkills) {
+            if (!names.isEmpty()) names.append(", ");
+            names.append(s.getName());
+        }
+        attachSkillButton.setToolTipText("Skills for the next message: " + names);
+    }
+
+    private static Integer latencyOf(AIResponse res) {
+        return (res != null && res.getLatency() > 0) ? (int) res.getLatency() : null;
+    }
+
+    private static Integer tokensOf(AIResponse res) {
+        return (res != null && res.getTokens() > 0) ? res.getTokens() : null;
+    }
+
+    private void addMessage(String response, boolean user, Integer latency, Integer tokens) {
+        JComponent bubble = chatBubble(response, user, latency, tokens);
         String cons = user
                 ? "growx, wmax 78%, alignx trailing"
                 : "growx, wmax 92%, alignx leading";
@@ -681,14 +767,21 @@ public class AssistantPanel extends JPanel {
     }
 
     private void onRemovePrompt(AIChat chat) {
-        context.deleteChat(chat);
-        if (chat == selectedChat) selectedChat = null;
-        refreshHistory();
+        if (chat == null) return;
+        int res = JOptionPane.showConfirmDialog(this, "Delete \"" + chat.getTitle() + "\"?",
+                "Delete chat", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
+        if (res != JOptionPane.OK_OPTION) return;
+        BackgroundTask.runCatching(this, null, () -> context.deleteChat(chat), () -> {
+            if (chat == selectedChat) selectedChat = null;
+            refreshHistory();
+        });
     }
 
     private void onOpenChat(AIChat chat) {
         context.setCurrentChat(chat);
+        promptCards.show("prompt");
         cardStack.show("chat");
+        chatButton.setSelected(true);
     }
 
     private void onAddSkill() {
@@ -708,9 +801,39 @@ public class AssistantPanel extends JPanel {
     }
 
     private void onRemoveSkill(AISkill skill) {
-        context.deleteSkill(skill);
-        if (selectedSkill == skill) selectedSkill = null;
-        refreshSkills();
+        if (skill == null) return;
+        int res = JOptionPane.showConfirmDialog(this, "Delete \"" + skill.getName() + "\"?",
+                "Delete skill", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
+        if (res != JOptionPane.OK_OPTION) return;
+        BackgroundTask.runCatching(this, null, () -> context.deleteSkill(skill), () -> {
+            if (selectedSkill == skill) selectedSkill = null;
+            refreshSkills();
+        });
+    }
+
+    private void onEditProvider(AIProvider provider) {
+        if (provider == null || provider.getAPIKey() == null) return;
+        APIKey<String> key = provider.getAPIKey();
+        String chosen = promptProviderType(key);
+        if (chosen == null) return;
+        if (key.getProperties() != null) key.getProperties().build("provider", chosen);
+
+        BackgroundTask.run(this, null,
+                () -> {
+                    context.getCredentials().setEnabled(key, true);
+                    AIAPIProvider rebuilt = AIAPIProvider.create(key);
+                    if (rebuilt != null) {
+                        try {
+                            rebuilt.getModelCatalog().refresh();
+                        } catch (Exception ignore) {
+                        }
+                    }
+                    return rebuilt;
+                },
+                rebuilt -> {
+                    if (rebuilt != null) context.getProviders().put(rebuilt.getName(), rebuilt);
+                    if (providerList != null) providerList.refresh();
+                });
     }
 
     private void onAddProvider() {
@@ -727,7 +850,7 @@ public class AssistantPanel extends JPanel {
                         context.getCredentials().setEnabled(provider.getAPIKey(), false);
                     return null;
                 },
-                r -> {
+                _ -> {
                     context.getProviders().getCacheMap().remove(provider.getName());
                     if (providerList != null) providerList.refresh();
                     if (providerAddList != null) providerAddList.refresh();
@@ -785,6 +908,7 @@ public class AssistantPanel extends JPanel {
     public void refreshSkills() {
         if (!SwingUtilities.isEventDispatchThread()) {
             SwingUtilities.invokeLater(this::refreshSkills);
+            return;
         }
         if (skillsList != null) skillsList.refresh();
     }
@@ -820,7 +944,11 @@ public class AssistantPanel extends JPanel {
 
     public void resetPanel() {
         context.resetContext();
+        sendFullHistory.setSelected(true);
+        pendingSkills.clear();
+        refreshSkillTooltip();
         composer.setText("");
+        promptCards.show("empty");
         cardStack.show("chat");
         historyCards.show("list");
         skillsCards.show("list");

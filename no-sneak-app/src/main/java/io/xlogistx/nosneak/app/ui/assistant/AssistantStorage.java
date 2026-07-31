@@ -24,7 +24,7 @@ public class AssistantStorage implements AIRepository {
 
     @Override
     public AIChat saveChat(AIChat chat) {
-        if (SUS.isNotEmpty(chat.getReferenceID())) return ds.update(chat);
+        if (SUS.isNotEmpty(chat.getGUID())) return ds.update(chat);
         chat.setSubjectGUID(owner());
         return ds.insert(chat);
     }
@@ -49,7 +49,7 @@ public class AssistantStorage implements AIRepository {
 
     @Override
     public AISkill saveSkill(AISkill skill) {
-        if (SUS.isNotEmpty(skill.getReferenceID())) return ds.update(skill);
+        if (SUS.isNotEmpty(skill.getGUID())) return ds.update(skill);
         skill.setSubjectGUID(owner());
         return ds.insert(skill);
     }

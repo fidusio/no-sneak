@@ -64,7 +64,11 @@ public class Main {
         public AppFrame(DomainSecurityManager domainSecurityManager) {
             setTitle("NoSneak");
             setDefaultCloseOperation(EXIT_ON_CLOSE);
-            setSize(800, 600);
+            //setSize(800, 600);
+            Dimension screenSize = Toolkit.getDefaultToolkit().getScreenSize();
+            int width = (int) (screenSize.width * 0.6);
+            int height = (int) (screenSize.height * 0.7);
+            setSize(width, height);
             setLocationRelativeTo(null);
 
             AppContext ctx = new AppContext(domainSecurityManager);

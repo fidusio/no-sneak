@@ -32,7 +32,6 @@ public class AIChatRoundTripTest {
     private static AIChat sampleChat() {
         AIChat c = new AIChat("planning chat");
         c.setModel(MODEL);
-        c.addSkill(new AISkill("helpful", "tone", "You are helpful."));
 
         AIMessage turn = c.startTurn("what is 2+2?", 4096);
         AIResponse resp = new AIResponse();
@@ -127,8 +126,6 @@ public class AIChatRoundTripTest {
 
         assertEquals(original.getTitle(), restored.getTitle());
         assertEquals(original.getModel(), restored.getModel());
-        assertEquals(original.getSkills().size(), restored.getSkills().size());
-        assertEquals("You are helpful.", ((AISkill) restored.getSkills().values()[0]).getContent());
         assertEquals(original.getCreationTime(), restored.getCreationTime());
         assertEquals(1, restored.getMessages().size());
 

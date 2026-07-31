@@ -44,22 +44,49 @@ has chosen to use.
 >   (`editSkill*` fields), remove calls `context.deleteSkill`; all saves run off the EDT via
 >   `BackgroundTask.runCatching`. `AISkill.content` is the instruction text — a plain `String`,
 >   so a skill authored in markdown is stored verbatim.
-> - **Chat send is wired for a single provider, and persists.** `onSend` builds an `AIRequest`
->   (content, model from the header combo, maxTokens), attaches an `AIMessage` to `currentChat`,
->   calls `AIProvider.send(...)` on a `BackgroundTask`, and on success sets the response on the
->   message and calls `context.saveChat(...)` (so the transcript survives a chat switch). The
->   `currentChat` `PropertyChangeEvent` drives `refreshPrompt()`, which resets the title, model
->   combo, and transcript.
+> - **Chat send is wired for a single provider, async, and persists.** `onSend` validates
+>   (chat / model / provider — each missing piece gets a dialog, no more silent returns), builds
+>   an `AIRequest` (raw user text, maxTokens), attaches an `AIMessage` to `currentChat`, flattens
+>   the whole transcript into a `Human:/Assistant:` wire request, and calls
+>   `AIProvider.asyncSend(wire, skillText, AssistantCallback)`. The callback (on the API
+>   executor thread) decodes the payload via `AssistantMDDecoder`, sets content + model + tokens
+>   + latency on a fresh `AIResponse`, `saveChat`s, then marshals UI work to the EDT; its error
+>   path removes the unanswered message (on the EDT), re-enables Send, restores the typed text
+>   into the composer, and shows the failure dialog. The `currentChat` `PropertyChangeEvent`
+>   drives `refreshPrompt()`, which resets the title, model combo, and transcript.
+> - **Response decoding is this module's job, and it is the biggest thing here.**
+>   `asyncSend` hands back the provider's **raw** `NVGenericMap` (`ai-model` deleted the typed
+>   `AICallback`), so `AssistantMDDecoder` — a `DataDecoder<NVGenericMap, String>` singleton —
+>   owns the whole extract-and-repair pipeline. See *§10.1 Markdown decoding* below; it is
+>   provider-protocol work living in a UI module, which `ai-model/CLAUDE.md` flags as a gap.
+> - **Markdown rendering comes from the shared GUI toolkit.** The module's own
+>   `MarkDownViewerPanel` was **deleted** and `AssistantUtil.chatBubble` now renders through
+>   `io.xlogistx.gui.MDViewerPanel` (xlogistx-gui-audio). The explicit `org.commonmark`
+>   dependency was dropped from `ai-assistant/pom.xml` — commonmark and its GFM extensions
+>   (tables / strikethrough / task-list-items) now arrive **transitively** through
+>   `xlogistx-gui-audio`, which is why the tests can still parse markdown without a declared
+>   dependency. If the GUI toolkit ever drops commonmark, `AssistantMDDecoderTest` breaks first.
+> - **Per-message skills go through the composer `+` popup** (`showAttachPopup`): a
+>   `JPopupMenu` anchored above the button with a "Skills for this message" checkbox section —
+>   check attaches, uncheck removes, popup stays open while toggling. Selections live in the
+>   transient `pendingSkills` list (the `+` button's tooltip names them), are flattened into
+>   `<skill>…</skill>` blocks and passed as `asyncSend`'s **`String skill`** argument (there is
+>   no `AIRequest.skillsPrompt` field — the skill text is never persisted with the turn), and
+>   clear after a successful dispatch (kept on failure so a retry re-sends them) and on logout. Future attachment kinds (photos,
+>   files, job-queue items) are meant to be added as further sections of this popup. The chat
+>   header also carries the **`Send history`** checkbox (default on; reset to on at logout) —
+>   unchecked sends only the new message with no conversation context.
 > - **Session reset is wired.** On logout `no-sneak-app` calls `clearProviders()` (wipes the
 >   registrar) + `resetPanel()` → `context.resetContext()` (nulls `currentChat` / credential /
 >   model, clears the chat + skill caches, fires `currentChat` so the transcript clears) and
 >   blanks the composer / resets the card stacks. On app close, `Main` closes the datastore in a
 >   `windowClosing` handler.
 >
-> **Still target-only / stubbed:** the multi-model **compare** path (`asyncSend` is an empty
-> stub, no `AIRunner`); the **skill→request pipeline** (skills are stored, but nothing yet
-> selects which apply to a chat or assembles them into `AIRequest.skillsPrompt`); the **Job queue**
-> and **Screen capture** pages (all handlers empty).
+> **Still target-only / stubbed:** the multi-model **compare** path (no `AIRunner`; single-provider
+> `asyncSend` is wired); **chat-scoped skill activation** (per-*message* attachment works, but
+> nothing marks a skill active for a whole conversation — `AIChat`'s skills list was removed from
+> the DAO, so there is nowhere to persist it); the **Job queue** and **Screen capture** pages (all
+> handlers empty).
 > `AICredentialSource` and `AIRepository` come from `no-sneak-app` (`SessionAICredentialSource`,
 > `AssistantStorage` over the H2P `APIDataStore`); the DAOs and interfaces live in **`ai-model`**
 > — see its CLAUDE.md. `no-sneak-app` builds
@@ -68,10 +95,46 @@ has chosen to use.
 > (`no-sneak-app → ai-assistant → ai-model`).
 >
 > **Known rough edges** (see the code, not yet fixed):
-> `refreshSkills()` is missing a `return` after its off-EDT `invokeLater`, so it also
-> touches the list once off the EDT; `onSend` silently returns when there is no current chat or
-> selected model (no feedback); a failed send leaves the unanswered `AIMessage` in the in-memory
-> chat (persist happens only on success).
+> - **No send timeout or cancel.** If the provider never invokes the callback, the Send button
+>   stays disabled for the life of the app. `AIProvider.asyncSend` returns `void`, so there is no
+>   handle to cancel or time out against — the fix belongs in `ai-model`.
+> - **The persisted response is the *display*-processed markdown.** `AssistantCallback` stores
+>   what `AssistantMDDecoder` produced — outer fence unwrapped, wrapper fences widened, images
+>   neutralized, and the truncation note appended — not the provider's original text. The
+>   flattened `Human:/Assistant:` history then feeds that processed text back to the model
+>   verbatim, so a truncated turn re-sends the `_Answer cut off…_` line as if the model had
+>   written it. Round-tripping through the decoder is idempotent (`repairIsIdempotent`), so it
+>   does not compound, but the original is unrecoverable.
+> - **`providerSessionID` is sent but never captured.** Nothing calls `chat.setProviderSessionID`,
+>   so every turn re-sends the full flattened history even against a stateful provider.
+> - **`maxTokens` is hardcoded to 1024** in `onSend` — the single most likely cause of a
+>   truncated answer, and not surfaced anywhere in the UI.
+> - **Latency is measured from callback construction**, i.e. it includes queueing in the API
+>   executor, not just the wire time. `tokens` *is* populated now (from the payload's usage
+>   block), but reads `0` for any provider that omits one.
+> - **The transcript re-renders in full on every `currentChat` change** (`refreshPrompt` clears
+>   and rebuilds every bubble). Fine at current lengths; it is an `MDViewerPanel` per message.
+> - **Login-time discovery failures are swallowed.** `reloadProviders` catches and ignores every
+>   `getModelCatalog().refresh()` exception, so a rejected or expired key still registers — just
+>   with an empty model list and no message. §6's "401, key rejected" status chip is design
+>   intent, not built; today the only symptom is a model combo that will not populate.
+
+## Source map
+
+Six classes, all in `io.xlogistx.nosneak.ai.assistant`:
+
+| Class | What it is |
+|---|---|
+| `AssistantPanel` | The whole UI — the six pages, their nested `CardStack`s, and `onSend` |
+| `AssistantContext` | Swing-free state holder: injected services + current selection + caches |
+| `AIAPIProvider` | The `AIProvider` implementation over `io.xlogistx.api.ai.AIAPI` (+ inner `ModelCatalog`) |
+| `AssistantCallback` | `ConsumerCallback<NVGenericMap>` — payload → `AIResponse`, persist, hop to the EDT |
+| `AssistantMDDecoder` | Provider payload → renderable markdown (see §10.1) |
+| `AssistantUtil` | `chatBubble(...)` — a rounded bubble around an `io.xlogistx.gui.MDViewerPanel` |
+
+`MarkDownViewerPanel` used to live here and is **gone** — markdown rendering is
+`io.xlogistx.gui.MDViewerPanel` from `xlogistx-gui-audio`, which is also where commonmark now
+comes from.
 
 ---
 
@@ -168,9 +231,16 @@ Data-access options: `Scan data`, `Scan data and host inventory`, `Findings only
 > `deleteSkill`). The DAO carries only `name` / `description` / `content` (the instructions),
 > stored as a plain `String` — so **markdown skills are just the string** (no file reference; if
 > you want `.md` import/export, parse frontmatter→name/description, body→content at the edge and
-> keep the model a `String`). **Not yet built:** the `data access` scope (no DAO field), the
-> global-vs-per-message **activation**, and the pipeline that assembles active skills into
-> `AIRequest.skillsPrompt`.
+> keep the model a `String`).
+>
+> **Per-message activation is built** — the composer `+` popup checks skills into `pendingSkills`,
+> and `onSend` flattens them into `<skill>…</skill>` blocks passed as `asyncSend`'s `skill`
+> argument. **Not yet built:** the `data access` scope (no DAO field) and **per-prompt**
+> activation. The latter regressed rather than stalled: `AIChat` used to carry a `skills` list
+> and it was **removed** from the DAO, so a chat cannot remember which skills it runs with. Note
+> also that nothing records *which* skills went out with a given turn — `AIRequest` has no
+> `skillsPrompt` field, so the stored transcript cannot tell you what the model was actually
+> instructed with.
 
 ---
 
@@ -251,21 +321,28 @@ The value DAOs (`io.xlogistx.nosneak.ai.model`) and the service interfaces
 (`io.xlogistx.nosneak.ai`) live in the separate **`ai-model`** module — this module depends on it.
 **`ai-model/CLAUDE.md` is the authoritative contract**: the pair-based conversation model
 (`AIChat` → `AIMessage` → `{AIRequest, AIResponse}`, plus `AISkill` / `AIModel`), the service
-interfaces (`AIProvider`, `AIRunner`, `AICallback`, `AICallbackCollection`, `AICredentialSource`,
+interfaces (`AIProvider`, `AIRunner`, `AICallbackCollection`, `AICredentialSource`,
 `AIModelCatalog`, `AIRepository`, `AIException`), the `correlationID` / `providerSessionID`
 id scoping, and the interface-shape gaps the compare UI will force. Read it before touching the
 send path. What follows is only how *this* module binds to those types.
+
+> The typed **`AICallback`** is gone. `AIProvider.asyncSend(AIRequest, String skill,
+> ConsumerCallback<NVGenericMap>)` delivers the provider's raw payload, so decoding it into an
+> `AIResponse` happens **here** — `AssistantCallback` + `AssistantMDDecoder`.
 
 ### State holder (`io.xlogistx.nosneak.ai.assistant.AssistantContext`)
 
 Swing-free. Bundles the injected services (`AICredentialSource`, `AIRepository`) and an internally
 built `AIProviderRegistrar`, plus the current selection (`currentChat`, `currentCredential`,
-`currentModel`) and two `referenceID`-keyed **canonical caches** (`chatCache`, `skillCache`) that
-dedupe DAOs so the same chat/skill is one object across list refreshes. Chat API:
+`currentModel`) and two **GUID**-keyed **canonical caches** (`chatCache`, `skillCache`) that
+dedupe DAOs so the same chat/skill is one object across list refreshes (`referenceID` is always
+null on the H2P store — see the identity note in `ai-model/CLAUDE.md`). Chat API:
 `getAllChats()` / `saveChat(AIChat)` / `deleteChat(AIChat)`; skills mirror it
 (`getAllSkills` / `saveSkill` / `deleteSkill`). `setCurrentChat(AIChat)` swaps the in-memory
 selection and fires `"currentChat"`; `deleteChat` fires it **only** when the deleted chat is the
-current one (nulling first, then firing); `resetContext()` clears the selection + both caches and
+current one (matched by instance **or GUID**, nulling first, then firing — instance identity
+alone misses, because History refreshes hand out fresh instances whenever the cache hasn't seen
+the GUID yet); `resetContext()` clears the selection + both caches and
 fires `"currentChat"` so the transcript blanks. Panels subscribe via `onChange(prop, listener)`
 and re-render, so the Chat page never decides *which* chat to load — it renders whatever
 `currentChat()` is. The app supplies the concrete services (`SessionAICredentialSource`,
@@ -274,6 +351,17 @@ cleared on logout by `clearProviders()`.
 
 ### Binding notes
 
+- **Shared-endpoint hazard (`AIAPIProvider.bound()`).** zoxweb's
+  `HTTPAPIManager.buildAPICaller` hands every `AIAPI` the **same shared endpoint instances**
+  for the `ai-api` domain, and both `HTTPAPICaller.updateURL` and `AIAPIBuilder.createAIAPI`'s
+  Anthropic models-authorization special case **mutate those shared objects** — so creating a
+  provider rebinds every other provider's base URL (symptom: add a Gemini key mid-session and
+  the existing OpenAI provider's sends start failing — its requests now go to Gemini's URL).
+  `AIAPIProvider.bound()` re-asserts this provider's URL and models-auth encoder before
+  **every** call (`send`, `asyncSend`, catalog `refresh`). This is a workaround: a tiny race
+  remains if two providers hit the wire concurrently (panel sends are serialized, so in
+  practice only a per-row Refresh racing an in-flight send). The real fix is per-caller
+  endpoint copies in `buildAPICaller` (zoxweb-core).
 - **Providers.** `AssistantPanel.reloadProviders()` builds an `AIAPIProvider` per **enabled** key
   on login (off the EDT), discovers its models, and `put`s it in the `AIProviderRegistrar`;
   `clearProviders()` empties the registrar on logout. The `add` picker (`buildAddProvider` →
@@ -286,13 +374,56 @@ cleared on logout by `clearProviders()`.
 - **Persistence.** `no-sneak-app`'s `AssistantStorage` implements `AIRepository` against the app's
   H2P `APIDataStore`, owner-scoped by subjectGUID. **Chats and skills both persist** — create,
   edit, and delete all round-trip through the store (`saveChat` inserts when there's no
-  `referenceID`, else updates; same for `saveSkill`). `getAllChats` / `getAllSkills` return empty
-  when signed out.
-- **Send path.** `onSend` builds an `AIRequest`, attaches an `AIMessage` to `currentChat`, and
-  calls `AIProvider.send(...)` on a `BackgroundTask` for the single bound provider
-  (`getProviders().lookup(chat.getProvider())`); on success it sets the response on the message and
-  `saveChat`s the chat. It does **not** use `asyncSend` or the compare fan-out. See the
-  interface-shape gaps in `ai-model/CLAUDE.md` before extending it.
+  `GUID`, else updates; same for `saveSkill` — the store assigns the GUID on insert and both
+  paths upsert by GUID underneath). `getAllChats` / `getAllSkills` return empty when signed out.
+- **Send path.** `onSend` validates chat / model / provider with user-visible dialogs, then calls
+  `AIProvider.asyncSend(wire, skillText, callback)` for the single bound provider
+  (`getProviders().lookup(chat.getProvider())`), where `wire` is a **second, throwaway**
+  `AIRequest` carrying the flattened `Human:/Assistant:` transcript — the `AIRequest` stored on
+  the `AIMessage` keeps the raw user text, so the transcript shows what was typed while the model
+  sees the whole conversation. `AssistantCallback` decodes the payload (`AssistantMDDecoder`),
+  persists via `saveChat`, and marshals UI updates (and the error-path message removal) to the
+  EDT. Both the synchronous throw (`asyncSend` itself failing) and the async error path undo the
+  optimistic message and restore the composer text. The compare fan-out (`AIRunner`) is still
+  unbuilt. See the interface-shape gaps in `ai-model/CLAUDE.md` before extending it.
+
+### 10.1 Markdown decoding (`AssistantMDDecoder`)
+
+A `DataDecoder<NVGenericMap, String>` singleton, and the only place that understands provider
+wire formats. `decode(payload)` runs, in order:
+
+1. **Extract the text.** `AIAPI.AIMDDecoder` first; on empty, `fromContentBlocks` walks
+   `choices[0].message.content` (and a top-level `content`) as an `NVGenericMapList`, keeping
+   `text` / `output_text` blocks — the Anthropic/Responses shape. If both come back empty it
+   falls back to **rendering the raw JSON in a ```json fence** rather than showing nothing, so a
+   shape it does not know still surfaces something debuggable in the bubble.
+2. **`toMarkdown`** = `unwrapOuterFence` → `repairWrapperFences` → `neutralizeImages`.
+   - `unwrapOuterFence` strips a whole-response ```` ```md ```` / ```` ```markdown ```` wrapper
+     (a model asked for "a markdown file" answers with the document inside a fence, which would
+     otherwise render as one grey box).
+   - `repairWrapperFences` **widens** a wrapper whose inner blocks use a backtick run at least as
+     long as its own — the collision that makes a document render as a code box followed by
+     orphaned prose. Idempotent; leaves well-formed and unbalanced input alone.
+   - `neutralizeImages` rewrites `![alt](url)` → `[image: alt](url)` and `<img` → `&lt;img`
+     **outside** code spans and fences. Net effect: a model's answer can never make the viewer
+     issue an outbound image fetch — it degrades to a plain link. Inline code stays literal, so a
+     markdown tutorial that *talks about* `![alt](url)` still shows it verbatim.
+3. **Truncation.** `truncated(payload)` checks `choices[0].finish_reason`, `stop_reason`, and
+   `candidates[0].finishReason` for `length` / `max_tokens`; when set it closes any dangling
+   fence and appends the `_Answer cut off…_ ` note.
+
+`tokens(payload)` reads `usage` **or** `usageMetadata`, preferring `total_tokens` /
+`totalTokenCount`, else summing the prompt/input/completion/output/candidates spellings; `0`
+when absent.
+
+**Tests.** `AssistantMDDecoderTest` (**29 tests, green**) renders through commonmark and asserts
+on the resulting HTML rather than on strings, so it checks the fix actually renders — plus fence
+fixtures in `src/test/resources/fence/`. `ChatBubbleTest` is **not** a JUnit test: it is a
+`main`-method visual harness that renders `AssistantUtil.chatBubble` over the real transcript
+layout under both FlatLaf themes; paste a provider answer into its `RESPONSE` constant and run it
+to eyeball a rendering bug. Run the suite with
+`mvn -pl ai-assistant test -DskipTests=false -Dmaven.test.skip=false` (surefire is skipped by the
+parent pom).
 
 ---
 

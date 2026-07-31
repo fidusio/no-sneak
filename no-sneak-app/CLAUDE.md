@@ -24,8 +24,9 @@ scanner and file-sharing screens are still placeholders.
 > tables, the scanner/file-sharing screens, and — in the AI assistant — the Job-queue and
 > Screen-capture pages, and the multi-model compare path. (The assistant's provider discovery,
 > the user-picked provider flow — keys are enabled per credential via `Session.setAssistantEnabled`
-> / `assistant-enabled`, not auto-added — single-provider chat send **with message persistence**,
-> and full **History + Skills CRUD** are wired now — see `ai-assistant/CLAUDE.md`.)
+> / `assistant-enabled`, not auto-added — single-provider chat send **with message persistence**
+> and rendered markdown replies, per-message skill attachment, and full **History + Skills CRUD**
+> are wired now — see `ai-assistant/CLAUDE.md`.)
 
 ## Layout
 
@@ -42,8 +43,8 @@ io.xlogistx.nosneak.app
     ├── ScanPanel.java             ← network scanner view (placeholder)
     ├── MenuBarFactory.java        ← builds the application menu bar
     ├── assistant/                 ← app-side bindings for the ai-assistant module
-    │   ├── SessionAICredentialSource.java ← exposes the subject's API keys (implements AICredentialSource.APIKeys())
-    │   └── AssistantStorage.java  ← AIRepository impl (chats + skills), datastore-backed over the H2P APIDataStore
+    │   ├── SessionAICredentialSource.java ← the subject's API keys + which are assistant-enabled (AICredentialSource)
+    │   └── AssistantStorage.java  ← AIRepository impl (chats + skills), GUID-keyed over the H2P APIDataStore
     └── utility/
         ├── AppContext.java        ← per-app service locator (Session + Navigator)
         ├── Session.java           ← auth + identifiers + credentials + profile + addresses (over DomainSecurityManager)
@@ -70,7 +71,11 @@ Two entry paths, chosen by whether a manager was built from the params:
   username / password / encryption password); on completion it builds the store the same way and
   then `launchApp(dsm)`.
 
-`launchApp(DomainSecurityManager)` opens `Main.AppFrame` (a `JFrame`, 800×600, title "NoSneak"),
+`launchApp(DomainSecurityManager)` opens `Main.AppFrame` (a `JFrame` titled "NoSneak", sized
+**relative to the display** — 60 % of screen width × 70 % of screen height from
+`Toolkit.getDefaultToolkit().getScreenSize()`, then centred; the old fixed 800×600 is commented
+out just above it. `getScreenSize()` reports the **primary** display, so on a multi-monitor setup
+the frame is sized off that one regardless of where it opens),
 which creates the single `AppContext` from the manager, builds the menu bar via `MenuBarFactory`,
 and installs `AppShell` as the content pane. The menu bar starts hidden and is toggled by
 `session().onAuthChange(...)` — it only appears once authenticated. `AppFrame` is `EXIT_ON_CLOSE`
@@ -388,8 +393,22 @@ The adapter that lets the `ai-assistant` module reach NoSneak's keys without dep
 `no-sneak-app` — it implements `io.xlogistx.nosneak.ai.AICredentialSource` over a `Session`. Its
 `APIKeys()` walks `getAllCredentialForUserByType(CredentialInfo.Type.API_KEY)` and returns every
 API key as a `List<APIKey<String>>` (the module reads the AI metadata off each key's property bag
-itself, e.g. `getProperties().getValue("provider")`). Returns an empty list when signed out. This
-is the single point where the app meets the AI-assistant module; the dependency is one-way.
+itself, e.g. `getProperties().getValue("provider")`). Returns an empty list when signed out. It
+also implements `enabledAPIKeys()` (the subset the subject has linked to the assistant) and
+`setEnabled(key, on)`, which persists the choice on the credential's `assistant-enabled` property
+via `Session.setAssistantEnabled` — so a key is used only once picked, never auto-added. Together
+with `AssistantStorage` this is where the app meets the AI-assistant module; the dependency is
+one-way.
+
+### `AssistantStorage` (in `ui.assistant`)
+The `io.xlogistx.nosneak.ai.AIRepository` implementation — persistence for **both** chats and
+skills — constructed from the `Session` and reading the H2P `APIDataStore` off it, owner-scoped
+by `subjectGUID`. `saveChat` / `saveSkill` branch on **`getGUID()`**: non-empty → `ds.update`,
+empty → stamp the owner and `ds.insert` (the store assigns the GUID). This must be `getGUID()`,
+**not `getReferenceID()`** — `referenceID` is deprecated in zoxweb and the H2P store never sets
+it, so branching on it made every save an insert and duplicated the row on each edit. The same
+GUID keying is what `AssistantContext`'s canonical caches rely on; see the identity note in
+`ai-model/CLAUDE.md`. `getAllChats` / `getAllSkills` return empty when signed out.
 
 ### `Navigator`
 Thin top-level screen-switcher over a `CardLayout`. Defines the `Screen` enum (`LOGIN, REGISTER,
