@@ -62,8 +62,15 @@ AIChat  ──has many──▶  AIMessage  ──is──▶  { AIRequest, AIRe
   `latency`. `getTokens()` / `getLatency()` are **null-safe**: an unset field reads `0` rather
   than throwing on unbox, which is what makes a response persisted before those were populated
   still readable.
-- **`AISkill`** — `content` (the instruction text) is its only declared param; `name` and
-  `description` are the inherited `NVEntity` fields.
+- **`AISkill`** — `content` (the instruction text) plus **`skillType`**; `name` and
+  `description` are the inherited `NVEntity` fields. `SkillType` is a `GetName` enum —
+  `MD_SKILL` ("md skill") / `PROMPT_SKILL` ("prompt skill") — and the two mean different things
+  to the composer: an md skill is **attached** (flattened into the `skill` argument), a prompt
+  skill's content is **inserted into the message box** for the subject to edit before sending
+  (see `ai-assistant/CLAUDE.md` §2). The enum-typed `NVConfig` follows the zoxweb pattern
+  (`CreditCardType`, `FileType`); H2P persists it by `name()` and rebuilds it via
+  `SharedUtil.enumValue`. Verified round-trip against a real encrypted H2 store, both
+  directions.
 - **`AIModel`** — `provider` + model id (`getModelID()` / `getName()`), cached by
   `AIModelCatalog`.
 
@@ -78,6 +85,28 @@ system field — it rides the `skill` argument, not the DAO.
 DAO serialization invariant (guarded by `AIChatRoundTripTest`): `AIMessage` embeds
 `AIRequest`/`AIResponse` with `createNVConfigEntity` — a scalar `createNVConfig` compiles but
 drops the nested entity on JSON round-trip.
+
+### Two things to know before adding a field or reading a timestamp
+
+- **Adding a param breaks existing stores.** H2P's `ensureTable` is `CREATE TABLE IF NOT
+  EXISTS` with no `ALTER TABLE … ADD COLUMN` anywhere, so a table created before a param
+  existed never gains its column, while the generated INSERT/UPDATE names it — saves fail
+  against the old store. `AISkill.skillType` hit exactly this. Adding a param means deleting
+  the dev store (or adding the column by hand); a fresh `@TempDir` store hides the problem in
+  tests.
+- **None of these DAOs collide with the inherited `PropertyDAO` chain**, and new params must
+  keep it that way. The reserved attribute names are `guid` / `subject_guid`
+  (`ReferenceIDDAO`), `name` (`SetNameDAO`), `description` (`SetNameDescriptionDAO`),
+  `creation_ts` / `last_update_ts` / `last_read_ts` (`TimeStampDAO`), and `canonical_id` /
+  `properties` (`PropertyDAO`). `AIChat.getTitle`/`setTitle` and `AIModel.getModelID`
+  **delegate** to the inherited `name` rather than declaring a field — keep that pattern.
+- **`last_update_ts` does not advance by itself.** The store calls
+  `MetaUtil.initTimeStamp(nve)` on both insert and update, but it only writes a value when the
+  current one is `0` — so it stamps creation once and never bumps "last updated". Anything that
+  wants a real modified time must set it: `AIChat.addMessage` does, and `no-sneak-app`'s
+  `AssistantStorage` stamps it on the update branch of `saveChat`/`saveSkill` (the insert branch
+  leaves it to the store so creation and update don't land a millisecond apart). `last_read_ts`
+  is never set by anything — treat it as unused, not as data.
 
 ## Service interfaces (`io.xlogistx.nosneak.ai`)
 
@@ -119,10 +148,12 @@ drops the nested entity on JSON round-trip.
   `TIMEOUT`, `NETWORK`, `PROVIDER`).
 
 > Skill persistence is now part of `AIRepository` (the earlier standalone `AISkillStore` idea was
-> folded in). The `AISkill` DAO carries `name` / `description` / `content` — the instruction text
-> is a plain `String`, so markdown is stored as-is; there is no skill-scope/data-access field yet.
-> Skills are **attached per message, never persisted with the chat** (the `AIChat.skills` list was
-> removed) — the UI flattens the selected skills into the `skill` argument at send time.
+> folded in). The `AISkill` DAO carries `name` / `description` / `content` / `skillType` — the
+> instruction text is a plain `String`, so markdown is stored as-is; there is still no
+> skill-scope/data-access field. Skills are **attached per message, never persisted with the
+> chat** (the `AIChat.skills` list was removed) — the UI flattens the selected md skills into
+> the `skill` argument at send time, and inserts a prompt skill's text into the composer
+> instead.
 >
 > The UI-side state holder `AssistantContext` lives in the **`ai-assistant`** module
 > (`io.xlogistx.nosneak.ai.assistant`), not here — it bundles these injected services plus the

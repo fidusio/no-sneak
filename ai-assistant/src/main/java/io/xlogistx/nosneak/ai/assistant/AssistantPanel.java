@@ -14,15 +14,25 @@ import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 
 import static io.xlogistx.nosneak.ai.assistant.AssistantUtil.chatBubble;
 
 public class AssistantPanel extends JPanel {
+
+    private static final DateTimeFormatter ROW_TIMESTAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
     private final CardStack cardStack = new CardStack();
     private final AssistantContext context;
@@ -44,11 +54,13 @@ public class AssistantPanel extends JPanel {
     private final CardStack skillsCards = new CardStack();
     private final JTextField skillName = new JTextField(20);
     private final JTextField skillDescription = new JTextField(20);
-    private final JTextArea skillInstructions = new JTextArea(6, 20);
+    private final JLabel skillContentInfo = new JLabel();
+    private String skillContent = "";
 
     private final JTextField editSkillName = new JTextField(20);
     private final JTextField editSkillDescription = new JTextField(20);
-    private final JTextArea editSkillInstructions = new JTextArea(6, 20);
+    private final JLabel editSkillContentInfo = new JLabel();
+    private String editSkillContent = "";
     private AISkill selectedSkill;
 
     private final CardStack historyCards = new CardStack();
@@ -64,6 +76,9 @@ public class AssistantPanel extends JPanel {
     private final JComboBox<String> createModelSelector = new JComboBox<>();
     private AIChat selectedChat;
 
+    private final JComboBox<AISkill.SkillType> skillTypes = skillTypeCombo();
+    private final JComboBox<AISkill.SkillType> editSkillTypes = skillTypeCombo();
+
     private JLabel chatTitle;
 
     private JButton sendButton;
@@ -76,7 +91,7 @@ public class AssistantPanel extends JPanel {
 
     JToggleButton chatButton = new JToggleButton("Chat");
     JToggleButton jobQueueButton = new JToggleButton("Job Queue");
-    JToggleButton historyButton = new JToggleButton("History");
+    JToggleButton historyButton = new JToggleButton("Chat History");
     JToggleButton skillsButton = new JToggleButton("Skills");
     JToggleButton providersButton = new JToggleButton("Providers");
     JToggleButton captureButton = new JToggleButton("Capture");
@@ -223,6 +238,8 @@ public class AssistantPanel extends JPanel {
                 .label(_ -> "")
                 .onEdit(c -> this::onEditJob)
                 .onRemove(c -> this::onRemoveJob)
+                .scrollable()
+                .search("search")
                 .build();
 
         return jobQueueList;
@@ -244,13 +261,17 @@ public class AssistantPanel extends JPanel {
 
     public JPanel buildHistoryPanel() {
         historyList = ListSection.of(context::getAllChats)
-                .title("History")
+                .title("Chat History")
                 .addButton("+ New Prompt", this::onAddPrompt)
-                .label(AIChat::getTitle)
+                .label(chat -> chat.getTitle()
+                        + "  ·  created " + timestamp(chat.getCreationTime())
+                        + "  ·  updated " + timestamp(chat.getLastTimeUpdated()))
                 .onEdit(c -> () -> onEditPrompt(c))
                 .onRemove(c -> () -> onRemovePrompt(c))
                 .action(new ListSection.RowAction<>(new IconUtil.NextIcon(16), "Open Chat", c -> () -> onOpenChat(c)))
                 .emptyText("No chats yet")
+                .scrollable()
+                .search("search")
                 .build();
 
         return historyList;
@@ -337,6 +358,8 @@ public class AssistantPanel extends JPanel {
                 .onEdit(c -> () -> onEditSkill(c))
                 .onRemove(c -> () -> onRemoveSkill(c))
                 .emptyText("No Skills yet")
+                .scrollable()
+                .search("search")
                 .build();
 
         return skillsList;
@@ -348,25 +371,30 @@ public class AssistantPanel extends JPanel {
         save.addActionListener(e -> {
             String name = editSkillName.getText();
             String description = editSkillDescription.getText();
-            String content = editSkillInstructions.getText();
+            AISkill.SkillType type = (AISkill.SkillType) editSkillTypes.getSelectedItem();
 
             if (!name.isEmpty()) selectedSkill.setName(name);
             if (!description.isEmpty()) selectedSkill.setDescription(description);
-            if (!content.isEmpty()) selectedSkill.setContent(content);
+            if(type != null) selectedSkill.setSkillType(type);
+            selectedSkill.setContent(editSkillContent);
 
             BackgroundTask.runCatching(this, save, () -> context.saveSkill(selectedSkill), () -> {
+                contentInfo(editSkillContentInfo, editSkillContent, false);
                 refreshSkills();
                 skillsCards.show("list");
             });
         });
 
         return PanelBuilder.detail("Skill", () -> skillsCards.show("list"), panel -> {
-            editSkillInstructions.setLineWrap(true);
-            editSkillInstructions.setWrapStyleWord(true);
+            JComponent instructions = instructionsRow(editSkillContentInfo, () -> editSkillContent, md -> {
+                editSkillContent = md;
+                contentInfo(editSkillContentInfo, editSkillContent, true);
+            });
 
             PanelBuilder.addRow(panel, "Name", editSkillName);
             PanelBuilder.addRow(panel, "Description", editSkillDescription);
-            PanelBuilder.addRow(panel, "Skill Instructions", editSkillInstructions);
+            PanelBuilder.addRow(panel, "Type", editSkillTypes);
+            PanelBuilder.addRow(panel, "Skill instructions", instructions);
             PanelBuilder.addRow(panel, "", save);
         });
     }
@@ -377,14 +405,16 @@ public class AssistantPanel extends JPanel {
         create.addActionListener(e -> {
             String name = skillName.getText();
             String description = skillDescription.getText();
-            String content = skillInstructions.getText();
+            AISkill.SkillType type = (AISkill.SkillType) skillTypes.getSelectedItem();
 
             AISkill skill = new AISkill();
             skill.setName(name);
             skill.setDescription(description);
-            skill.setContent(content);
+            skill.setContent(skillContent);
+            skill.setSkillType(type);
 
             BackgroundTask.runCatching(this, create, () -> context.saveSkill(skill), () -> {
+                contentInfo(skillContentInfo, skillContent, false);
                 refreshSkills();
                 skillsCards.show("list");
             });
@@ -392,14 +422,79 @@ public class AssistantPanel extends JPanel {
         });
 
         return PanelBuilder.detail("Skill", () -> skillsCards.show("list"), panel -> {
-            skillInstructions.setLineWrap(true);
-            skillInstructions.setWrapStyleWord(true);
+            JComponent instructions = instructionsRow(skillContentInfo, () -> skillContent, md -> {
+                skillContent = md;
+                contentInfo(skillContentInfo, skillContent, true);
+            });
 
             PanelBuilder.addRow(panel, "Name", skillName);
             PanelBuilder.addRow(panel, "Description", skillDescription);
-            PanelBuilder.addRow(panel, "Skill Instructions", skillInstructions);
+            PanelBuilder.addRow(panel, "Type", skillTypes);
+            PanelBuilder.addRow(panel, "Skill instructions", instructions);
             PanelBuilder.addRow(panel, "", create);
         });
+    }
+
+    private static JComboBox<AISkill.SkillType> skillTypeCombo() {
+        JComboBox<AISkill.SkillType> combo = new JComboBox<>(AISkill.SkillType.values());
+        combo.setRenderer(new DefaultListCellRenderer() {
+            @Override
+            public Component getListCellRendererComponent(JList<?> list, Object value, int index,
+                                                          boolean selected, boolean focused) {
+                super.getListCellRendererComponent(list, value, index, selected, focused);
+                if (value instanceof AISkill.SkillType type) setText(type.getName());
+                return this;
+            }
+        });
+        return combo;
+    }
+
+    private JComponent instructionsRow(JLabel info, Supplier<String> markdown, Consumer<String> onApply) {
+        JButton edit = new JButton("Edit instructions", new IconUtil.EditIcon(16));
+        edit.addActionListener(e -> openMarkdownEditor(markdown.get(), onApply));
+
+        info.setForeground(UIManager.getColor("Label.disabledForeground"));
+
+        JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        row.setOpaque(false);
+        row.add(edit);
+        row.add(info);
+        return row;
+    }
+
+    private void openMarkdownEditor(String markdown, Consumer<String> onApply) {
+        Window owner = SwingUtilities.getWindowAncestor(this);
+        JDialog dialog = new JDialog(owner, "Skill instructions", Dialog.ModalityType.APPLICATION_MODAL);
+        dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
+
+        MDFileViewer fileViewer = new MDFileViewer(markdown);
+        fileViewer.setTitle("Instructions");
+        fileViewer.setSaveText("Apply");
+        fileViewer.setOnSave(md -> {
+            onApply.accept(md);
+            dialog.dispose();
+        });
+        fileViewer.setOnCancel(dialog::dispose);
+
+        dialog.setContentPane(fileViewer);
+        dialog.setSize(1000, 700);
+        dialog.setLocationRelativeTo(owner);
+        dialog.setVisible(true);
+    }
+
+    private static String timestamp(long millis) {
+        if (millis <= 0) return "n/a";
+        return ROW_TIMESTAMP.format(Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()));
+    }
+
+    private void contentInfo(JLabel info, String content, boolean pending) {
+        if (content == null || content.isBlank()) {
+            info.setText("No instructions yet");
+            return;
+        }
+
+        int lines = content.split("\n", -1).length;
+        info.setText(lines + (lines == 1 ? " line" : " lines") + (pending ? " · not saved yet" : ""));
     }
 
     public JPanel buildProviderCardsPanel() {
@@ -422,6 +517,7 @@ public class AssistantPanel extends JPanel {
                 .emptyText("No providers")
                 .onEdit(p -> () -> onEditProvider(p))
                 .onRemove(p -> () -> onRemoveProvider(p))
+                .scrollable()
                 .build();
 
         return providerList;
@@ -524,6 +620,7 @@ public class AssistantPanel extends JPanel {
                 .onRemove(p -> this::onRemoveCapture)
                 .action(new ListSection.RowAction<>(new IconUtil.AreaIcon(16), "Edit Capture Location", p -> this::onEditCaptureLocation))
                 .emptyText("No Captures yet")
+                .search("search")
                 .build();
 
         JPanel panel = new JPanel(new BorderLayout());
@@ -672,25 +769,92 @@ public class AssistantPanel extends JPanel {
             none.setEnabled(false);
             content.add(none);
         } else {
-            for (AISkill skill : skills) {
-                JCheckBox box = new JCheckBox(skill.getName(), pendingSkills.contains(skill));
-                box.setOpaque(false);
-                if (skill.getDescription() != null && !skill.getDescription().isEmpty())
-                    box.setToolTipText(skill.getDescription());
-                box.addActionListener(_ -> {
-                    if (box.isSelected()) {
-                        if (!pendingSkills.contains(skill)) pendingSkills.add(skill);
-                    } else {
-                        pendingSkills.remove(skill);
-                    }
-                    refreshSkillTooltip();
-                });
-                content.add(box);
+            Map<AISkill.SkillType, List<AISkill>> byType = groupByType(skills);
+            boolean showHeaders = byType.size() > 1;
+
+            for (Map.Entry<AISkill.SkillType, List<AISkill>> group : byType.entrySet()) {
+                if (showHeaders) {
+                    AISkill.SkillType type = group.getKey();
+                    content.add(sectionLabel(type != null ? type.getName() : "other"), "gaptop 6");
+                }
+
+                for (AISkill skill : group.getValue()) {
+                    content.add(skill.getSkillType() == AISkill.SkillType.PROMPT_SKILL
+                            ? promptSkillRow(skill, popup)
+                            : attachSkillRow(skill));
+                }
             }
         }
 
         popup.add(content);
         popup.show(attachSkillButton, 0, -popup.getPreferredSize().height);
+    }
+
+    private JCheckBox attachSkillRow(AISkill skill) {
+        JCheckBox box = new JCheckBox(skill.getName(), pendingSkills.contains(skill));
+        box.setOpaque(false);
+        if (skill.getDescription() != null && !skill.getDescription().isEmpty())
+            box.setToolTipText(skill.getDescription());
+        box.addActionListener(_ -> {
+            if (box.isSelected()) {
+                if (!pendingSkills.contains(skill)) pendingSkills.add(skill);
+            } else {
+                pendingSkills.remove(skill);
+            }
+            refreshSkillTooltip();
+        });
+        return box;
+    }
+
+    private JButton promptSkillRow(AISkill skill, JPopupMenu popup) {
+        JButton insert = new JButton(skill.getName());
+        insert.putClientProperty("JButton.buttonType", "borderless");
+        insert.setHorizontalAlignment(SwingConstants.LEFT);
+        insert.setFocusable(false);
+        insert.setToolTipText(skill.getDescription() != null && !skill.getDescription().isEmpty()
+                ? skill.getDescription() + " (inserts into the message)"
+                : "Insert into the message");
+        insert.addActionListener(_ -> {
+            popup.setVisible(false);
+            insertIntoComposer(skill.getContent());
+        });
+        return insert;
+    }
+
+    private void insertIntoComposer(String text) {
+        if (text == null || text.isBlank()) return;
+
+        String existing = composer.getText();
+        if (existing.isBlank()) {
+            composer.setText(text);
+        } else {
+            int caret = Math.min(composer.getCaretPosition(), existing.length());
+            String before = existing.substring(0, caret);
+            composer.insert(before.endsWith("\n") ? text : "\n\n" + text, caret);
+        }
+
+        composer.setCaretPosition(composer.getDocument().getLength());
+        composer.requestFocusInWindow();
+    }
+
+    private static Map<AISkill.SkillType, List<AISkill>> groupByType(List<AISkill> skills) {
+        Map<AISkill.SkillType, List<AISkill>> byType = new LinkedHashMap<>();
+
+        for (AISkill.SkillType type : AISkill.SkillType.values()) {
+            List<AISkill> ofType = skills.stream()
+                    .filter(s -> s.getSkillType() == type)
+                    .sorted(Comparator.comparing(AISkill::getName, Comparator.nullsLast(String::compareToIgnoreCase)))
+                    .toList();
+            if (!ofType.isEmpty()) byType.put(type, ofType);
+        }
+
+        List<AISkill> untyped = skills.stream()
+                .filter(s -> s.getSkillType() == null)
+                .sorted(Comparator.comparing(AISkill::getName, Comparator.nullsLast(String::compareToIgnoreCase)))
+                .toList();
+        if (!untyped.isEmpty()) byType.put(null, untyped);
+
+        return byType;
     }
 
     private static JLabel sectionLabel(String text) {
@@ -787,7 +951,9 @@ public class AssistantPanel extends JPanel {
     private void onAddSkill() {
         skillName.setText("");
         skillDescription.setText("");
-        skillInstructions.setText("");
+        skillContent = "";
+        skillTypes.setSelectedItem(AISkill.SkillType.MD_SKILL);
+        contentInfo(skillContentInfo, skillContent, false);
         skillsCards.show("creator");
     }
 
@@ -796,7 +962,10 @@ public class AssistantPanel extends JPanel {
         selectedSkill = skill;
         editSkillName.setText(selectedSkill.getName());
         editSkillDescription.setText(selectedSkill.getDescription());
-        editSkillInstructions.setText(selectedSkill.getContent());
+        editSkillTypes.setSelectedItem(selectedSkill.getSkillType() != null
+                ? selectedSkill.getSkillType() : AISkill.SkillType.MD_SKILL);
+        editSkillContent = selectedSkill.getContent() != null ? selectedSkill.getContent() : "";
+        contentInfo(editSkillContentInfo, editSkillContent, false);
         skillsCards.show("editor");
     }
 

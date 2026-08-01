@@ -37,13 +37,15 @@ has chosen to use.
 >   `context.saveChat`), and remove calls `context.deleteChat`. The list source is
 >   `context.getAllChats()` (→ `AIRepository.getAllChats()`), refreshed by the public EDT-safe
 >   `refreshHistory()`, which `no-sneak-app` calls on both login and logout.
-> - **Skills have create / edit / delete + persistence.** `buildSkillCards` is a nested
->   `CardStack` (`list` / `editor` / `creator`). The list source is `context.getAllSkills()`
->   (→ `AIRepository.getAllSkills()`), refreshed by `refreshSkills()`. `+ New Skill` opens a
->   Create form (name / description / instructions), a row's edit opens a pre-filled Edit form
->   (`editSkill*` fields), remove calls `context.deleteSkill`; all saves run off the EDT via
->   `BackgroundTask.runCatching`. `AISkill.content` is the instruction text — a plain `String`,
->   so a skill authored in markdown is stored verbatim.
+> - **Skills have create / edit / delete + persistence, and are typed.** `buildSkillCards` is a
+>   nested `CardStack` (`list` / `editor` / `creator`). The list source is
+>   `context.getAllSkills()` (→ `AIRepository.getAllSkills()`), refreshed by `refreshSkills()`.
+>   Both forms carry name / description / **type** (`AISkill.SkillType`) / instructions; remove
+>   calls `context.deleteSkill`; all saves run off the EDT via `BackgroundTask.runCatching`.
+>   `AISkill.content` is the instruction text — a plain `String`, so a skill authored in markdown
+>   is stored verbatim. **Instructions are edited in a modal `MDFileViewer` dialog** whose Apply
+>   writes to a per-page buffer, never to the store: the page's Save/Create is the single
+>   persistence point. See §5 and §5.1.
 > - **Chat send is wired for a single provider, async, and persists.** `onSend` validates
 >   (chat / model / provider — each missing piece gets a dialog, no more silent returns), builds
 >   an `AIRequest` (raw user text, maxTokens), attaches an `AIMessage` to `currentChat`, flattens
@@ -67,8 +69,11 @@ has chosen to use.
 >   `xlogistx-gui-audio`, which is why the tests can still parse markdown without a declared
 >   dependency. If the GUI toolkit ever drops commonmark, `AssistantMDDecoderTest` breaks first.
 > - **Per-message skills go through the composer `+` popup** (`showAttachPopup`): a
->   `JPopupMenu` anchored above the button with a "Skills for this message" checkbox section —
->   check attaches, uncheck removes, popup stays open while toggling. Selections live in the
+>   `JPopupMenu` anchored above the button with a "Skills for this message" section, **grouped by
+>   skill type** (`groupByType`). An **md skill** is a checkbox — check attaches, uncheck removes,
+>   popup stays open while toggling; a **prompt skill** is a borderless button that closes the
+>   popup and inserts its content into the composer at the caret (`insertIntoComposer`), and is
+>   deliberately *not* added to `pendingSkills`. Checkbox selections live in the
 >   transient `pendingSkills` list (the `+` button's tooltip names them), are flattened into
 >   `<skill>…</skill>` blocks and passed as `asyncSend`'s **`String skill`** argument (there is
 >   no `AIRequest.skillsPrompt` field — the skill text is never persisted with the turn), and
@@ -121,7 +126,7 @@ has chosen to use.
 
 ## Source map
 
-Six classes, all in `io.xlogistx.nosneak.ai.assistant`:
+Seven classes, all in `io.xlogistx.nosneak.ai.assistant`:
 
 | Class | What it is |
 |---|---|
@@ -131,6 +136,7 @@ Six classes, all in `io.xlogistx.nosneak.ai.assistant`:
 | `AssistantCallback` | `ConsumerCallback<NVGenericMap>` — payload → `AIResponse`, persist, hop to the EDT |
 | `AssistantMDDecoder` | Provider payload → renderable markdown (see §10.1) |
 | `AssistantUtil` | `chatBubble(...)` — a rounded bubble around an `io.xlogistx.gui.MDViewerPanel` |
+| `MDFileViewer` | Split markdown editor: editor left, live `MDViewerPanel` preview right (see §5.1) |
 
 `MarkDownViewerPanel` used to live here and is **gone** — markdown rendering is
 `io.xlogistx.gui.MDViewerPanel` from `xlogistx-gui-audio`, which is also where commonmark now
@@ -167,6 +173,11 @@ The conversation view. Bottom composer with:
   **Job queue** (attach ready items) and **Skills for this message** (per-message skill override).
 - Selected items and skills appear as **removable chips** above the input.
 - Send button.
+
+The skills section is **grouped by `SkillType`**, and the two types are different interactions,
+not a cosmetic split: **md skills** are checkboxes that attach (system prompt), **prompt skills**
+are buttons that paste their text into the composer for the subject to edit before sending. See
+§5's implementation status for the mechanics and why a prompt skill is not also attached.
 
 Header shows the prompt title plus a compact binding:
 - one model → `key · model` (mono chip)
@@ -211,6 +222,14 @@ Every past prompt: title, the models it ran against, an `N models` badge, the wi
 marked, date, message count. **Rename and delete live only here** (inline rename field; red confirm
 strip for delete) — not in the prompt header.
 
+> **Implementation status.** Rows read `title · created <ts> · updated <ts>` (`timestamp(...)`,
+> `yyyy-MM-dd HH:mm` local, `n/a` for an unset stamp). Note `ListSection.Builder.label(...)` is a
+> **setter, not an accumulator** — calling it twice silently discards the first lambda. The
+> "updated" half is only meaningful because `AssistantStorage` stamps `lastTimeUpdated` on the
+> update branch; the store itself never bumps it (see `ai-model/CLAUDE.md`). The list is
+> `.scrollable()` + `.search(...)` — the shared `ListSection` gained a filter box, so History and
+> Skills filter client-side over their supplier.
+
 ---
 
 ## 5. Skills page
@@ -220,7 +239,8 @@ Its instructions are prepended to the system prompt for **every model in the run
 
 - List rows show name, description, and the data-access scope; each row has edit + delete.
 - The **editor** has only a back arrow in the header and a single `Save`/`Create` action — no delete,
-  no cancel inside it (back is cancel). Delete lives on the list rows.
+  no cancel inside it (back is cancel). Delete lives on the list rows. (The markdown dialog it
+  opens is a separate window and does carry its own Apply/Cancel — see §5.1.)
 - Activation is decided in exactly two places: per prompt (New prompt form) and per message (`+` popup).
 
 Data-access options: `Scan data`, `Scan data and host inventory`, `Findings only`,
@@ -228,19 +248,72 @@ Data-access options: `Scan data`, `Scan data and host inventory`, `Findings only
 
 > **Implementation status.** `buildSkillCards` (`list` / `editor` / `creator`) implements
 > **create / edit / delete + persistence** against `AIRepository` (`getAllSkills` / `saveSkill` /
-> `deleteSkill`). The DAO carries only `name` / `description` / `content` (the instructions),
-> stored as a plain `String` — so **markdown skills are just the string** (no file reference; if
-> you want `.md` import/export, parse frontmatter→name/description, body→content at the edge and
-> keep the model a `String`).
+> `deleteSkill`). The DAO carries `name` / `description` / `content` (the instructions) /
+> `skillType`, with the content a plain `String` — so **markdown skills are just the string**
+> (no file reference; `MDFileViewer`'s *Open file* loads a `.md` off disk **into the editor
+> buffer**, it does not create a link to it, and there is no export. If you want frontmatter
+> import, parse it →name/description, body→content at the edge and keep the model a `String`).
 >
-> **Per-message activation is built** — the composer `+` popup checks skills into `pendingSkills`,
-> and `onSend` flattens them into `<skill>…</skill>` blocks passed as `asyncSend`'s `skill`
-> argument. **Not yet built:** the `data access` scope (no DAO field) and **per-prompt**
-> activation. The latter regressed rather than stalled: `AIChat` used to carry a `skills` list
-> and it was **removed** from the DAO, so a chat cannot remember which skills it runs with. Note
-> also that nothing records *which* skills went out with a given turn — `AIRequest` has no
-> `skillsPrompt` field, so the stored transcript cannot tell you what the model was actually
-> instructed with.
+> **A skill now has a type** (`AISkill.SkillType`), picked from one combo **per page** —
+> `skillTypes` on the creator, `editSkillTypes` on the editor. They must stay **separate
+> instances**: one Swing component cannot sit on two cards, and sharing it meant whichever page
+> was built last stole the control, leaving the other page a bare "Type" label whose save read
+> the *other* page's selection. `skillTypeCombo()` renders
+> the constants through `SkillType.getName()` ("md skill" / "prompt skill") rather than
+> `toString()`. `onEditSkill` pre-selects the stored type — without that, opening a
+> `PROMPT_SKILL` and saving silently rewrote it to the combo's default.
+>
+> **Instructions are edited in a modal markdown dialog, not a text area.** The row is
+> `instructionsRow(...)`: an **Edit instructions** button plus a muted state label
+> (`No instructions yet` / `42 lines` / `42 lines · not saved yet`). The button opens
+> `openMarkdownEditor(...)` — an `MDFileViewer` in an `APPLICATION_MODAL` `JDialog` whose commit
+> button is relabelled **Apply**. Apply writes into a per-page `String` buffer
+> (`skillContent` / `editSkillContent`), **not** into the DAO and **not** to the store; the
+> page's `Save`/`Create` is the only thing that persists, and it writes name + description +
+> type + instructions in one go. That split is deliberate: two buttons labelled "Save" nested
+> inside each other is the ambiguity it exists to avoid, and buffering means backing out with
+> the back arrow leaves the cached `AISkill` unmutated.
+>
+> **Per-message activation is built, and the two types behave differently** (see §2). The
+> composer `+` popup groups skills by type (`groupByType`, enum order, name-sorted within a
+> group, untyped last under `other`, headers only when more than one group exists). An **md
+> skill** is a checkbox that toggles `pendingSkills`, flattened into `<skill>…</skill>` blocks
+> as `asyncSend`'s `skill` argument. A **prompt skill** is a borderless button that closes the
+> popup and inserts its content into the composer at the caret — it is deliberately **not**
+> added to `pendingSkills`, or the same text would go out twice (once as the message, once as a
+> system-prompt block). A consequence worth knowing: prompt-skill text is persisted with the
+> turn as ordinary message content, while attached md skills are still recorded nowhere.
+>
+> **Not yet built:** the `data access` scope (no DAO field) and **per-prompt** activation. The
+> latter regressed rather than stalled: `AIChat` used to carry a `skills` list and it was
+> **removed** from the DAO, so a chat cannot remember which skills it runs with. Note also that
+> nothing records *which* skills went out with a given turn — `AIRequest` has no `skillsPrompt`
+> field, so the stored transcript cannot tell you what the model was actually instructed with.
+
+### 5.1 The markdown editor (`MDFileViewer`)
+
+A standalone `JPanel`, deliberately **not** to the house spec in §9 — it is its own thing, used
+by the skill editor today and reusable anywhere a markdown string needs editing.
+
+- **Split view.** Mono `JTextArea` in a scroll pane on the left, `io.xlogistx.gui.MDViewerPanel`
+  on the right, 50/50 one-touch-expandable `JSplitPane`. The preview re-renders on a 250 ms
+  non-repeating `Timer` restarted per keystroke, so typing does not reparse per character;
+  `Save` / `Cancel` / `setMarkdown` stop the pending timer and render immediately.
+- **Save and Cancel are both callback-driven and always visible.** `setOnSave(Consumer<String>)`
+  hands over the current markdown; `setOnCancel(Runnable)` reverts the editor to the last
+  committed text **first**, then runs the handler — so a host that only wants "go back" does not
+  have to re-load the source to undo edits. `revert()` is public for a host that prefers its own
+  back arrow. `⌘S`/`Ctrl+S` saves, `Esc` cancels.
+- **Open file** loads a `.md` / `.markdown` / `.txt` from disk (UTF-8, remembers the last
+  directory, confirms first when the buffer is dirty). The load counts as an **edit, not a
+  commit** — it never touches the committed baseline, so Cancel still returns to the original
+  text and nothing reaches the caller until Save. There is no write-to-disk path; the status
+  line shows provenance (`loaded readme.md · unsaved changes`).
+- Host hooks: `setTitle` (renames the editor pane's border), `setSaveText` ("Apply" in the skill
+  dialog), `getSaveButton()` / `getCancelButton()` for driving an async save through
+  `BackgroundTask.runCatching`, plus `isDirty` / `markDirty` / `markSaved`.
+- `JPanelTest` (test sources) is a `main`-method visual harness for it, in the same spirit as
+  `ChatBubbleTest`.
 
 ---
 

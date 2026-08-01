@@ -199,13 +199,17 @@ The **Profile** screen is itself a nested `CardStack` (`profileCards`, built by
     > to come, and the dialog currently closes on click even on error.
   - The `editAPI` card is fully wired: the secret shows in a masked `JPasswordField` with a
     **Show/Hide** toggle (`VisibleIcon`/`InvisibleIcon`, re-masked on every open) and a **Copy**
-    button; editable **Label** / **Description**, **App ID** / **Domain ID**, and **Provider** /
-    **Base URI** — all populated from the key on open. **Label and Description are required**.
-    Saved via `Session.changeAPIDetails(key, label, description, domainID, appID, provider,
-    baseURI, authScheme, headerName)` — App ID / Domain ID persist when both non-blank
-    (re-validated through the AppID filters). **Rotate** (`Session.rotateAPIKey`, disabled for
-    external keys) and **Delete** (`Session.deleteAPIKey`) each confirm first, run off the EDT,
-    and refresh — Rotate re-populates the card with the new secret, Delete navigates back.
+    button; editable **Label** / **Description**, **App ID** / **Domain ID**, and **Provider**
+    (its own editable `keyProvider` combo — **not** the add dialog's `inProvider`; see the
+    review note below) / **Base URI** — all populated from the key on open. **Label and
+    Description are required**. Saved via `Session.changeAPIDetails(key, label, description,
+    domainID, appID, provider, baseURI, authScheme, headerName)` — App ID / Domain ID persist
+    when both non-blank (re-validated through the AppID filters); `authScheme`/`headerName` are
+    not on the form but round-trip unchanged from the stored key. **Delete**
+    (`Session.deleteAPIKey`) confirms first, runs off the EDT, and refreshes. **Rotate**
+    (`Session.rotateAPIKey`, disabled for external keys) is wired but **commented out of the
+    card** (`keyView.add(rotateKey)`) — read the `external`-flag hazard under *Security
+    hardening* before putting it back.
 
 > **Icon buttons.** Credential/identifier/address actions render as `io.xlogistx.gui.IconUtil`
 > SVG icons with tooltips: **EditIcon** (pencil), **DeleteIcon** (trash), **RefreshIcon**
@@ -410,6 +414,17 @@ it, so branching on it made every save an insert and duplicated the row on each 
 GUID keying is what `AssistantContext`'s canonical caches rely on; see the identity note in
 `ai-model/CLAUDE.md`. `getAllChats` / `getAllSkills` return empty when signed out.
 
+Both saves also **stamp `lastTimeUpdated` on the update branch only**. The store's
+`MetaUtil.initTimeStamp` writes a timestamp *only when the current value is 0*, so it sets
+creation once and never advances "last updated" — the History rows' `updated` column would
+otherwise show the insert time forever. Stamping only on update (not insert) keeps creation and
+update from landing a millisecond apart on a fresh row. See the timestamp note in
+`ai-model/CLAUDE.md`.
+
+> **`deleteChat` orphans children.** It calls `ds.delete(chat, false)`, and `withReference=false`
+> means H2P deletes the chat row plus the cascading join rows but **not** the child entities — the
+> `ai_message` / `ai_request` / `ai_response` rows stay in the database indefinitely.
+
 ### `Navigator`
 Thin top-level screen-switcher over a `CardLayout`. Defines the `Screen` enum (`LOGIN, REGISTER,
 MAIN, SCAN, SUBJECT, MANAGER, ASSISTANT`) and `show(Screen)` flips the shared content panel to the
@@ -438,11 +453,16 @@ Shared Swing layout helpers:
   data-driven lists, kept only for static ones.
 
 ### `ListSection`
-A titled, refreshable list component. Constructed with a title, an add-button label + action, and
-a `Supplier<List<Entry>>` data source; `refresh()` rebuilds the rows (call after any mutation). A
-**null `onAdd`** omits the add button (the read-only Password section). Each `Entry(label, onEdit,
-onRemove)` renders a row with optional per-row Edit/Remove buttons (null handler hides that
-button); an `Entry` with both handlers null is a plain label row (empty-state lines).
+A titled, refreshable list component, built through a fluent builder:
+`ListSection.of(Supplier<List<T>>)` plus `.title(...)`, `.label(Function<T,String>)`,
+`.addButton(label, onAdd)`, `.onEdit(...)` / `.onRemove(...)`, extra `.action(RowAction)`s,
+`.emptyText(...)`, and `.scrollable()` / `.search(placeholder)`. `refresh()` rebuilds every row
+from the supplier — call it after any mutation. Omitting `.addButton` omits the add button (the
+read-only Password section); a row with no handlers is a plain label line (empty states).
+
+> `.label(...)` **assigns**, it does not accumulate — calling it twice silently drops the first
+> lambda. `.search(...)` filters client-side over the supplier's list, which is why History and
+> Skills can search without any store support.
 
 ### `BackgroundTask`
 A `SwingWorker` helper so blocking work never runs on the EDT. `run(owner, toDisable, work,
@@ -539,11 +559,17 @@ All target-only, because the model has nowhere to store them: per-identifier **s
 From a security pass over the app's own code (issues fixable here, not in the zoxweb dependency),
 ordered by priority.
 
-- **`loginAPIKey` can authenticate with a null principal** (`Session.loginAPIKey`). When a key
-  resolves to a subject with **zero** identifiers, `principalID` is set to `null` but
-  `authenticated` is still flipped `true` — the footer shows `subject: null` and
-  `principalID`-guarded methods silently no-op. Fix: if `principals.length == 0`, clear
-  `subjectIdentifier` and throw rather than authenticating.
+- **A third-party key can be stored without the `external` flag** (`Session.storeAPIKey`). The
+  flag is written **only when both `appID` and `domainID` are non-blank**, but the Add-key
+  dialog requires only App ID (`SubjectPanel.onAddAPIKey`). `isExternalKey()` then reads `false`
+  for an imported vendor key — and `rotateAPIKey` refuses external keys precisely so it cannot
+  overwrite a secret NoSneak did not mint. With the flag missing, Rotate would replace a real
+  OpenAI/Anthropic secret with a locally generated AES key, unrecoverably. **Latent today only
+  because `keyView.add(rotateKey)` is commented out**; uncommenting it makes this live data
+  loss. Fix: write the `external` property unconditionally in the external branch (the AppID
+  attachment can stay conditional).
+- ~~**`loginAPIKey` can authenticate with a null principal**~~ — **fixed.** Zero identifiers now
+  clears `subjectIdentifier` and throws instead of flipping `authenticated`.
 - **Clipboard secret never cleared** (`SubjectPanel`, the **Copy** actions). A copied API-key
   secret sits on the clipboard indefinitely. Add an auto-clear after a timeout (Swing `Timer`,
   ~60 s), guarded to only clear if the clipboard still holds that value.
@@ -562,6 +588,35 @@ ordered by priority.
 - **External favicon fetch on the login screen** (`LoginPanel`). Startup pulls
   `https://xlogistx.io/favicon.ico` (exceptions swallowed) — a minor privacy / supply-chain
   "phone home." Bundle a local icon or drop it.
+
+### Correctness issues found in the last review pass (`no-sneak-app`)
+
+- ~~**The Edit-API-key card shared the Add dialog's provider combo**~~ — **fixed.** `inProvider`
+  was on both the add input card (rebuilt per dialog open) and the edit card (built once), so
+  Swing's one-parent rule let Add steal the control, the edit card read *its* selection on save
+  (silently rewriting the key's `provider`, which is what `AIAPIProvider.resolveType` keys off),
+  and `Objects.requireNonNull(getSelectedItem())` threw after a cancelled Add. `keyProvider` is
+  now an editable `JComboBox` owned by the edit card — it was already being populated, just
+  never displayed. Both call sites read through `comboText(...)`, which takes the **editor's**
+  item when the combo is editable, so a typed custom provider is not dropped when you click
+  Save without committing.
+- **Deleting a chat orphans its message rows.** `AssistantStorage.deleteChat` passes
+  `withReference=false` to `ds.delete`, so H2P removes the chat row and the join rows but never
+  the child entities — every `ai_message` / `ai_request` / `ai_response` row survives, forever.
+  Not fixed; confirm the cascade semantics before flipping it to `true`.
+- **Clearing the Provider field silently unlinks a key from the assistant.**
+  `changeAPIDetails` writes `""` rather than removing the property, `resolveType("")` returns
+  null, `AIAPIProvider.create` returns null, and `reloadProviders` skips the key — while
+  `assistant-enabled` stays `true`, so nothing tells the subject why it vanished.
+- **Every registration failure reads "That username is already taken"**
+  (`registerUsernamePassword` catches `SecurityException` broadly), so a store or IO failure is
+  misreported as a duplicate.
+- **`Main.main` does not handle a failed `connect()`** on the `ds.*` param path — a wrong
+  encryption password kills the app with a console stack trace and no window, unlike the setup
+  screen, which surfaces it in a dialog.
+- **`LoginPanel`'s Enter binding always runs `passwordAction()`** regardless of which card is
+  showing (`WHEN_ANCESTOR_OF_FOCUSED_COMPONENT`). Harmless while the API-key and passkey
+  selectors are hidden; wrong the moment the commented-out `applyMode()` lines are restored.
 
 > Considered and **not** treated as issues: menu items are unreachable while signed out (the whole
 > `JMenuBar` is hidden until auth); values render in `JTextField`s with no HTML, and AppID/domain

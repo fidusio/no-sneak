@@ -47,7 +47,7 @@ public class SubjectPanel extends JPanel {
     private final JTextField editKeyDescription = new JTextField(20);
     private final JTextField keyAppID = new JTextField(20);
     private final JTextField keyDomainID = new JTextField(20);
-    private final JTextField keyProvider = new JTextField(20);
+    private final JComboBox<String> keyProvider = new JComboBox<>(PROVIDER_DISPLAY);
     private final JTextField keyURI = new JTextField(20);
     private final JTextField authScheme = new JTextField(20);
     private final JTextField headerName = new JTextField(20);
@@ -119,7 +119,7 @@ public class SubjectPanel extends JPanel {
                 editKeyDescription.setText("");
                 keyAppID.setText("");
                 keyDomainID.setText("");
-                keyProvider.setText("");
+                keyProvider.setSelectedItem(null);
                 keyURI.setText("");
                 authScheme.setText("");
                 headerName.setText("");
@@ -520,7 +520,7 @@ public class SubjectPanel extends JPanel {
         String appId = generating ? "" : inAppID.getText().trim();
         String domainId = generating ? "" : inDomainID.getText().trim();
         String key = generating ? genKey.getText() : new String(inKey.getPassword()).trim();
-        String provider = generating ? "" : Objects.toString(inProvider.getSelectedItem(), "").trim();
+        String provider = generating ? "" : comboText(inProvider);
         String baseURI = generating ? "" : inBaseURI.getText().trim();
         String authScheme = generating ? "" : inAuthScheme.getText().trim();
         String headerName = generating ? "" : inHeaderName.getText().trim();
@@ -636,7 +636,7 @@ public class SubjectPanel extends JPanel {
                     PanelBuilder.addRow(panel, "Domain ID", keyDomainID);
 
                     PanelBuilder.addSection(panel, "PROVIDER ENDPOINT");
-                    PanelBuilder.addRow(panel, "Provider", inProvider);
+                    PanelBuilder.addRow(panel, "Provider", keyProvider);
                     PanelBuilder.addRow(panel, "Base URL", keyURI);
 
                     PanelBuilder.addRow(panel, "", submit);
@@ -670,12 +670,19 @@ public class SubjectPanel extends JPanel {
         String baseUrl = ctx.session().baseUrlOf(key);
         String scheme = ctx.session().authTypeOf(key);
         String header = ctx.session().headerNameOf(key);
-        keyProvider.setText(provider == null ? "" : provider);
+        keyProvider.setSelectedItem(provider == null ? null : provider);
         keyURI.setText(baseUrl == null ? "" : baseUrl);
         authScheme.setText(scheme == null ? "" : scheme);
         headerName.setText(header == null ? "" : header);
 
         credentialCards.show("editAPI");
+    }
+
+    private static String comboText(JComboBox<String> combo) {
+        Object value = combo.isEditable() && combo.getEditor() != null
+                ? combo.getEditor().getItem()
+                : combo.getSelectedItem();
+        return Objects.toString(value, "").trim();
     }
 
     private void setKeyMasked(boolean masked) {
@@ -698,7 +705,7 @@ public class SubjectPanel extends JPanel {
 
         String appID = keyAppID.getText().trim();
         String domainID = keyDomainID.getText().trim();
-        String provider = Objects.requireNonNull(inProvider.getSelectedItem()).toString();
+        String provider = comboText(keyProvider);
         String uri = keyURI.getText();
         String scheme = authScheme.getText();
         String header = headerName.getText();
@@ -714,7 +721,7 @@ public class SubjectPanel extends JPanel {
                     editKeyDescription.setText("");
                     keyAppID.setText("");
                     keyDomainID.setText("");
-                    keyProvider.setText("");
+                    keyProvider.setSelectedItem(null);
                     keyURI.setText("");
                     authScheme.setText("");
                     headerName.setText("");
