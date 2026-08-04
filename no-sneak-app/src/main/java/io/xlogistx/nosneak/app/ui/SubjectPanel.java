@@ -8,6 +8,7 @@ import io.xlogistx.nosneak.app.ui.utility.*;
 import net.miginfocom.swing.MigLayout;
 import org.zoxweb.shared.crypto.CIPassword;
 import org.zoxweb.shared.data.DataConst;
+import org.zoxweb.shared.filters.FilterType;
 import org.zoxweb.shared.security.APIKey;
 import org.zoxweb.shared.security.CredentialInfo;
 import org.zoxweb.shared.security.PrincipalIdentifier;
@@ -37,9 +38,9 @@ public class SubjectPanel extends JPanel {
     private final JButton saveProfile = new JButton("Save Changes", new IconUtil.SaveIcon(16));
 
     // ---- Change-password fields ----
-    private final JPasswordField currentPwd = new JPasswordField(20);
-    private final JPasswordField newPwd = new JPasswordField(20);
-    private final JPasswordField confirmPwd = new JPasswordField(20);
+    private final JPasswordField currentPwd = new JPasswordField(35);
+    private final JPasswordField newPwd = new JPasswordField(35);
+    private final JPasswordField confirmPwd = new JPasswordField(35);
 
     // ---- Edit-API-key fields (populated from whichever key the user clicks in the list) ----
     private final JPasswordField editKeySecret = new JPasswordField(30);
@@ -58,11 +59,11 @@ public class SubjectPanel extends JPanel {
     private final JButton rotateKey = GUIUtil.iconButton(new IconUtil.RefreshIcon(16));
 
     // ---- Edit-address fields (populated from the clicked address; null selection = new address) ----
-    private final JTextField addrLabel = new JTextField(20);
-    private final JTextField addrStreet = new JTextField(20);
-    private final JTextField addrCity = new JTextField(20);
-    private final JTextField addrRegion = new JTextField(20);
-    private final JTextField addrPostCode = new JTextField(20);
+    private final JTextField addrLabel = new JTextField(35);
+    private final JTextField addrStreet = new JTextField(35);
+    private final JTextField addrCity = new JTextField(35);
+    private final JTextField addrRegion = new JTextField(35);
+    private final JTextField addrPostCode = new JTextField(35);
     private final String[] countries = DataConst.COUNTRIES.getValue().stream()
             .map(NVPair::getValue)
             .toArray(String[]::new);
@@ -146,8 +147,10 @@ public class SubjectPanel extends JPanel {
         profileCards.add(buildEditAddress(), "editAddress");
         profileCards.show("profile");
 
+        JPanel anchor = new JPanel(new BorderLayout());
+        anchor.add(profileCards.view(), BorderLayout.WEST);
         JPanel p = new JPanel(new BorderLayout());
-        p.add(profileCards.view(), BorderLayout.CENTER);
+        p.add(anchor, BorderLayout.NORTH);
         return p;
     }
 
@@ -205,16 +208,36 @@ public class SubjectPanel extends JPanel {
     }
 
     private void onAddIdentifier() {
-        String id = JOptionPane.showInputDialog(this, "New email / username / handle:");
-        if (id == null || id.isBlank()) return;
+        JComboBox<String> kind = new JComboBox<>(new String[]{"Email", "Username"});
+        JTextField value = new JTextField(24);
+        JPanel form = new JPanel(new MigLayout("wrap 2, insets 8, gapx 10, gapy 6", "[left][grow,fill]"));
+        addRow(form, "Kind", kind);
+        addRow(form, "Value", value);
+
+        int ok = JOptionPane.showConfirmDialog(this, form, "Add identifier",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if (ok != JOptionPane.OK_OPTION) return;
+
+        String id = value.getText().trim();
+        if (id.isEmpty()) return;
+        if ("Email".equals(kind.getSelectedItem()) && !FilterType.EMAIL.isValid(id)) {
+            JOptionPane.showMessageDialog(this, "Enter a valid email address.",
+                    "Invalid email", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
         BackgroundTask.runCatching(this, null,
-                () -> ctx.session().addIdentifier(id.trim()),
+                () -> ctx.session().addIdentifier(id),
                 () -> identifiers.refresh());
+    }
+
+    private static String deleteConfirm(String name, String noun) {
+        String subject = (name == null || name.isBlank()) ? "this " + noun : "'" + name + "'";
+        return "Delete " + subject + "? This permanently removes it.";
     }
 
     private void onRemoveIdentifier(PrincipalIdentifier p) {
         int ok = JOptionPane.showConfirmDialog(this,
-                "Delete this identifier?", "Delete identifier",
+                deleteConfirm(p.getPrincipalID(), "identifier"), "Delete identifier",
                 JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
         if (ok != JOptionPane.OK_OPTION) return;
         BackgroundTask.runCatching(this, null,
@@ -255,7 +278,7 @@ public class SubjectPanel extends JPanel {
 
     private void onRemoveAddress(NVGenericMap addr) {
         int ok = JOptionPane.showConfirmDialog(this,
-                "Delete this address? This permanently removes it.",
+                deleteConfirm(addressLabel(addr), "address"),
                 "Delete address", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
         if (ok != JOptionPane.OK_OPTION) return;
         BackgroundTask.runCatching(this, null,
@@ -273,6 +296,10 @@ public class SubjectPanel extends JPanel {
         JButton save = new JButton("Save address", new IconUtil.SaveIcon(16));
         save.addActionListener(_ -> onSaveAddress(save));
 
+        addrCountry.setPreferredSize(new Dimension(
+                addrStreet.getPreferredSize().width,
+                addrCountry.getPreferredSize().height));
+
         return PanelBuilder.detail("Address",
                 () -> profileCards.show("profile"),
                 panel -> {
@@ -288,7 +315,7 @@ public class SubjectPanel extends JPanel {
                     panel.add(addrPostCode);
                     panel.add(new JLabel("Country"));
                     panel.add(addrCountry);
-                    panel.add(save);
+                    panel.add(save, "gaptop 10");
                 });
     }
 
@@ -358,13 +385,13 @@ public class SubjectPanel extends JPanel {
 
     private JPanel buildCredentialList() {
 
-        passwordSection = ListSection.of(() -> ctx.session().getAllCredentialForUserByType(CredentialInfo.Type.PASSWORD).stream().map(CIPassword.class::cast).toList())
+        passwordSection = ListSection.of(() -> ctx.session().getAllCredentialForUserByType(CredentialInfo.Type.PASSWORD).stream().filter(CIPassword.class::isInstance).map(CIPassword.class::cast).toList())
                 .title("Password")
-                .label(_ -> "Password")
+                .label(SubjectPanel::passwordLabel)
                 .onEdit(_ -> () -> credentialCards.show("changePassword"))
                 .build();
 
-        apiKeySection = ListSection.of(() -> ctx.session().getAllCredentialForUserByType(CredentialInfo.Type.API_KEY).stream().map(SubjectAPIKey.class::cast).toList())
+        apiKeySection = ListSection.of(() -> ctx.session().getAllCredentialForUserByType(CredentialInfo.Type.API_KEY).stream().filter(SubjectAPIKey.class::isInstance).map(SubjectAPIKey.class::cast).toList())
                 .title("API keys")
                 .addButton("+ Add API Key", this::onAddAPIKey)
                 .label(p -> {
@@ -396,6 +423,14 @@ public class SubjectPanel extends JPanel {
         JPanel p = new JPanel(new BorderLayout());
         p.add(content, BorderLayout.NORTH);   // hug the top; leftover space stays at the bottom
         return p;
+    }
+
+    static String passwordLabel(CIPassword p) {
+        long ts = Math.max(p.getLastTimeUpdated(), p.getCreationTime());
+        if (ts <= 0) return "Password — set";
+        long days = (System.currentTimeMillis() - ts) / 86_400_000L;
+        if (days <= 0) return "Password — set · changed today";
+        return "Password — set · last changed " + days + (days == 1 ? " day ago" : " days ago");
     }
 
     // ============================ Add API key ============================
@@ -463,6 +498,9 @@ public class SubjectPanel extends JPanel {
 
         inProvider.setEditable(true);
         inProvider.setSelectedItem(null);
+        if (inProvider.getEditor().getEditorComponent() instanceof JTextField providerEditor) {
+            providerEditor.putClientProperty("JTextField.placeholderText", "Select or type a provider");
+        }
         JTextField inBaseURI = textField("e.g. https://api.anthropic.com");
         JTextField inAuthScheme = textField("e.g. Bearer Token");
         JTextField inHeaderName = textField("e.g. x-api-key");
@@ -473,7 +511,7 @@ public class SubjectPanel extends JPanel {
 
         addSection(inputCard, "Key");
         addRow(inputCard, "Label*", inLabel);
-        addRow(inputCard, "Description*", inDescription);
+        addRow(inputCard, "Description", inDescription);
         addRow(inputCard, "API Key*", PanelBuilder.passwordField(inKey));
 
         addSection(inputCard, "Scope");
@@ -487,27 +525,19 @@ public class SubjectPanel extends JPanel {
         //addRow(inputCard, "Header Name", inHeaderName);
 
 
-        // --- selector + cards ---
+        // --- cards (the generate card stays registered for when local keys return) ---
         CardStack cards = new CardStack();
         cards.add(generateCard, "generate");
         cards.add(inputCard, "input");
         cards.show("input");
 
-        //JToggleButton generateButton = new JToggleButton("Generate local key", true);
-        JToggleButton existingButton = new JToggleButton("Add third party key");
-        ButtonGroup selector = new ButtonGroup();
-        //selector.add(generateButton);
-        selector.add(existingButton);
-        //generateButton.addActionListener(_ -> cards.show("generate"));
-        existingButton.addActionListener(_ -> cards.show("input"));
-
-        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.CENTER));
-        //buttons.add(generateButton);
-        buttons.add(existingButton);
+        JLabel requiredLegend = new JLabel("* required");
+        requiredLegend.setFont(requiredLegend.getFont().deriveFont(requiredLegend.getFont().getSize2D() - 2f));
+        requiredLegend.setForeground(UIManager.getColor("Label.disabledForeground"));
 
         JPanel dialog = PanelBuilder.buildJPanelWithFields(
-                PanelBuilder.title("Generate or Add Your API Key"),
-                buttons, cards.view());
+                PanelBuilder.title("Add third party API key"),
+                cards.view(), requiredLegend);
 
         String[] actions = {"Create key", "Cancel"};
         int result = JOptionPane.showOptionDialog(this, dialog, "Add API key",
@@ -525,10 +555,15 @@ public class SubjectPanel extends JPanel {
         String authScheme = generating ? "" : inAuthScheme.getText().trim();
         String headerName = generating ? "" : inHeaderName.getText().trim();
 
-        // An external (third party) key requires both the AppID and the key.
-        if (!generating && (appId.isBlank() || key.isBlank())) {
+        if (!generating && (label.isBlank() || key.isBlank())) {
             JOptionPane.showMessageDialog(this,
-                    "Enter both the App Id and the key to add a third party API key.",
+                    "Label and API key are required.",
+                    "Missing information", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        if (!generating && (appId.isBlank() != domainId.isBlank())) {
+            JOptionPane.showMessageDialog(this,
+                    "Provide both App ID and Domain ID, or leave both empty.",
                     "Missing information", JOptionPane.WARNING_MESSAGE);
             return;
         }
@@ -557,7 +592,7 @@ public class SubjectPanel extends JPanel {
                     PanelBuilder.addRow(panel, "New password", PanelBuilder.passwordField(newPwd));
                     PanelBuilder.addRow(panel, "Confirm new password", PanelBuilder.passwordField(confirmPwd));
 
-                    panel.add(submit);
+                    panel.add(submit, "gaptop 10");
                 });
     }
 
@@ -628,7 +663,7 @@ public class SubjectPanel extends JPanel {
 
                     PanelBuilder.addSection(panel, "KEY");
                     PanelBuilder.addRow(panel, "Label*", editKeyLabel);
-                    PanelBuilder.addRow(panel, "Description*", editKeyDescription);
+                    PanelBuilder.addRow(panel, "Description", editKeyDescription);
                     PanelBuilder.addRow(panel, "API KEY*", keyView);
 
                     PanelBuilder.addSection(panel, "SCOPE");
@@ -696,15 +731,21 @@ public class SubjectPanel extends JPanel {
         String label = editKeyLabel.getText().trim();
         String description = editKeyDescription.getText().trim();
 
-        if (label.isBlank() || description.isBlank()) {
+        if (label.isBlank()) {
             JOptionPane.showMessageDialog(this,
-                    "Label and description are required.",
+                    "Label is required.",
                     "Missing information", JOptionPane.WARNING_MESSAGE);
             return;
         }
 
         String appID = keyAppID.getText().trim();
         String domainID = keyDomainID.getText().trim();
+        if (appID.isBlank() != domainID.isBlank()) {
+            JOptionPane.showMessageDialog(this,
+                    "Provide both App ID and Domain ID, or leave both empty.",
+                    "Missing information", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
         String provider = comboText(keyProvider);
         String uri = keyURI.getText();
         String scheme = authScheme.getText();
@@ -751,7 +792,7 @@ public class SubjectPanel extends JPanel {
     private void onDeleteAPIKey(SubjectAPIKey key) {
         if (key == null) return;
         int ok = JOptionPane.showConfirmDialog(this,
-                "Delete this key? This permanently removes it.",
+                deleteConfirm(key.getName(), "API key"),
                 "Delete API key", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
         if (ok != JOptionPane.OK_OPTION) return;
 

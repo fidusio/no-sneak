@@ -18,15 +18,19 @@ public class MenuBarFactory {
         JMenu view = new JMenu("View");
         JMenu tools = new JMenu("Tools");
         JMenu help = new JMenu("Help");
-        JMenu logout = new JMenu("Logout");
         JMenu mode = new JMenu("Mode");
 
         // create menu bar item
         JMenuItem menuItem = new JMenuItem("Test");
         menuItem.addActionListener(e -> System.out.println("test"));
 
-        JMenuItem confirmLogout = new JMenuItem("Confirm Logout");
-        confirmLogout.addActionListener(e -> ctx.session().logout());
+        JMenuItem logout = new JMenuItem("Logout");
+        logout.setMaximumSize(logout.getPreferredSize());
+        logout.addActionListener(_ -> {
+            int ok = JOptionPane.showConfirmDialog(menuBar, "Log out of NoSneak?", "Logout",
+                    JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE);
+            if (ok == JOptionPane.OK_OPTION) ctx.session().logout();
+        });
 
         JCheckBoxMenuItem modeToggle = new JCheckBoxMenuItem("Technical Mode");
 
@@ -49,8 +53,6 @@ public class MenuBarFactory {
 
         file.add(menuItem);
         mode.add(modeToggle);
-
-        logout.add(confirmLogout);
 
         // add menu bar items to menu bar
         menuBar.add(file);

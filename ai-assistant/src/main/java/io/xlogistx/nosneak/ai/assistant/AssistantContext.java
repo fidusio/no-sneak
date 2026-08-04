@@ -88,7 +88,7 @@ public class AssistantContext {
     }
 
     public void clearProviders() {
-        providers.getCacheMap().clear();
+        providers.clear(false);
     }
 
     private AISkill canonicalSkill(AISkill s) {

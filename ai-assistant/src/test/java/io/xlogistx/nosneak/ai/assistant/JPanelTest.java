@@ -3,6 +3,7 @@ package io.xlogistx.nosneak.ai.assistant;
 import com.formdev.flatlaf.FlatLaf;
 import com.formdev.flatlaf.FlatLightLaf;
 import com.formdev.flatlaf.fonts.roboto.FlatRobotoFont;
+import io.xlogistx.nosneak.ai.model.AISkill;
 
 import javax.swing.*;
 import java.awt.*;
@@ -37,8 +38,14 @@ public class JPanelTest {
 
             MDFileViewer fileViewer = new MDFileViewer(MARKDOWN)
                     .setTitle("Skill instructions")
-                    .setOnSave(md -> System.out.println("saved " + md.length() + " chars"))
+                    .setOnCommit(doc -> System.out.println("saved " + doc.getName() + " · " + doc.getType()
+                            + " · " + doc.getMarkdown().length() + " chars"))
                     .setOnCancel(() -> System.out.println("cancelled"));
+
+            fileViewer.withName("Scan summarizer")
+                    .withDescription("Turns a scan into a short report")
+                    .withTypes(AISkill.SkillType.values(), AISkill.SkillType.MD_SKILL,
+                            AISkill.SkillType::getName);
 
             frame.setContentPane(fileViewer);
             frame.setVisible(true);

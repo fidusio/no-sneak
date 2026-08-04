@@ -54,6 +54,18 @@ class AssistantPanelTest {
             if (on) enabled.add(key.getAPIKey());
             else enabled.remove(key.getAPIKey());
         }
+
+        @Override
+        public APIKey<String> addAPIKey(String label, String description, String provider, String baseURL,
+                                        String authType, String headerName, String secret) {
+            SubjectAPIKey key = new SubjectAPIKey();
+            key.setName(label);
+            key.setAPIKey(secret);
+            key.getProperties().build("provider", provider);
+            keys.add(key);
+            enabled.add(secret);
+            return key;
+        }
     }
 
     private static class chats implements AIRepository {

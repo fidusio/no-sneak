@@ -184,26 +184,30 @@ public class Session {
     }
 
     /**
-     * Stores a new API key (plain) with an optional label/description. @return {@code null} on success, else an error message.
+     * Stores a new API key (plain) with an optional label/description.
+     *
+     * @return the created credential
      */
-    public void storeAPIKey(String label, String description, String domainID, String appID, String rawKey,
-                            String provider, String baseURI, String authScheme, String headerName, Boolean external) throws SecurityException {
+    public SubjectAPIKey storeAPIKey(String label, String description, String domainID, String appID, String rawKey,
+                                     String provider, String baseURI, String authScheme, String headerName, Boolean external) throws SecurityException {
 
 
         if (principalID == null) throw new SecurityException("Not signed in");
         if (rawKey == null || rawKey.isBlank()) throw new SecurityException("Key cannot be empty");
 
-        APIKey<String> key = new SubjectAPIKey();
+        SubjectAPIKey key = new SubjectAPIKey();
         NVGenericMap props = key.getProperties();
 
         if (external) {
+            // external is stamped unconditionally: a vendor key stored without a domain/app-id
+            // pair must still read as external, or rotate could overwrite its real secret
+            props.build(new NVBoolean("external", true));
             if (appID != null && !appID.isBlank() && domainID != null && !domainID.isBlank()) {
                 try {
                     key.setAppID(new AppIDDefault(domainID.trim(), appID.trim()));
                 } catch (IllegalArgumentException e) {
                     throw new SecurityException("Invalid domain or app ID", e);
                 }
-                props.build(new NVBoolean("external", true));
             }
         } else {
             AppIDDefault noSneakAppID = new AppIDDefault();
@@ -223,10 +227,21 @@ public class Session {
         if (label != null && !label.isBlank()) key.setName(label.trim());
         if (description != null && !description.isBlank()) key.setDescription(description.trim());
         domainSecurityManager.createCredential(subjectIdentifier, key);
+        return key;
     }
 
     private static void putIfPresent(NVGenericMap props, GetName name, String value) {
         if (value != null && !value.isBlank()) props.build(name, value.trim());
+    }
+
+    private static NVGenericMap propertiesOf(APIKey<String> key) throws SecurityException {
+        NVGenericMap props = key.getProperties();
+        if (props == null) {
+            if (!(key instanceof PropertyDAO dao)) throw new SecurityException("Key cannot store properties");
+            props = new NVGenericMap();
+            dao.setValue(PropertyDAO.Param.PROPERTIES, props);
+        }
+        return props;
     }
 
     /**
@@ -282,7 +297,7 @@ public class Session {
         if (subjectIdentifier == null) throw new SecurityException("Not signed in");
         if (key == null) throw new SecurityException("Empty Key");
 
-        key.getProperties().build(APIKeyInfo.ASSISTANT_ENABLED, Boolean.toString(enabled));
+        propertiesOf(key).build(APIKeyInfo.ASSISTANT_ENABLED, Boolean.toString(enabled));
         domainSecurityManager.updateCredential(subjectIdentifier, key);
     }
 
@@ -419,6 +434,9 @@ public class Session {
             existingPw.setRounds(fresh.getRounds());
             existingPw.setSalt(fresh.getSalt());
             existingPw.setHash(fresh.getHash());
+            // the store's MetaUtil only stamps creation, never updates — stamp here so
+            // "last changed" on the credentials list reflects this change
+            existingPw.setLastTimeUpdated(System.currentTimeMillis());
             domainSecurityManager.updateCredential(subjectIdentifier, existingPw);
         } else {
             // No existing password credential (shouldn't happen for a normal account) — create one.
@@ -448,10 +466,11 @@ public class Session {
             }
         }
 
-        apiKey.getProperties().build(APIKeyInfo.PROVIDER, provider == null ? "" : provider.trim());
-        apiKey.getProperties().build(APIKeyInfo.BASE_URL, baseURI == null ? "" : baseURI.trim());
-        apiKey.getProperties().build(APIKeyInfo.AUTH_SCHEME, authScheme == null ? "" : authScheme.trim());
-        apiKey.getProperties().build(APIKeyInfo.HEADER_NAME, headerName == null ? "" : headerName.trim());
+        NVGenericMap props = propertiesOf(apiKey);
+        props.build(APIKeyInfo.PROVIDER, provider == null ? "" : provider.trim());
+        props.build(APIKeyInfo.BASE_URL, baseURI == null ? "" : baseURI.trim());
+        props.build(APIKeyInfo.AUTH_SCHEME, authScheme == null ? "" : authScheme.trim());
+        props.build(APIKeyInfo.HEADER_NAME, headerName == null ? "" : headerName.trim());
 
         domainSecurityManager.updateCredential(subjectIdentifier, apiKey);
     }

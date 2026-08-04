@@ -559,15 +559,14 @@ All target-only, because the model has nowhere to store them: per-identifier **s
 From a security pass over the app's own code (issues fixable here, not in the zoxweb dependency),
 ordered by priority.
 
-- **A third-party key can be stored without the `external` flag** (`Session.storeAPIKey`). The
-  flag is written **only when both `appID` and `domainID` are non-blank**, but the Add-key
-  dialog requires only App ID (`SubjectPanel.onAddAPIKey`). `isExternalKey()` then reads `false`
-  for an imported vendor key — and `rotateAPIKey` refuses external keys precisely so it cannot
-  overwrite a secret NoSneak did not mint. With the flag missing, Rotate would replace a real
-  OpenAI/Anthropic secret with a locally generated AES key, unrecoverably. **Latent today only
-  because `keyView.add(rotateKey)` is commented out**; uncommenting it makes this live data
-  loss. Fix: write the `external` property unconditionally in the external branch (the AppID
-  attachment can stay conditional).
+- ~~**A third-party key can be stored without the `external` flag**~~ — **fixed.**
+  `Session.storeAPIKey` now writes the `external` property unconditionally in the external
+  branch (the AppID attachment stays conditional on both parts being present), so an imported
+  vendor key always reads external and `rotateAPIKey` can never overwrite a secret NoSneak did
+  not mint. Guarded by `APIKeyRoundTripTest.createSkipsAppIDWhenOnlyOnePartProvided` and
+  `SessionAICredentialSourceTest`. `storeAPIKey` also **returns the created `SubjectAPIKey`**
+  now — `SessionAICredentialSource.addAPIKey` (the assistant Providers page's New Key path)
+  needs it to enable the key and hand it back for discovery.
 - ~~**`loginAPIKey` can authenticate with a null principal**~~ — **fixed.** Zero identifiers now
   clears `subjectIdentifier` and throws instead of flipping `authenticated`.
 - **Clipboard secret never cleared** (`SubjectPanel`, the **Copy** actions). A copied API-key

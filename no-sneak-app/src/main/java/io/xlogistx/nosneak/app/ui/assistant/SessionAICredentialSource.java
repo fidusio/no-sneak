@@ -22,10 +22,7 @@ public class SessionAICredentialSource implements AICredentialSource {
         List<APIKey<String>> out = new ArrayList<>();
 
         for (CredentialInfo ci : session.getAllCredentialForUserByType(CredentialInfo.Type.API_KEY)) {
-
-            SubjectAPIKey k = (SubjectAPIKey) ci;
-
-            out.add(k);
+            if (ci instanceof SubjectAPIKey k) out.add(k);
         }
         return out;
 
@@ -43,5 +40,14 @@ public class SessionAICredentialSource implements AICredentialSource {
     @Override
     public void setEnabled(APIKey<String> key, boolean enabled) {
         session.setAssistantEnabled(key, enabled);
+    }
+
+    @Override
+    public APIKey<String> addAPIKey(String label, String description, String provider, String baseURL,
+                                    String authType, String headerName, String secret) throws SecurityException {
+        APIKey<String> key = session.storeAPIKey(label, description, "", "", secret,
+                provider, baseURL, authType, headerName, true);
+        session.setAssistantEnabled(key, true);
+        return key;
     }
 }

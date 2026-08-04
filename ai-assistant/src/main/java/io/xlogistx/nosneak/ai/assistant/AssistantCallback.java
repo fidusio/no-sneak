@@ -37,12 +37,24 @@ public class AssistantCallback implements ConsumerCallback<NVGenericMap> {
             response.setTokens(AssistantMDDecoder.tokens(payload));
             response.setLatency(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start));
             message.setAIResponse(response);
-            context.saveChat(chat);
         } catch (Exception e) {
             exception(e);
             return;
         }
-        SwingUtilities.invokeLater(() -> onResponse.accept(response));
+        Exception persistError = null;
+        try {
+            context.saveChat(chat);
+        } catch (Exception e) {
+            persistError = e;
+        }
+        final Exception saveError = persistError;
+        SwingUtilities.invokeLater(() -> {
+            onResponse.accept(response);
+            if (saveError != null)
+                JOptionPane.showMessageDialog(null,
+                        "The reply was received but saving the chat failed: " + saveError.getMessage(),
+                        "Save", JOptionPane.WARNING_MESSAGE);
+        });
     }
 
     @Override

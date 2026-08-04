@@ -13,6 +13,11 @@ public class AssistantUtil {
     }
 
     public static JComponent chatBubble(String markdown, boolean user, Integer latency, Integer tokens) {
+        return chatBubble(markdown, user, latency, tokens, null);
+    }
+
+    public static JComponent chatBubble(String markdown, boolean user, Integer latency, Integer tokens,
+                                        Runnable onSaveAsSkill) {
 
         MDViewerPanel mdViewerPanel = new MDViewerPanel();
         mdViewerPanel.setMarkdown(markdown);
@@ -32,12 +37,27 @@ public class AssistantUtil {
         Bubble bubble = new Bubble(bg);
         bubble.add(pane, BorderLayout.CENTER);
         String detail = user ? null : detailLine(latency, tokens);
-        if (detail != null) {
-            JLabel label = new JLabel(detail);
-            label.setFont(label.getFont().deriveFont(label.getFont().getSize2D() - 2f));
-            label.setForeground(UIManager.getColor("Label.disabledForeground"));
-            label.setBorder(BorderFactory.createEmptyBorder(0, 12, 6, 12));
-            bubble.add(label, BorderLayout.SOUTH);
+        if (detail != null || (!user && onSaveAsSkill != null)) {
+            JPanel south = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+            south.setOpaque(false);
+            south.setBorder(BorderFactory.createEmptyBorder(0, 12, 6, 12));
+            if (detail != null) {
+                JLabel label = new JLabel(detail);
+                label.setFont(label.getFont().deriveFont(label.getFont().getSize2D() - 2f));
+                label.setForeground(UIManager.getColor("Label.disabledForeground"));
+                south.add(label);
+            }
+            if (!user && onSaveAsSkill != null) {
+                JButton saveAsSkill = new JButton("Save as skill");
+                saveAsSkill.putClientProperty("JButton.buttonType", "borderless");
+                saveAsSkill.setFont(saveAsSkill.getFont().deriveFont(saveAsSkill.getFont().getSize2D() - 2f));
+                saveAsSkill.setForeground(UIManager.getColor("Label.disabledForeground"));
+                saveAsSkill.setFocusable(false);
+                saveAsSkill.setToolTipText("Open the skill editor seeded with this response");
+                saveAsSkill.addActionListener(_ -> onSaveAsSkill.run());
+                south.add(saveAsSkill);
+            }
+            bubble.add(south, BorderLayout.SOUTH);
         }
 
         return bubble;

@@ -7,6 +7,7 @@ import io.xlogistx.nosneak.ai.AIProvider;
 import org.zoxweb.shared.security.APIKey;
 
 import net.miginfocom.swing.MigLayout;
+import org.zoxweb.shared.data.ReferenceIDDAO;
 import org.zoxweb.shared.util.NVEntity;
 
 import javax.swing.*;
@@ -24,8 +25,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.Consumer;
-import java.util.function.Supplier;
 
 
 import static io.xlogistx.nosneak.ai.assistant.AssistantUtil.chatBubble;
@@ -52,15 +51,7 @@ public class AssistantPanel extends JPanel {
     private final CardStack promptCards = new CardStack();
 
     private final CardStack skillsCards = new CardStack();
-    private final JTextField skillName = new JTextField(20);
-    private final JTextField skillDescription = new JTextField(20);
-    private final JLabel skillContentInfo = new JLabel();
-    private String skillContent = "";
-
-    private final JTextField editSkillName = new JTextField(20);
-    private final JTextField editSkillDescription = new JTextField(20);
-    private final JLabel editSkillContentInfo = new JLabel();
-    private String editSkillContent = "";
+    private MDFileViewer skillEditor;
     private AISkill selectedSkill;
 
     private final CardStack historyCards = new CardStack();
@@ -75,9 +66,6 @@ public class AssistantPanel extends JPanel {
     private final JComboBox<String> createProviderSelector = new JComboBox<>();
     private final JComboBox<String> createModelSelector = new JComboBox<>();
     private AIChat selectedChat;
-
-    private final JComboBox<AISkill.SkillType> skillTypes = skillTypeCombo();
-    private final JComboBox<AISkill.SkillType> editSkillTypes = skillTypeCombo();
 
     private JLabel chatTitle;
 
@@ -104,9 +92,9 @@ public class AssistantPanel extends JPanel {
         setLayout(new BorderLayout());
 
         cardStack.add(buildPromptCards(), "chat");
-        cardStack.add(new JScrollPane(buildJobQueuePanel()), "queue");
         cardStack.add(new JScrollPane(buildHistoryCards()), "history");
-        cardStack.add(new JScrollPane(buildSkillCards()), "skills");
+        cardStack.add(new JScrollPane(buildJobQueuePanel()), "queue");
+        cardStack.add(buildSkillCards(), "skills");
         cardStack.add(new JScrollPane(buildProviderCardsPanel()), "providers");
         cardStack.add(new JScrollPane(buildScreenCapturePanel()), "capture");
 
@@ -126,7 +114,7 @@ public class AssistantPanel extends JPanel {
         selectorGroup.add(captureButton);
         chatButton.setSelected(true);
 
-        add(PanelBuilder.buildDefaultSplitPanel(cardStack.view(), chatButton, captureButton, jobQueueButton, historyButton, skillsButton, providersButton));
+        add(PanelBuilder.buildDefaultSplitPanel(cardStack.view(), chatButton, historyButton, captureButton, jobQueueButton, skillsButton, providersButton));
 
         context.onChange("currentChat", e -> refreshPrompt());
     }
@@ -142,10 +130,44 @@ public class AssistantPanel extends JPanel {
     }
 
     public JPanel buildEmptyChat() {
-        JPanel out = new JPanel();
-        out.add(new JLabel("No chat selected, create one in the history tab"));
+        JLabel title = new JLabel("No chat selected");
+        title.setFont(title.getFont().deriveFont(Font.BOLD, title.getFont().getSize2D() + 4f));
+        title.setAlignmentX(Component.CENTER_ALIGNMENT);
 
+        JLabel hint = new JLabel("Start a new chat, or pick one up from your history");
+        hint.setForeground(UIManager.getColor("Label.disabledForeground"));
+        hint.setAlignmentX(Component.CENTER_ALIGNMENT);
+
+        JButton newChat = new JButton("New Chat", new IconUtil.PlusIcon(16));
+        newChat.addActionListener(_ -> openChatCreator());
+
+        JButton openHistory = new JButton("Open Chat History");
+        openHistory.putClientProperty("JButton.buttonType", "borderless");
+        openHistory.addActionListener(_ -> historyButton.doClick());
+
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 0));
+        buttons.setOpaque(false);
+        buttons.add(newChat);
+        buttons.add(openHistory);
+        buttons.setAlignmentX(Component.CENTER_ALIGNMENT);
+
+        JPanel stack = new JPanel();
+        stack.setLayout(new BoxLayout(stack, BoxLayout.Y_AXIS));
+        stack.setOpaque(false);
+        stack.add(title);
+        stack.add(Box.createVerticalStrut(6));
+        stack.add(hint);
+        stack.add(Box.createVerticalStrut(16));
+        stack.add(buttons);
+
+        JPanel out = new JPanel(new GridBagLayout());
+        out.add(stack);
         return out;
+    }
+
+    private void openChatCreator() {
+        historyButton.doClick();
+        onAddPrompt();
     }
 
     public JPanel buildPromptPanel() {
@@ -161,10 +183,15 @@ public class AssistantPanel extends JPanel {
         sendFullHistory.setToolTipText(
                 "Checked: each request carries the whole conversation. Unchecked: only the new message is sent.");
 
+        JButton newChat = new JButton("New Chat", new IconUtil.PlusIcon(16));
+        newChat.setToolTipText("Create a new chat");
+        newChat.addActionListener(_ -> openChatCreator());
+
         JPanel titlePanel = new JPanel(new FlowLayout());
         titlePanel.add(chatTitle);
         titlePanel.add(modelSelector);
         titlePanel.add(sendFullHistory);
+        titlePanel.add(newChat);
 
         transcriptScroll = new JScrollPane(transcript,
                 JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
@@ -262,7 +289,7 @@ public class AssistantPanel extends JPanel {
     public JPanel buildHistoryPanel() {
         historyList = ListSection.of(context::getAllChats)
                 .title("Chat History")
-                .addButton("+ New Prompt", this::onAddPrompt)
+                .addButton("+ New Chat", this::onAddPrompt)
                 .label(chat -> chat.getTitle()
                         + "  ·  created " + timestamp(chat.getCreationTime())
                         + "  ·  updated " + timestamp(chat.getLastTimeUpdated()))
@@ -342,7 +369,6 @@ public class AssistantPanel extends JPanel {
     public JPanel buildSkillCards() {
         skillsCards.add(buildSkillPanel(), "list");
         skillsCards.add(buildSkillEditor(), "editor");
-        skillsCards.add(buildSkillCreator(), "creator");
 
         skillsCards.show("list");
         JPanel p = new JPanel(new BorderLayout());
@@ -366,120 +392,66 @@ public class AssistantPanel extends JPanel {
     }
 
     public JPanel buildSkillEditor() {
-        JButton save = new JButton("Save", new IconUtil.SaveIcon(16));
-
-        save.addActionListener(e -> {
-            String name = editSkillName.getText();
-            String description = editSkillDescription.getText();
-            AISkill.SkillType type = (AISkill.SkillType) editSkillTypes.getSelectedItem();
-
-            if (!name.isEmpty()) selectedSkill.setName(name);
-            if (!description.isEmpty()) selectedSkill.setDescription(description);
-            if(type != null) selectedSkill.setSkillType(type);
-            selectedSkill.setContent(editSkillContent);
-
-            BackgroundTask.runCatching(this, save, () -> context.saveSkill(selectedSkill), () -> {
-                contentInfo(editSkillContentInfo, editSkillContent, false);
-                refreshSkills();
-                skillsCards.show("list");
-            });
+        skillEditor = new MDFileViewer();
+        skillEditor.setTitle("Skill instructions");
+        skillEditor.withName("Name", "");
+        skillEditor.withDescription("Description", "");
+        skillEditor.withTypes("Type", List.of(AISkill.SkillType.values()),
+                AISkill.SkillType.MD_SKILL, AISkill.SkillType::getName);
+        skillEditor.setValidator(this::validateSkill);
+        skillEditor.setOnCommit(this::onSaveSkill);
+        skillEditor.setOnCancel(() -> {
+            selectedSkill = null;
+            skillsCards.show("list");
         });
-
-        return PanelBuilder.detail("Skill", () -> skillsCards.show("list"), panel -> {
-            JComponent instructions = instructionsRow(editSkillContentInfo, () -> editSkillContent, md -> {
-                editSkillContent = md;
-                contentInfo(editSkillContentInfo, editSkillContent, true);
-            });
-
-            PanelBuilder.addRow(panel, "Name", editSkillName);
-            PanelBuilder.addRow(panel, "Description", editSkillDescription);
-            PanelBuilder.addRow(panel, "Type", editSkillTypes);
-            PanelBuilder.addRow(panel, "Skill instructions", instructions);
-            PanelBuilder.addRow(panel, "", save);
-        });
+        return skillEditor;
     }
 
-    public JPanel buildSkillCreator() {
-        JButton create = new JButton("Create", new IconUtil.PlusIcon(16));
-
-        create.addActionListener(e -> {
-            String name = skillName.getText();
-            String description = skillDescription.getText();
-            AISkill.SkillType type = (AISkill.SkillType) skillTypes.getSelectedItem();
-
-            AISkill skill = new AISkill();
-            skill.setName(name);
-            skill.setDescription(description);
-            skill.setContent(skillContent);
-            skill.setSkillType(type);
-
-            BackgroundTask.runCatching(this, create, () -> context.saveSkill(skill), () -> {
-                contentInfo(skillContentInfo, skillContent, false);
-                refreshSkills();
-                skillsCards.show("list");
-            });
-
-        });
-
-        return PanelBuilder.detail("Skill", () -> skillsCards.show("list"), panel -> {
-            JComponent instructions = instructionsRow(skillContentInfo, () -> skillContent, md -> {
-                skillContent = md;
-                contentInfo(skillContentInfo, skillContent, true);
-            });
-
-            PanelBuilder.addRow(panel, "Name", skillName);
-            PanelBuilder.addRow(panel, "Description", skillDescription);
-            PanelBuilder.addRow(panel, "Type", skillTypes);
-            PanelBuilder.addRow(panel, "Skill instructions", instructions);
-            PanelBuilder.addRow(panel, "", create);
-        });
+    private boolean validateSkill(MDFileViewer.MDDocument document) {
+        String name = document.getName() != null ? document.getName().trim() : "";
+        if (name.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "Give the skill a name before saving.",
+                    "Skill", JOptionPane.WARNING_MESSAGE);
+            return false;
+        }
+        return true;
     }
 
-    private static JComboBox<AISkill.SkillType> skillTypeCombo() {
-        JComboBox<AISkill.SkillType> combo = new JComboBox<>(AISkill.SkillType.values());
-        combo.setRenderer(new DefaultListCellRenderer() {
-            @Override
-            public Component getListCellRendererComponent(JList<?> list, Object value, int index,
-                                                          boolean selected, boolean focused) {
-                super.getListCellRendererComponent(list, value, index, selected, focused);
-                if (value instanceof AISkill.SkillType type) setText(type.getName());
-                return this;
+    private void onSaveSkill(MDFileViewer.MDDocument document) {
+        AISkill skill = selectedSkill != null ? selectedSkill : new AISkill();
+        String oldName = skill.getName();
+        String oldDescription = skill.getDescription();
+        AISkill.SkillType oldType = skill.getSkillType();
+        String oldContent = skill.getContent();
+        skill.setName(document.getName().trim());
+        skill.setDescription(document.getDescription());
+        skill.setSkillType(document.typeAs());
+        skill.setContent(document.getMarkdown());
+
+        BackgroundTask.runCatching(this, skillEditor.getSaveButton(), () -> {
+            try {
+                context.saveSkill(skill);
+            } catch (Exception e) {
+                skill.setName(oldName);
+                skill.setDescription(oldDescription);
+                skill.setSkillType(oldType);
+                skill.setContent(oldContent);
+                SwingUtilities.invokeLater(() -> {
+                    skillEditor.markDirty();
+                    refreshSkills();
+                });
+                throw e;
             }
+        }, () -> {
+            selectedSkill = null;
+            refreshSkills();
+            skillsCards.show("list");
         });
-        return combo;
     }
 
-    private JComponent instructionsRow(JLabel info, Supplier<String> markdown, Consumer<String> onApply) {
-        JButton edit = new JButton("Edit instructions", new IconUtil.EditIcon(16));
-        edit.addActionListener(e -> openMarkdownEditor(markdown.get(), onApply));
-
-        info.setForeground(UIManager.getColor("Label.disabledForeground"));
-
-        JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
-        row.setOpaque(false);
-        row.add(edit);
-        row.add(info);
-        return row;
-    }
-
-    private void openMarkdownEditor(String markdown, Consumer<String> onApply) {
-        Window owner = SwingUtilities.getWindowAncestor(this);
-        JDialog dialog = new JDialog(owner, "Skill instructions", Dialog.ModalityType.APPLICATION_MODAL);
-        dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
-
-        MDFileViewer fileViewer = new MDFileViewer(markdown);
-        fileViewer.setTitle("Instructions");
-        fileViewer.setSaveText("Apply");
-        fileViewer.setOnSave(md -> {
-            onApply.accept(md);
-            dialog.dispose();
-        });
-        fileViewer.setOnCancel(dialog::dispose);
-
-        dialog.setContentPane(fileViewer);
-        dialog.setSize(1000, 700);
-        dialog.setLocationRelativeTo(owner);
-        dialog.setVisible(true);
+    private static String deleteConfirm(String name, String noun) {
+        String subject = (name == null || name.isBlank()) ? "this " + noun : "'" + name + "'";
+        return "Delete " + subject + "? This permanently removes it.";
     }
 
     private static String timestamp(long millis) {
@@ -487,19 +459,10 @@ public class AssistantPanel extends JPanel {
         return ROW_TIMESTAMP.format(Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()));
     }
 
-    private void contentInfo(JLabel info, String content, boolean pending) {
-        if (content == null || content.isBlank()) {
-            info.setText("No instructions yet");
-            return;
-        }
-
-        int lines = content.split("\n", -1).length;
-        info.setText(lines + (lines == 1 ? " line" : " lines") + (pending ? " · not saved yet" : ""));
-    }
-
     public JPanel buildProviderCardsPanel() {
         providerCards.add(buildProviderPanel(), "list");
         providerCards.add(buildAddProvider(), "add");
+        providerCards.add(buildCreateProviderKey(), "create");
 
         providerCards.show("list");
         JPanel p = new JPanel(new BorderLayout());
@@ -512,7 +475,7 @@ public class AssistantPanel extends JPanel {
                         context::getProvidersList
                 )
                 .title("Providers")
-                .addButton(" + Add Key", this::onAddProvider)
+                .addButton(" + Add Provider", this::onAddProvider)
                 .label(AIProvider::getName)
                 .emptyText("No providers")
                 .onEdit(p -> () -> onEditProvider(p))
@@ -525,25 +488,93 @@ public class AssistantPanel extends JPanel {
 
     public JPanel buildAddProvider() {
         providerAddList = ListSection.of(this::availableKeys)
-                .title("Nickname  *  Provider (if any)")
+                .title("Available keys")
                 .label(this::keyLabel)
-                .emptyText("No keys available. Add one in NoSneak credentials.")
+                .emptyText("No keys yet")
                 .action(new ListSection.RowAction<>(new IconUtil.PlusIcon(16), "Add to assistant",
                         k -> () -> onSelectAddKey(k)))
                 .build();
 
+        JButton newKey = new JButton("New Key", new IconUtil.PlusIcon(16));
+        newKey.setToolTipText("Add a provider API key you don't have in NoSneak yet");
+        newKey.addActionListener(_ -> providerCards.show("create"));
+
         return PanelBuilder.detail("Add a key", () -> providerCards.show("list"),
-                content -> content.add(providerAddList, "growx"));
+                content -> {
+                    content.add(providerAddList, "growx");
+                    content.add(newKey, "gaptop 8");
+                });
+    }
+
+    public JPanel buildCreateProviderKey() {
+        JTextField keyLabel = PanelBuilder.textField("e.g. Claude prod");
+        JComboBox<String> provider = new JComboBox<>(PROVIDER_DISPLAY);
+        JPasswordField secret = new JPasswordField(28);
+        secret.putClientProperty("JTextField.placeholderText", "Your API key");
+        JTextField baseURL = PanelBuilder.textField("Optional — provider default when empty");
+        JButton create = new JButton("Add to assistant", new IconUtil.PlusIcon(16));
+
+        create.addActionListener(_ -> {
+            String name = keyLabel.getText().trim();
+            String rawKey = new String(secret.getPassword()).trim();
+            if (name.isEmpty() || rawKey.isEmpty()) {
+                JOptionPane.showMessageDialog(this, "Enter a label and the API key.",
+                        "Missing information", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            String canonical = PROVIDER_CANONICAL[provider.getSelectedIndex()];
+            String url = baseURL.getText().trim();
+
+            BackgroundTask.run(this, create,
+                    () -> {
+                        APIKey<String> key = context.getCredentials()
+                                .addAPIKey(name, "", canonical, url, "", "", rawKey);
+                        AIAPIProvider p = AIAPIProvider.create(key);
+                        if (p != null) {
+                            try {
+                                p.getModelCatalog().refresh();
+                            } catch (Exception ignore) {
+                            }
+                        }
+                        return p;
+                    },
+                    p -> {
+                        if (p != null) context.getProviders().put(p.getName(), p);
+                        keyLabel.setText("");
+                        secret.setText("");
+                        baseURL.setText("");
+                        provider.setSelectedIndex(0);
+                        if (providerList != null) providerList.refresh();
+                        if (providerAddList != null) providerAddList.refresh();
+                        providerCards.show("list");
+                        JOptionPane.showMessageDialog(this,
+                                "Key added. It also appears in your NoSneak credentials.");
+                    });
+        });
+
+        return PanelBuilder.detail("New provider key", () -> providerCards.show("add"), panel -> {
+            PanelBuilder.addRow(panel, "Label*", keyLabel);
+            PanelBuilder.addRow(panel, "Provider*", provider);
+            PanelBuilder.addRow(panel, "API Key*", PanelBuilder.passwordField(secret));
+            PanelBuilder.addRow(panel, "Base URL", baseURL);
+            panel.add(create, "gaptop 10");
+        });
+    }
+
+    private static String keyIdentity(APIKey<String> key) {
+        return (key instanceof ReferenceIDDAO dao) ? dao.getGUID() : null;
     }
 
     private List<APIKey<String>> availableKeys() {
         Set<String> enabled = new HashSet<>();
         for (APIKey<String> k : context.getCredentials().enabledAPIKeys()) {
-            if (k.getAPIKey() != null) enabled.add(k.getAPIKey());
+            String id = keyIdentity(k);
+            if (id != null) enabled.add(id);
         }
         List<APIKey<String>> out = new ArrayList<>();
         for (APIKey<String> k : context.getCredentials().APIKeys()) {
-            if (enabled.contains(k.getAPIKey())) continue;
+            String id = keyIdentity(k);
+            if (id != null && enabled.contains(id)) continue;
             out.add(k);
         }
         return out;
@@ -665,7 +696,7 @@ public class AssistantPanel extends JPanel {
 
         AIChat chat = context.currentChat();
         if (chat == null) {
-            JOptionPane.showMessageDialog(this, "Open a chat first (History > + New Prompt)",
+            JOptionPane.showMessageDialog(this, "Open a chat first (Chat History > + New Chat)",
                     "Send", JOptionPane.INFORMATION_MESSAGE);
             return;
         }
@@ -736,6 +767,7 @@ public class AssistantPanel extends JPanel {
                             addMessage(resp.getContent(), false, latencyOf(resp), tokensOf(resp));
                     }, err -> {
                 sendButton.setEnabled(true);
+                BackgroundTask.runCatching(this, null, () -> context.saveChat(sending), null);
                 if (sending == context.currentChat()) {
                     refreshPrompt();
                     if (composer.getText().isBlank()) composer.setText(text);
@@ -753,6 +785,7 @@ public class AssistantPanel extends JPanel {
                     "Send", JOptionPane.ERROR_MESSAGE);
             return;
         }
+        BackgroundTask.runCatching(this, null, () -> context.saveChat(sending), null);
         pendingSkills.clear();
         refreshSkillTooltip();
     }
@@ -887,9 +920,10 @@ public class AssistantPanel extends JPanel {
     }
 
     private void addMessage(String response, boolean user, Integer latency, Integer tokens) {
-        JComponent bubble = chatBubble(response, user, latency, tokens);
+        JComponent bubble = chatBubble(response, user, latency, tokens,
+                user ? null : () -> onSaveSkillFromResponse(response));
         String cons = user
-                ? "growx, wmax 78%, alignx trailing"
+                ? "wmax 60%, alignx trailing"
                 : "growx, wmax 92%, alignx leading";
         transcript.add(bubble, cons);
         transcript.revalidate();
@@ -932,7 +966,7 @@ public class AssistantPanel extends JPanel {
 
     private void onRemovePrompt(AIChat chat) {
         if (chat == null) return;
-        int res = JOptionPane.showConfirmDialog(this, "Delete \"" + chat.getTitle() + "\"?",
+        int res = JOptionPane.showConfirmDialog(this, deleteConfirm(chat.getTitle(), "chat"),
                 "Delete chat", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
         if (res != JOptionPane.OK_OPTION) return;
         BackgroundTask.runCatching(this, null, () -> context.deleteChat(chat), () -> {
@@ -949,33 +983,52 @@ public class AssistantPanel extends JPanel {
     }
 
     private void onAddSkill() {
-        skillName.setText("");
-        skillDescription.setText("");
-        skillContent = "";
-        skillTypes.setSelectedItem(AISkill.SkillType.MD_SKILL);
-        contentInfo(skillContentInfo, skillContent, false);
-        skillsCards.show("creator");
+        selectedSkill = null;
+        showSkillEditor(null, "Create");
     }
 
     private void onEditSkill(AISkill skill) {
         if (skill == null) return;
         selectedSkill = skill;
-        editSkillName.setText(selectedSkill.getName());
-        editSkillDescription.setText(selectedSkill.getDescription());
-        editSkillTypes.setSelectedItem(selectedSkill.getSkillType() != null
-                ? selectedSkill.getSkillType() : AISkill.SkillType.MD_SKILL);
-        editSkillContent = selectedSkill.getContent() != null ? selectedSkill.getContent() : "";
-        contentInfo(editSkillContentInfo, editSkillContent, false);
+        showSkillEditor(skill, "Save");
+    }
+
+    private void showSkillEditor(AISkill skill, String saveText) {
+        showSkillEditorFields(skill, saveText);
         skillsCards.show("editor");
+    }
+
+    private void onSaveSkillFromResponse(String markdown) {
+        if (skillEditor != null && skillEditor.isDirty()) {
+            int ok = JOptionPane.showConfirmDialog(this,
+                    "Discard the unsaved skill edits and start a new skill from this response?",
+                    "Unsaved skill", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
+            if (ok != JOptionPane.OK_OPTION) return;
+        }
+        selectedSkill = null;
+        showSkillEditorFields(null, "Create");
+        skillEditor.setMarkdown(markdown);
+        skillsCards.show("editor");
+        skillsButton.doClick();
+    }
+
+    private void showSkillEditorFields(AISkill skill, String saveText) {
+        skillEditor.setSaveText(saveText);
+        skillEditor.setDocumentName(skill != null ? skill.getName() : "");
+        skillEditor.setDescription(skill != null ? skill.getDescription() : "");
+        skillEditor.setSelectedType(skill != null && skill.getSkillType() != null
+                ? skill.getSkillType() : AISkill.SkillType.MD_SKILL);
+        skillEditor.setMarkdown(skill != null ? skill.getContent() : "");
     }
 
     private void onRemoveSkill(AISkill skill) {
         if (skill == null) return;
-        int res = JOptionPane.showConfirmDialog(this, "Delete \"" + skill.getName() + "\"?",
+        int res = JOptionPane.showConfirmDialog(this, deleteConfirm(skill.getName(), "skill"),
                 "Delete skill", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
         if (res != JOptionPane.OK_OPTION) return;
         BackgroundTask.runCatching(this, null, () -> context.deleteSkill(skill), () -> {
             if (selectedSkill == skill) selectedSkill = null;
+            if (pendingSkills.remove(skill)) refreshSkillTooltip();
             refreshSkills();
         });
     }
@@ -1020,7 +1073,7 @@ public class AssistantPanel extends JPanel {
                     return null;
                 },
                 _ -> {
-                    context.getProviders().getCacheMap().remove(provider.getName());
+                    context.getProviders().unregister(provider.getName());
                     if (providerList != null) providerList.refresh();
                     if (providerAddList != null) providerAddList.refresh();
                 });
@@ -1096,13 +1149,28 @@ public class AssistantPanel extends JPanel {
         for (String name : context.getProviders().getCacheMap().keySet()) box.addItem(name);
     }
 
+    private static final String[] NON_CHAT_MODEL_MARKERS = {
+            "whisper", "tts", "embedding", "moderation", "dall-e", "davinci", "babbage",
+            "audio", "realtime", "image", "transcribe"};
+
+    private static boolean isChatModel(String modelID) {
+        if (modelID == null) return false;
+        String m = modelID.toLowerCase();
+        for (String marker : NON_CHAT_MODEL_MARKERS) {
+            if (m.contains(marker)) return false;
+        }
+        return true;
+    }
+
     private void fillModels(JComboBox<String> box, String providerName) {
         box.removeAllItems();
         AIProvider p = context.getProviders().lookup(providerName);
         if (p == null) return;
         try {
             String[] models = p.getModelCatalog().models();
-            if (models != null) for (String m : models) box.addItem(m);
+            if (models != null) for (String m : models) {
+                if (isChatModel(m)) box.addItem(m);
+            }
         } catch (AIException _) {
         }
     }
@@ -1124,5 +1192,6 @@ public class AssistantPanel extends JPanel {
         chatButton.setSelected(true);
         selectedChat = null;
         selectedSkill = null;
+        if (skillEditor != null) showSkillEditorFields(null, "Create");
     }
 }

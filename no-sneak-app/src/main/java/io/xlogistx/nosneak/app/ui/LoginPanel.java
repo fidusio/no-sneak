@@ -2,8 +2,10 @@ package io.xlogistx.nosneak.app.ui;
 
 import io.xlogistx.gui.DynamicComboBox;
 import io.xlogistx.gui.IconStatusWidget;
+import io.xlogistx.gui.IconUtil;
 import io.xlogistx.nosneak.app.ui.utility.AppContext;
 import io.xlogistx.gui.BackgroundTask;
+import org.zoxweb.shared.filters.FilterType;
 import io.xlogistx.gui.CardStack;
 import io.xlogistx.gui.PanelBuilder;
 
@@ -20,6 +22,7 @@ public class LoginPanel extends JPanel {
     private final JPasswordField confirmPassword = new JPasswordField(20);
     private final JPanel confirmPasswordField = PanelBuilder.passwordField(confirmPassword);
     private final JLabel confirmPasswordLabel = new JLabel("Confirm Password");
+    private final JLabel registerError = new JLabel(" ");
     private final JPasswordField apiKey = new JPasswordField(30);
     private final CardStack cardStack = new CardStack();
 
@@ -126,6 +129,28 @@ public class LoginPanel extends JPanel {
         add(modeToggle, c);
 
         domain.addItem("local.nosneak-nosneak");
+        configureDomainCombo();
+    }
+
+    private void configureDomainCombo() {
+        for (Component child : domain.getComponents()) {
+            if (child instanceof JComboBox<?> combo) {
+                combo.setPreferredSize(new Dimension(
+                        username.getPreferredSize().width,
+                        combo.getPreferredSize().height));
+            } else if (child instanceof JPanel buttons) {
+                for (Component b : buttons.getComponents()) {
+                    if (b instanceof JButton button) {
+                        if (button.getIcon() instanceof IconUtil.PlusIcon)
+                            button.setToolTipText("Add DomainAppID");
+                        else if (button.getIcon() instanceof IconUtil.MinusIcon)
+                            button.setToolTipText("Remove selected DomainAppID");
+                        else if (button.getIcon() instanceof IconUtil.UpdateIcon)
+                            button.setToolTipText("Update selected DomainAppID");
+                    }
+                }
+            }
+        }
     }
 
     private JPanel buildSelectorPane() {
@@ -155,7 +180,9 @@ public class LoginPanel extends JPanel {
     }
 
     private JPanel buildPasswordScreen() {
-        return PanelBuilder.buildJPanelWithFields(new JLabel("Username"), username, new JLabel("Password"), PanelBuilder.passwordField(password), confirmPasswordLabel, confirmPasswordField, new JLabel("DomainAppID — optional"), domain, passwordAction);
+        Color error = UIManager.getColor("Label.errorForeground");
+        registerError.setForeground(error != null ? error : new Color(0xB71C1C));
+        return PanelBuilder.buildJPanelWithFields(new JLabel("Username"), username, new JLabel("Password"), PanelBuilder.passwordField(password), confirmPasswordLabel, confirmPasswordField, registerError, new JLabel("DomainAppID — optional"), domain, passwordAction);
     }
 
     private JPanel buildAPIKeyScreen() {
@@ -181,6 +208,8 @@ public class LoginPanel extends JPanel {
         // Confirm-password is only collected when registering.
         confirmPasswordLabel.setVisible(!login);
         confirmPasswordField.setVisible(!login);
+        registerError.setText(" ");
+        registerError.setVisible(!login);
         if (login) {
             confirmPassword.setText("");
         }
@@ -203,9 +232,20 @@ public class LoginPanel extends JPanel {
                     () -> ctx.session().loginUsernamePassword(user, pwd),
                     null);
         } else {
+            registerError.setText(" ");
             if (!java.util.Arrays.equals(pwd, confirmPassword.getPassword())) {
-                JOptionPane.showMessageDialog(this, "Passwords do not match.", "Register",
-                        JOptionPane.ERROR_MESSAGE);
+                registerError.setText("Passwords do not match.");
+                return;
+            }
+            String candidate = new String(pwd);
+            if (!FilterType.PASSWORD.isValid(candidate)) {
+                String reason = "Password does not meet requirements.";
+                try {
+                    FilterType.PASSWORD.validate(candidate);
+                } catch (Exception ex) {
+                    if (ex.getMessage() != null && !ex.getMessage().isBlank()) reason = ex.getMessage();
+                }
+                registerError.setText(reason);
                 return;
             }
             BackgroundTask.runCatching(this, passwordAction,

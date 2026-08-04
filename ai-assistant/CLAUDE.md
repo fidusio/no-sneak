@@ -38,14 +38,14 @@ has chosen to use.
 >   `context.getAllChats()` (→ `AIRepository.getAllChats()`), refreshed by the public EDT-safe
 >   `refreshHistory()`, which `no-sneak-app` calls on both login and logout.
 > - **Skills have create / edit / delete + persistence, and are typed.** `buildSkillCards` is a
->   nested `CardStack` (`list` / `editor` / `creator`). The list source is
+>   nested `CardStack` of exactly two cards (`list` / `editor`). The list source is
 >   `context.getAllSkills()` (→ `AIRepository.getAllSkills()`), refreshed by `refreshSkills()`.
->   Both forms carry name / description / **type** (`AISkill.SkillType`) / instructions; remove
->   calls `context.deleteSkill`; all saves run off the EDT via `BackgroundTask.runCatching`.
+>   **The editor card *is* an `MDFileViewer`** — one instance reused for both create and edit,
+>   carrying name / description / **type** (`AISkill.SkillType`) / instructions in a single form;
+>   remove calls `context.deleteSkill`; all saves run off the EDT via `BackgroundTask.runCatching`.
 >   `AISkill.content` is the instruction text — a plain `String`, so a skill authored in markdown
->   is stored verbatim. **Instructions are edited in a modal `MDFileViewer` dialog** whose Apply
->   writes to a per-page buffer, never to the store: the page's Save/Create is the single
->   persistence point. See §5 and §5.1.
+>   is stored verbatim. There is no separate page form and no modal dialog any more: the viewer's
+>   own Save is the single persistence point. See §5 and §5.1.
 > - **Chat send is wired for a single provider, async, and persists.** `onSend` validates
 >   (chat / model / provider — each missing piece gets a dialog, no more silent returns), builds
 >   an `AIRequest` (raw user text, maxTokens), attaches an `AIMessage` to `currentChat`, flattens
@@ -238,15 +238,15 @@ A skill is: `name`, `description`, `instructions`, `data access` scope. No globa
 Its instructions are prepended to the system prompt for **every model in the run** when active.
 
 - List rows show name, description, and the data-access scope; each row has edit + delete.
-- The **editor** has only a back arrow in the header and a single `Save`/`Create` action — no delete,
-  no cancel inside it (back is cancel). Delete lives on the list rows. (The markdown dialog it
-  opens is a separate window and does carry its own Apply/Cancel — see §5.1.)
+- The **editor** is the markdown editor itself (§5.1) with its name / description / type fields
+  turned on: one `Save` (relabelled `Create` for a new skill) and one `Cancel` that reverts and
+  returns to the list. No delete inside it — delete lives on the list rows.
 - Activation is decided in exactly two places: per prompt (New prompt form) and per message (`+` popup).
 
 Data-access options: `Scan data`, `Scan data and host inventory`, `Findings only`,
 `Queue items only`, `No app data`.
 
-> **Implementation status.** `buildSkillCards` (`list` / `editor` / `creator`) implements
+> **Implementation status.** `buildSkillCards` (`list` / `editor`) implements
 > **create / edit / delete + persistence** against `AIRepository` (`getAllSkills` / `saveSkill` /
 > `deleteSkill`). The DAO carries `name` / `description` / `content` (the instructions) /
 > `skillType`, with the content a plain `String` — so **markdown skills are just the string**
@@ -254,25 +254,24 @@ Data-access options: `Scan data`, `Scan data and host inventory`, `Findings only
 > buffer**, it does not create a link to it, and there is no export. If you want frontmatter
 > import, parse it →name/description, body→content at the edge and keep the model a `String`).
 >
-> **A skill now has a type** (`AISkill.SkillType`), picked from one combo **per page** —
-> `skillTypes` on the creator, `editSkillTypes` on the editor. They must stay **separate
-> instances**: one Swing component cannot sit on two cards, and sharing it meant whichever page
-> was built last stole the control, leaving the other page a bare "Type" label whose save read
-> the *other* page's selection. `skillTypeCombo()` renders
-> the constants through `SkillType.getName()` ("md skill" / "prompt skill") rather than
-> `toString()`. `onEditSkill` pre-selects the stored type — without that, opening a
-> `PROMPT_SKILL` and saving silently rewrote it to the combo's default.
+> **There is one skill form, and it is the markdown editor.** `buildSkillEditor()` builds a
+> single `MDFileViewer` (field `skillEditor`), enables its optional name / description / type
+> rows (`withName` / `withDescription` / `withTypes(...)`, the type combo rendered through
+> `SkillType.getName()` — "md skill" / "prompt skill" — rather than `toString()`), and hands it
+> `setOnCommit(this::onSaveSkill)` plus a `setOnCancel` that clears `selectedSkill` and returns
+> to the list. Both entry points route through `showSkillEditor(skill, saveText)`:
+> `onAddSkill` passes `null` + "Create", `onEditSkill` passes the row + "Save". Reusing **one**
+> instance is why the old creator/editor pair had to go — a Swing component cannot sit on two
+> cards, and the duplicated combos silently read each other's selection.
 >
-> **Instructions are edited in a modal markdown dialog, not a text area.** The row is
-> `instructionsRow(...)`: an **Edit instructions** button plus a muted state label
-> (`No instructions yet` / `42 lines` / `42 lines · not saved yet`). The button opens
-> `openMarkdownEditor(...)` — an `MDFileViewer` in an `APPLICATION_MODAL` `JDialog` whose commit
-> button is relabelled **Apply**. Apply writes into a per-page `String` buffer
-> (`skillContent` / `editSkillContent`), **not** into the DAO and **not** to the store; the
-> page's `Save`/`Create` is the only thing that persists, and it writes name + description +
-> type + instructions in one go. That split is deliberate: two buttons labelled "Save" nested
-> inside each other is the ambiguity it exists to avoid, and buffering means backing out with
-> the back arrow leaves the cached `AISkill` unmutated.
+> `onSaveSkill(MDDocument)` is the only persistence point: it rejects a blank name with a dialog,
+> then writes name + description + type (`document.typeAs()`) + instructions onto
+> `selectedSkill` (or a fresh `AISkill` when creating) and saves off the EDT via
+> `BackgroundTask.runCatching(..., skillEditor.getSaveButton(), ...)`. Cancel calls the viewer's
+> `revert()` before the handler, so backing out leaves the cached `AISkill` unmutated — the same
+> guarantee the old per-page buffer gave, now enforced inside the editor. Note the skills page is
+> **not** wrapped in an outer `JScrollPane` (unlike the other pages) — the editor's `JSplitPane`
+> needs a real viewport height, and the list card already scrolls itself.
 >
 > **Per-message activation is built, and the two types behave differently** (see §2). The
 > composer `+` popup groups skills by type (`groupByType`, enum order, name-sorted within a
@@ -292,25 +291,37 @@ Data-access options: `Scan data`, `Scan data and host inventory`, `Findings only
 
 ### 5.1 The markdown editor (`MDFileViewer`)
 
-A standalone `JPanel`, deliberately **not** to the house spec in §9 — it is its own thing, used
-by the skill editor today and reusable anywhere a markdown string needs editing.
+A standalone `JPanel`, deliberately **not** to the house spec in §9 — it is its own thing, and it
+*is* the skill editor page today (§5), reusable anywhere a markdown string needs editing.
 
 - **Split view.** Mono `JTextArea` in a scroll pane on the left, `io.xlogistx.gui.MDViewerPanel`
   on the right, 50/50 one-touch-expandable `JSplitPane`. The preview re-renders on a 250 ms
   non-repeating `Timer` restarted per keystroke, so typing does not reparse per character;
   `Save` / `Cancel` / `setMarkdown` stop the pending timer and render immediately.
 - **Save and Cancel are both callback-driven and always visible.** `setOnSave(Consumer<String>)`
-  hands over the current markdown; `setOnCancel(Runnable)` reverts the editor to the last
+  hands over the current markdown; `setOnCommit(Consumer<MDDocument>)` hands over the metadata
+  fields with it and both fire on Save; `setOnCancel(Runnable)` reverts the editor to the last
   committed text **first**, then runs the handler — so a host that only wants "go back" does not
   have to re-load the source to undo edits. `revert()` is public for a host that prefers its own
   back arrow. `⌘S`/`Ctrl+S` saves, `Esc` cancels.
+- **Optional metadata fields, off by default.** A `GridBagLayout` form sits between the toolbar
+  and the split, invisible until a host asks for a row: `withName(...)`, `withDescription(...)`,
+  and a **generic** `withTypes(...)` (`T[]` or `Collection<? extends T>`, an optional
+  `Function<? super T,String>` renderer, and an overload taking the row label) that holds any
+  object, not just `AISkill.SkillType`. Each `withX` adds its row once and updates the value
+  afterwards. Read back with `getDocumentName()` / `getDescription()` / `<T> getSelectedType()`
+  / `getDocument()`, or write with `setDocumentName` / `setDescription` / `setSelectedType`
+  (`setName` was taken by `Component`). `MDDocument` is a plain value class (name, description,
+  type, markdown) with a typed `typeAs()`. `commit()` snapshots the fields alongside the
+  markdown and `revert()` restores them, so `isDirty()` — and therefore the status line and the
+  Open-file overwrite confirm — reacts to a name edit too.
 - **Open file** loads a `.md` / `.markdown` / `.txt` from disk (UTF-8, remembers the last
   directory, confirms first when the buffer is dirty). The load counts as an **edit, not a
   commit** — it never touches the committed baseline, so Cancel still returns to the original
   text and nothing reaches the caller until Save. There is no write-to-disk path; the status
   line shows provenance (`loaded readme.md · unsaved changes`).
-- Host hooks: `setTitle` (renames the editor pane's border), `setSaveText` ("Apply" in the skill
-  dialog), `getSaveButton()` / `getCancelButton()` for driving an async save through
+- Host hooks: `setTitle` (renames the editor pane's border), `setSaveText` ("Create" / "Save" on
+  the skills page), `getSaveButton()` / `getCancelButton()` for driving an async save through
   `BackgroundTask.runCatching`, plus `isDirty` / `markDirty` / `markSaved`.
 - `JPanelTest` (test sources) is a `main`-method visual harness for it, in the same spirit as
   `ChatBubbleTest`.
@@ -333,12 +344,16 @@ scheme** (`auth-type`, e.g. `Bearer`), and an optional **header name** (`header-
 `x-api-key`) — read straight off the credential's property bag (via the `Session.APIKeyInfo` keys
 `provider` / `base-url` / `auth-type` / `header-name`), so the Providers page never re-asks for them.
 
-### Add key = pick, not type
+### Add key = pick, or create through the source
 
 `Add key` opens a **picker** sub-page (back-arrow header) listing the credentials the source offers
-that aren't already added. There is **no form** — provider, name, base URL, and secret already live on
-the credential. Selecting a row adds it and runs discovery immediately. When everything is already
-added, the picker says so and points back to NoSneak credential management.
+that aren't already added — provider, name, base URL, and secret already live on the credential, so
+selecting a row adds it and runs discovery immediately. Below the picker, **New Key** opens a
+`create` card (`buildCreateProviderKey`) for a key NoSneak doesn't have yet: Label / Provider (the
+known types) / API Key / optional Base URL — no domain/app-id scope fields, that's Credentials
+vocabulary. It creates through `AICredentialSource.addAPIKey` (→ `Session.storeAPIKey` with
+`external = true` + `setAssistantEnabled`), then registers the provider and runs discovery like the
+pick path. The key is a full NoSneak credential — visible, editable, and deletable in Credentials.
 
 Footer note on the list: keys come from NoSneak credentials; adding one here lets the assistant use it
 and discover its models; it is never stored separately.
@@ -364,8 +379,11 @@ errored offers an inline `Query models` or a jump to Providers, and blocks `Star
 
 ## 8. Invariants
 
-1. The assistant owns no keys — it reads an `AICredentialSource` and stores only the chosen subset
-   (key GUIDs) plus per-key discovery state.
+1. The assistant stores no keys — it reads an `AICredentialSource` and stores only the chosen
+   subset (key GUIDs) plus per-key discovery state. It may *create* one through
+   `AICredentialSource.addAPIKey` (the Providers page's **New Key** form), but the key
+   materializes as an ordinary NoSneak credential owned by the source, external-flagged and
+   assistant-enabled on creation.
 2. Removing a key from the assistant never deletes the underlying credential.
 3. Model lists are **discovered**, never hardcoded.
 4. Key + model are immutable for a prompt's lifetime.

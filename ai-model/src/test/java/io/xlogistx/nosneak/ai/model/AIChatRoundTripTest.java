@@ -171,6 +171,17 @@ public class AIChatRoundTripTest {
         assertEquals(88L, rResp.getLatency());
     }
 
+    /**
+     * {@code getTokens()} / {@code getLatency()} are null-safe by contract: a response persisted
+     * before those fields were populated must read {@code 0}, not throw on unbox.
+     */
+    @Test
+    public void unsetTokensAndLatencyReadZero() {
+        AIResponse fresh = new AIResponse();
+        assertEquals(0, fresh.getTokens());
+        assertEquals(0L, fresh.getLatency());
+    }
+
     /** {@link AIModel} is cached by the catalog; if persisted it goes through the same JSON path. */
     @Test
     public void aiModelJsonRoundTrip() {

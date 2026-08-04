@@ -6,6 +6,7 @@ import org.zoxweb.server.security.DomainSecurityManagerDefault;
 import org.zoxweb.server.security.HashUtil;
 import org.zoxweb.server.util.MockAPIDataStore;
 import org.zoxweb.shared.crypto.CIPassword;
+import org.zoxweb.shared.security.CredentialInfo;
 import org.zoxweb.shared.security.DomainSecurityManager;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -79,6 +80,24 @@ public class ChangePasswordRoundTripTest {
                 () -> s.changePassword(OLD.toCharArray(), "weak".toCharArray()),
                 "a new password failing the policy must be rejected");
         assertEquals("New password does not meet requirements", ex.getMessage());
+    }
+
+    @Test
+    public void changeStampsLastTimeUpdated() {
+        DomainSecurityManager dsm =
+                new DomainSecurityManagerDefault().setDataStore(new MockAPIDataStore())
+                        .addCredentialType(CIPassword.class);
+        dsm.createSubjectID("kailen", HashUtil.toBCryptPassword(OLD));
+        Session s = new Session(dsm);
+        s.loginUsernamePassword("kailen", OLD.toCharArray());
+
+        long before = System.currentTimeMillis();
+        assertDoesNotThrow(() -> s.changePassword(OLD.toCharArray(), NEW.toCharArray()));
+
+        CIPassword stored = (CIPassword) dsm.lookupCredential("kailen", CredentialInfo.Type.PASSWORD);
+        assertTrue(stored.getLastTimeUpdated() >= before,
+                "changePassword must stamp lastTimeUpdated — the store never advances it, "
+                        + "and the credentials list shows it as the last-changed date");
     }
 
     @Test

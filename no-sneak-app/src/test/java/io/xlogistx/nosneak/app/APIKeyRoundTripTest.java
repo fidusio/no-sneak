@@ -304,6 +304,9 @@ public class APIKeyRoundTripTest {
                 "a domain with a blank app id should still create the key");
         SubjectAPIKey stored = firstApiKey(s);
         assertNotNull(stored, "the key must be created even though the app id was skipped");
+        assertTrue(s.isExternalKey(stored),
+                "an external key without a domain/app-id pair must still be marked external — "
+                        + "otherwise rotate could overwrite a real vendor secret");
     }
 
     @Test
