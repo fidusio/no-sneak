@@ -1,14 +1,17 @@
 package io.xlogistx.nosneak.ai.assistant;
 
 import io.xlogistx.gui.*;
+import io.xlogistx.api.ai.AIAPIBuilder;
 import io.xlogistx.nosneak.ai.model.*;
+import io.xlogistx.nosneak.ai.AICredentialSource;
 import io.xlogistx.nosneak.ai.AIException;
+import io.xlogistx.nosneak.ai.AIModelCatalog;
 import io.xlogistx.nosneak.ai.AIProvider;
 import org.zoxweb.shared.security.APIKey;
 
 import net.miginfocom.swing.MigLayout;
-import org.zoxweb.shared.data.ReferenceIDDAO;
 import org.zoxweb.shared.util.NVEntity;
+import org.zoxweb.shared.util.SUS;
 
 import javax.swing.*;
 import java.awt.*;
@@ -20,11 +23,10 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashSet;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 
 import static io.xlogistx.nosneak.ai.assistant.AssistantUtil.chatBubble;
@@ -62,6 +64,16 @@ public class AssistantPanel extends JPanel {
     private final CardStack providerCards = new CardStack();
     private ListSection<APIKey<String>> providerAddList;
 
+    private final JTextField providerFormLabel = PanelBuilder.textField("e.g. Claude prod");
+    private final JComboBox<String> providerFormType = new JComboBox<>(PROVIDER_DISPLAY);
+    private final JTextField providerFormBaseURL =
+            PanelBuilder.textField("Optional — provider default when empty");
+    private final JComboBox<String> providerFormModel = new JComboBox<>();
+    private final JLabel providerFormKey = new JLabel();
+    private final JButton providerFormSave = new JButton("Save", new IconUtil.SaveIcon(16));
+    private AIProviderConfig editingConfig;
+    private APIKey<String> editingKey;
+
     private final JTextField createPromptName = new JTextField();
     private final JComboBox<String> createProviderSelector = new JComboBox<>();
     private final JComboBox<String> createModelSelector = new JComboBox<>();
@@ -98,23 +110,33 @@ public class AssistantPanel extends JPanel {
         cardStack.add(new JScrollPane(buildProviderCardsPanel()), "providers");
         cardStack.add(new JScrollPane(buildScreenCapturePanel()), "capture");
 
+        // A list only rebuilds from its supplier on refresh(), so a page that is merely switched
+        // back to shows whatever it held when it was last refreshed — stale message counts and
+        // timestamps until the next login. Refresh on the way in.
         chatButton.addActionListener(_ -> cardStack.show("chat"));
         jobQueueButton.addActionListener(_ -> cardStack.show("queue"));
-        historyButton.addActionListener(_ -> cardStack.show("history"));
-        skillsButton.addActionListener(_ -> cardStack.show("skills"));
-        providersButton.addActionListener(_ -> cardStack.show("providers"));
+        historyButton.addActionListener(_ -> {
+            refreshHistory();
+            cardStack.show("history");
+        });
+        skillsButton.addActionListener(_ -> {
+            refreshSkills();
+            cardStack.show("skills");
+        });
+        providersButton.addActionListener(_ -> {
+            // The list only — not refreshProviderViews(), which repopulates the chat editor's
+            // provider combo and would reset a selection the editor card is still holding.
+            if (providerList != null) providerList.refresh();
+            cardStack.show("providers");
+        });
         captureButton.addActionListener(_ -> cardStack.show("capture"));
 
-        ButtonGroup selectorGroup = new ButtonGroup();
-        selectorGroup.add(chatButton);
-        selectorGroup.add(jobQueueButton);
-        selectorGroup.add(historyButton);
-        selectorGroup.add(skillsButton);
-        selectorGroup.add(providersButton);
-        selectorGroup.add(captureButton);
         chatButton.setSelected(true);
 
-        add(PanelBuilder.buildDefaultSplitPanel(cardStack.view(), chatButton, historyButton, captureButton, jobQueueButton, skillsButton, providersButton));
+        add(PanelBuilder.buildDefaultSplitPanel(cardStack.view(),
+                chatButton, historyButton, providersButton,
+                new JSeparator(),
+                skillsButton, jobQueueButton, captureButton));
 
         context.onChange("currentChat", e -> refreshPrompt());
     }
@@ -290,9 +312,8 @@ public class AssistantPanel extends JPanel {
         historyList = ListSection.of(context::getAllChats)
                 .title("Chat History")
                 .addButton("+ New Chat", this::onAddPrompt)
-                .label(chat -> chat.getTitle()
-                        + "  ·  created " + timestamp(chat.getCreationTime())
-                        + "  ·  updated " + timestamp(chat.getLastTimeUpdated()))
+                .label(chat -> blankTo(chat.getTitle(), "Untitled chat"))
+                .sublabel(this::chatSublabel)
                 .onEdit(c -> () -> onEditPrompt(c))
                 .onRemove(c -> () -> onRemovePrompt(c))
                 .action(new ListSection.RowAction<>(new IconUtil.NextIcon(16), "Open Chat", c -> () -> onOpenChat(c)))
@@ -306,7 +327,6 @@ public class AssistantPanel extends JPanel {
 
     public JPanel buildChatEditor() {
         JButton save = new JButton("Save", new IconUtil.SaveIcon(16));
-        editProviderSelector.setEditable(true);
         editModelSelector.setEditable(true);
         bindProviderModels(editProviderSelector, editModelSelector);
 
@@ -380,7 +400,8 @@ public class AssistantPanel extends JPanel {
         skillsList = ListSection.of(context::getAllSkills)
                 .title("Skills")
                 .addButton("+ New Skill", this::onAddSkill)
-                .label(AISkill::getName)
+                .label(AssistantPanel::skillLabel)
+                .sublabel(skill -> SUS.trimOrNull(skill.getDescription()))
                 .onEdit(c -> () -> onEditSkill(c))
                 .onRemove(c -> () -> onRemoveSkill(c))
                 .emptyText("No Skills yet")
@@ -459,10 +480,45 @@ public class AssistantPanel extends JPanel {
         return ROW_TIMESTAMP.format(Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()));
     }
 
+    private static String blankTo(String value, String fallback) {
+        String trimmed = SUS.trimOrNull(value);
+        return (trimmed != null) ? trimmed : fallback;
+    }
+
+    /**
+     * The row's second line. Everything but the title lives here so the search box filters on
+     * titles rather than on the timestamps every row carries.
+     */
+    private String chatSublabel(AIChat chat) {
+        AIProvider provider = context.lookupProvider(chat.getProvider());
+        StringBuilder sb = new StringBuilder(
+                (provider != null) ? provider.getName() : blankTo(chat.getProvider(), "no provider"));
+
+        String model = SUS.trimOrNull(chat.getModel());
+        if (model != null) sb.append("  ·  ").append(model);
+
+        int messages = chat.getMessages().size();
+        sb.append("  ·  ").append(messages).append(messages == 1 ? " message" : " messages");
+        sb.append("  ·  created ").append(timestamp(chat.getCreationTime()));
+        sb.append("  ·  updated ").append(timestamp(chat.getLastTimeUpdated()));
+        return sb.toString();
+    }
+
+    /**
+     * Name and type share the first line: the type decides whether the composer attaches the
+     * skill or pastes it, so it belongs with the identity rather than down in the description.
+     */
+    private static String skillLabel(AISkill skill) {
+        String name = blankTo(skill.getName(), "Untitled skill");
+        AISkill.SkillType type = skill.getSkillType();
+        return (type == null) ? name : name + "  ·  " + type.getName();
+    }
+
     public JPanel buildProviderCardsPanel() {
         providerCards.add(buildProviderPanel(), "list");
         providerCards.add(buildAddProvider(), "add");
         providerCards.add(buildCreateProviderKey(), "create");
+        providerCards.add(buildProviderForm(), "form");
 
         providerCards.show("list");
         JPanel p = new JPanel(new BorderLayout());
@@ -475,8 +531,10 @@ public class AssistantPanel extends JPanel {
                         context::getProvidersList
                 )
                 .title("Providers")
+                .description("Keys come from your NoSneak credentials. Adding one here lets the assistant use it and discover its models.")
                 .addButton(" + Add Provider", this::onAddProvider)
-                .label(AIProvider::getName)
+                .label(this::providerLabel)
+                .sublabel(this::providerSublabel)
                 .emptyText("No providers")
                 .onEdit(p -> () -> onEditProvider(p))
                 .onRemove(p -> () -> onRemoveProvider(p))
@@ -489,21 +547,17 @@ public class AssistantPanel extends JPanel {
     public JPanel buildAddProvider() {
         providerAddList = ListSection.of(this::availableKeys)
                 .title("Available keys")
+                .description("Pick a credential from your NoSneak key store, or add a brand-new key.")
                 .label(this::keyLabel)
+                .sublabel(this::keySublabel)
+                .addButton("+ New Key", () -> providerCards.show("create"))
                 .emptyText("No keys yet")
-                .action(new ListSection.RowAction<>(new IconUtil.PlusIcon(16), "Add to assistant",
+                .action(new ListSection.RowAction<>(new IconUtil.NextIcon(16), "Add",
                         k -> () -> onSelectAddKey(k)))
                 .build();
 
-        JButton newKey = new JButton("New Key", new IconUtil.PlusIcon(16));
-        newKey.setToolTipText("Add a provider API key you don't have in NoSneak yet");
-        newKey.addActionListener(_ -> providerCards.show("create"));
-
-        return PanelBuilder.detail("Add a key", () -> providerCards.show("list"),
-                content -> {
-                    content.add(providerAddList, "growx");
-                    content.add(newKey, "gaptop 8");
-                });
+        return PanelBuilder.detail("", () -> providerCards.show("list"),
+                content -> content.add(providerAddList, "grow, push"));
     }
 
     public JPanel buildCreateProviderKey() {
@@ -526,29 +580,13 @@ public class AssistantPanel extends JPanel {
             String url = baseURL.getText().trim();
 
             BackgroundTask.run(this, create,
-                    () -> {
-                        APIKey<String> key = context.getCredentials()
-                                .addAPIKey(name, "", canonical, url, "", "", rawKey);
-                        AIAPIProvider p = AIAPIProvider.create(key);
-                        if (p != null) {
-                            try {
-                                p.getModelCatalog().refresh();
-                            } catch (Exception ignore) {
-                            }
-                        }
-                        return p;
-                    },
-                    p -> {
-                        if (p != null) context.getProviders().put(p.getName(), p);
+                    () -> context.getCredentials().addAPIKey(name, "", canonical, url, "", "", rawKey),
+                    key -> {
                         keyLabel.setText("");
                         secret.setText("");
                         baseURL.setText("");
                         provider.setSelectedIndex(0);
-                        if (providerList != null) providerList.refresh();
-                        if (providerAddList != null) providerAddList.refresh();
-                        providerCards.show("list");
-                        JOptionPane.showMessageDialog(this,
-                                "Key added. It also appears in your NoSneak credentials.");
+                        showProviderForm(null, key);
                     });
         });
 
@@ -561,57 +599,77 @@ public class AssistantPanel extends JPanel {
         });
     }
 
-    private static String keyIdentity(APIKey<String> key) {
-        return (key instanceof ReferenceIDDAO dao) ? dao.getGUID() : null;
+    /**
+     * The add/edit form for one provider. A key may back several of these, so everything the
+     * assistant routes on lives here rather than on the credential.
+     */
+    public JPanel buildProviderForm() {
+        providerFormModel.setEditable(true);
+        providerFormSave.addActionListener(_ -> onSaveProviderConfig());
+
+        return PanelBuilder.detail("Provider", () -> providerCards.show("list"), panel -> {
+            PanelBuilder.addRow(panel, "Key", providerFormKey);
+            PanelBuilder.addRow(panel, "Label*", providerFormLabel);
+            PanelBuilder.addRow(panel, "Provider*", providerFormType);
+            PanelBuilder.addRow(panel, "Base URL", providerFormBaseURL);
+            PanelBuilder.addRow(panel, "Default model", providerFormModel);
+            panel.add(providerFormSave, "gaptop 10");
+        });
     }
 
-    private List<APIKey<String>> availableKeys() {
-        Set<String> enabled = new HashSet<>();
-        for (APIKey<String> k : context.getCredentials().enabledAPIKeys()) {
-            String id = keyIdentity(k);
-            if (id != null) enabled.add(id);
+    /**
+     * Opens the form on an existing config, or on a new one seeded from the key's own metadata.
+     */
+    private void showProviderForm(AIProviderConfig config, APIKey<String> key) {
+        if (key == null) return;
+        editingConfig = config;
+        editingKey = key;
+
+        String type = (config != null) ? config.getProviderType() : providerOf(key);
+        String baseURL = (config != null) ? config.getBaseURL() : baseUrlOf(key);
+
+        providerFormKey.setText(key.getName() != null ? key.getName() : "");
+        providerFormLabel.setText(config != null && config.getName() != null
+                ? config.getName() : (key.getName() != null ? key.getName() : ""));
+        providerFormType.setSelectedIndex(providerIndex(type));
+        providerFormBaseURL.setText(baseURL != null ? baseURL : "");
+        providerFormSave.setText(config != null ? "Save" : "Add to assistant");
+
+        providerFormModel.removeAllItems();
+        if (config != null) {
+            fillModels(providerFormModel, config.getGUID());
+            providerFormModel.setSelectedItem(config.getDefaultModel());
+        } else {
+            providerFormModel.setSelectedItem("");
         }
-        List<APIKey<String>> out = new ArrayList<>();
-        for (APIKey<String> k : context.getCredentials().APIKeys()) {
-            String id = keyIdentity(k);
-            if (id != null && enabled.contains(id)) continue;
-            out.add(k);
+
+        providerCards.show("form");
+    }
+
+    private void onSaveProviderConfig() {
+        String label = providerFormLabel.getText().trim();
+        if (label.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "Give the provider a label.",
+                    "Missing information", JOptionPane.WARNING_MESSAGE);
+            return;
         }
-        return out;
-    }
+        if (editingKey == null) return;
 
-    private String keyLabel(APIKey<String> key) {
-        String provider = providerOf(key);
-        if (AIAPIProvider.resolveType(provider) != null) return key.getName() + "  ·  " + provider;
-        return key.getName() + "  ·  choose provider";
-    }
+        AIProviderConfig config = (editingConfig != null) ? editingConfig : new AIProviderConfig();
+        config.setName(label);
+        config.setKeyGUID(keyIdentity(editingKey));
+        config.setProviderType(PROVIDER_CANONICAL[providerFormType.getSelectedIndex()]);
+        config.setBaseURL(providerFormBaseURL.getText().trim());
+        Object model = providerFormModel.getSelectedItem();
+        config.setDefaultModel(model != null ? model.toString().trim() : "");
+        config.setEnabled(true);
 
-    private String providerOf(APIKey<String> key) {
-        Object v = (key.getProperties() != null) ? key.getProperties().getValue("provider") : null;
-        return v == null ? null : v.toString();
-    }
-
-    private static final String[] PROVIDER_DISPLAY = {"OpenAI", "Anthropic (Claude)", "Google (Gemini)", "Grok (xAI)"};
-    private static final String[] PROVIDER_CANONICAL = {"openai", "anthropic", "gemini", "grok"};
-
-    private String promptProviderType(APIKey<String> key) {
-        JComboBox<String> combo = new JComboBox<>(PROVIDER_DISPLAY);
-        int res = JOptionPane.showConfirmDialog(this, combo, "Provider for " + key.getName(),
-                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
-        if (res != JOptionPane.OK_OPTION) return null;
-        return PROVIDER_CANONICAL[combo.getSelectedIndex()];
-    }
-
-    private void onSelectAddKey(APIKey<String> key) {
-        if (AIAPIProvider.resolveType(providerOf(key)) == null) {
-            String chosen = promptProviderType(key);
-            if (chosen == null) return;
-            if (key.getProperties() != null) key.getProperties().build("provider", chosen);
-        }
-        BackgroundTask.run(this, null,
+        final APIKey<String> key = editingKey;
+        BackgroundTask.run(this, providerFormSave,
                 () -> {
+                    AIProviderConfig saved = context.saveProviderConfig(config);
                     context.getCredentials().setEnabled(key, true);
-                    AIAPIProvider p = AIAPIProvider.create(key);
+                    AIAPIProvider p = AIAPIProvider.create(saved, key);
                     if (p != null) {
                         try {
                             p.getModelCatalog().refresh();
@@ -621,11 +679,131 @@ public class AssistantPanel extends JPanel {
                     return p;
                 },
                 p -> {
-                    if (p != null) context.getProviders().put(p.getName(), p);
-                    if (providerList != null) providerList.refresh();
-                    if (providerAddList != null) providerAddList.refresh();
+                    if (p != null) context.getProviders().put(p.getID(), p);
+                    editingConfig = null;
+                    editingKey = null;
+                    refreshProviderViews();
                     providerCards.show("list");
                 });
+    }
+
+    /**
+     * The add-list is not refreshed here — its supplier queries the credential store on the EDT,
+     * and {@link #onAddProvider()} already refreshes it every time its card opens.
+     */
+    private void refreshProviderViews() {
+        if (providerList != null) providerList.refresh();
+        fillProviders(createProviderSelector);
+        fillProviders(editProviderSelector);
+    }
+
+    private static int providerIndex(String canonical) {
+        AIAPIBuilder.AIAPIType type = AIAPIProvider.resolveType(canonical);
+        if (type != null) {
+            for (int i = 0; i < PROVIDER_CANONICAL.length; i++) {
+                if (type == AIAPIProvider.resolveType(PROVIDER_CANONICAL[i])) return i;
+            }
+        }
+        return 0;
+    }
+
+    private String providerLabel(AIProvider provider) {
+        return provider.getName();
+    }
+
+    /**
+     * The row's status line: what it talks to, and what discovery last returned. A key the
+     * provider rejected registers anyway (discovery failures are swallowed at login), so
+     * "0 models · never synced" is the only signal the subject gets that it is not usable.
+     */
+    private String providerSublabel(AIProvider provider) {
+        if (!(provider instanceof AIAPIProvider p)) return null;
+
+        StringBuilder sb = new StringBuilder(p.getConfig().getProviderType());
+        sb.append("  ·  ").append(p.getBaseURL());
+
+        String defaultModel = SUS.trimOrNull(p.getConfig().getDefaultModel());
+        if (defaultModel != null) sb.append("  ·  default ").append(defaultModel);
+
+        AIModelCatalog catalog = p.getModelCatalog();
+        String[] models = catalog.models();
+        int count = (models != null) ? models.length : 0;
+        sb.append("  ·  ").append(count).append(count == 1 ? " model" : " models");
+
+        Instant synced = catalog.lastSynced();
+        sb.append("  ·  ").append(synced == null ? "never synced" : timestamp(synced.toEpochMilli()));
+        return sb.toString();
+    }
+
+    private static String keyIdentity(APIKey<String> key) {
+        return AICredentialSource.guidOf(key);
+    }
+
+    /**
+     * Every credential the source offers. Unfiltered on purpose: one key can back several
+     * providers, so an already-used key stays pickable.
+     */
+    private List<APIKey<String>> availableKeys() {
+        return new ArrayList<>(context.getCredentials().APIKeys());
+    }
+
+    private String keyLabel(APIKey<String> key) {
+        return blankTo(key.getName(), "Unnamed key");
+    }
+
+    private String keySublabel(APIKey<String> key) {
+        String provider = providerOf(key);
+        StringBuilder sb = new StringBuilder(
+                AIAPIProvider.resolveType(provider) != null ? provider : "choose provider");
+
+        String baseURL = SUS.trimOrNull(baseUrlOf(key));
+        if (baseURL != null) sb.append("  ·  ").append(baseURL);
+
+        int used = providersUsing(keyIdentity(key));
+        if (used > 0)
+            sb.append("  ·  used by ").append(used).append(used == 1 ? " provider" : " providers");
+        return sb.toString();
+    }
+
+    /**
+     * Counts off the registrar rather than the store: this renders per row on the EDT, and the
+     * registered providers are exactly the configs in play.
+     *
+     * @return how many live providers borrow this credential
+     */
+    private int providersUsing(String keyGUID) {
+        if (keyGUID == null) return 0;
+        int count = 0;
+        for (AIProvider p : context.getProvidersList()) {
+            if (p instanceof AIAPIProvider api && keyGUID.equals(api.getConfig().getKeyGUID())) count++;
+        }
+        return count;
+    }
+
+    private String providerOf(APIKey<String> key) {
+        return keyProperty(key, "provider");
+    }
+
+    private String baseUrlOf(APIKey<String> key) {
+        return keyProperty(key, "base-url");
+    }
+
+    private String keyProperty(APIKey<String> key, String name) {
+        Object v = (key != null && key.getProperties() != null) ? key.getProperties().getValue(name) : null;
+        return v == null ? null : v.toString();
+    }
+
+    private static final String[] PROVIDER_DISPLAY = {"OpenAI", "Anthropic (Claude)", "Google (Gemini)", "Grok (xAI)"};
+    private static final String[] PROVIDER_CANONICAL = {"openai", "anthropic", "gemini", "grok"};
+
+    private void onSelectAddKey(APIKey<String> key) {
+        if (keyIdentity(key) == null) {
+            JOptionPane.showMessageDialog(this,
+                    "This key has not been saved yet, so a provider cannot be attached to it.",
+                    "Add provider", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        showProviderForm(null, key);
     }
 
     public JPanel buildScreenCapturePanel() {
@@ -706,7 +884,7 @@ public class AssistantPanel extends JPanel {
                     "Send", JOptionPane.INFORMATION_MESSAGE);
             return;
         }
-        AIProvider p = context.getProviders().lookup(chat.getProvider());
+        AIProvider p = context.lookupProvider(chat.getProvider());
         if (p == null) {
             JOptionPane.showMessageDialog(this,
                     "Provider \"" + chat.getProvider() + "\" is not linked. Add its key on the Providers page.",
@@ -958,7 +1136,7 @@ public class AssistantPanel extends JPanel {
         this.selectedChat = chat;
         fillProviders(editProviderSelector);
         editPromptName.setText(chat.getTitle());
-        editProviderSelector.setSelectedItem(chat.getProvider());
+        selectProvider(editProviderSelector, chat.getProvider());
         editModelSelector.setSelectedItem(chat.getModel());
         historyCards.show("editor");
 
@@ -1034,28 +1212,8 @@ public class AssistantPanel extends JPanel {
     }
 
     private void onEditProvider(AIProvider provider) {
-        if (provider == null || provider.getAPIKey() == null) return;
-        APIKey<String> key = provider.getAPIKey();
-        String chosen = promptProviderType(key);
-        if (chosen == null) return;
-        if (key.getProperties() != null) key.getProperties().build("provider", chosen);
-
-        BackgroundTask.run(this, null,
-                () -> {
-                    context.getCredentials().setEnabled(key, true);
-                    AIAPIProvider rebuilt = AIAPIProvider.create(key);
-                    if (rebuilt != null) {
-                        try {
-                            rebuilt.getModelCatalog().refresh();
-                        } catch (Exception ignore) {
-                        }
-                    }
-                    return rebuilt;
-                },
-                rebuilt -> {
-                    if (rebuilt != null) context.getProviders().put(rebuilt.getName(), rebuilt);
-                    if (providerList != null) providerList.refresh();
-                });
+        if (!(provider instanceof AIAPIProvider p) || p.getAPIKey() == null) return;
+        showProviderForm(p.getConfig(), p.getAPIKey());
     }
 
     private void onAddProvider() {
@@ -1065,17 +1223,26 @@ public class AssistantPanel extends JPanel {
 
 
     private void onRemoveProvider(AIProvider provider) {
-        if (provider == null) return;
+        if (!(provider instanceof AIAPIProvider p)) return;
+        int res = JOptionPane.showConfirmDialog(this,
+                "Remove provider '" + p.getName() + "'? The key stays in your NoSneak credentials.",
+                "Remove provider", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
+        if (res != JOptionPane.OK_OPTION) return;
+
+        AIProviderConfig config = p.getConfig();
         BackgroundTask.run(this, null,
                 () -> {
-                    if (provider.getAPIKey() != null)
-                        context.getCredentials().setEnabled(provider.getAPIKey(), false);
+                    context.deleteProviderConfig(config);
+                    // assistant-enabled is derived now: the key stays linked only while some
+                    // config still borrows it, so a stale flag can't resurrect it at next login.
+                    APIKey<String> key = p.getAPIKey();
+                    if (key != null && context.configsUsing(keyIdentity(key)) == 0)
+                        context.getCredentials().setEnabled(key, false);
                     return null;
                 },
                 _ -> {
-                    context.getProviders().unregister(provider.getName());
-                    if (providerList != null) providerList.refresh();
-                    if (providerAddList != null) providerAddList.refresh();
+                    context.getProviders().unregister(p.getID());
+                    refreshProviderViews();
                 });
     }
 
@@ -1101,9 +1268,21 @@ public class AssistantPanel extends JPanel {
 
     public void reloadProviders() {
         BackgroundTask.run(this, null, () -> {
+            List<AIProviderConfig> configs = context.getAllProviderConfigs();
+            if (configs.isEmpty()) configs = adoptEnabledKeys();
+
+            Map<String, APIKey<String>> keysByGUID = new HashMap<>();
+            for (APIKey<String> k : context.getCredentials().APIKeys()) {
+                String guid = keyIdentity(k);
+                if (guid != null) keysByGUID.put(guid, k);
+            }
+
             List<AIProvider> built = new ArrayList<>();
-            for (APIKey<String> key : context.getCredentials().enabledAPIKeys()) {
-                AIAPIProvider p = AIAPIProvider.create(key);
+            for (AIProviderConfig cfg : configs) {
+                if (!cfg.isEnabled()) continue;
+                APIKey<String> key = keysByGUID.get(cfg.getKeyGUID());
+                if (key == null) continue;
+                AIAPIProvider p = AIAPIProvider.create(cfg, key);
                 if (p == null) continue;
                 try {
                     p.getModelCatalog().refresh();
@@ -1113,10 +1292,29 @@ public class AssistantPanel extends JPanel {
             }
             return built;
         }, built -> {
-            for (AIProvider p : built) context.getProviders().put(p.getName(), p);
-            if (providerList != null) providerList.refresh();
+            context.clearProviders();
+            for (AIProvider p : built) context.getProviders().put(p.getID(), p);
+            refreshProviderViews();
         });
 
+    }
+
+    /**
+     * One-time upgrade: subjects who linked keys before providers became their own record have
+     * assistant-enabled credentials and no configs. Give each one a config so their providers
+     * survive the change. Runs only while the subject has none.
+     */
+    private List<AIProviderConfig> adoptEnabledKeys() {
+        List<AIProviderConfig> out = new ArrayList<>();
+        for (APIKey<String> key : context.getCredentials().enabledAPIKeys()) {
+            String type = providerOf(key);
+            String keyGUID = keyIdentity(key);
+            if (keyGUID == null || AIAPIProvider.resolveType(type) == null) continue;
+            AIProviderConfig cfg = new AIProviderConfig(key.getName(), keyGUID, type);
+            cfg.setBaseURL(baseUrlOf(key));
+            out.add(context.saveProviderConfig(cfg));
+        }
+        return out;
     }
 
     public void refreshHistory() {
@@ -1137,16 +1335,37 @@ public class AssistantPanel extends JPanel {
 
     public void clearProviders() {
         context.clearProviders();
-        fillProviders(createProviderSelector);
-        fillProviders(editProviderSelector);
-        if (providerList != null) providerList.refresh();
+        refreshProviderViews();
         if (modelSelector != null) modelSelector.removeAllItems();
-
     }
 
+    /**
+     * Providers are carried in the combo by id, not label — two providers can share a name, and a
+     * label can be edited after a chat is already bound to it.
+     */
     private void fillProviders(JComboBox<String> box) {
         box.removeAllItems();
-        for (String name : context.getProviders().getCacheMap().keySet()) box.addItem(name);
+        for (AIProvider p : context.getProviders().getCacheMap().values()) box.addItem(p.getID());
+    }
+
+    private ListCellRenderer<Object> providerRenderer() {
+        return new DefaultListCellRenderer() {
+            @Override
+            public Component getListCellRendererComponent(JList<?> list, Object value, int index,
+                                                          boolean selected, boolean focused) {
+                AIProvider p = (value instanceof String id) ? context.lookupProvider(id) : null;
+                return super.getListCellRendererComponent(list,
+                        p != null ? p.getName() : value, index, selected, focused);
+            }
+        };
+    }
+
+    /**
+     * Selects the entry a chat is bound to, resolving a legacy provider name to its id.
+     */
+    private void selectProvider(JComboBox<String> box, String ref) {
+        AIProvider p = context.lookupProvider(ref);
+        box.setSelectedItem(p != null ? p.getID() : ref);
     }
 
     private static final String[] NON_CHAT_MODEL_MARKERS = {
@@ -1162,12 +1381,13 @@ public class AssistantPanel extends JPanel {
         return true;
     }
 
-    private void fillModels(JComboBox<String> box, String providerName) {
+    private void fillModels(JComboBox<String> box, String providerRef) {
         box.removeAllItems();
-        AIProvider p = context.getProviders().lookup(providerName);
+        AIProvider p = context.lookupProvider(providerRef);
         if (p == null) return;
         try {
             String[] models = p.getModelCatalog().models();
+            // @TODO match models with TokenMatcher instead of the marker list
             if (models != null) for (String m : models) {
                 if (isChatModel(m)) box.addItem(m);
             }
@@ -1175,8 +1395,21 @@ public class AssistantPanel extends JPanel {
         }
     }
 
+    /**
+     * Repopulates the model combo when the provider changes, preselecting that provider's default.
+     */
     private void bindProviderModels(JComboBox<String> providerBox, JComboBox<String> modelBox) {
-        providerBox.addActionListener(_ -> fillModels(modelBox, (String) providerBox.getSelectedItem()));
+        providerBox.setEditable(false);
+        providerBox.setRenderer(providerRenderer());
+        providerBox.addActionListener(_ -> {
+            String ref = (String) providerBox.getSelectedItem();
+            fillModels(modelBox, ref);
+            AIProvider p = context.lookupProvider(ref);
+            if (p instanceof AIAPIProvider api) {
+                String preferred = api.getConfig().getDefaultModel();
+                if (preferred != null && !preferred.isBlank()) modelBox.setSelectedItem(preferred);
+            }
+        });
     }
 
     public void resetPanel() {
@@ -1189,9 +1422,12 @@ public class AssistantPanel extends JPanel {
         cardStack.show("chat");
         historyCards.show("list");
         skillsCards.show("list");
+        providerCards.show("list");
         chatButton.setSelected(true);
         selectedChat = null;
         selectedSkill = null;
+        editingConfig = null;
+        editingKey = null;
         if (skillEditor != null) showSkillEditorFields(null, "Create");
     }
 }

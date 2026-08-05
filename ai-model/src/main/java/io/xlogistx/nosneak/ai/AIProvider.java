@@ -32,4 +32,6 @@ public interface AIProvider extends GetName, GetDescription {
     AIResponse send(AIRequest req, String skill) throws AIException;
 
     void asyncSend(AIRequest req, String skill, ConsumerCallback<NVGenericMap> callback) throws AIException;
+
+    String getID();
 }

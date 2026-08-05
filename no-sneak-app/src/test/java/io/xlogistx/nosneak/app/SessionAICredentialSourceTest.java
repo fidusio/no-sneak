@@ -7,6 +7,7 @@ import org.zoxweb.server.security.DomainSecurityManagerDefault;
 import org.zoxweb.server.security.HashUtil;
 import org.zoxweb.server.util.MockAPIDataStore;
 import org.zoxweb.shared.crypto.CIPassword;
+import org.zoxweb.shared.data.ReferenceIDDAO;
 import org.zoxweb.shared.security.APIKey;
 import org.zoxweb.shared.security.DomainSecurityManager;
 import org.zoxweb.shared.security.SubjectAPIKey;
@@ -85,6 +86,37 @@ public class SessionAICredentialSourceTest {
 
         assertThrows(SecurityException.class,
                 () -> source.addAPIKey("label", "", "openai", "", "", "", "sk-x"));
+    }
+
+    /**
+     * A provider config stores the credential's GUID, so the key handed back by {@code addAPIKey}
+     * must already carry one — a null there would save a provider that can never resolve its key.
+     */
+    @Test
+    public void addedKeyIsResolvableByGuid() {
+        Session s = loggedInSession();
+        SessionAICredentialSource source = new SessionAICredentialSource(s);
+        APIKey<String> key = source.addAPIKey("k", "", "openai", "", "", "", "sk-guid");
+
+        assertInstanceOf(ReferenceIDDAO.class, key);
+        String guid = ((ReferenceIDDAO) key).getGUID();
+        assertNotNull(guid, "the created key must come back carrying its GUID");
+        assertFalse(guid.isEmpty());
+
+        APIKey<String> found = source.getKey(guid);
+        assertNotNull(found, "a provider config must be able to resolve its key by GUID");
+        assertEquals("sk-guid", found.getAPIKey());
+    }
+
+    @Test
+    public void getKeyMissesReturnNull() {
+        Session s = loggedInSession();
+        SessionAICredentialSource source = new SessionAICredentialSource(s);
+        source.addAPIKey("k", "", "openai", "", "", "", "sk-x");
+
+        assertNull(source.getKey("no-such-guid"), "a deleted credential must resolve to null");
+        assertNull(source.getKey(null));
+        assertNull(source.getKey("  "));
     }
 
     @Test

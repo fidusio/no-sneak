@@ -1,6 +1,7 @@
 package io.xlogistx.nosneak.app;
 
 import io.xlogistx.nosneak.ai.model.AIChat;
+import io.xlogistx.nosneak.ai.model.AIProviderConfig;
 import io.xlogistx.nosneak.ai.model.AISkill;
 import io.xlogistx.nosneak.app.ui.assistant.AssistantStorage;
 import io.xlogistx.nosneak.app.ui.utility.Session;
@@ -114,5 +115,69 @@ public class AssistantStorageTest {
 
         assertTrue(storage.getAllChats().isEmpty(), "signed out must read no chats");
         assertTrue(storage.getAllSkills().isEmpty(), "signed out must read no skills");
+        assertTrue(storage.getAllProviderConfigs().isEmpty(), "signed out must read no providers");
+    }
+
+    @Test
+    public void providerConfigRoundTripsEveryField() {
+        Session s = freshLoggedInSession();
+        AssistantStorage storage = new AssistantStorage(s);
+
+        AIProviderConfig config = new AIProviderConfig("Claude prod", "key-guid-1", "anthropic");
+        config.setBaseURL("https://gateway.internal/v1");
+        config.setDefaultModel("claude-sonnet-4");
+        AIProviderConfig saved = storage.saveProviderConfig(config);
+
+        assertNotNull(saved.getGUID(), "the store must assign a GUID on insert");
+        assertEquals(s.getSubjectGUID(), saved.getSubjectGUID(), "insert must stamp the owner");
+
+        AIProviderConfig read = storage.getAllProviderConfigs().getFirst();
+        assertEquals("Claude prod", read.getName(), "the editable label must round-trip");
+        assertEquals("key-guid-1", read.getKeyGUID());
+        assertEquals("anthropic", read.getProviderType());
+        assertEquals("https://gateway.internal/v1", read.getBaseURL());
+        assertEquals("claude-sonnet-4", read.getDefaultModel());
+        assertTrue(read.isEnabled());
+    }
+
+    @Test
+    public void oneKeyBacksSeveralProviderConfigs() {
+        Session s = freshLoggedInSession();
+        AssistantStorage storage = new AssistantStorage(s);
+
+        storage.saveProviderConfig(new AIProviderConfig("direct", "shared-key", "anthropic"));
+        AIProviderConfig viaGateway = new AIProviderConfig("via gateway", "shared-key", "anthropic");
+        viaGateway.setBaseURL("https://gateway.internal/v1");
+        storage.saveProviderConfig(viaGateway);
+
+        assertEquals(2, storage.getAllProviderConfigs().size(),
+                "two configs may borrow the same credential — they are distinct providers");
+    }
+
+    @Test
+    public void providerConfigSaveIsUpsertByGuid() {
+        Session s = freshLoggedInSession();
+        AssistantStorage storage = new AssistantStorage(s);
+
+        AIProviderConfig saved =
+                storage.saveProviderConfig(new AIProviderConfig("old label", "key-guid-1", "openai"));
+        saved.setName("new label");
+        storage.saveProviderConfig(saved);
+
+        assertEquals(1, storage.getAllProviderConfigs().size(),
+                "relabelling must update the row, not duplicate it");
+        assertEquals("new label", storage.getAllProviderConfigs().getFirst().getName());
+    }
+
+    @Test
+    public void providerConfigDeleteRemovesTheRow() {
+        Session s = freshLoggedInSession();
+        AssistantStorage storage = new AssistantStorage(s);
+
+        AIProviderConfig saved =
+                storage.saveProviderConfig(new AIProviderConfig("temp", "key-guid-1", "grok"));
+        storage.deleteProviderConfig(saved);
+
+        assertTrue(storage.getAllProviderConfigs().isEmpty());
     }
 }

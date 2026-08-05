@@ -1,6 +1,7 @@
 package io.xlogistx.nosneak.ai;
 
 import io.xlogistx.nosneak.ai.model.AIChat;
+import io.xlogistx.nosneak.ai.model.AIProviderConfig;
 import io.xlogistx.nosneak.ai.model.AISkill;
 
 import java.util.List;
@@ -26,4 +27,13 @@ public interface AIRepository {
     AISkill getSkill(String refID);
 
     List<AISkill> getAllSkills();
+
+
+    AIProviderConfig saveProviderConfig(AIProviderConfig config);
+
+    void deleteProviderConfig(AIProviderConfig config);
+
+    AIProviderConfig getProviderConfig(String guid);
+
+    List<AIProviderConfig> getAllProviderConfigs();
 }

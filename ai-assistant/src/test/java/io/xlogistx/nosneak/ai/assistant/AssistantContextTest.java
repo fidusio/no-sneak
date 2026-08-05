@@ -2,6 +2,7 @@ package io.xlogistx.nosneak.ai.assistant;
 
 import io.xlogistx.nosneak.ai.AIRepository;
 import io.xlogistx.nosneak.ai.model.AIChat;
+import io.xlogistx.nosneak.ai.model.AIProviderConfig;
 import io.xlogistx.nosneak.ai.model.AISkill;
 import org.junit.jupiter.api.Test;
 
@@ -27,7 +28,40 @@ public class AssistantContextTest {
 
         private final Map<String, AIChat> chats = new LinkedHashMap<>();
         private final Map<String, AISkill> skills = new LinkedHashMap<>();
+        private final Map<String, AIProviderConfig> configs = new LinkedHashMap<>();
         private int seq;
+
+        @Override
+        public AIProviderConfig saveProviderConfig(AIProviderConfig config) {
+            if (config.getGUID() == null || config.getGUID().isEmpty()) config.setGUID("provider-" + ++seq);
+            configs.put(config.getGUID(), config);
+            return config;
+        }
+
+        @Override
+        public void deleteProviderConfig(AIProviderConfig config) {
+            if (config.getGUID() != null) configs.remove(config.getGUID());
+        }
+
+        @Override
+        public AIProviderConfig getProviderConfig(String id) {
+            return configs.get(id);
+        }
+
+        @Override
+        public List<AIProviderConfig> getAllProviderConfigs() {
+            List<AIProviderConfig> out = new ArrayList<>();
+            for (AIProviderConfig c : configs.values()) {
+                AIProviderConfig copy =
+                        new AIProviderConfig(c.getName(), c.getKeyGUID(), c.getProviderType());
+                copy.setGUID(c.getGUID());
+                copy.setBaseURL(c.getBaseURL());
+                copy.setDefaultModel(c.getDefaultModel());
+                copy.setEnabled(c.isEnabled());
+                out.add(copy);
+            }
+            return out;
+        }
 
         @Override
         public AIChat saveChat(AIChat chat) {

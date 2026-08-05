@@ -11,26 +11,52 @@ has chosen to use.
 > from it (`AssistantPanel` currently uses **Chat / Capture / Job Queue / History / Skills /
 > Providers** toggle buttons rather than the nav table in §1). What is wired today:
 >
-> - **Providers are real, and user-picked.** `AIAPIProvider` (this module) is a concrete
->   `AIProvider` wrapping `io.xlogistx.api.ai.AIAPI` (built by `AIAPIBuilder`), resolving the
->   provider type from the credential's `provider` property (`openai` / `gemini`+`google` /
->   `anthropic`+`claude` / `grok`+`xai`). `AssistantPanel.reloadProviders()` runs on login (from
->   `no-sneak-app`'s `onAuthChange`), off the EDT, building a provider **per enabled key**
->   (`AICredentialSource.enabledAPIKeys()`) and discovering each one's models via
->   `AIModelCatalog.refresh()` — nothing is auto-added; a key is used only once the subject picks
->   it. The Providers page is a `CardStack` (`list` / `add`): the list has a per-row **Refresh**
->   (`onRefreshProvider`) and an **✕** that unlinks (`onRemoveProvider` → `setEnabled(key,false)`,
->   drops it from the registrar, never deletes the credential); **+ Add Key** (`onAddProvider`)
->   opens the `add` picker (`buildAddProvider`), which lists **all** source credentials not yet
->   added. Selecting a row enables + discovers it; if the key's `provider` property does not
->   resolve to a known type (`AIAPIProvider.resolveType`), `onSelectAddKey` first prompts for the
->   provider type (`promptProviderType`) and writes the choice onto the credential's `provider`
->   property — the write persists via `setEnabled`'s `updateCredential` (same key object).
->   Selection persists on each credential's `assistant-enabled` property.
+> - **A provider is its own persisted record, not a key.** The unit is
+>   **`AIProviderConfig`** (an `ai-model` DAO: `keyGUID` / `providerType` / `baseURL` /
+>   `defaultModel` / `enabled`, plus the inherited `name`), so **one credential can back several
+>   providers** — the same OpenAI key pointed at two base URLs, or relabelled per use.
+>   `AIAPIProvider` (this module) is the concrete `AIProvider` over `io.xlogistx.api.ai.AIAPI`
+>   (built by `AIAPIBuilder`), created by `AIAPIProvider.create(config, key)` and resolving its
+>   type from the **config's** `providerType` (`openai` / `gemini`+`google` /
+>   `anthropic`+`claude` / `grok`+`xai`), no longer from the credential's property bag. Its
+>   **`getID()` is the config GUID**, which is also the registrar key — a label can be edited
+>   without orphaning the chats bound to it.
+> - **`reloadProviders()` builds from configs.** It runs on login (from `no-sneak-app`'s
+>   `onAuthChange`) off the EDT, reads `getAllProviderConfigs()`, skips the disabled ones,
+>   resolves each `keyGUID` against the credential source, builds an `AIAPIProvider` and
+>   discovers its models via `AIModelCatalog.refresh()`. `adoptEnabledKeys()` is a **one-time
+>   migration** that runs only when the subject has zero configs: every `assistant-enabled`
+>   credential gets a config minted from its `provider` / `base-url` properties, so keys linked
+>   before this change survive it.
+> - **The Providers page is a four-card `CardStack`** (`list` / `add` / `create` / `form`).
+>   The list rows carry **edit** (`onEditProvider` → the form, pre-filled) and **remove**
+>   (`onRemoveProvider`), which deletes the *config* and only calls `setEnabled(key,false)` when
+>   `context.configsUsing(keyGUID) == 0` — `assistant-enabled` is **derived** now, so a stale
+>   flag cannot resurrect a provider at the next login. **+ Add Provider** opens the `add`
+>   picker, which lists **every** credential the source offers, unfiltered on purpose (a key
+>   stays pickable because it can back more than one provider). Selecting a row opens the same
+>   `form` on a new config seeded from the key's metadata; **+ New Key** (`create`) makes a
+>   credential first via `AICredentialSource.addAPIKey`, then lands on the form. Saving
+>   (`onSaveProviderConfig`) persists the config, enables the key, builds the provider, runs
+>   discovery, and registers it. There is no separate provider-type prompt any more — the type
+>   is a required field on the form.
 > - **Model discovery drives the pickers.** A provider→model helper pair (`fillProviders` /
 >   `fillModels` / `bindProviderModels`) populates provider combos from the registrar and model
 >   combos from the selected provider's cached catalog (`models()`, never hardcoded). Used by the
->   Chat header and the History create/edit forms.
+>   Chat header and the History create/edit forms. Provider combos carry the provider **id**, not
+>   the label — two providers can share a name — and render through `providerRenderer()`;
+>   `selectProvider` resolves a legacy provider *name* on an older chat back to an id.
+>   `fillModels` filters the catalog through `isChatModel` (a `NON_CHAT_MODEL_MARKERS` substring
+>   list: whisper / tts / embedding / moderation / dall-e / …), with a live `@TODO` to match with
+>   `TokenMatcher` instead.
+> - **List rows are label + sublabel, and search covers both.** The shared `ListSection` grew
+>   `.description(...)` (a wrapping blurb under the panel title) and `.sublabel(...)` (a muted
+>   second line per row). The rule here: the **label is the searchable identity**, the sublabel
+>   carries the metadata. Chat History = title / `provider · model · N messages · created ·
+>   updated`; Skills = `name · <skill type>` / description; Providers = config label /
+>   `type · baseURL · default model · N models · last sync`; the key picker = key name /
+>   `provider · baseURL · used by N providers`. `ListSection.filter()` matches label **or**
+>   sublabel, so moving metadata off the label does not drop it out of search.
 > - **History has create / edit / delete + persistence.** `buildHistoryCards` is a nested
 >   `CardStack` (`list` / `editor` / `creator`). `+ New Prompt` opens a Create form
 >   (name + provider + model), a row's edit opens a pre-filled Edit form (both persist via
@@ -45,7 +71,15 @@ has chosen to use.
 >   remove calls `context.deleteSkill`; all saves run off the EDT via `BackgroundTask.runCatching`.
 >   `AISkill.content` is the instruction text — a plain `String`, so a skill authored in markdown
 >   is stored verbatim. There is no separate page form and no modal dialog any more: the viewer's
->   own Save is the single persistence point. See §5 and §5.1.
+>   own Save is the single persistence point. See §5 and §5.1. The editor also takes a
+>   `setValidator(Predicate<MDDocument>)` — `validateSkill` rejects a blank name **before**
+>   `onSaveSkill` runs — and `onSaveSkill` snapshots the old field values so a failed store write
+>   rolls the cached `AISkill` back and re-marks the editor dirty.
+> - **An assistant reply can become a skill.** `AssistantUtil.chatBubble(...)` takes an optional
+>   `onSaveAsSkill` `Runnable`, rendered as a borderless "Save as skill" button beside the
+>   latency/token line (assistant bubbles only, never the user's). It routes to
+>   `onSaveSkillFromResponse`, which confirms first if the editor holds unsaved edits, then opens
+>   the skill editor seeded with that response. Guarded by `ChatBubbleSaveAsSkillTest`.
 > - **Chat send is wired for a single provider, async, and persists.** `onSend` validates
 >   (chat / model / provider — each missing piece gets a dialog, no more silent returns), builds
 >   an `AIRequest` (raw user text, maxTokens), attaches an `AIMessage` to `currentChat`, flattens
@@ -77,7 +111,9 @@ has chosen to use.
 >   transient `pendingSkills` list (the `+` button's tooltip names them), are flattened into
 >   `<skill>…</skill>` blocks and passed as `asyncSend`'s **`String skill`** argument (there is
 >   no `AIRequest.skillsPrompt` field — the skill text is never persisted with the turn), and
->   clear after a successful dispatch (kept on failure so a retry re-sends them) and on logout. Future attachment kinds (photos,
+>   clear once `asyncSend` has been dispatched, plus on logout. They survive only a
+>   **synchronous** `asyncSend` throw (`onSend` returns before the clear); an async failure
+>   arrives after the clear has already run, so a retry does **not** re-send them. Future attachment kinds (photos,
 >   files, job-queue items) are meant to be added as further sections of this popup. The chat
 >   header also carries the **`Send history`** checkbox (default on; reset to on at logout) —
 >   unchecked sends only the new message with no conversation context.
@@ -90,8 +126,11 @@ has chosen to use.
 > **Still target-only / stubbed:** the multi-model **compare** path (no `AIRunner`; single-provider
 > `asyncSend` is wired); **chat-scoped skill activation** (per-*message* attachment works, but
 > nothing marks a skill active for a whole conversation — `AIChat`'s skills list was removed from
-> the DAO, so there is nowhere to persist it); the **Job queue** and **Screen capture** pages (all
-> handlers empty).
+> the DAO, so there is nowhere to persist it); the **Job queue** and **Screen capture** pages
+> (`onAddJob` / `onEditJob` / `onRemoveJob` / `onAddCapture` / `onSelectArea` /
+> `onEditCaptureLocation` / `onEditCaptureDetails` are all empty bodies, and both lists bind to
+> `ArrayList::new` with a `_ -> ""` label — there is nothing there to test); per-row provider
+> **Refresh**; and a skill's **data-access scope** (no DAO field).
 > `AICredentialSource` and `AIRepository` come from `no-sneak-app` (`SessionAICredentialSource`,
 > `AssistantStorage` over the H2P `APIDataStore`); the DAOs and interfaces live in **`ai-model`**
 > — see its CLAUDE.md. `no-sneak-app` builds
@@ -119,10 +158,20 @@ has chosen to use.
 >   block), but reads `0` for any provider that omits one.
 > - **The transcript re-renders in full on every `currentChat` change** (`refreshPrompt` clears
 >   and rebuilds every bubble). Fine at current lengths; it is an `MDViewerPanel` per message.
-> - **Login-time discovery failures are swallowed.** `reloadProviders` catches and ignores every
->   `getModelCatalog().refresh()` exception, so a rejected or expired key still registers — just
->   with an empty model list and no message. §6's "401, key rejected" status chip is design
->   intent, not built; today the only symptom is a model combo that will not populate.
+> - **Discovery failures are swallowed.** Both `reloadProviders` and `onSaveProviderConfig` catch
+>   and ignore every `getModelCatalog().refresh()` exception, so a rejected or expired key still
+>   registers — just with an empty model list and no message. §6's "401, key rejected" status
+>   chip is design intent, not built; the closest thing today is the row sublabel reading
+>   `0 models · never synced`, plus a model combo that will not populate.
+> - **A sublabel lambda runs per row, on the EDT, on every refresh and every keystroke in the
+>   search box.** Keep them to fields already in memory. `providersUsing` (walks the registrar)
+>   is safe; `AssistantContext.configsUsing` (a store query) is not — the two exist separately on
+>   purpose, don't collapse them.
+> - **The shared-endpoint race is still open.** `AIAPIProvider.bound()` re-asserts this
+>   provider's URL and models-auth encoder before every call, but two providers hitting the wire
+>   concurrently can still cross wires — in practice only a provider-form save (which runs
+>   discovery) racing an in-flight send. The real fix is per-caller endpoint copies in
+>   zoxweb-core's `HTTPAPIManager.buildAPICaller`.
 
 ## Source map
 
@@ -162,6 +211,18 @@ the detail pane via `CardLayout`, matching the Subject panel master/detail patte
 
 Page-level actions live in each page's own toolbar (`New prompt`, `Add item`, `Add skill`,
 `Add key`), never in the sidebar.
+
+> **Implementation status.** The sidebar is a `ButtonGroup` of `JToggleButton`s built by
+> `PanelBuilder.buildDefaultSplitPanel`, ordered **Chat / Chat History / Providers —
+> separator — Skills / Job Queue / Capture**: the daily loop first, the configuration below the
+> line. The separator is why `buildDefaultSplitPanel` takes `JComponent...` rather than
+> `JToggleButton...` — toggle buttons join the group, anything else is laid out but ungrouped.
+> The History / Skills / Providers buttons **refresh their list on the way in**
+> (`refreshHistory()` / `refreshSkills()` / `providerList.refresh()`): a `ListSection` only
+> rebuilds from its supplier on `refresh()`, so a page that was merely switched back to used to
+> show whatever it held at the last mutation — a message count frozen until the next login.
+> Providers deliberately refreshes the **list only**, not `refreshProviderViews()`, which would
+> repopulate the chat editor's provider combo and reset a selection that card is still holding.
 
 ---
 
@@ -222,13 +283,18 @@ Every past prompt: title, the models it ran against, an `N models` badge, the wi
 marked, date, message count. **Rename and delete live only here** (inline rename field; red confirm
 strip for delete) — not in the prompt header.
 
-> **Implementation status.** Rows read `title · created <ts> · updated <ts>` (`timestamp(...)`,
-> `yyyy-MM-dd HH:mm` local, `n/a` for an unset stamp). Note `ListSection.Builder.label(...)` is a
-> **setter, not an accumulator** — calling it twice silently discards the first lambda. The
-> "updated" half is only meaningful because `AssistantStorage` stamps `lastTimeUpdated` on the
-> update branch; the store itself never bumps it (see `ai-model/CLAUDE.md`). The list is
-> `.scrollable()` + `.search(...)` — the shared `ListSection` gained a filter box, so History and
-> Skills filter client-side over their supplier.
+> **Implementation status.** The row is a **two-line** `ListSection` row: the label is the chat
+> title alone (blank → `Untitled chat`), and `chatSublabel` supplies
+> `provider · model · N messages · created <ts> · updated <ts>` (`timestamp(...)`,
+> `yyyy-MM-dd HH:mm` local, `n/a` for an unset stamp). The provider half resolves through
+> `context.lookupProvider(...)` because `AIChat.provider` holds a **config GUID** now — a raw
+> ref would render as a GUID. Keeping the timestamps off the label is what makes the search box
+> filter on titles; they stay findable because `filter()` also matches the sublabel. Note
+> `ListSection.Builder.label(...)` is a **setter, not an accumulator** — calling it twice
+> silently discards the first lambda. The "updated" half is only meaningful because
+> `AssistantStorage` stamps `lastTimeUpdated` on the update branch; the store itself never bumps
+> it (see `ai-model/CLAUDE.md`). The list is `.scrollable()` + `.search(...)`, filtering
+> client-side over its supplier.
 
 ---
 
@@ -248,8 +314,13 @@ Data-access options: `Scan data`, `Scan data and host inventory`, `Findings only
 
 > **Implementation status.** `buildSkillCards` (`list` / `editor`) implements
 > **create / edit / delete + persistence** against `AIRepository` (`getAllSkills` / `saveSkill` /
-> `deleteSkill`). The DAO carries `name` / `description` / `content` (the instructions) /
-> `skillType`, with the content a plain `String` — so **markdown skills are just the string**
+> `deleteSkill`). Rows are two-line: `skillLabel` puts **name and type on the first line**
+> (`network-recon · md skill`) because the type is what decides whether the composer attaches
+> the skill or pastes it — it belongs with the identity, not buried in the description — and the
+> description is the sublabel (run through `SUS.trimOrNull`, so a whitespace-only one collapses
+> the row back to a single line). The DAO carries `name` / `description` / `content` (the
+> instructions) / `skillType`, with the content a plain `String` — so **markdown skills are just
+> the string**
 > (no file reference; `MDFileViewer`'s *Open file* loads a `.md` off disk **into the editor
 > buffer**, it does not create a link to it, and there is no export. If you want frontmatter
 > import, parse it →name/description, body→content at the edge and keep the model a `String`).
@@ -330,30 +401,51 @@ A standalone `JPanel`, deliberately **not** to the house spec in §9 — it is i
 
 ## 6. Providers page
 
-Lists the keys the subject has **added to the assistant** (a subset of what the source offers). Per row:
-name, provider badge (Anthropic / OpenAI / Ollama / …), the discovery endpoint
+Lists the **providers** the subject has configured — not the keys. Per row: the provider's label,
+provider badge (Anthropic / OpenAI / Ollama / …), the discovery endpoint
 (`baseUrl + /v1/models` or `/api/tags`), a status chip, the discovered models, and last sync.
 
 - `Refresh` (per row) re-runs model discovery. A rejected key shows `401, key rejected` and stays
   visible.
-- The row's remove control is an **✕, not a trash can** — removing **unlinks** the key from the
-  assistant only. Confirm copy: "The key stays in your NoSneak credentials."
+- The row's remove control is an **✕, not a trash can** — removing deletes the *provider config*
+  and unlinks the credential only when nothing else uses it. Confirm copy: "The key stays in your
+  NoSneak credentials."
+
+> **Implementation status.** A provider is an `AIProviderConfig` row (see the status block at the
+> top), so **one credential can back several providers** and the row's identity is the config's
+> editable label. `providerSublabel` renders
+> `providerType · baseURL · default <model> · N models · <last sync>` — that model count and
+> `never synced` are currently the *only* signal that a key was rejected, because discovery
+> failures are swallowed (see the rough edges). A per-row **Refresh** is still **not built**:
+> re-discovery happens on login, and as a side effect of saving the provider form.
+> The `✕` runs `onRemoveProvider` → `deleteProviderConfig` + `getProviders().unregister(id)`,
+> and calls `setEnabled(key,false)` only when `configsUsing(keyGUID)` hits zero.
+> `AIProviderConfig.enabled` exists but is effectively **write-only `true`** — the form always
+> sets it, and nothing in the UI can disable a provider without deleting its config.
 
 Each key carries its own auth metadata from NoSneak — `provider`, `base-url`, a free-text **auth
 scheme** (`auth-type`, e.g. `Bearer`), and an optional **header name** (`header-name`, e.g.
 `x-api-key`) — read straight off the credential's property bag (via the `Session.APIKeyInfo` keys
 `provider` / `base-url` / `auth-type` / `header-name`), so the Providers page never re-asks for them.
 
-### Add key = pick, or create through the source
+### Add provider = pick a key, or create one through the source
 
-`Add key` opens a **picker** sub-page (back-arrow header) listing the credentials the source offers
-that aren't already added — provider, name, base URL, and secret already live on the credential, so
-selecting a row adds it and runs discovery immediately. Below the picker, **New Key** opens a
-`create` card (`buildCreateProviderKey`) for a key NoSneak doesn't have yet: Label / Provider (the
-known types) / API Key / optional Base URL — no domain/app-id scope fields, that's Credentials
-vocabulary. It creates through `AICredentialSource.addAPIKey` (→ `Session.storeAPIKey` with
-`external = true` + `setAssistantEnabled`), then registers the provider and runs discovery like the
-pick path. The key is a full NoSneak credential — visible, editable, and deletable in Credentials.
+`+ Add Provider` opens a **picker** sub-page (back-arrow header) listing the credentials the source
+offers — **unfiltered**, because a key that already backs one provider can back another. Rows read
+key name over `provider · baseURL · used by N providers`; that count comes from `providersUsing`,
+which walks the **registrar** rather than the store, since the sublabel renders per row on the EDT.
+Selecting a row opens the provider **form** (`buildProviderForm`) on a new config seeded from the
+key's `provider` / `base-url` properties: Key (read-only) / Label / Provider type / Base URL /
+Default model. Below the picker, **New Key** opens a `create` card (`buildCreateProviderKey`) for a
+key NoSneak doesn't have yet: Label / Provider (the known types) / API Key / optional Base URL — no
+domain/app-id scope fields, that's Credentials vocabulary. It creates through
+`AICredentialSource.addAPIKey` (→ `Session.storeAPIKey` with `external = true` +
+`setAssistantEnabled`), then lands on the same form. The key is a full NoSneak credential —
+visible, editable, and deletable in Credentials.
+
+> **Known gap.** On the add path the form's **Default model** combo is empty: `showProviderForm`
+> only calls `fillModels` for an existing config, and discovery has not run yet. You save, reopen
+> the provider via edit, and only then can you pick from the discovered list.
 
 Footer note on the list: keys come from NoSneak credentials; adding one here lets the assistant use it
 and discover its models; it is never stored separately.
@@ -379,14 +471,16 @@ errored offers an inline `Query models` or a jump to Providers, and blocks `Star
 
 ## 8. Invariants
 
-1. The assistant stores no keys — it reads an `AICredentialSource` and stores only the chosen
-   subset (key GUIDs) plus per-key discovery state. It may *create* one through
-   `AICredentialSource.addAPIKey` (the Providers page's **New Key** form), but the key
-   materializes as an ordinary NoSneak credential owned by the source, external-flagged and
-   assistant-enabled on creation.
-2. Removing a key from the assistant never deletes the underlying credential.
+1. The assistant stores no keys — it reads an `AICredentialSource` and stores only
+   `AIProviderConfig` rows (each holding a key **GUID**, never a secret) plus in-memory discovery
+   state. It may *create* a key through `AICredentialSource.addAPIKey` (the Providers page's
+   **New Key** form), but the key materializes as an ordinary NoSneak credential owned by the
+   source, external-flagged and assistant-enabled on creation.
+2. Removing a provider from the assistant never deletes the underlying credential.
 3. Model lists are **discovered**, never hardcoded.
-4. Key + model are immutable for a prompt's lifetime.
+4. Key + model are immutable for a prompt's lifetime. **Not enforced today** — the chat header's
+   model combo is editable and `onSend` writes the selection back to the chat, and the Edit Chat
+   form rewrites both provider and model. Either lock the controls or drop the invariant.
 5. Skills have no global default — activation is per prompt or per message.
 6. Every model in a run gets identical prompt text, skills, and attachments.
 7. Nothing leaves the machine that the subject didn't attach.
@@ -425,11 +519,15 @@ send path. What follows is only how *this* module binds to those types.
 
 Swing-free. Bundles the injected services (`AICredentialSource`, `AIRepository`) and an internally
 built `AIProviderRegistrar`, plus the current selection (`currentChat`, `currentCredential`,
-`currentModel`) and two **GUID**-keyed **canonical caches** (`chatCache`, `skillCache`) that
-dedupe DAOs so the same chat/skill is one object across list refreshes (`referenceID` is always
-null on the H2P store — see the identity note in `ai-model/CLAUDE.md`). Chat API:
-`getAllChats()` / `saveChat(AIChat)` / `deleteChat(AIChat)`; skills mirror it
-(`getAllSkills` / `saveSkill` / `deleteSkill`). `setCurrentChat(AIChat)` swaps the in-memory
+`currentModel`) and three **GUID**-keyed **canonical caches** (`chatCache`, `skillCache`,
+`configCache`) that dedupe DAOs so the same chat/skill/config is one object across list refreshes
+(`referenceID` is always null on the H2P store — see the identity note in `ai-model/CLAUDE.md`).
+Chat API: `getAllChats()` / `saveChat(AIChat)` / `deleteChat(AIChat)`; skills mirror it
+(`getAllSkills` / `saveSkill` / `deleteSkill`), as do provider configs
+(`getAllProviderConfigs` / `saveProviderConfig` / `deleteProviderConfig`), plus
+`configsUsing(keyGUID)` (counts stored configs borrowing a credential — it queries the **store**,
+so never call it per row) and `lookupProvider(ref)` (registrar lookup by id, falling back to a
+name match so a chat saved before providers had ids still resolves). `setCurrentChat(AIChat)` swaps the in-memory
 selection and fires `"currentChat"`; `deleteChat` fires it **only** when the deleted chat is the
 current one (matched by instance **or GUID**, nulling first, then firing — instance identity
 alone misses, because History refreshes hand out fresh instances whenever the cache hasn't seen
@@ -453,20 +551,24 @@ cleared on logout by `clearProviders()`.
   remains if two providers hit the wire concurrently (panel sends are serialized, so in
   practice only a per-row Refresh racing an in-flight send). The real fix is per-caller
   endpoint copies in `buildAPICaller` (zoxweb-core).
-- **Providers.** `AssistantPanel.reloadProviders()` builds an `AIAPIProvider` per **enabled** key
-  on login (off the EDT), discovers its models, and `put`s it in the `AIProviderRegistrar`;
-  `clearProviders()` empties the registrar on logout. The `add` picker (`buildAddProvider` →
-  `availableKeys` / `onSelectAddKey`) enables + discovers a single chosen key; `onRemoveProvider`
-  disables it. `AssistantContext.addProvider(APIKey)` also exists (build + register, **no**
-  discovery) but is currently unused.
-- **Credentials.** `no-sneak-app`'s `SessionAICredentialSource` implements `AICredentialSource`; its
-  `enabledAPIKeys()` feeds `reloadProviders`, `APIKeys()` feeds the picker, and `setEnabled(key,on)`
-  persists the choice on the credential's `assistant-enabled` property (via `Session`).
+- **Providers.** `AssistantPanel.reloadProviders()` builds an `AIAPIProvider` per **enabled
+  `AIProviderConfig`** on login (off the EDT), resolving each config's `keyGUID` against the
+  credential source, discovering its models, and `put`ting it in the `AIProviderRegistrar` —
+  which is keyed by **`AIProvider::getID`** (the config GUID), not by name. `clearProviders()`
+  empties the registrar on logout. `adoptEnabledKeys()` mints configs for `assistant-enabled`
+  credentials the first time a subject has none.
+- **Credentials.** `no-sneak-app`'s `SessionAICredentialSource` implements `AICredentialSource`;
+  `APIKeys()` feeds the picker and the `keyGUID` resolution, `enabledAPIKeys()` feeds only the
+  one-time `adoptEnabledKeys` migration, and `setEnabled(key,on)` persists the flag on the
+  credential's `assistant-enabled` property (via `Session`). Key identity goes through the
+  interface's own `AICredentialSource.guidOf(key)` static (and the `getKey(guid)` default) —
+  never the name, which is editable.
 - **Persistence.** `no-sneak-app`'s `AssistantStorage` implements `AIRepository` against the app's
-  H2P `APIDataStore`, owner-scoped by subjectGUID. **Chats and skills both persist** — create,
-  edit, and delete all round-trip through the store (`saveChat` inserts when there's no
-  `GUID`, else updates; same for `saveSkill` — the store assigns the GUID on insert and both
-  paths upsert by GUID underneath). `getAllChats` / `getAllSkills` return empty when signed out.
+  H2P `APIDataStore`, owner-scoped by subjectGUID. **Chats, skills, and provider configs all
+  persist** — create, edit, and delete round-trip through the store (`saveChat` inserts when
+  there's no `GUID`, else updates; `saveSkill` and `saveProviderConfig` mirror it — the store
+  assigns the GUID on insert and every path upserts by GUID underneath). `getAllChats` /
+  `getAllSkills` / `getAllProviderConfigs` return empty when signed out.
 - **Send path.** `onSend` validates chat / model / provider with user-visible dialogs, then calls
   `AIProvider.asyncSend(wire, skillText, callback)` for the single bound provider
   (`getProviders().lookup(chat.getProvider())`), where `wire` is a **second, throwaway**
@@ -507,12 +609,20 @@ wire formats. `decode(payload)` runs, in order:
 `totalTokenCount`, else summing the prompt/input/completion/output/candidates spellings; `0`
 when absent.
 
-**Tests.** `AssistantMDDecoderTest` (**29 tests, green**) renders through commonmark and asserts
-on the resulting HTML rather than on strings, so it checks the fix actually renders — plus fence
-fixtures in `src/test/resources/fence/`. `ChatBubbleTest` is **not** a JUnit test: it is a
-`main`-method visual harness that renders `AssistantUtil.chatBubble` over the real transcript
-layout under both FlatLaf themes; paste a provider answer into its `RESPONSE` constant and run it
-to eyeball a rendering bug. Run the suite with
+**Tests.** The module runs **45 green tests**: `AssistantMDDecoderTest` (29) renders through
+commonmark and asserts on the resulting HTML rather than on strings, so it checks the fix actually
+renders — plus fence fixtures in `src/test/resources/fence/`; `MDFileViewerTest` (7) covers the
+editor's commit/revert/dirty contract; `AssistantContextTest` (5) guards the canonical caches, the
+delete-fires-only-for-the-current-chat rule, and `resetContext`, against an in-memory
+`AIRepository` that hands out a fresh instance per read like the real store does; and
+`ChatBubbleSaveAsSkillTest` (4) covers the "Save as skill" affordance.
+
+Three files in test sources are **not** JUnit tests but `main`-method visual harnesses:
+`ChatBubbleTest` (renders `AssistantUtil.chatBubble` over the real transcript layout under both
+FlatLaf themes — paste a provider answer into its `RESPONSE` constant to eyeball a rendering bug),
+`JPanelTest` (the `MDFileViewer`), and `AssistantPanelTest` (the whole panel against fake
+credentials and an in-memory repository — layout only; its keys are not real, so anything touching
+a wire will fail). Run the suite with
 `mvn -pl ai-assistant test -DskipTests=false -Dmaven.test.skip=false` (surefire is skipped by the
 parent pom).
 

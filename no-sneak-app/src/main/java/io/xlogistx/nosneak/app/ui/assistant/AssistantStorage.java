@@ -2,6 +2,7 @@ package io.xlogistx.nosneak.app.ui.assistant;
 
 import io.xlogistx.nosneak.ai.AIRepository;
 import io.xlogistx.nosneak.ai.model.AIChat;
+import io.xlogistx.nosneak.ai.model.AIProviderConfig;
 import io.xlogistx.nosneak.ai.model.AISkill;
 import io.xlogistx.nosneak.app.ui.utility.Session;
 import org.zoxweb.shared.api.APIDataStore;
@@ -76,5 +77,34 @@ public class AssistantStorage implements AIRepository {
         String o = owner();
         if (SUS.isEmpty(o)) return List.of();
         return ds.userSearch(owner(), AISkill.NVC_AI_SKILL, null);
+    }
+
+    @Override
+    public AIProviderConfig saveProviderConfig(AIProviderConfig config) {
+        if (SUS.isNotEmpty(config.getGUID())) {
+            config.setLastTimeUpdated(System.currentTimeMillis());
+            return ds.update(config);
+        }
+        config.setSubjectGUID(owner());
+        return ds.insert(config);
+    }
+
+    @Override
+    public void deleteProviderConfig(AIProviderConfig config) {
+        ds.delete(config, true);
+    }
+
+    @Override
+    public AIProviderConfig getProviderConfig(String guid) {
+        List<AIProviderConfig> found =
+                ds.userSearchByID(owner(), AIProviderConfig.NVC_AI_PROVIDER_CONFIG, guid);
+        return found.isEmpty() ? null : found.getFirst();
+    }
+
+    @Override
+    public List<AIProviderConfig> getAllProviderConfigs() {
+        String o = owner();
+        if (SUS.isEmpty(o)) return List.of();
+        return ds.userSearch(o, AIProviderConfig.NVC_AI_PROVIDER_CONFIG, null);
     }
 }

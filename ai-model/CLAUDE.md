@@ -11,15 +11,15 @@ Two packages:
   conversation model), plus `AIProviderRegistrar`.
 - **`io.xlogistx.nosneak.ai`** — the service interfaces (no implementations) and `AIException`.
 
-> **Status.** Interfaces + DAOs only in *this* module. A JSON round-trip test
-> (`io.xlogistx.nosneak.ai.model.AIChatRoundTripTest`, 8 tests, green) guards the DAO
+> **Status.** Interfaces + DAOs only in *this* module. JSON round-trip tests
+> (`AIChatRoundTripTest` 9 + `AISkillRoundTripTest` 3, **12 green**) guard the DAO
 > (de)serialization invariants. The concrete implementations all live **outside** this module:
 > `ai-assistant`'s **`AIAPIProvider`** (an `AIProvider` + inner `AIModelCatalog`, wrapping
-> `io.xlogistx.api.ai.AIAPI` built by `AIAPIBuilder`, resolving provider type from the key's
-> `provider` property) and `no-sneak-app`'s **`AssistantStorage`** (an `AIRepository` over
+> `io.xlogistx.api.ai.AIAPI` built by `AIAPIBuilder`, resolving provider type from its
+> **`AIProviderConfig`**) and `no-sneak-app`'s **`AssistantStorage`** (an `AIRepository` over
 > the app's H2P `APIDataStore`). There is still **no** `AIRunner` implementation (the compare
-> fan-out). Providers register into an `AIProviderRegistrar` keyed by `AIProvider::getName`
-> (which returns the credential's name).
+> fan-out). Providers register into an `AIProviderRegistrar` keyed by `AIProvider::getID` —
+> the config GUID.
 >
 > **The async contract is untyped on purpose (for now).** `AICallback` — the old
 > `ConsumerCallback<AIResponse>` — has been **deleted**. `asyncSend` now takes a
@@ -73,6 +73,14 @@ AIChat  ──has many──▶  AIMessage  ──is──▶  { AIRequest, AIRe
   directions.
 - **`AIModel`** — `provider` + model id (`getModelID()` / `getName()`), cached by
   `AIModelCatalog`.
+- **`AIProviderConfig`** — *a configured provider*, and the newest DAO here. `keyGUID` (the
+  credential it borrows its secret from — a **GUID**, never a name, because labels are editable)
+  / `providerType` (canonical: `openai`, `anthropic`, `gemini`, `grok`) / `baseURL` (blank = the
+  type's default) / `defaultModel` / `enabled`, plus the inherited `name` as its editable label.
+  It exists so a provider stops being *the same thing as* a key: **one credential can back
+  several providers** (two base URLs, two labels), and a provider's identity survives being
+  relabelled. Its **GUID is `AIProvider.getID()`**, which is what `AIChat.provider` stores and
+  what the registrar is keyed by. The assistant never persists a secret — only this row.
 
 Two ids, two scopes: **`correlationID`** joins one request to its response(s) (only meaningful
 once sends go async / fan out); **`providerSessionID`** is a *stateful provider's* resume
@@ -93,7 +101,9 @@ drops the nested entity on JSON round-trip.
   existed never gains its column, while the generated INSERT/UPDATE names it — saves fail
   against the old store. `AISkill.skillType` hit exactly this. Adding a param means deleting
   the dev store (or adding the column by hand); a fresh `@TempDir` store hides the problem in
-  tests.
+  tests. A whole **new entity** is fine — `AIProviderConfig` got its own table, which
+  `CREATE TABLE IF NOT EXISTS` creates on first use against an existing store. It is only
+  *new params on an existing entity* that break.
 - **None of these DAOs collide with the inherited `PropertyDAO` chain**, and new params must
   keep it that way. The reserved attribute names are `guid` / `subject_guid`
   (`ReferenceIDDAO`), `name` (`SetNameDAO`), `description` (`SetNameDescriptionDAO`),
@@ -118,15 +128,16 @@ drops the nested entity on JSON round-trip.
   void asyncSend(AIRequest req, String skill, ConsumerCallback<NVGenericMap> callback) throws AIException;
   ```
 
-  plus `getModelCatalog()`, `setAPIKey` / `getAPIKey`, and `setHTTPAPICaller` /
+  plus `getModelCatalog()`, `setAPIKey` / `getAPIKey`, `setHTTPAPICaller` /
   `getHTTPAPICaller` (the request goes out through `io.xlogistx.api.ai.AIAPI`, built by
-  `AIAPIBuilder`). Note the **asymmetry**: the sync path returns a typed `AIResponse`, the async
-  path returns the untyped provider payload. Concrete providers register into
-  `io.xlogistx.nosneak.ai.model.AIProviderRegistrar` (`RegistrarMapDefault<String, AIProvider>`,
-  keyed by `AIProvider::getName`). The one implementation is `ai-assistant`'s `AIAPIProvider`;
-  both are wired there (`asyncSend` delegates straight to `AIAPI.asyncCompletion`). The
-  single-provider path is real; only the multi-provider compare (`AIRunner`) remains
-  unimplemented.
+  `AIAPIBuilder`), and **`getID()`**. Note the **asymmetry**: the sync path returns a typed
+  `AIResponse`, the async path returns the untyped provider payload. Concrete providers register
+  into `io.xlogistx.nosneak.ai.model.AIProviderRegistrar` (`RegistrarMapDefault<String,
+  AIProvider>`), now keyed by **`AIProvider::getID`** — the backing `AIProviderConfig`'s GUID,
+  **not** `getName()`, since two providers may share a label and a label can be edited after a
+  chat is bound to it. The one implementation is `ai-assistant`'s `AIAPIProvider`; both are wired
+  there (`asyncSend` delegates straight to `AIAPI.asyncCompletion`). The single-provider path is
+  real; only the multi-provider compare (`AIRunner`) remains unimplemented.
 - **`AIRunner`** — `send(AIRequest, AIProvider...)` → an `AICallbackCollection` for the
   fan-out (compare). No implementation; note it has **no** skill parameter, unlike `AIProvider`.
 - **`AICallbackCollection`** — aggregates a multi-provider run: `size()`, `completed()` /
@@ -134,16 +145,22 @@ drops the nested entity on JSON round-trip.
   `AIResponse`, so a fan-out built today would have to decode payloads before aggregating.
 - ~~`AICallback`~~ — **deleted.** Callers pass an `org.zoxweb.shared.task.ConsumerCallback<NVGenericMap>`
   directly; it carries both the success (`accept`) and the error (`exception`) path.
-- **`AICredentialSource.APIKeys()`** (returns `List<APIKey<String>>`) — the keys the Providers
-  picker lists. `no-sneak-app`'s `SessionAICredentialSource` implements it.
-- **`AIModelCatalog`** — each key's discovered models (`models()`), `refresh()` (the Refresh
+- **`AICredentialSource`** — `APIKeys()` (returns `List<APIKey<String>>`, what the Providers
+  picker lists), `enabledAPIKeys()`, `setEnabled(key, on)`, and `addAPIKey(...)`, which **returns
+  the created key** so the caller can configure a provider against it. It also owns the one
+  definition of a key's identity: the **`guidOf(APIKey<?>)` static** (casts to `ReferenceIDDAO`,
+  null for an unpersisted key) and the **`getKey(String guid)` default** that resolves the
+  credential an `AIProviderConfig` borrows from. Match on GUID, never on name.
+  `no-sneak-app`'s `SessionAICredentialSource` implements it.
+- **`AIModelCatalog`** — each provider's discovered models (`models()`), `refresh()` (the Refresh
   button), and `lastSynced()` (the "Last sync" line).
-- **`AIRepository`** — persistence for **both** chats and skills, keyed by **GUID** (the
-  `getChat(refID)` / `getSkill(refID)` parameters take the GUID; see the `AIChat` identity note
-  above): `saveChat` / `deleteChat` / `getChat` / `getAllChats`, and
-  `saveSkill` / `deleteSkill` / `getSkill` / `getAllSkills`. `no-sneak-app`'s
-  `AssistantStorage` implements it against the H2P `APIDataStore` (owner-scoped by subjectGUID),
-  branching insert-vs-update on `getGUID()`.
+- **`AIRepository`** — persistence for chats, skills, **and provider configs**, keyed by **GUID**
+  (the `getChat(refID)` / `getSkill(refID)` / `getProviderConfig(guid)` parameters all take the
+  GUID; see the `AIChat` identity note above): `saveChat` / `deleteChat` / `getChat` /
+  `getAllChats`, `saveSkill` / `deleteSkill` / `getSkill` / `getAllSkills`, and
+  `saveProviderConfig` / `deleteProviderConfig` / `getProviderConfig` / `getAllProviderConfigs`.
+  `no-sneak-app`'s `AssistantStorage` implements it against the H2P `APIDataStore` (owner-scoped
+  by subjectGUID), branching insert-vs-update on `getGUID()`.
 - **`AIException`** — checked, with a `Kind` (`AUTH`, `RATE_LIMIT`, `CONTEXT_OVERFLOW`,
   `TIMEOUT`, `NETWORK`, `PROVIDER`).
 

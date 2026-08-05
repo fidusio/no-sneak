@@ -23,10 +23,11 @@ scanner and file-sharing screens are still placeholders.
 > **Still stubbed:** passkey (login/register are empty `void` no-ops), the security-manager admin
 > tables, the scanner/file-sharing screens, and — in the AI assistant — the Job-queue and
 > Screen-capture pages, and the multi-model compare path. (The assistant's provider discovery,
-> the user-picked provider flow — keys are enabled per credential via `Session.setAssistantEnabled`
-> / `assistant-enabled`, not auto-added — single-provider chat send **with message persistence**
-> and rendered markdown replies, per-message skill attachment, and full **History + Skills CRUD**
-> are wired now — see `ai-assistant/CLAUDE.md`.)
+> the user-picked provider flow — a provider is now its own persisted **`AIProviderConfig`**
+> record borrowing a credential by GUID, so one key can back several providers and
+> `assistant-enabled` is derived from whether any config still uses it — single-provider chat
+> send **with message persistence** and rendered markdown replies, per-message skill attachment,
+> and full **History + Skills + Provider CRUD** are wired now — see `ai-assistant/CLAUDE.md`.)
 
 ## Layout
 
@@ -44,7 +45,7 @@ io.xlogistx.nosneak.app
     ├── MenuBarFactory.java        ← builds the application menu bar
     ├── assistant/                 ← app-side bindings for the ai-assistant module
     │   ├── SessionAICredentialSource.java ← the subject's API keys + which are assistant-enabled (AICredentialSource)
-    │   └── AssistantStorage.java  ← AIRepository impl (chats + skills), GUID-keyed over the H2P APIDataStore
+    │   └── AssistantStorage.java  ← AIRepository impl (chats + skills + provider configs), GUID-keyed over the H2P APIDataStore
     └── utility/
         ├── AppContext.java        ← per-app service locator (Session + Navigator)
         ├── Session.java           ← auth + identifiers + credentials + profile + addresses (over DomainSecurityManager)
@@ -405,9 +406,11 @@ with `AssistantStorage` this is where the app meets the AI-assistant module; the
 one-way.
 
 ### `AssistantStorage` (in `ui.assistant`)
-The `io.xlogistx.nosneak.ai.AIRepository` implementation — persistence for **both** chats and
-skills — constructed from the `Session` and reading the H2P `APIDataStore` off it, owner-scoped
-by `subjectGUID`. `saveChat` / `saveSkill` branch on **`getGUID()`**: non-empty → `ds.update`,
+The `io.xlogistx.nosneak.ai.AIRepository` implementation — persistence for chats, skills, **and
+`AIProviderConfig` rows** (a configured provider: key GUID + type + base URL + default model +
+enabled label; see `ai-model/CLAUDE.md`) — constructed from the `Session` and reading the H2P
+`APIDataStore` off it, owner-scoped by `subjectGUID`. `saveChat` / `saveSkill` /
+`saveProviderConfig` all branch on **`getGUID()`**: non-empty → `ds.update`,
 empty → stamp the owner and `ds.insert` (the store assigns the GUID). This must be `getGUID()`,
 **not `getReferenceID()`** — `referenceID` is deprecated in zoxweb and the H2P store never sets
 it, so branching on it made every save an insert and duplicated the row on each edit. The same
@@ -423,7 +426,14 @@ update from landing a millisecond apart on a fresh row. See the timestamp note i
 
 > **`deleteChat` orphans children.** It calls `ds.delete(chat, false)`, and `withReference=false`
 > means H2P deletes the chat row plus the cascading join rows but **not** the child entities — the
-> `ai_message` / `ai_request` / `ai_response` rows stay in the database indefinitely.
+> `ai_message` / `ai_request` / `ai_response` rows stay in the database indefinitely. Note
+> `deleteProviderConfig` passes `true` — the two are inconsistent, deliberately or not; settle it
+> once the cascade semantics are confirmed.
+>
+> **Tests** (`AssistantStorageTest`, 9 green, over a `@TempDir` H2P store): insert assigns GUID +
+> owner, update stamps `lastTimeUpdated`, save is an upsert by GUID (an edit must not duplicate
+> the row), skills mirror chats, signed-out reads return empty, and — for provider configs — a
+> full field round-trip, **one key backing several configs**, upsert-by-GUID, and delete.
 
 ### `Navigator`
 Thin top-level screen-switcher over a `CardLayout`. Defines the `Screen` enum (`LOGIN, REGISTER,
@@ -440,8 +450,15 @@ name)` registers a card, `show(name)` flips to it. Used by `LoginPanel`, `Subjec
 ### `PanelBuilder`
 Shared Swing layout helpers:
 - `buildHorizontalSplitView(left, right, divLocation, resizeWeight)` — a configured `JSplitPane`.
-- `buildDefaultSplitPanel(content, JToggleButton...)` — the master–detail shell: a left sidebar of
-  grouped toggle buttons (a `ButtonGroup`) and the supplied `content` on the right.
+- `buildDefaultSplitPanel(content, JComponent...)` — the master–detail shell: a left sidebar of
+  sidebar rows and the supplied `content` on the right. Every `JToggleButton` joins one
+  `ButtonGroup`; **anything else** (a `JSeparator`, a header label) is laid out but not grouped,
+  which is how the assistant divides its nav into sections. Do not also build your own
+  `ButtonGroup` over the same buttons — a button model holds exactly one group reference, so the
+  second `add` silently replaces the first.
+- `row(label, JButton...)` / `row(label, subtitle, JButton...)` — a list row; the subtitle
+  variant stacks label over a muted second line in a `BoxLayout` (this is what `ListSection`'s
+  `.sublabel(...)` renders through). A null/empty subtitle returns the single-line row.
 - `buildJPanelWithFields(JComponent...)` — a single-column `GridBagLayout` form.
 - `detail(title, onBack, content)` — a back-linked detail view (change-password, edit-API-key). Its
   body is a `MigLayout` single left-aligned column so fields keep their preferred size.
@@ -454,11 +471,25 @@ Shared Swing layout helpers:
 
 ### `ListSection`
 A titled, refreshable list component, built through a fluent builder:
-`ListSection.of(Supplier<List<T>>)` plus `.title(...)`, `.label(Function<T,String>)`,
-`.addButton(label, onAdd)`, `.onEdit(...)` / `.onRemove(...)`, extra `.action(RowAction)`s,
-`.emptyText(...)`, and `.scrollable()` / `.search(placeholder)`. `refresh()` rebuilds every row
-from the supplier — call it after any mutation. Omitting `.addButton` omits the add button (the
-read-only Password section); a row with no handlers is a plain label line (empty states).
+`ListSection.of(Supplier<List<T>>)` plus `.title(...)`, `.description(...)`,
+`.label(Function<T,String>)`, `.sublabel(Function<T,String>)`, `.addButton(label, onAdd)`,
+`.onEdit(...)` / `.onRemove(...)`, extra `.action(RowAction)`s, `.emptyText(...)`, and
+`.scrollable()` / `.search(placeholder)`. `refresh()` rebuilds every row from the supplier — call
+it after any mutation. Omitting `.addButton` omits the add button (the read-only Password
+section); a row with no handlers is a plain label line (empty states).
+
+- **`.description(...)`** is a panel-level blurb under the title (a wrapping `JTextArea`, not a
+  `JLabel`, so long copy wraps to the panel width instead of stretching it). Per *item* detail is
+  `.sublabel(...)`, which is a different thing.
+- **`.sublabel(...)`** renders a muted second line **under the row's own label** — 2pt smaller,
+  `Label.disabledForeground`, via `PanelBuilder.row(label, subtitle, buttons...)`. A null or empty
+  result falls through to the single-line row, so one list can mix one- and two-line rows; a
+  two-line row also drops the fixed 36px height cap.
+- **Convention: the label is the identity, the sublabel is the metadata.** Don't cram
+  `name · type · date` into one label — split it. `filter()` matches label **or** sublabel, so
+  nothing falls out of search when you move it down a line.
+- **A sublabel lambda runs per row, on the EDT, on every refresh and every keystroke in the search
+  box.** Keep it to fields already in memory — no store queries.
 
 > `.label(...)` **assigns**, it does not accumulate — calling it twice silently drops the first
 > lambda. `.search(...)` filters client-side over the supplier's list, which is why History and

@@ -705,7 +705,7 @@ public class SubjectPanel extends JPanel {
         String baseUrl = ctx.session().baseUrlOf(key);
         String scheme = ctx.session().authTypeOf(key);
         String header = ctx.session().headerNameOf(key);
-        keyProvider.setSelectedItem(provider == null ? null : provider);
+        keyProvider.setSelectedItem(provider);
         keyURI.setText(baseUrl == null ? "" : baseUrl);
         authScheme.setText(scheme == null ? "" : scheme);
         headerName.setText(header == null ? "" : header);

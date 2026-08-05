@@ -6,6 +6,7 @@ import io.xlogistx.nosneak.ai.model.AIChat;
 import com.formdev.flatlaf.FlatLaf;
 import com.formdev.flatlaf.FlatLightLaf;
 import com.formdev.flatlaf.fonts.roboto.FlatRobotoFont;
+import io.xlogistx.nosneak.ai.model.AIProviderConfig;
 import io.xlogistx.nosneak.ai.model.AISkill;
 import org.zoxweb.shared.security.APIKey;
 import org.zoxweb.shared.security.SubjectAPIKey;
@@ -70,9 +71,33 @@ class AssistantPanelTest {
 
     private static class chats implements AIRepository {
 
+        private final List<AIProviderConfig> configs = new ArrayList<>();
+
         @Override
         public AIChat getChat(String refID) {
             return null;
+        }
+
+        @Override
+        public AIProviderConfig saveProviderConfig(AIProviderConfig config) {
+            if (!configs.contains(config)) configs.add(config);
+            return config;
+        }
+
+        @Override
+        public void deleteProviderConfig(AIProviderConfig config) {
+            configs.remove(config);
+        }
+
+        @Override
+        public AIProviderConfig getProviderConfig(String guid) {
+            for (AIProviderConfig c : configs) if (guid != null && guid.equals(c.getGUID())) return c;
+            return null;
+        }
+
+        @Override
+        public List<AIProviderConfig> getAllProviderConfigs() {
+            return new ArrayList<>(configs);
         }
 
         @Override

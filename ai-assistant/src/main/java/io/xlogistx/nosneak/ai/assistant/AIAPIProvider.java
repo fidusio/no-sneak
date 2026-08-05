@@ -5,6 +5,7 @@ import io.xlogistx.api.ai.AIAPIBuilder;
 import io.xlogistx.nosneak.ai.AIException;
 import io.xlogistx.nosneak.ai.AIModelCatalog;
 import io.xlogistx.nosneak.ai.AIProvider;
+import io.xlogistx.nosneak.ai.model.AIProviderConfig;
 import io.xlogistx.nosneak.ai.model.AIRequest;
 import io.xlogistx.nosneak.ai.model.AIResponse;
 import org.zoxweb.server.http.HTTPAPIEndPoint;
@@ -12,24 +13,39 @@ import org.zoxweb.server.task.TaskUtil;
 import org.zoxweb.shared.security.APIKey;
 import org.zoxweb.shared.task.ConsumerCallback;
 import org.zoxweb.shared.util.NVGenericMap;
+import org.zoxweb.shared.util.SUS;
 
 import java.io.IOException;
 import java.time.Instant;
 
 public class AIAPIProvider implements AIProvider {
 
+    private final AIProviderConfig config;
     private APIKey<String> key;
     private final AIAPIBuilder.AIAPIType type;
     private AIAPI api;
     private final ModelCatalog modelCatalog;
 
-    public AIAPIProvider(APIKey<String> key, AIAPIBuilder.AIAPIType type) {
+    public AIAPIProvider(AIProviderConfig config, APIKey<String> key, AIAPIBuilder.AIAPIType type) {
+        this.config = config;
         this.key = key;
         this.type = type;
 
         api = AIAPIBuilder.createAIAPI(type, null, key.getAPIKey());
         api.updateExecutor(TaskUtil.defaultTaskProcessor());
         modelCatalog = new ModelCatalog();
+    }
+
+    public AIProviderConfig getConfig() {
+        return config;
+    }
+
+    /**
+     * @return the endpoint this provider talks to: its own base URL, or the provider type's default
+     */
+    public String getBaseURL() {
+        String url = SUS.trimOrNull(config.getBaseURL());
+        return (url == null) ? type.getURL() : url;
     }
 
     @Override
@@ -58,7 +74,7 @@ public class AIAPIProvider implements AIProvider {
     }
 
     private AIAPI bound() {
-        api.updateURL(type.getURL());
+        api.updateURL(getBaseURL());
         api.lookupEndPoint(AIAPIBuilder.Command.MODELS.getName()).setAuthorizationEncoder(
                 type == AIAPIBuilder.AIAPIType.ANTHROPIC
                         ? AIAPIBuilder.ANTHROPIC_AUTHORIZATION
@@ -89,20 +105,33 @@ public class AIAPIProvider implements AIProvider {
         bound().asyncCompletion(req.getModel(), req.getContent(), maxTokens, skill, callback);
     }
 
+    /**
+     * Identity, and the registrar key. The config GUID rather than the name, so two providers can
+     * share one credential and either can be relabelled without orphaning the chats bound to it.
+     */
+    @Override
+    public String getID() {
+        return config.getGUID();
+    }
+
     @Override
     public String getDescription() {
         return type.getDescription();
     }
 
+    /**
+     * The editable label. Falls back to the credential's name for a config saved without one.
+     */
     @Override
     public String getName() {
-        return key.getName();
+        String label = config.getName();
+        return SUS.isEmpty(label) ? key.getName() : label;
     }
 
-    public static AIAPIProvider create(APIKey<String> key) {
-        String provider = (key.getProperties() != null) ? key.getProperties().getValue("provider") : null;
-        AIAPIBuilder.AIAPIType type = resolveType(provider);
-        return (type == null) ? null : new AIAPIProvider(key, type);
+    public static AIAPIProvider create(AIProviderConfig config, APIKey<String> key) {
+        if (config == null || key == null) return null;
+        AIAPIBuilder.AIAPIType type = resolveType(config.getProviderType());
+        return (type == null) ? null : new AIAPIProvider(config, key, type);
     }
 
     public static AIAPIBuilder.AIAPIType resolveType(String provider) {
