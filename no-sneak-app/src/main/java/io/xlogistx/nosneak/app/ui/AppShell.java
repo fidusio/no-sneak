@@ -5,6 +5,7 @@ import io.xlogistx.nosneak.ai.assistant.AssistantContext;
 import io.xlogistx.nosneak.ai.assistant.AssistantPanel;
 import io.xlogistx.nosneak.app.ui.assistant.AssistantStorage;
 import io.xlogistx.nosneak.app.ui.utility.AppContext;
+import io.xlogistx.nosneak.app.ui.utility.AppInfoPanel;
 import io.xlogistx.nosneak.app.ui.utility.Navigator;
 import io.xlogistx.nosneak.app.ui.assistant.SessionAICredentialSource;
 
@@ -31,6 +32,7 @@ public class AppShell extends JPanel {
         content.add(new ScanPanel(ctx), Navigator.Screen.SCAN.name());
         content.add(new SubjectSecManagerPanel(ctx), Navigator.Screen.MANAGER.name());
         content.add(assistantPanel, Navigator.Screen.ASSISTANT.name());
+        content.add(new AppInfoPanel(ctx), Navigator.Screen.INFO.name());
 
         add(buildContent(), BorderLayout.CENTER);
         add(buildFooter(), BorderLayout.SOUTH);

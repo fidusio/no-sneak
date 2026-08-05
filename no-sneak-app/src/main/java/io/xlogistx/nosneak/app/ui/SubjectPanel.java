@@ -1,9 +1,11 @@
 package io.xlogistx.nosneak.app.ui;
 
 import io.xlogistx.api.ai.AIAPIBuilder;
+import io.xlogistx.datastore.h2p.H2PDataStore;
 import io.xlogistx.gui.GUIUtil;
 import io.xlogistx.gui.IconUtil;
 import io.xlogistx.gui.*;
+import io.xlogistx.nosneak.app.Main;
 import io.xlogistx.nosneak.app.ui.utility.*;
 import net.miginfocom.swing.MigLayout;
 import org.zoxweb.shared.crypto.CIPassword;
@@ -19,6 +21,13 @@ import org.zoxweb.shared.util.NVPair;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.datatransfer.StringSelection;
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.*;
 
 import static io.xlogistx.gui.PanelBuilder.*;
@@ -91,12 +100,15 @@ public class SubjectPanel extends JPanel {
 
         cardStack.add(new JScrollPane(buildProfileArea()), "Profile");
         cardStack.add(new JScrollPane(buildCredentials()), "Credentials");
+        cardStack.add(new JScrollPane(buildBackupArea()), "Backup");
         cardStack.show("Profile");
 
         JToggleButton profileButton = new JToggleButton("Profile");
         profileButton.addActionListener(_ -> cardStack.show("Profile"));
         JToggleButton credentialButton = new JToggleButton("Credentials");
         credentialButton.addActionListener(_ -> cardStack.show("Credentials"));
+        JToggleButton backupButton = new JToggleButton("Backup");
+        backupButton.addActionListener(_ -> cardStack.show("Backup"));
 
         // Panels are built once (before login). Refresh on both login and logout: the Session
         // getters return empty once logged out, so this also clears the previous subject's rows
@@ -137,7 +149,160 @@ public class SubjectPanel extends JPanel {
             }
         });
 
-        add(PanelBuilder.buildDefaultSplitPanel(cardStack.view(), profileButton, credentialButton));
+        add(PanelBuilder.buildDefaultSplitPanel(cardStack.view(), profileButton, credentialButton, backupButton));
+    }
+
+    // ============================ Backup ============================
+
+    private static final String[] RESTORE_MODES = {"Merge into this store", "Replace this store"};
+
+    private JPanel buildBackupArea() {
+        JPanel area = new JPanel(new MigLayout("wrap 1, insets 0", "[grow,fill]"));
+        area.add(buildDBBackup());
+        area.add(new JSeparator(), "gaptop 8, gapbottom 8");
+        area.add(buildDBRestore());
+
+        JPanel anchor = new JPanel(new BorderLayout());
+        anchor.add(area, BorderLayout.NORTH);
+        return anchor;
+    }
+
+    private JPanel buildDBRestore() {
+        JPanel panel = new JPanel(new MigLayout("wrap 1, insets 12, gapy 6", "[grow,fill]"));
+
+        panel.add(PanelBuilder.title("Restore"));
+
+        JTextArea note = new JTextArea("""
+                Loads a backup archive back into the data store.
+
+                Merge keeps what is already here and adds or overwrites records from the archive. \
+                Replace clears the store first, so it ends up holding exactly what the archive holds.
+
+                You are signed out when the restore finishes — the account you are signed in as may \
+                have been rewritten or removed by it.""");
+        note.setEditable(false);
+        note.setOpaque(false);
+        note.setLineWrap(true);
+        note.setWrapStyleWord(true);
+        note.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
+        panel.add(note, "width 100::480");
+
+        JComboBox<String> mode = new JComboBox<>(RESTORE_MODES);
+        JButton restore = new JButton("Restore backup", new IconUtil.RefreshIcon(16));
+        JLabel status = new JLabel(" ");
+        status.setForeground(UIManager.getColor("Label.disabledForeground"));
+
+        restore.addActionListener(_ -> onRestoreBackup(restore, status, mode.getSelectedIndex()));
+        panel.add(mode, "growx 0, width 240!");
+        panel.add(restore, "growx 0");
+        panel.add(status);
+
+        return panel;
+    }
+
+    private void onRestoreBackup(JButton restore, JLabel status, int modeIndex) {
+        if (!(ctx.session().getDomainSecurityManager().getDataStore() instanceof H2PDataStore ds)) {
+            JOptionPane.showMessageDialog(this, "This data store cannot be restored.",
+                    "Restore", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        H2PDataStore.RestoreMode mode = modeIndex == 1
+                ? H2PDataStore.RestoreMode.WIPE_AND_LOAD
+                : H2PDataStore.RestoreMode.MERGE;
+
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("Restore backup");
+        if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) return;
+
+        File source = chooser.getSelectedFile();
+        String warning = mode == H2PDataStore.RestoreMode.WIPE_AND_LOAD
+                ? "Every record in this store will be deleted and replaced with the contents of\n"
+                + source.getName() + ".\n\nThis cannot be undone. Continue?"
+                : "Records from " + source.getName() + " will be added to this store, overwriting\n"
+                + "any that share the same id.\n\nContinue?";
+
+        if (JOptionPane.showConfirmDialog(this, warning, "Restore backup",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE) != JOptionPane.OK_OPTION) {
+            return;
+        }
+
+        status.setText("Restoring…");
+        BackgroundTask.run(this, restore,
+                () -> {
+                    try (InputStream in = new BufferedInputStream(new FileInputStream(source))) {
+                        return ds.restore(in, mode);
+                    }
+                },
+                _ -> {
+                    status.setText("Restored " + source.getName());
+                    ctx.session().logout();
+                    JOptionPane.showMessageDialog(this,
+                            "Restore complete. You have been signed out — sign in again to use the "
+                                    + "restored data.");
+                });
+    }
+
+    private JPanel buildDBBackup() {
+        JPanel panel = new JPanel(new MigLayout("wrap 1, insets 12, gapy 6", "[grow,fill]"));
+
+        panel.add(PanelBuilder.title("Backup"));
+
+        JTextArea note = new JTextArea("""
+                Exports every record in the data store — subjects, credentials, chats and skills — \
+                as a zip archive.
+
+                The archive is NOT encrypted. API keys are stored in the clear, so keep the file \
+                somewhere you would keep the keys themselves.""");
+        note.setEditable(false);
+        note.setOpaque(false);
+        note.setLineWrap(true);
+        note.setWrapStyleWord(true);
+        note.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
+        panel.add(note, "width 100::480");
+
+        JButton export = new JButton("Export backup", new IconUtil.SaveIcon(16));
+        JLabel status = new JLabel(" ");
+        status.setForeground(UIManager.getColor("Label.disabledForeground"));
+
+        export.addActionListener(_ -> onExportBackup(export, status));
+        panel.add(export, "growx 0");
+        panel.add(status);
+
+        return panel;
+    }
+
+    private void onExportBackup(JButton export, JLabel status) {
+        if (!(ctx.session().getDomainSecurityManager().getDataStore() instanceof H2PDataStore ds)) {
+            JOptionPane.showMessageDialog(this, "This data store cannot be exported.",
+                    "Backup", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("Export backup");
+        chooser.setSelectedFile(new File(Main.dbName + "-backup.zip"));
+        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
+
+        File target = chooser.getSelectedFile();
+        if (target.exists() && JOptionPane.showConfirmDialog(this,
+                target.getName() + " already exists. Replace it?", "Export backup",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE) != JOptionPane.OK_OPTION) {
+            return;
+        }
+
+        status.setText("Exporting…");
+        BackgroundTask.run(this, export,
+                () -> {
+                    try (OutputStream out = new BufferedOutputStream(new FileOutputStream(target))) {
+                        ds.dumpZip(out);
+                    }
+                    return target.length();
+                },
+                size -> {
+                    status.setText("Exported " + target.getName() + " — " + (size / 1024) + " KB");
+                    JOptionPane.showMessageDialog(this, "Backup written to\n" + target.getAbsolutePath());
+                });
     }
 
     // ============================ Profile & identifiers ============================

@@ -3,6 +3,7 @@ package io.xlogistx.nosneak.app.ui.utility;
 import org.zoxweb.server.security.CryptoUtil;
 import org.zoxweb.server.security.HashUtil;
 import org.zoxweb.shared.app.AppIDDefault;
+import org.zoxweb.shared.app.AppVersionDAO;
 import org.zoxweb.shared.crypto.CIPassword;
 import org.zoxweb.shared.crypto.CryptoConst;
 import org.zoxweb.shared.data.PropertyDAO;
@@ -32,7 +33,7 @@ import java.util.*;
 public class Session {
     private static final String PASSWORD_RULES_MESSAGE = """
             Your password must meet all of the following requirements:
-  
+            
             • Be at least 8 characters long.
             • Include at least one uppercase letter (A–Z).
             • Include at least one number (0–9).

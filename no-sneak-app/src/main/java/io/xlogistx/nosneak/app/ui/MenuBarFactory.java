@@ -15,14 +15,9 @@ public class MenuBarFactory {
 
         // create menu bar items
         JMenu file = new JMenu("File");
-        JMenu view = new JMenu("View");
         JMenu tools = new JMenu("Tools");
         JMenu help = new JMenu("Help");
         JMenu mode = new JMenu("Mode");
-
-        // create menu bar item
-        JMenuItem menuItem = new JMenuItem("Test");
-        menuItem.addActionListener(e -> System.out.println("test"));
 
         JMenuItem logout = new JMenuItem("Logout");
         logout.setMaximumSize(logout.getPreferredSize());
@@ -36,27 +31,39 @@ public class MenuBarFactory {
 
         JMenuItem scanner = new JMenuItem("Network scanner");
         scanner.addActionListener(e -> ctx.nav().show(Navigator.Screen.SCAN));
-        JMenuItem pqc = new JMenuItem("PQC file sharing");
-        pqc.addActionListener(e -> ctx.nav().show(Navigator.Screen.MAIN));
-        JMenuItem subject = new JMenuItem("Subject Profile");
-        subject.addActionListener(e -> ctx.nav().show(Navigator.Screen.SUBJECT));
-        JMenuItem manager = new JMenuItem("Subject Security Manager");
+
+//      JMenuItem pqc = new JMenuItem("PQC file sharing");
+//      pqc.addActionListener(e -> ctx.nav().show(Navigator.Screen.MAIN));
+
+        JMenuItem settings = new JMenuItem("Settings");
+        settings.addActionListener(e -> ctx.nav().show(Navigator.Screen.SUBJECT));
+
+        JMenuItem manager = new JMenuItem("ACL Tool");
         manager.addActionListener(e -> ctx.nav().show(Navigator.Screen.MANAGER));
-        JMenuItem aiChat = new JMenuItem("AI Chat");
+
+        JMenuItem aiChat = new JMenuItem("AI Assistant");
         aiChat.addActionListener(_ -> ctx.nav().show(Navigator.Screen.ASSISTANT));
 
-        view.add(scanner);
-        view.add(pqc);
-        view.add(subject);
-        view.add(manager);
-        view.add(aiChat);
+        JMenuItem appInfo = new JMenuItem("App Info");
+        appInfo.addActionListener(_ -> ctx.nav().show(Navigator.Screen.INFO));
 
-        file.add(menuItem);
+        // FILE
+        file.add(settings);
+
+        // TOOLS
+        tools.add(scanner);
+        tools.add(manager);
+        tools.add(aiChat);
+//        tools.add(pqc);
+
+        // HELP
+        help.add(appInfo);
+
+
         mode.add(modeToggle);
 
         // add menu bar items to menu bar
         menuBar.add(file);
-        menuBar.add(view);
         menuBar.add(tools);
         menuBar.add(help);
         menuBar.add(Box.createHorizontalGlue());

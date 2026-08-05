@@ -12,6 +12,7 @@ import io.xlogistx.nosneak.app.ui.utility.AppContext;
 import io.xlogistx.opsec.OPSecUtil;
 import org.zoxweb.server.security.DomainSecurityManagerDefault;
 import org.zoxweb.shared.api.APIDataStore;
+import org.zoxweb.shared.app.AppVersionDAO;
 import org.zoxweb.shared.crypto.CIPassword;
 import org.zoxweb.shared.security.DomainSecurityManager;
 import org.zoxweb.shared.security.SubjectAPIKey;
@@ -27,6 +28,7 @@ import java.util.function.Consumer;
 
 public class Main {
 
+    public final static AppVersionDAO VERSION = new AppVersionDAO("NOSNEAK::1.0.0");
     public static final String dbName = "no-sneak";
 
     public static void main(String... args) {
