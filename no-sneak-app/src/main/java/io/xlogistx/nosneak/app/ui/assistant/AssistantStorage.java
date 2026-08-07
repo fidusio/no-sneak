@@ -1,6 +1,7 @@
 package io.xlogistx.nosneak.app.ui.assistant;
 
 import io.xlogistx.nosneak.ai.AIRepository;
+import io.xlogistx.nosneak.ai.model.AICapture;
 import io.xlogistx.nosneak.ai.model.AIChat;
 import io.xlogistx.nosneak.ai.model.AIProviderConfig;
 import io.xlogistx.nosneak.ai.model.AISkill;
@@ -106,5 +107,35 @@ public class AssistantStorage implements AIRepository {
         String o = owner();
         if (SUS.isEmpty(o)) return List.of();
         return ds.userSearch(o, AIProviderConfig.NVC_AI_PROVIDER_CONFIG, null);
+    }
+
+    @Override
+    public AICapture saveCapture(AICapture capture) {
+        if (SUS.isNotEmpty(capture.getGUID())) {
+            capture.setLastTimeUpdated(System.currentTimeMillis());
+            return ds.update(capture);
+        }
+        capture.setSubjectGUID(owner());
+        return ds.insert(capture);
+    }
+
+    @Override
+    public void deleteCapture(AICapture capture) {
+        ds.delete(capture, true);
+    }
+
+    @Override
+    public AICapture getCapture(String guid) {
+        List<AICapture> found =
+                ds.userSearchByID(owner(), AICapture.NVC_AI_CAPTURE, guid);
+        return found.isEmpty() ? null : found.getFirst();
+    }
+
+    @Override
+    public List<AICapture> getAllCaptures() {
+        String o = owner();
+        if (SUS.isEmpty(o)) return List.of();
+        return ds.userSearch(o, AICapture.NVC_AI_CAPTURE, List.of("subject_guid", "name", "description", "from_area",
+                "width", "height", "num_bytes", "thumbnail", "creation_ts"));
     }
 }

@@ -2,11 +2,13 @@ package io.xlogistx.nosneak.ai.assistant.panels;
 
 import io.xlogistx.gui.BackgroundTask;
 import io.xlogistx.gui.CardStack;
+import io.xlogistx.gui.GUIUtil;
 import io.xlogistx.gui.IconUtil;
 import io.xlogistx.gui.PanelBuilder;
 import io.xlogistx.nosneak.ai.AIProvider;
 import io.xlogistx.nosneak.ai.assistant.AssistantCallback;
 import io.xlogistx.nosneak.ai.assistant.AssistantContext;
+import io.xlogistx.nosneak.ai.assistant.CaptureArea;
 import io.xlogistx.nosneak.ai.model.*;
 import net.miginfocom.swing.MigLayout;
 import org.zoxweb.shared.util.NVEntity;
@@ -26,7 +28,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
-import java.util.function.Supplier;
 
 import static io.xlogistx.nosneak.ai.assistant.AssistantUtil.chatBubble;
 import static io.xlogistx.nosneak.ai.assistant.panels.PanelSupport.fillModels;
@@ -55,7 +56,7 @@ public class ChatPanel extends JPanel {
     private BufferedImage pendingImage;
     private String pendingImageName;
     private final JFileChooser imageChooser = new JFileChooser();
-    private Supplier<List<ScreenCapture>> captureSource;
+    private JButton captureButton;
 
     private final JCheckBox sendFullHistory = new JCheckBox("Send history", true);
 
@@ -82,13 +83,6 @@ public class ChatPanel extends JPanel {
 
     public void setOnSaveAsSkill(Consumer<String> onSaveAsSkill) {
         this.onSaveAsSkill = onSaveAsSkill;
-    }
-
-    /**
-     * The live capture list, read on every popup so a capture taken after this wiring still shows.
-     */
-    public void setCaptureSource(Supplier<List<ScreenCapture>> captureSource) {
-        this.captureSource = captureSource;
     }
 
     /**
@@ -215,9 +209,22 @@ public class ChatPanel extends JPanel {
         attachSkillButton.setMargin(new Insets(0, 0, 0, 0));
         attachSkillButton.setPreferredSize(new Dimension(28, 28));
 
+        captureButton = new JButton(new IconUtil.CameraIcon(16));
+        captureButton.putClientProperty("JButton.buttonType", "toolBarButton");
+        captureButton.setFocusable(false);
+        captureButton.setMargin(new Insets(0, 0, 0, 0));
+        captureButton.setPreferredSize(new Dimension(28, 28));
+        captureButton.addActionListener(_ -> onCaptureButton());
+        refreshCaptureTooltip();
+
+        JPanel attachButtons = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));
+        attachButtons.setOpaque(false);
+        attachButtons.add(attachSkillButton);
+        attachButtons.add(captureButton);
+
         JPanel addSkillHolder = new JPanel(new BorderLayout());
         addSkillHolder.setOpaque(false);
-        addSkillHolder.add(attachSkillButton, BorderLayout.NORTH);
+        addSkillHolder.add(attachButtons, BorderLayout.NORTH);
 
         JPanel inputBox = new JPanel(new BorderLayout(4, 0));
         inputBox.setBackground(composer.getBackground());
@@ -361,7 +368,7 @@ public class ChatPanel extends JPanel {
                 JOptionPane.showMessageDialog(this, "Send failed: " + err.getMessage(), "Send", JOptionPane.ERROR_MESSAGE);
             });
 
-            if (image != null) p.asyncImageSend(wire, skillSb.toString(), image, callback);
+            if (image != null) p.asyncImageSend(wire, skillSb.toString(), callback, image);
             else p.asyncSend(wire, skillSb.toString(), callback);
         } catch (Exception e) {
             sendButton.setEnabled(true);
@@ -455,8 +462,11 @@ public class ChatPanel extends JPanel {
 
         content.add(sectionLabel("Image for this message"), "gaptop 10");
         content.add(imageRow(popup));
-        for (ScreenCapture capture : captures())
-            content.add(captureRow(capture, popup));
+
+        content.add(sectionLabel("Capture"), "gaptop 10");
+        content.add(captureOnceRow(popup));
+        for (CaptureArea area : ctx.getCaptureAreas())
+            content.add(areaRow(area, popup));
 
         popup.add(content);
         popup.show(attachSkillButton, 0, -popup.getPreferredSize().height);
@@ -479,25 +489,100 @@ public class ChatPanel extends JPanel {
         return button;
     }
 
-    private List<ScreenCapture> captures() {
-        if (captureSource == null) return List.of();
-        List<ScreenCapture> all = captureSource.get();
-        if (all == null) return List.of();
-        return all.stream().filter(c -> c.getImage() != null).toList();
+    /**
+     * The one-click path: re-shoots the area used last, or falls back to a drag when none is
+     * defined. It attaches rather than sends, because a saved rectangle points at whatever moved
+     * into that space since it was defined.
+     */
+    private void onCaptureButton() {
+        CaptureArea area = defaultArea();
+        if (area == null) capture(null, null, false);
+        else shootArea(area, false);
     }
 
-    private JButton captureRow(ScreenCapture capture, JPopupMenu popup) {
-        BufferedImage image = capture.getImage();
-        JButton button = new JButton(capture.getName());
+    private void shootArea(CaptureArea area, boolean sendNow) {
+        area.setLastUsed(System.currentTimeMillis());
+        refreshCaptureTooltip();
+        capture(area.getBounds(), area.getName(), sendNow);
+    }
+
+    private CaptureArea defaultArea() {
+        CaptureArea latest = null;
+        for (CaptureArea area : ctx.getCaptureAreas())
+            if (latest == null || area.getLastUsed() >= latest.getLastUsed()) latest = area;
+        return latest;
+    }
+
+    private void refreshCaptureTooltip() {
+        if (captureButton == null) return;
+        CaptureArea area = defaultArea();
+        captureButton.setToolTipText(area == null
+                ? "Drag out a region and attach it to this message"
+                : "Capture " + area.getName() + " and attach it");
+    }
+
+    private JButton captureOnceRow(JPopupMenu popup) {
+        JButton button = new JButton("Capture area...", new IconUtil.AreaIcon(14));
         button.putClientProperty("JButton.buttonType", "borderless");
         button.setHorizontalAlignment(SwingConstants.LEFT);
         button.setFocusable(false);
-        button.setToolTipText("Attach this capture (" + image.getWidth() + "x" + image.getHeight() + ")");
+        button.setToolTipText("Drag out a region and attach it to this message");
         button.addActionListener(_ -> {
             popup.setVisible(false);
-            attachImage(image, capture.getName());
+            capture(null, null, false);
         });
         return button;
+    }
+
+    private JPanel areaRow(CaptureArea area, JPopupMenu popup) {
+        JButton attach = new JButton(area.getName(), new IconUtil.CameraIcon(14));
+        attach.putClientProperty("JButton.buttonType", "borderless");
+        attach.setHorizontalAlignment(SwingConstants.LEFT);
+        attach.setFocusable(false);
+        attach.setToolTipText("Capture " + CaptureSupport.region(area.getBounds()) + " and attach it");
+        attach.addActionListener(_ -> {
+            popup.setVisible(false);
+            shootArea(area, false);
+        });
+
+        JButton send = GUIUtil.iconButton(new IconUtil.NextIcon(14), true);
+        send.setToolTipText("Capture and send straight away");
+        send.setFocusable(false);
+        send.addActionListener(_ -> {
+            popup.setVisible(false);
+            shootArea(area, true);
+        });
+
+        JPanel row = new JPanel(new BorderLayout());
+        row.setOpaque(false);
+        row.add(attach, BorderLayout.CENTER);
+        row.add(send, BorderLayout.EAST);
+        return row;
+    }
+
+    /**
+     * Shoots the region, saves it, and attaches it. The saved row is what makes the image
+     * recoverable later; the attached BufferedImage is what goes on the wire.
+     */
+    private void capture(Rectangle bounds, String areaName, boolean sendNow) {
+        Window window = SwingUtilities.getWindowAncestor(this);
+        String name = (areaName != null ? areaName : "Capture")
+                + " " + PanelSupport.timestamp(System.currentTimeMillis());
+
+        BackgroundTask.run(this, captureButton, () -> {
+            BufferedImage shot = CaptureSupport.shoot(window, bounds);
+            if (shot == null) return null;
+            ctx.saveCapture(CaptureSupport.toCapture(shot, name, areaName));
+            return shot;
+        }, shot -> {
+            if (shot == null) {
+                JOptionPane.showMessageDialog(this, "Nothing was selected. Drag out an area to capture it.",
+                        "Capture", JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+            attachImage(shot, name);
+            if (sendNow) onSend();
+        });
     }
 
     private void chooseImage() {
@@ -623,6 +708,7 @@ public class ChatPanel extends JPanel {
         sendFullHistory.setSelected(true);
         pendingSkills.clear();
         clearPendingImage();
+        refreshCaptureTooltip();
         composer.setText("");
         promptCards.show("empty");
     }

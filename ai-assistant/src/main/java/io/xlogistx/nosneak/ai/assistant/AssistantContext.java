@@ -3,10 +3,7 @@ package io.xlogistx.nosneak.ai.assistant;
 import io.xlogistx.nosneak.ai.AIProvider;
 import io.xlogistx.nosneak.ai.AIRepository;
 import io.xlogistx.nosneak.ai.AICredentialSource;
-import io.xlogistx.nosneak.ai.model.AIChat;
-import io.xlogistx.nosneak.ai.model.AIProviderConfig;
-import io.xlogistx.nosneak.ai.model.AIProviderRegistrar;
-import io.xlogistx.nosneak.ai.model.AISkill;
+import io.xlogistx.nosneak.ai.model.*;
 import org.zoxweb.shared.data.ReferenceIDDAO;
 import org.zoxweb.shared.security.APIKey;
 import org.zoxweb.shared.util.SUS;
@@ -17,6 +14,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 public class AssistantContext {
     private final AICredentialSource credentials;
@@ -32,6 +30,8 @@ public class AssistantContext {
     private final Map<String, AIChat> chatCache = new ConcurrentHashMap<>();
     private final Map<String, AISkill> skillCache = new ConcurrentHashMap<>();
     private final Map<String, AIProviderConfig> configCache = new ConcurrentHashMap<>();
+
+    private final List<CaptureArea> captureAreas = new CopyOnWriteArrayList<>();
 
     public AssistantContext(AICredentialSource credentials, AIRepository repository) {
         this.credentials = credentials;
@@ -186,6 +186,35 @@ public class AssistantContext {
         }
     }
 
+    public List<CaptureArea> getCaptureAreas() {
+        return captureAreas;
+    }
+
+    public void addCaptureArea(CaptureArea area){
+        captureAreas.add(area);
+    }
+
+    public void removeCaptureArea(CaptureArea area){
+        captureAreas.remove(area);
+    }
+
+    public List<AICapture> getAllCaptures() {
+        return repository.getAllCaptures();
+    }
+
+    public AICapture getCapture(String guid)  {
+        return repository.getCapture(guid);
+    }
+
+    public AICapture saveCapture(AICapture c) {
+        return repository.saveCapture(c);
+    }
+
+    public void deleteCapture(AICapture c)  {
+        repository.deleteCapture(c);
+    }
+
+
     public void resetContext() {
         AIChat old = currentChat;
         currentChat = null;
@@ -194,6 +223,7 @@ public class AssistantContext {
         chatCache.clear();
         skillCache.clear();
         configCache.clear();
+        captureAreas.clear();
         pcs.firePropertyChange("currentChat", old, null);
     }
 }

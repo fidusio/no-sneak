@@ -58,9 +58,8 @@ public class AssistantPanel extends JPanel {
         providersPanel.setOnProvidersChanged(historyPanel::refreshProviderCombos);
         skillsPanel.setOnSkillRemoved(chatPanel::dropPendingSkill);
 
-        chatPanel.setCaptureSource(capturePanel::getCaptures);
-        capturePanel.setOnSendToChat(capture -> {
-            chatPanel.attachImage(capture.getImage(), capture.getName());
+        capturePanel.setOnSendToChat((image, name) -> {
+            chatPanel.attachImage(image, name);
             chatPanel.showPrompt();
             cardStack.show("chat");
             chatButton.setSelected(true);
@@ -96,7 +95,11 @@ public class AssistantPanel extends JPanel {
             providersPanel.refreshList();
             cardStack.show("providers");
         });
-        captureButton.addActionListener(_ -> cardStack.show("capture"));
+        captureButton.addActionListener(_ -> {
+            capturePanel.refreshAreas();
+            capturePanel.refreshCaptures();
+            cardStack.show("capture");
+        });
 
         chatButton.setSelected(true);
 

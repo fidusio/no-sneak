@@ -2,6 +2,7 @@ package io.xlogistx.nosneak.ai.assistant;
 
 import io.xlogistx.nosneak.ai.AICredentialSource;
 import io.xlogistx.nosneak.ai.AIRepository;
+import io.xlogistx.nosneak.ai.model.AICapture;
 import io.xlogistx.nosneak.ai.model.AIChat;
 import com.formdev.flatlaf.FlatLaf;
 import com.formdev.flatlaf.FlatLightLaf;
@@ -76,6 +77,25 @@ class AssistantPanelTest {
         @Override
         public AIChat getChat(String refID) {
             return null;
+        }
+
+        @Override
+        public AICapture saveCapture(AICapture capture) {
+            return capture;
+        }
+
+        @Override
+        public void deleteCapture(AICapture capture) {
+        }
+
+        @Override
+        public AICapture getCapture(String guid) {
+            return null;
+        }
+
+        @Override
+        public List<AICapture> getAllCaptures() {
+            return List.of();
         }
 
         @Override

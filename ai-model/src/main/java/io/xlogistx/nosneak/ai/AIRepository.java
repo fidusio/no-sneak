@@ -1,5 +1,6 @@
 package io.xlogistx.nosneak.ai;
 
+import io.xlogistx.nosneak.ai.model.AICapture;
 import io.xlogistx.nosneak.ai.model.AIChat;
 import io.xlogistx.nosneak.ai.model.AIProviderConfig;
 import io.xlogistx.nosneak.ai.model.AISkill;
@@ -36,4 +37,13 @@ public interface AIRepository {
     AIProviderConfig getProviderConfig(String guid);
 
     List<AIProviderConfig> getAllProviderConfigs();
+
+
+    AICapture saveCapture(AICapture capture);
+
+    void deleteCapture(AICapture capture);
+
+    AICapture getCapture(String guid);
+
+    List<AICapture> getAllCaptures();
 }

@@ -1,6 +1,7 @@
 package io.xlogistx.nosneak.ai.assistant;
 
 import io.xlogistx.nosneak.ai.AIRepository;
+import io.xlogistx.nosneak.ai.model.AICapture;
 import io.xlogistx.nosneak.ai.model.AIChat;
 import io.xlogistx.nosneak.ai.model.AIProviderConfig;
 import io.xlogistx.nosneak.ai.model.AISkill;
@@ -29,7 +30,30 @@ public class AssistantContextTest {
         private final Map<String, AIChat> chats = new LinkedHashMap<>();
         private final Map<String, AISkill> skills = new LinkedHashMap<>();
         private final Map<String, AIProviderConfig> configs = new LinkedHashMap<>();
+        private final Map<String, AICapture> captures = new LinkedHashMap<>();
         private int seq;
+
+        @Override
+        public AICapture saveCapture(AICapture capture) {
+            if (capture.getGUID() == null || capture.getGUID().isEmpty()) capture.setGUID("capture-" + ++seq);
+            captures.put(capture.getGUID(), capture);
+            return capture;
+        }
+
+        @Override
+        public void deleteCapture(AICapture capture) {
+            if (capture.getGUID() != null) captures.remove(capture.getGUID());
+        }
+
+        @Override
+        public AICapture getCapture(String guid) {
+            return captures.get(guid);
+        }
+
+        @Override
+        public List<AICapture> getAllCaptures() {
+            return new ArrayList<>(captures.values());
+        }
 
         @Override
         public AIProviderConfig saveProviderConfig(AIProviderConfig config) {

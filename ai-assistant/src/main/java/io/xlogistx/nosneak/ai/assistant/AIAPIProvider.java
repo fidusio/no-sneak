@@ -20,6 +20,8 @@ import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 
 public class AIAPIProvider implements AIProvider {
 
@@ -107,7 +109,7 @@ public class AIAPIProvider implements AIProvider {
     @Override
     public void asyncSend(AIRequest req, String skill, ConsumerCallback<NVGenericMap> callback) throws AIException {
         int maxTokens = (req.getMaxTokens() != null) ? req.getMaxTokens() : 1024;
-        bound().asyncCompletion(req.getModel(), req.getContent(), maxTokens, skill, callback);
+        bound().asyncCompletion(callback, req.getModel(), req.getContent(), maxTokens, skill);
     }
 
     /**
@@ -116,24 +118,31 @@ public class AIAPIProvider implements AIProvider {
      * {@link AIAPI#asyncCompletion} does it internally.
      */
     @Override
-    public void asyncImageSend(AIRequest req, String skill, BufferedImage image, ConsumerCallback<NVGenericMap> callback) throws AIException {
+    public void asyncImageSend(AIRequest req, String skill, ConsumerCallback<NVGenericMap> callback, BufferedImage... image) throws AIException {
         int maxTokens = (req.getMaxTokens() != null) ? req.getMaxTokens() : 1024;
 
-        UByteArrayOutputStream baos = new UByteArrayOutputStream();
-        try {
-            if (image == null || !ImageIO.write(image, IMAGE_TYPE, baos))
-                throw new IOException("cannot encode the image as " + IMAGE_TYPE);
-        } catch (IOException e) {
-            throw new AIException(AIException.Kind.PROVIDER, e);
+        UByteArrayOutputStream[] baos = new UByteArrayOutputStream[image != null ? image.length : 0];
+
+
+        for(int i = 0; i < baos.length; i++) {
+            UByteArrayOutputStream ubaos = new UByteArrayOutputStream();
+            try {
+                if (image[i] == null || !ImageIO.write(image[i], IMAGE_TYPE, ubaos))
+                    throw new IOException("cannot encode the image as " + IMAGE_TYPE);
+            } catch (IOException e) {
+                throw new AIException(AIException.Kind.PROVIDER, e);
+            }
+            baos[i] = ubaos;
         }
 
-        bound().asyncVisionCompletion(req.getModel(), AIAPI.toSkillPrompt(req.getContent(), skill),
-                maxTokens, baos, IMAGE_TYPE, callback);
+
+        bound().asyncVisionCompletion(callback, req.getModel(), AIAPI.toSkillPrompt(req.getContent(), skill),
+                maxTokens, IMAGE_TYPE, baos);
     }
 
     /**
      * Identity, and the registrar key. The config GUID rather than the name, so two providers can
-     * share one credential and either can be relabelled without orphaning the chats bound to it.
+     * share one credential and either can be relabeled without orphaning the chats bound to it.
      */
     @Override
     public String getID() {
