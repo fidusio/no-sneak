@@ -9,6 +9,8 @@ import org.zoxweb.shared.util.GetDescription;
 import org.zoxweb.shared.util.GetName;
 import org.zoxweb.shared.util.NVGenericMap;
 
+import java.awt.image.BufferedImage;
+
 
 /**
  * Main interface to implement for each type of provider (Claude, open AI, etc.).
@@ -32,6 +34,8 @@ public interface AIProvider extends GetName, GetDescription {
     AIResponse send(AIRequest req, String skill) throws AIException;
 
     void asyncSend(AIRequest req, String skill, ConsumerCallback<NVGenericMap> callback) throws AIException;
+
+    void asyncImageSend(AIRequest req, String skill, BufferedImage image, ConsumerCallback<NVGenericMap> callback) throws AIException;
 
     String getID();
 }

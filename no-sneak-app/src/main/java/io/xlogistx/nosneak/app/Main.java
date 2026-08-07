@@ -82,7 +82,7 @@ public class Main {
                 }
             });
 
-            JMenuBar menuBar = new MenuBarFactory().buildMenu(ctx);
+            JMenuBar menuBar = new MenuBarFactory(ctx).buildMenu();
             menuBar.setVisible(false);
             setJMenuBar(menuBar);
 

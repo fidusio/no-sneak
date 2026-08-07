@@ -12,7 +12,7 @@ import java.awt.*;
 /**
  * Visual test for the chat transcript — run its {@code main} and eyeball the result.
  * Renders {@link AssistantUtil#chatBubble} over the same transcript layout, scroll pane
- * and width constraints {@code AssistantPanel.buildPromptPanel} uses, under the same
+ * and width constraints {@code ChatPanel.buildPromptPanel} uses, under the same
  * FlatLaf look-and-feel and custom defaults {@code Main} installs, with nothing else on
  * screen — no composer, model selector or sidebar.
  * <p>

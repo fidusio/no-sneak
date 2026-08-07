@@ -9,16 +9,21 @@ import io.xlogistx.nosneak.ai.model.AIProviderConfig;
 import io.xlogistx.nosneak.ai.model.AIRequest;
 import io.xlogistx.nosneak.ai.model.AIResponse;
 import org.zoxweb.server.http.HTTPAPIEndPoint;
+import org.zoxweb.server.io.UByteArrayOutputStream;
 import org.zoxweb.server.task.TaskUtil;
 import org.zoxweb.shared.security.APIKey;
 import org.zoxweb.shared.task.ConsumerCallback;
 import org.zoxweb.shared.util.NVGenericMap;
 import org.zoxweb.shared.util.SUS;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.time.Instant;
 
 public class AIAPIProvider implements AIProvider {
+
+    private static final String IMAGE_TYPE = "png";
 
     private final AIProviderConfig config;
     private APIKey<String> key;
@@ -103,6 +108,27 @@ public class AIAPIProvider implements AIProvider {
     public void asyncSend(AIRequest req, String skill, ConsumerCallback<NVGenericMap> callback) throws AIException {
         int maxTokens = (req.getMaxTokens() != null) ? req.getMaxTokens() : 1024;
         bound().asyncCompletion(req.getModel(), req.getContent(), maxTokens, skill, callback);
+    }
+
+    /**
+     * The vision overloads take encoded bytes and a media subtype, and carry no skill argument, so
+     * the image is written to PNG here and the skill merged into the prompt the way
+     * {@link AIAPI#asyncCompletion} does it internally.
+     */
+    @Override
+    public void asyncImageSend(AIRequest req, String skill, BufferedImage image, ConsumerCallback<NVGenericMap> callback) throws AIException {
+        int maxTokens = (req.getMaxTokens() != null) ? req.getMaxTokens() : 1024;
+
+        UByteArrayOutputStream baos = new UByteArrayOutputStream();
+        try {
+            if (image == null || !ImageIO.write(image, IMAGE_TYPE, baos))
+                throw new IOException("cannot encode the image as " + IMAGE_TYPE);
+        } catch (IOException e) {
+            throw new AIException(AIException.Kind.PROVIDER, e);
+        }
+
+        bound().asyncVisionCompletion(req.getModel(), AIAPI.toSkillPrompt(req.getContent(), skill),
+                maxTokens, baos, IMAGE_TYPE, callback);
     }
 
     /**
