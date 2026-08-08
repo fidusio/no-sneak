@@ -53,8 +53,10 @@ public class ChatPanel extends JPanel {
     private JButton attachSkillButton;
     private final List<AISkill> pendingSkills = new ArrayList<>();
 
-    private BufferedImage pendingImage;
-    private String pendingImageName;
+    private final List<BufferedImage> pendingImages = new ArrayList<>();
+    private final List<String> pendingImageNames = new ArrayList<>();
+    private static final int AREA_LIST_MAX_HEIGHT = 160;
+
     private final JFileChooser imageChooser = new JFileChooser();
     private JButton captureButton;
 
@@ -70,7 +72,7 @@ public class ChatPanel extends JPanel {
         promptCards.show("empty");
         add(promptCards.view());
 
-        ctx.onChange("currentChat", e -> refreshPrompt());
+        ctx.onChange("currentChat", _ -> refreshPrompt());
     }
 
     public void setOnNewChat(Runnable onNewChat) {
@@ -90,8 +92,8 @@ public class ChatPanel extends JPanel {
      */
     public void attachImage(BufferedImage image, String name) {
         if (image == null) return;
-        pendingImage = image;
-        pendingImageName = (name == null || name.isBlank()) ? "image" : name;
+        pendingImages.add(image);
+        pendingImageNames.add((name == null || name.isBlank()) ? "image" : name);
         refreshSkillTooltip();
     }
 
@@ -220,7 +222,7 @@ public class ChatPanel extends JPanel {
         JPanel attachButtons = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));
         attachButtons.setOpaque(false);
         attachButtons.add(attachSkillButton);
-        attachButtons.add(captureButton);
+        //attachButtons.add(captureButton);
 
         JPanel addSkillHolder = new JPanel(new BorderLayout());
         addSkillHolder.setOpaque(false);
@@ -280,10 +282,10 @@ public class ChatPanel extends JPanel {
 
         if (sendButton == null || !sendButton.isEnabled()) return;
 
-        final BufferedImage image = pendingImage;
+        final List<BufferedImage> images = new ArrayList<>(pendingImages);
 
         String typed = composer.getText().trim();
-        if (typed.isEmpty() && image == null) return;
+        if (typed.isEmpty() && images.isEmpty()) return;
         final String text = typed.isEmpty() ? "Describe this image." : typed;
 
         AIChat chat = ctx.currentChat();
@@ -315,7 +317,10 @@ public class ChatPanel extends JPanel {
         AIMessage msg = new AIMessage(request);
         chat.addMessage(msg);
         addMessage(text, true, null, null);
-        if (image != null) addImage(image);
+        for (BufferedImage i : images) {
+            if (i != null) addImage(i);
+        }
+
         composer.setText("");
         composer.requestFocusInWindow();
 
@@ -368,7 +373,8 @@ public class ChatPanel extends JPanel {
                 JOptionPane.showMessageDialog(this, "Send failed: " + err.getMessage(), "Send", JOptionPane.ERROR_MESSAGE);
             });
 
-            if (image != null) p.asyncImageSend(wire, skillSb.toString(), callback, image);
+            if (!images.isEmpty())
+                p.asyncImageSend(wire, skillSb.toString(), callback, images.toArray(new BufferedImage[0]));
             else p.asyncSend(wire, skillSb.toString(), callback);
         } catch (Exception e) {
             sendButton.setEnabled(true);
@@ -383,7 +389,7 @@ public class ChatPanel extends JPanel {
         }
         BackgroundTask.runCatching(this, null, () -> ctx.saveChat(sending), null);
         pendingSkills.clear();
-        clearPendingImage();
+        clearPendingImages();
     }
 
     private void addMessage(String response, boolean user, Integer latency, Integer tokens) {
@@ -460,31 +466,58 @@ public class ChatPanel extends JPanel {
             }
         }
 
-        content.add(sectionLabel("Image for this message"), "gaptop 10");
-        content.add(imageRow(popup));
+        content.add(sectionLabel("Images for this message"), "gaptop 10");
+        for (int i = 0; i < pendingImages.size(); i++)
+            content.add(imageRow(pendingImages.get(i), pendingImageNames.get(i)));
+        content.add(attachImageRow(popup));
 
         content.add(sectionLabel("Capture"), "gaptop 10");
         content.add(captureOnceRow(popup));
+
+        JPanel areas = new JPanel(new MigLayout("wrap 1, insets 0, gapy 2", "[grow]"));
+        areas.setOpaque(false);
         for (CaptureArea area : ctx.getCaptureAreas())
-            content.add(areaRow(area, popup));
+            areas.add(areaRow(area, popup), "growx");
+
+        JScrollPane areaScroll = new JScrollPane(areas);
+        areaScroll.setBorder(BorderFactory.createEmptyBorder());
+        areaScroll.getViewport().setOpaque(false);
+        areaScroll.setOpaque(false);
+        areaScroll.getVerticalScrollBar().setUnitIncrement(16);
+        areaScroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        areaScroll.setPreferredSize(new Dimension(
+                areas.getPreferredSize().width + 16,
+                Math.min(areas.getPreferredSize().height + 4, AREA_LIST_MAX_HEIGHT)));
+        content.add(areaScroll, "growx");
 
         popup.add(content);
         popup.show(attachSkillButton, 0, -popup.getPreferredSize().height);
     }
 
-    private JButton imageRow(JPopupMenu popup) {
-        boolean attached = (pendingImage != null);
-        JButton button = new JButton(attached ? "Remove " + pendingImageName : "Attach image");
+    private JCheckBox imageRow(BufferedImage image, String name) {
+        JCheckBox box = new JCheckBox(name, true);
+        box.setOpaque(false);
+        box.setToolTipText(image.getWidth() + "x" + image.getHeight() + ", uncheck to drop it");
+        box.addActionListener(_ -> {
+            int i = pendingImages.indexOf(image);
+            if (i >= 0) {
+                pendingImages.remove(i);
+                pendingImageNames.remove(i);
+            }
+            refreshSkillTooltip();
+        });
+        return box;
+    }
+
+    private JButton attachImageRow(JPopupMenu popup) {
+        JButton button = new JButton("Attach image");
         button.putClientProperty("JButton.buttonType", "borderless");
         button.setHorizontalAlignment(SwingConstants.LEFT);
         button.setFocusable(false);
-        button.setToolTipText(attached
-                ? "Send this message without the image"
-                : "Pick a png or jpeg to send with this message");
+        button.setToolTipText("Pick one or more png or jpeg files to send with this message");
         button.addActionListener(_ -> {
             popup.setVisible(false);
-            if (attached) clearPendingImage();
-            else chooseImage();
+            chooseImage();
         });
         return button;
     }
@@ -589,24 +622,24 @@ public class ChatPanel extends JPanel {
         imageChooser.setDialogTitle("Attach image");
         imageChooser.setAcceptAllFileFilterUsed(false);
         imageChooser.setFileFilter(new FileNameExtensionFilter("Images", "png", "jpg", "jpeg", "gif", "bmp"));
+        imageChooser.setMultiSelectionEnabled(true);
         if (imageChooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) return;
 
-        File file = imageChooser.getSelectedFile();
-        BackgroundTask.run(this, null, () -> ImageIO.read(file), image -> {
-            if (image == null) {
-                JOptionPane.showMessageDialog(this, "That file is not a readable image.",
-                        "Attach image", JOptionPane.WARNING_MESSAGE);
-                return;
-            }
-            pendingImage = image;
-            pendingImageName = file.getName();
-            refreshSkillTooltip();
-        });
+        for (File file : imageChooser.getSelectedFiles()) {
+            BackgroundTask.run(this, null, () -> ImageIO.read(file), image -> {
+                if (image == null) {
+                    JOptionPane.showMessageDialog(this, "\"" + file.getName() + "\" is not a readable image.",
+                            "Attach image", JOptionPane.WARNING_MESSAGE);
+                    return;
+                }
+                attachImage(image, file.getName());
+            });
+        }
     }
 
-    private void clearPendingImage() {
-        pendingImage = null;
-        pendingImageName = null;
+    private void clearPendingImages() {
+        pendingImages.clear();
+        pendingImageNames.clear();
         refreshSkillTooltip();
     }
 
@@ -688,8 +721,8 @@ public class ChatPanel extends JPanel {
 
     private void refreshSkillTooltip() {
         if (attachSkillButton == null) return;
-        if (pendingSkills.isEmpty() && pendingImage == null) {
-            attachSkillButton.setToolTipText("Attach skills or an image to the next message");
+        if (pendingSkills.isEmpty() && pendingImages.isEmpty()) {
+            attachSkillButton.setToolTipText("Attach skills or images to the next message");
             return;
         }
         StringBuilder names = new StringBuilder();
@@ -697,9 +730,9 @@ public class ChatPanel extends JPanel {
             if (!names.isEmpty()) names.append(", ");
             names.append(s.getName());
         }
-        if (pendingImage != null) {
+        for (String image : pendingImageNames) {
             if (!names.isEmpty()) names.append(", ");
-            names.append(pendingImageName);
+            names.append(image);
         }
         attachSkillButton.setToolTipText("Attached to the next message: " + names);
     }
@@ -707,7 +740,7 @@ public class ChatPanel extends JPanel {
     public void reset() {
         sendFullHistory.setSelected(true);
         pendingSkills.clear();
-        clearPendingImage();
+        clearPendingImages();
         refreshCaptureTooltip();
         composer.setText("");
         promptCards.show("empty");

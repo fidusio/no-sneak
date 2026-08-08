@@ -5,6 +5,8 @@ import java.awt.*;
 public class CaptureArea {
     private String name;
     private Rectangle bounds;
+    private String display;
+    private boolean selected = true;
     private long lastUsed;
 
     public CaptureArea() {
@@ -25,6 +27,22 @@ public class CaptureArea {
 
     public void setBounds(Rectangle bounds) {
         this.bounds = bounds;
+    }
+
+    public String getDisplay() {
+        return display;
+    }
+
+    public void setDisplay(String display) {
+        this.display = display;
+    }
+
+    public boolean isSelected() {
+        return selected;
+    }
+
+    public void setSelected(boolean selected) {
+        this.selected = selected;
     }
 
     public long getLastUsed() {

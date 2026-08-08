@@ -21,13 +21,15 @@ scanner and file-sharing screens are still placeholders.
 > `BackgroundTask.runCatching` (failures surface as a dialog from the thrown `SecurityException`).
 >
 > **Still stubbed:** passkey (login/register are empty `void` no-ops), the security-manager admin
-> tables, the scanner/file-sharing screens, and — in the AI assistant — the Job-queue and
-> Screen-capture pages, and the multi-model compare path. (The assistant's provider discovery,
+> tables, the scanner/file-sharing screens, and — in the AI assistant — the Job-queue page and
+> the multi-model compare path. (The assistant's provider discovery,
 > the user-picked provider flow — a provider is now its own persisted **`AIProviderConfig`**
 > record borrowing a credential by GUID, so one key can back several providers and
 > `assistant-enabled` is derived from whether any config still uses it — single-provider chat
 > send **with message persistence** and rendered markdown replies, per-message skill attachment,
-> and full **History + Skills + Provider CRUD** are wired now — see `ai-assistant/CLAUDE.md`.)
+> the **screen-capture page** (multi-monitor drag-select, reusable areas, persisted `AICapture`
+> rows) with **multi-image attachment** from the composer, and full
+> **History + Skills + Provider CRUD** are wired now — see `ai-assistant/CLAUDE.md`.)
 
 ## Layout
 
@@ -406,16 +408,24 @@ with `AssistantStorage` this is where the app meets the AI-assistant module; the
 one-way.
 
 ### `AssistantStorage` (in `ui.assistant`)
-The `io.xlogistx.nosneak.ai.AIRepository` implementation — persistence for chats, skills, **and
-`AIProviderConfig` rows** (a configured provider: key GUID + type + base URL + default model +
-enabled label; see `ai-model/CLAUDE.md`) — constructed from the `Session` and reading the H2P
+The `io.xlogistx.nosneak.ai.AIRepository` implementation — persistence for chats, skills,
+**`AIProviderConfig` rows** (a configured provider: key GUID + type + base URL + default model +
+enabled label; see `ai-model/CLAUDE.md`), **and `AICapture` rows** (saved screenshots) —
+constructed from the `Session` and reading the H2P
 `APIDataStore` off it, owner-scoped by `subjectGUID`. `saveChat` / `saveSkill` /
-`saveProviderConfig` all branch on **`getGUID()`**: non-empty → `ds.update`,
+`saveProviderConfig` / `saveCapture` all branch on **`getGUID()`**: non-empty → `ds.update`,
 empty → stamp the owner and `ds.insert` (the store assigns the GUID). This must be `getGUID()`,
 **not `getReferenceID()`** — `referenceID` is deprecated in zoxweb and the H2P store never sets
 it, so branching on it made every save an insert and duplicated the row on each edit. The same
 GUID keying is what `AssistantContext`'s canonical caches rely on; see the identity note in
 `ai-model/CLAUDE.md`. `getAllChats` / `getAllSkills` return empty when signed out.
+
+> **`getAllCaptures` is a projected read** — it names its columns explicitly and **omits
+> `image`**, so list rows carry a thumbnail but no full png. Since `saveCapture`'s update branch
+> is `ds.update`, which writes every column, saving a row that came from `getAllCaptures` nulls
+> the stored image. Anything that mutates a capture must re-read it through `getCapture(guid)`
+> first — and must handle that read returning **null** (signed out, or deleted meanwhile) rather
+> than falling back to the projected instance.
 
 Both saves also **stamp `lastTimeUpdated` on the update branch only**. The store's
 `MetaUtil.initTimeStamp` writes a timestamp *only when the current value is 0*, so it sets

@@ -70,7 +70,7 @@ public class AssistantPanel extends JPanel {
         cardStack.add(new JScrollPane(jobQueuePanel), "queue");
         cardStack.add(skillsPanel, "skills");
         cardStack.add(new JScrollPane(providersPanel), "providers");
-        cardStack.add(new JScrollPane(capturePanel), "capture");
+        cardStack.add(capturePanel, "capture");
 
         JToggleButton jobQueueButton = new JToggleButton("Job Queue");
         JToggleButton providersButton = new JToggleButton("Providers");

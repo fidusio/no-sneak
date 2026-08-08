@@ -81,6 +81,15 @@ AIChat  ──has many──▶  AIMessage  ──is──▶  { AIRequest, AIRe
   several providers** (two base URLs, two labels), and a provider's identity survives being
   relabelled. Its **GUID is `AIProvider.getID()`**, which is what `AIChat.provider` stores and
   what the registrar is keyed by. The assistant never persists a secret — only this row.
+- **`AICapture`** (`NVC_AI_CAPTURE`) — a saved screenshot: `fromArea` / `width` / `height` /
+  `numBytes` / `thumbnail` (png bytes) / `image` (png bytes), plus the inherited `name` and
+  `creationTime`. It sits **outside** the conversation model — a capture is not attached to an
+  `AIChat` or an `AIMessage`, so sending one to a chat copies the pixels onto the wire and
+  leaves no record on the turn. `fromArea` is a **copied string label**, not a reference, so the
+  session `CaptureArea` it came from can be renamed or deleted without touching the row.
+  **`image` is the reason reads are projected:** `AssistantStorage.getAllCaptures()` selects
+  `thumbnail` but not `image`, so any code that saves a row it got from a list read must
+  re-fetch the full row first or `ds.update` writes a null png over the stored one.
 
 Two ids, two scopes: **`correlationID`** joins one request to its response(s) (only meaningful
 once sends go async / fan out); **`providerSessionID`** is a *stateful provider's* resume
@@ -120,13 +129,22 @@ drops the nested entity on JSON round-trip.
 
 ## Service interfaces (`io.xlogistx.nosneak.ai`)
 
-- **`AIProvider`** (per credential, `extends GetName, GetDescription`) — two send methods, both
+- **`AIProvider`** (per credential, `extends GetName, GetDescription`) — three send methods, all
   taking the skill text as a **second `String` argument**:
 
   ```java
   AIResponse send(AIRequest req, String skill) throws AIException;
   void asyncSend(AIRequest req, String skill, ConsumerCallback<NVGenericMap> callback) throws AIException;
+  void asyncImageSend(AIRequest req, String skill, ConsumerCallback<NVGenericMap> callback, BufferedImage... image) throws AIException;
   ```
+
+  `asyncImageSend` is **varargs**, so one message can carry several images; `AIAPIProvider`
+  PNG-encodes each into its own `UByteArrayOutputStream` and hands the array to
+  `AIAPI.asyncVisionCompletion`, which emits one `image_url` content block per image. Two things
+  follow from the encoding being **synchronous on the caller's thread**: the UI must not call it
+  from the EDT with large screenshots, and there is no image counterpart to the sync `send`.
+  Note also that the images are **not** part of the `AIRequest`, so nothing about them is
+  persisted with the turn — the same gap `skill` has.
 
   plus `getModelCatalog()`, `setAPIKey` / `getAPIKey`, `setHTTPAPICaller` /
   `getHTTPAPICaller` (the request goes out through `io.xlogistx.api.ai.AIAPI`, built by
@@ -154,13 +172,17 @@ drops the nested entity on JSON round-trip.
   `no-sneak-app`'s `SessionAICredentialSource` implements it.
 - **`AIModelCatalog`** — each provider's discovered models (`models()`), `refresh()` (the Refresh
   button), and `lastSynced()` (the "Last sync" line).
-- **`AIRepository`** — persistence for chats, skills, **and provider configs**, keyed by **GUID**
-  (the `getChat(refID)` / `getSkill(refID)` / `getProviderConfig(guid)` parameters all take the
+- **`AIRepository`** — persistence for chats, skills, provider configs, **and captures**, keyed by
+  **GUID** (the `getChat(refID)` / `getSkill(refID)` / `getProviderConfig(guid)` /
+  `getCapture(guid)` parameters all take the
   GUID; see the `AIChat` identity note above): `saveChat` / `deleteChat` / `getChat` /
-  `getAllChats`, `saveSkill` / `deleteSkill` / `getSkill` / `getAllSkills`, and
-  `saveProviderConfig` / `deleteProviderConfig` / `getProviderConfig` / `getAllProviderConfigs`.
+  `getAllChats`, `saveSkill` / `deleteSkill` / `getSkill` / `getAllSkills`,
+  `saveProviderConfig` / `deleteProviderConfig` / `getProviderConfig` / `getAllProviderConfigs`,
+  and `saveCapture` / `deleteCapture` / `getCapture` / `getAllCaptures`.
   `no-sneak-app`'s `AssistantStorage` implements it against the H2P `APIDataStore` (owner-scoped
-  by subjectGUID), branching insert-vs-update on `getGUID()`.
+  by subjectGUID), branching insert-vs-update on `getGUID()`. **`getAllCaptures` is the one
+  projected read** — it omits the `image` column (see `AICapture` above), so it is `getCapture`
+  that returns a saveable row.
 - **`AIException`** — checked, with a `Kind` (`AUTH`, `RATE_LIMIT`, `CONTEXT_OVERFLOW`,
   `TIMEOUT`, `NETWORK`, `PROVIDER`).
 

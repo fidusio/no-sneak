@@ -74,7 +74,7 @@ public class ChatHistoryPanel extends JPanel {
         editModelSelector.setEditable(true);
         bindProviderModels(ctx, editProviderSelector, editModelSelector);
 
-        save.addActionListener(e -> {
+        save.addActionListener(_ -> {
             Object provider = editProviderSelector.getSelectedItem();
             Object model = editModelSelector.getSelectedItem();
             if (provider == null || model == null) {
@@ -102,7 +102,7 @@ public class ChatHistoryPanel extends JPanel {
         JButton create = new JButton("Create", new IconUtil.PlusIcon(16));
         bindProviderModels(ctx, createProviderSelector, createModelSelector);
 
-        create.addActionListener(e -> {
+        create.addActionListener(_ -> {
             Object provider = createProviderSelector.getSelectedItem();
             Object model = createModelSelector.getSelectedItem();
             if (provider == null || model == null) {

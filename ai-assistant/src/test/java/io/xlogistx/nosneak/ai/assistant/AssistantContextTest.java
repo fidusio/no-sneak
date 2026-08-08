@@ -223,6 +223,47 @@ public class AssistantContextTest {
     }
 
     @Test
+    public void captureAreasAreSessionStateAndClearOnReset() {
+        MemoryRepository repo = new MemoryRepository();
+        AssistantContext ctx = new AssistantContext(null, repo);
+
+        CaptureArea area = new CaptureArea();
+        area.setName("scanner grade panel");
+        area.setBounds(new java.awt.Rectangle(120, 180, 640, 360));
+        area.setDisplay("Display 1");
+
+        assertTrue(area.isSelected(), "a new area must default to ticked");
+
+        ctx.addCaptureArea(area);
+        assertSame(area, ctx.getCaptureAreas().getFirst());
+
+        ctx.resetContext();
+        assertTrue(ctx.getCaptureAreas().isEmpty(), "reset must clear the session areas");
+
+        ctx.addCaptureArea(area);
+        ctx.removeCaptureArea(area);
+        assertTrue(ctx.getCaptureAreas().isEmpty());
+    }
+
+    @Test
+    public void capturesRoundTripThroughTheRepository() {
+        MemoryRepository repo = new MemoryRepository();
+        AssistantContext ctx = new AssistantContext(null, repo);
+
+        AICapture capture = new AICapture();
+        capture.setName("scanner grade panel 11:04");
+        capture.setFromArea("scanner grade panel");
+        AICapture saved = ctx.saveCapture(capture);
+
+        assertNotNull(saved.getGUID());
+        assertEquals(1, ctx.getAllCaptures().size());
+        assertSame(saved, ctx.getCapture(saved.getGUID()));
+
+        ctx.deleteCapture(saved);
+        assertTrue(ctx.getAllCaptures().isEmpty());
+    }
+
+    @Test
     public void skillsMirrorTheChatCacheContract() {
         MemoryRepository repo = new MemoryRepository();
         AISkill stored = new AISkill();

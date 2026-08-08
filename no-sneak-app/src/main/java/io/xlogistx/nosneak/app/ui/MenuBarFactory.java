@@ -52,16 +52,18 @@ public class MenuBarFactory {
         JCheckBoxMenuItem modeToggle = new JCheckBoxMenuItem("Technical Mode");
 
         JMenuItem scanner = new JMenuItem("Network scanner");
-        scanner.addActionListener(e -> ctx.nav().show(Navigator.Screen.SCAN));
+        scanner.addActionListener(_ -> ctx.nav().show(Navigator.Screen.SCAN));
 
-//      JMenuItem pqc = new JMenuItem("PQC file sharing");
-//      pqc.addActionListener(e -> ctx.nav().show(Navigator.Screen.MAIN));
+/*
+      JMenuItem pqc = new JMenuItem("PQC file sharing");
+      pqc.addActionListener(e -> ctx.nav().show(Navigator.Screen.MAIN));
+*/
 
         JMenuItem settings = new JMenuItem("Settings");
-        settings.addActionListener(e -> ctx.nav().show(Navigator.Screen.SUBJECT));
+        settings.addActionListener(_ -> ctx.nav().show(Navigator.Screen.SUBJECT));
 
         JMenuItem manager = new JMenuItem("ACL Tool");
-        manager.addActionListener(e -> ctx.nav().show(Navigator.Screen.MANAGER));
+        manager.addActionListener(_ -> ctx.nav().show(Navigator.Screen.MANAGER));
 
         JMenuItem aiChat = new JMenuItem("AI Assistant");
         aiChat.addActionListener(_ -> ctx.nav().show(Navigator.Screen.ASSISTANT));

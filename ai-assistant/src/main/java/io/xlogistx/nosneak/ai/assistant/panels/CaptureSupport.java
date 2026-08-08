@@ -1,6 +1,8 @@
 package io.xlogistx.nosneak.ai.assistant.panels;
 
 import io.xlogistx.gui.GUIUtil;
+import io.xlogistx.nosneak.ai.assistant.AssistantContext;
+import io.xlogistx.nosneak.ai.assistant.CaptureArea;
 import io.xlogistx.nosneak.ai.model.AICapture;
 
 import javax.imageio.ImageIO;
@@ -10,22 +12,31 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
 
 public final class CaptureSupport {
+
+    record ShootResult(int saved, List<String> failures) {
+    }
 
     static final String IMAGE_FORMAT = "png";
     static final int THUMBNAIL_EDGE = 200;
 
     private static final int SETTLE_MILLIS = 150;
+    private static final DateTimeFormatter SHORT_TIME = DateTimeFormatter.ofPattern("HH:mm");
 
     private CaptureSupport() {
     }
 
-    static Rectangle select(Window owner) throws Exception {
+    static RegionOverlay.Selection select(Window owner) throws Exception {
         hideWindow(owner);
         try {
-            Rectangle area = drag();
-            return usable(area) ? area : null;
+            RegionOverlay.Selection selection = drag();
+            return (selection != null && usable(selection.bounds())) ? selection : null;
         } finally {
             restoreWindow(owner);
         }
@@ -34,12 +45,41 @@ public final class CaptureSupport {
     static BufferedImage shoot(Window owner, Rectangle preset) throws Exception {
         hideWindow(owner);
         try {
-            Rectangle area = (preset != null) ? preset : drag();
+            Rectangle area = preset;
+            if (area == null) {
+                RegionOverlay.Selection selection = drag();
+                area = (selection != null) ? selection.bounds() : null;
+            }
             if (!usable(area)) return null;
             return GUIUtil.captureSelectedArea(area);
         } finally {
             restoreWindow(owner);
         }
+    }
+
+    static ShootResult shootAll(AssistantContext ctx, Window owner, List<CaptureArea> areas, long now)
+            throws Exception {
+        int saved = 0;
+        List<String> failures = new ArrayList<>();
+        hideWindow(owner);
+        try {
+            Robot robot = new Robot();
+            for (CaptureArea area : areas) {
+                try {
+                    if (!usable(area.getBounds()))
+                        throw new IllegalStateException("area has no usable bounds");
+                    BufferedImage shot = robot.createScreenCapture(area.getBounds());
+                    ctx.saveCapture(toCapture(shot, area.getName() + " " + shortTime(now), area.getName()));
+                    area.setLastUsed(now);
+                    saved++;
+                } catch (Exception e) {
+                    failures.add(area.getName() + ": " + e.getMessage());
+                }
+            }
+        } finally {
+            restoreWindow(owner);
+        }
+        return new ShootResult(saved, failures);
     }
 
     static AICapture toCapture(BufferedImage image, String name, String areaName) throws IOException {
@@ -101,10 +141,27 @@ public final class CaptureSupport {
         return area != null && area.width > 0 && area.height > 0;
     }
 
-    private static Rectangle drag() throws Exception {
-        Rectangle area = GUIUtil.captureSelectedArea();
+    static String areaSublabel(CaptureArea area) {
+        String region = region(area.getBounds());
+        String display = area.getDisplay();
+        return (display == null || display.isBlank()) ? region : display + "  ·  " + region;
+    }
+
+    static String bytes(int numBytes) {
+        if (numBytes < 1024) return numBytes + " B";
+        if (numBytes < 1024 * 1024) return (numBytes / 1024) + " KB";
+        long tenths = Math.round(numBytes * 10.0 / (1024 * 1024));
+        return (tenths / 10) + "." + (tenths % 10) + " MB";
+    }
+
+    static String shortTime(long millis) {
+        return Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).format(SHORT_TIME);
+    }
+
+    private static RegionOverlay.Selection drag() throws Exception {
+        RegionOverlay.Selection selection = RegionOverlay.select();
         settle();
-        return area;
+        return selection;
     }
 
     private static void hideWindow(Window window) throws Exception {
