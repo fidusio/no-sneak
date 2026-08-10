@@ -100,6 +100,7 @@ public class ChatHistoryPanel extends JPanel {
 
     public JPanel buildChatCreator() {
         JButton create = new JButton("Create", new IconUtil.PlusIcon(16));
+        createModelSelector.setEditable(true);
         bindProviderModels(ctx, createProviderSelector, createModelSelector);
 
         create.addActionListener(_ -> {

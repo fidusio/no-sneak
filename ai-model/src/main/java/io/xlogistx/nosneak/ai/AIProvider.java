@@ -3,13 +3,12 @@ package io.xlogistx.nosneak.ai;
 import io.xlogistx.api.ai.AIAPI;
 import io.xlogistx.nosneak.ai.model.AIRequest;
 import io.xlogistx.nosneak.ai.model.AIResponse;
+import org.zoxweb.server.io.UByteArrayInputStream;
 import org.zoxweb.shared.security.APIKey;
 import org.zoxweb.shared.task.ConsumerCallback;
 import org.zoxweb.shared.util.GetDescription;
 import org.zoxweb.shared.util.GetName;
 import org.zoxweb.shared.util.NVGenericMap;
-
-import java.awt.image.BufferedImage;
 
 
 /**
@@ -35,7 +34,7 @@ public interface AIProvider extends GetName, GetDescription {
 
     void asyncSend(AIRequest req, String skill, ConsumerCallback<NVGenericMap> callback) throws AIException;
 
-    void asyncImageSend(AIRequest req, String skill,  ConsumerCallback<NVGenericMap> callback, BufferedImage ...image) throws AIException;
+    void asyncImageSend(AIRequest req, String skill, ConsumerCallback<NVGenericMap> callback, UByteArrayInputStream... images) throws AIException;
 
     String getID();
 }

@@ -1,5 +1,6 @@
 package io.xlogistx.nosneak.ai.assistant;
 
+import io.xlogistx.gui.CaptureArea;
 import io.xlogistx.nosneak.ai.AIRepository;
 import io.xlogistx.nosneak.ai.model.AICapture;
 import io.xlogistx.nosneak.ai.model.AIChat;
@@ -227,22 +228,19 @@ public class AssistantContextTest {
         MemoryRepository repo = new MemoryRepository();
         AssistantContext ctx = new AssistantContext(null, repo);
 
-        CaptureArea area = new CaptureArea();
-        area.setName("scanner grade panel");
-        area.setBounds(new java.awt.Rectangle(120, 180, 640, 360));
-        area.setDisplay("Display 1");
+        CaptureArea area = new CaptureArea("scanner grade panel", "Display 1",
+                new java.awt.Rectangle(120, 180, 640, 360));
 
-        assertTrue(area.isSelected(), "a new area must default to ticked");
-
-        ctx.addCaptureArea(area);
-        assertSame(area, ctx.getCaptureAreas().getFirst());
+        ctx.getCaptureAreaSet().addCaptureAreas(area);
+        assertSame(area, ctx.getCaptureAreaSet().getCaptureAreas()[0]);
 
         ctx.resetContext();
-        assertTrue(ctx.getCaptureAreas().isEmpty(), "reset must clear the session areas");
+        assertEquals(0, ctx.getCaptureAreaSet().getCaptureAreas().length,
+                "reset must clear the session areas");
 
-        ctx.addCaptureArea(area);
-        ctx.removeCaptureArea(area);
-        assertTrue(ctx.getCaptureAreas().isEmpty());
+        ctx.getCaptureAreaSet().addCaptureAreas(area);
+        ctx.getCaptureAreaSet().removeCaptureAreas(area);
+        assertEquals(0, ctx.getCaptureAreaSet().getCaptureAreas().length);
     }
 
     @Test

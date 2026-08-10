@@ -50,6 +50,7 @@ public class ProvidersPanel extends JPanel {
     private final JTextField providerFormBaseURL =
             PanelBuilder.textField("Optional — provider default when empty");
     private final JComboBox<String> providerFormModel = new JComboBox<>();
+    private final JLabel providerFormModelLabel = new JLabel("Default model");
     private final JLabel providerFormKey = new JLabel();
     private final JButton providerFormSave = new JButton("Save", new IconUtil.SaveIcon(16));
     private AIProviderConfig editingConfig;
@@ -151,7 +152,9 @@ public class ProvidersPanel extends JPanel {
             PanelBuilder.addRow(panel, "Label*", providerFormLabel);
             PanelBuilder.addRow(panel, "Provider*", providerFormType);
             PanelBuilder.addRow(panel, "Base URL", providerFormBaseURL);
-            PanelBuilder.addRow(panel, "Default model", providerFormModel);
+            // hidden on the add path: discovery has not run yet, so the combo would be empty
+            panel.add(providerFormModelLabel, "hidemode 3");
+            panel.add(providerFormModel, "growx, hidemode 3");
             panel.add(providerFormSave, "gaptop 10");
         });
     }
@@ -175,8 +178,10 @@ public class ProvidersPanel extends JPanel {
         providerFormSave.setText(config != null ? "Save" : "Add to assistant");
 
         providerFormModel.removeAllItems();
+        providerFormModelLabel.setVisible(config != null);
+        providerFormModel.setVisible(config != null);
         if (config != null) {
-            fillModels(ctx, providerFormModel, config.getGUID());
+            fillModels(ctx, providerFormModel, config.getGUID(), false);
             providerFormModel.setSelectedItem(config.getDefaultModel());
         } else {
             providerFormModel.setSelectedItem("");

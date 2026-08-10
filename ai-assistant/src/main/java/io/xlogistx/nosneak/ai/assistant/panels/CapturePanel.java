@@ -2,7 +2,6 @@ package io.xlogistx.nosneak.ai.assistant.panels;
 
 import io.xlogistx.gui.*;
 import io.xlogistx.nosneak.ai.assistant.AssistantContext;
-import io.xlogistx.nosneak.ai.assistant.CaptureArea;
 import io.xlogistx.nosneak.ai.model.AICapture;
 
 import javax.swing.*;
@@ -63,7 +62,7 @@ public class CapturePanel extends JPanel {
         defineAreaButton.addActionListener(_ -> onDefineArea());
 
         captureButton = new JButton("Capture (0)", new IconUtil.CameraIcon(16));
-        captureButton.setToolTipText("Capture an image of every ticked area");
+        captureButton.setToolTipText("Capture an image of every area");
         captureButton.setEnabled(false);
         captureButton.addActionListener(_ -> onCapture());
 
@@ -75,7 +74,7 @@ public class CapturePanel extends JPanel {
         titleRow.add(PanelBuilder.title("Capture"), BorderLayout.WEST);
         titleRow.add(buttons, BorderLayout.EAST);
 
-        areasTab = new JToggleButton("Capture areas", true);
+        areasTab = new JToggleButton("Capture area selection", true);
         areasTab.setFocusable(false);
         areasTab.addActionListener(_ -> {
             captureCards.show("areas");
@@ -145,8 +144,8 @@ public class CapturePanel extends JPanel {
         }
 
         areasContent.removeAll();
-        List<CaptureArea> areas = ctx.getCaptureAreas();
-        if (areas.isEmpty()) {
+        CaptureArea[] areas = ctx.getCaptureAreaSet().getCaptureAreas();
+        if (areas.length == 0) {
             areasContent.add(emptyLabel("No capture areas yet, use Define area to add one"));
         } else {
             boolean first = true;
@@ -175,7 +174,8 @@ public class CapturePanel extends JPanel {
                 try {
                     BufferedImage thumb = CaptureSupport.toImage(capture.getThumbnail());
                     if (thumb != null)
-                        icons.put(capture.getGUID(), fit(thumb));
+                        icons.put(capture.getGUID(),
+                                CaptureSupport.scaledIcon(thumb, THUMB_WIDTH, THUMB_HEIGHT));
                 } catch (Exception ignore) {
                 }
             }
@@ -206,15 +206,6 @@ public class CapturePanel extends JPanel {
     }
 
     private JPanel areaRow(CaptureArea area) {
-        JCheckBox tick = new JCheckBox();
-        tick.setSelected(area.isSelected());
-        tick.setFocusable(false);
-        tick.setToolTipText("Include in the next capture");
-        tick.addItemListener(_ -> {
-            area.setSelected(tick.isSelected());
-            updateCaptureButton();
-        });
-
         JComponent name;
         if (area == editingArea) {
             JTextField field = new JTextField(area.getName());
@@ -263,7 +254,7 @@ public class CapturePanel extends JPanel {
         JButton remove = GUIUtil.iconButton(new IconUtil.DeleteIcon(16));
         remove.setToolTipText("Remove");
         remove.addActionListener(_ -> {
-            ctx.removeCaptureArea(area);
+            ctx.getCaptureAreaSet().removeCaptureAreas(area);
             refreshAreas();
         });
 
@@ -274,7 +265,6 @@ public class CapturePanel extends JPanel {
         right.add(remove);
 
         JPanel row = new JPanel(new BorderLayout(6, 0));
-        row.add(tick, BorderLayout.WEST);
         row.add(text, BorderLayout.CENTER);
         row.add(right, BorderLayout.EAST);
         row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
@@ -337,11 +327,10 @@ public class CapturePanel extends JPanel {
         Window window = SwingUtilities.getWindowAncestor(this);
         BackgroundTask.run(this, defineAreaButton, () -> CaptureSupport.select(window), selection -> {
             if (selection == null) return;
-            CaptureArea area = new CaptureArea();
-            area.setName("Area " + (ctx.getCaptureAreas().size() + 1));
-            area.setBounds(selection.bounds());
-            area.setDisplay(selection.display());
-            ctx.addCaptureArea(area);
+            CaptureArea area = new CaptureArea(
+                    "Area " + (ctx.getCaptureAreaSet().getCaptureAreas().length + 1),
+                    selection.display(), selection.bounds());
+            ctx.getCaptureAreaSet().addCaptureAreas(area);
             editingArea = area;
             showAreas();
             refreshAreas();
@@ -352,24 +341,23 @@ public class CapturePanel extends JPanel {
         Window window = SwingUtilities.getWindowAncestor(this);
         BackgroundTask.run(this, null, () -> CaptureSupport.select(window), selection -> {
             if (selection == null) return;
-            area.setBounds(selection.bounds());
-            area.setDisplay(selection.display());
+            area.setCaptureArea(selection.bounds());
+            area.setDescription(selection.display());
             refreshAreas();
         });
     }
 
     private void onCapture() {
-        List<CaptureArea> ticked = ctx.getCaptureAreas().stream()
-                .filter(CaptureArea::isSelected).toList();
-        if (ticked.isEmpty()) return;
+        CaptureArea[] areas = ctx.getCaptureAreaSet().getCaptureAreas();
+        if (areas.length == 0) return;
 
         Window window = SwingUtilities.getWindowAncestor(this);
-        long now = System.currentTimeMillis();
         BackgroundTask.run(this, captureButton,
-                () -> CaptureSupport.shootAll(ctx, window, ticked, now), result -> {
-            if (!result.failures().isEmpty())
+                () -> CaptureSupport.shootAndSave(ctx, window, areas), snaps -> {
+            if (snaps.length < areas.length)
                 JOptionPane.showMessageDialog(this,
-                        "Some areas could not be captured:\n" + String.join("\n", result.failures()),
+                        (areas.length - snaps.length) + " of " + areas.length
+                                + " areas could not be captured",
                         "Capture", JOptionPane.WARNING_MESSAGE);
             showCaptures();
             refreshCaptures();
@@ -385,9 +373,9 @@ public class CapturePanel extends JPanel {
     }
 
     private void updateCaptureButton() {
-        long ticked = ctx.getCaptureAreas().stream().filter(CaptureArea::isSelected).count();
-        captureButton.setText("Capture (" + ticked + ")");
-        captureButton.setEnabled(ticked > 0);
+        int count = ctx.getCaptureAreaSet().getCaptureAreas().length;
+        captureButton.setText("Capture (" + count + ")");
+        captureButton.setEnabled(count > 0);
     }
 
     private void onViewCapture(AICapture capture) {
@@ -562,14 +550,6 @@ public class CapturePanel extends JPanel {
         sep.setMaximumSize(new Dimension(Integer.MAX_VALUE, sep.getPreferredSize().height));
         sep.setAlignmentX(Component.LEFT_ALIGNMENT);
         return sep;
-    }
-
-    private static ImageIcon fit(BufferedImage image) {
-        double factor = Math.min(1.0, Math.min(
-                (double) CapturePanel.THUMB_WIDTH / image.getWidth(), (double) CapturePanel.THUMB_HEIGHT / image.getHeight()));
-        int width = Math.max(1, (int) Math.round(image.getWidth() * factor));
-        int height = Math.max(1, (int) Math.round(image.getHeight() * factor));
-        return new ImageIcon(image.getScaledInstance(width, height, Image.SCALE_SMOOTH));
     }
 
     public void reset() {

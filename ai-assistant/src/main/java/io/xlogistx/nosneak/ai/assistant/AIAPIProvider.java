@@ -9,15 +9,13 @@ import io.xlogistx.nosneak.ai.model.AIProviderConfig;
 import io.xlogistx.nosneak.ai.model.AIRequest;
 import io.xlogistx.nosneak.ai.model.AIResponse;
 import org.zoxweb.server.http.HTTPAPIEndPoint;
-import org.zoxweb.server.io.UByteArrayOutputStream;
+import org.zoxweb.server.io.UByteArrayInputStream;
 import org.zoxweb.server.task.TaskUtil;
 import org.zoxweb.shared.security.APIKey;
 import org.zoxweb.shared.task.ConsumerCallback;
 import org.zoxweb.shared.util.NVGenericMap;
 import org.zoxweb.shared.util.SUS;
 
-import javax.imageio.ImageIO;
-import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -112,32 +110,12 @@ public class AIAPIProvider implements AIProvider {
         bound().asyncCompletion(callback, req.getModel(), req.getContent(), maxTokens, skill);
     }
 
-    /**
-     * The vision overloads take encoded bytes and a media subtype, and carry no skill argument, so
-     * the image is written to PNG here and the skill merged into the prompt the way
-     * {@link AIAPI#asyncCompletion} does it internally.
-     */
     @Override
-    public void asyncImageSend(AIRequest req, String skill, ConsumerCallback<NVGenericMap> callback, BufferedImage... image) throws AIException {
+    public void asyncImageSend(AIRequest req, String skill, ConsumerCallback<NVGenericMap> callback, UByteArrayInputStream... images) throws AIException {
         int maxTokens = (req.getMaxTokens() != null) ? req.getMaxTokens() : 1024;
 
-        UByteArrayOutputStream[] baos = new UByteArrayOutputStream[image != null ? image.length : 0];
-
-
-        for(int i = 0; i < baos.length; i++) {
-            UByteArrayOutputStream ubaos = new UByteArrayOutputStream();
-            try {
-                if (image[i] == null || !ImageIO.write(image[i], IMAGE_TYPE, ubaos))
-                    throw new IOException("cannot encode the image as " + IMAGE_TYPE);
-            } catch (IOException e) {
-                throw new AIException(AIException.Kind.PROVIDER, e);
-            }
-            baos[i] = ubaos;
-        }
-
-
         bound().asyncVisionCompletion(callback, req.getModel(), AIAPI.toSkillPrompt(req.getContent(), skill),
-                maxTokens, IMAGE_TYPE, baos);
+                maxTokens, IMAGE_TYPE, images);
     }
 
     /**

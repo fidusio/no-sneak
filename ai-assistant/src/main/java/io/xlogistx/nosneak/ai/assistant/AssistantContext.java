@@ -1,5 +1,6 @@
 package io.xlogistx.nosneak.ai.assistant;
 
+import io.xlogistx.gui.CaptureAreaSet;
 import io.xlogistx.nosneak.ai.AIProvider;
 import io.xlogistx.nosneak.ai.AIRepository;
 import io.xlogistx.nosneak.ai.AICredentialSource;
@@ -14,7 +15,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
 
 public class AssistantContext {
     private final AICredentialSource credentials;
@@ -31,7 +31,8 @@ public class AssistantContext {
     private final Map<String, AISkill> skillCache = new ConcurrentHashMap<>();
     private final Map<String, AIProviderConfig> configCache = new ConcurrentHashMap<>();
 
-    private final List<CaptureArea> captureAreas = new CopyOnWriteArrayList<>();
+    private final CaptureAreaSet captureAreaSet = new CaptureAreaSet();
+    private final ModelFilter modelFilter = new ModelFilter();
 
     public AssistantContext(AICredentialSource credentials, AIRepository repository) {
         this.credentials = credentials;
@@ -60,7 +61,7 @@ public class AssistantContext {
     }
 
     public List<AIProvider> getProvidersList() {
-        return new ArrayList<>( getProviders().getCacheMap().values());
+        return new ArrayList<>(getProviders().getCacheMap().values());
     }
 
     /**
@@ -117,7 +118,7 @@ public class AssistantContext {
 
     public List<AISkill> getAllSkills() {
         List<AISkill> out = new ArrayList<>();
-        for(AISkill s : repository.getAllSkills()) out.add(canonical(skillCache, s));
+        for (AISkill s : repository.getAllSkills()) out.add(canonical(skillCache, s));
         return out;
     }
 
@@ -126,9 +127,9 @@ public class AssistantContext {
     }
 
     public void deleteSkill(AISkill skill) {
-        if(skill == null) return;
+        if (skill == null) return;
         repository.deleteSkill(skill);
-        if(skill.getGUID() != null) skillCache.remove(skill.getGUID());
+        if (skill.getGUID() != null) skillCache.remove(skill.getGUID());
     }
 
     public List<AIProviderConfig> getAllProviderConfigs() {
@@ -186,23 +187,25 @@ public class AssistantContext {
         }
     }
 
-    public List<CaptureArea> getCaptureAreas() {
-        return captureAreas;
+    public CaptureAreaSet getCaptureAreaSet() {
+        return captureAreaSet;
     }
 
-    public void addCaptureArea(CaptureArea area){
-        captureAreas.add(area);
+    public ModelFilter getModelFilter() {
+        return modelFilter;
     }
 
-    public void removeCaptureArea(CaptureArea area){
-        captureAreas.remove(area);
+    public void setModelFilter(String patterns) {
+        String old = modelFilter.getPatterns();
+        modelFilter.setPatterns(patterns);
+        pcs.firePropertyChange("modelFilter", old, modelFilter.getPatterns());
     }
 
     public List<AICapture> getAllCaptures() {
         return repository.getAllCaptures();
     }
 
-    public AICapture getCapture(String guid)  {
+    public AICapture getCapture(String guid) {
         return repository.getCapture(guid);
     }
 
@@ -210,7 +213,7 @@ public class AssistantContext {
         return repository.saveCapture(c);
     }
 
-    public void deleteCapture(AICapture c)  {
+    public void deleteCapture(AICapture c) {
         repository.deleteCapture(c);
     }
 
@@ -223,7 +226,8 @@ public class AssistantContext {
         chatCache.clear();
         skillCache.clear();
         configCache.clear();
-        captureAreas.clear();
+        captureAreaSet.clearCaptureAreas();
+        modelFilter.setPatterns(null);
         pcs.firePropertyChange("currentChat", old, null);
     }
 }

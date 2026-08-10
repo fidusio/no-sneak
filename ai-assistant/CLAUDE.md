@@ -46,9 +46,25 @@ has chosen to use.
 >   Chat header and the History create/edit forms. Provider combos carry the provider **id**, not
 >   the label — two providers can share a name — and render through `providerRenderer()`;
 >   `selectProvider` resolves a legacy provider *name* on an older chat back to an id.
->   `fillModels` filters the catalog through `isChatModel` (a `NON_CHAT_MODEL_MARKERS` substring
->   list: whisper / tts / embedding / moderation / dall-e / …), with a live `@TODO` to match with
->   `TokenMatcher` instead.
+>   `fillModels` filters the catalog through **`ModelFilter`** (root package, Swing-free), which
+>   is where the old `PanelSupport.isChatModel` marker list moved.
+> - **The model list has a user filter, in the chat header.** `ModelFilter` wraps two zoxweb
+>   `TokenMatcher`s (case-insensitive) — includes and excludes — over a free-text pattern list the
+>   subject types into `modelFilterField`, the small search box beside the chat's model combo.
+>   Patterns split on comma / semicolon / whitespace; a bare word with no `*` or `?` is expanded
+>   to `*word*` so `mini` matches anywhere; a leading `!` sends the rest to the exclude matcher.
+>   **Blank means the built-in `NON_CHAT_MODEL_MARKERS` list** (whisper / tts / embedding /
+>   moderation / dall-e / …); as soon as one pattern is set the markers **step aside entirely**,
+>   which is the only way to reach an audio or embedding model on purpose (`*` lists everything
+>   the provider discovered). Excludes win over includes; an exclude-only filter keeps everything
+>   else. State is **session-scoped on `AssistantContext`** — `getModelFilter()` /
+>   `setModelFilter(String)` (which fires a `"modelFilter"` property event), cleared by
+>   `resetContext()` alongside the capture areas, never persisted. `fillModels(ctx, box, ref)`
+>   applies it; the four-arg `fillModels(..., false)` applies the built-in markers only and is
+>   what the **Providers form's Default model** combo uses, so a narrow chat-side filter can
+>   never hide the model you are trying to set as a provider default. Every chat-model combo it
+>   *does* reach is `setEditable(true)` (the chat header, both History forms), so a model the
+>   filter hides stays selectable and a bound chat never has its model silently rewritten.
 > - **List rows are label + sublabel, and search covers both.** The shared `ListSection` grew
 >   `.description(...)` (a wrapping blurb under the panel title) and `.sublabel(...)` (a muted
 >   second line per row). The rule here: the **label is the searchable identity**, the sublabel
@@ -128,45 +144,58 @@ has chosen to use.
 >   rows sits `attachImageRow`, the file picker (`chooseImage`, multi-select on). The three
 >   attach paths are the picker, the popup's *Capture* section, and `CapturePanel`'s
 >   send-to-chat arrow (→ `AssistantPanel` → `attachImage`). On send, `onSend` **snapshots**
->   (`new ArrayList<>(pendingImages)` — the field is cleared before the callback returns) and
->   dispatches `asyncImageSend(wire, skill, callback, images.toArray(...))`, falling back to
->   plain `asyncSend` when the list is empty; both guards test `isEmpty()`, since the lists are
->   final and never null. The wire supports this end to end: `AIProvider.asyncImageSend` is
->   varargs, `AIAPIProvider` PNG-encodes each into its own `UByteArrayOutputStream`, and
+>   (`new ArrayList<>(pendingImages)` — the field is cleared before the callback returns) and,
+>   when the snapshot or the ticked areas are non-empty, encodes everything **off the EDT** and
+>   dispatches `asyncImageSend(wire, skill, callback, UByteArrayInputStream...)`, falling back to
+>   plain `asyncSend` only when both are empty. The wire supports this end to end:
+>   `AIProvider.asyncImageSend` is varargs over **already-encoded** streams (encoding moved out
+>   of `AIAPIProvider`, which now only forwards them with the constant `IMAGE_TYPE` = `png`), and
 >   `AIAPIBuilder.toVisionParams` emits a plural `images` array that the COMPLETION encoder turns
 >   into one `image_url` content block per image. All four `AIAPIType` base URLs are
 >   OpenAI-compatible surfaces (Gemini via `/v1beta/openai`, Anthropic via its compat layer), so
 >   the single unbranched encoder is portable — a **custom base URL pointing at a native
 >   `/v1/messages` would not be**.
-> - **The composer can capture without leaving the chat.** The popup's *Capture* section carries
->   `captureOnceRow` ("Capture area...", a fresh drag) plus one `areaRow` per session
->   `CaptureArea` in a bounded scroll pane (`AREA_LIST_MAX_HEIGHT`): clicking the row shoots that
->   rectangle and attaches it, the trailing `▶` shoots and calls `onSend` straight away. Every
->   shot also lands in the store via `ctx.saveCapture`, so the image is recoverable on the
->   Capture page afterwards; the attached `BufferedImage` is what goes on the wire.
->   `defaultArea()` (most recently used) backs the old composer camera button, which is still
->   constructed but **commented out of the toolbar** — it remains the busy-button handed to
->   `BackgroundTask` in `capture(...)`, so that path currently has no visible busy feedback.
+> - **Capture areas are ticked in the composer and shot at send time.** The popup's *Capture*
+>   section carries `defineAreaRow` ("Capture area...", a fresh drag that **adds** a
+>   `CaptureArea` to the shared `CaptureAreaSet` — auto-named `Area N`, description = display,
+>   ticked on creation — nothing is shot at that point) and `areaSection`: an **All areas**
+>   check-all above one row per area in a bounded scroll pane (`AREA_LIST_MAX_HEIGHT`), each
+>   row a tick box (tooltip = `areaSublabel`) plus an ✕ that removes the area from the set.
+>   Ticks live in `ChatPanel.tickedAreas` (an identity set — view state, not on the area) and
+>   **survive the send**: the same areas go out with every message until unticked; `reset()`
+>   clears them. Nothing captures before Send: `onSend` intersects the ticks with the live set
+>   (`areasToSend()`) and, when areas or pending images exist, moves dispatch into a
+>   `BackgroundTask` — `CaptureSupport.shootAndSave` does one hide/sweep
+>   (`CaptureAreaSet.takeSnapShots(areas)`)/save-each/restore cycle, the pending images and
+>   snapshots are PNG-encoded **off the EDT** into `UByteArrayInputStream`s, and
+>   `asyncImageSend` fires from the background thread; the success callback adds the shots to
+>   the transcript, the failure path funnels through `failSend` (same undo as a sync throw).
+>   Every shot still lands in the store via `ctx.saveCapture`, so it is recoverable on the
+>   Capture page. The old instant-capture path (`capture`/`shootArea`/`onCaptureButton`/
+>   `defaultArea`, the commented-out composer camera button, `CaptureSupport.shoot`) is
+>   **deleted**.
 > - **The Capture page is built** (`panels/CapturePanel`): two tabs under a **fixed toolbar**
->   (**Define area** / **Capture (N)**, visible on both tabs; N = ticked areas, disabled at 0).
->   The *Capture areas* tab holds **session-scoped** `CaptureArea` rows (name, `selected` tick,
->   `display`, bounds — a plain POJO on `AssistantContext`'s `CopyOnWriteArrayList`, never
->   persisted, cleared by `resetContext()`), each with rename (inline editor — Define area lands
->   on it with the default name selected), redraw (re-runs the overlay, keeps name/tick/identity),
->   and remove. The *Captures* tab lists persisted `AICapture` rows — thumbnail, name,
->   `fromArea · WxH · KB · HH:mm` — with send-to-chat, open (preview card), rename, delete.
->   `fromArea` is a **copied string label**, so deleting the area leaves captures intact.
->   Capture (N) does one hide/settle/restore cycle, shoots every ticked area with one `Robot`
->   (per-area try/catch — one stale rect warns, never aborts the batch), saves each via
->   `ctx.saveCapture`, and flips to the Captures tab; there is **no job queue integration by
+>   (**Define area** / **Capture (N)**, visible on both tabs; N = all defined areas, disabled
+>   at 0). The *Capture area selection* tab holds **session-scoped** `io.xlogistx.gui.CaptureArea` rows
+>   (name, description = display, rectangle — held in `AssistantContext`'s `CaptureAreaSet`,
+>   never persisted, cleared by `resetContext()`), each with rename (inline editor — Define
+>   area lands on it with the default name selected), redraw (re-runs the overlay, keeps
+>   name/identity), and remove. The *Captures* tab lists persisted `AICapture` rows —
+>   thumbnail, name, `fromArea · WxH · KB · HH:mm` — with send-to-chat, open (preview card),
+>   rename, delete. `fromArea` is a **copied string label**, so deleting the area leaves
+>   captures intact. Capture (N) runs `CaptureSupport.shootAndSave` — the same sweep the chat
+>   send path uses: one hide/settle/restore cycle around a single
+>   `CaptureAreaSet.takeSnapShots` sweep (one cached `Robot`; unset or empty rectangles are
+>   silently skipped per the library contract, and the panel warns "N of M areas could not be
+>   captured" when the snapshot count comes up short), saves each via `ctx.saveCapture`, and
+>   flips to the Captures tab; there is **no job queue integration by
 >   design** (deferred with the queue itself). Selection runs through
 >   `panels/RegionOverlay.select()` — **multi-monitor**: one undecorated always-on-top `JWindow`
 >   per `GraphicsDevice` (translucency with per-pixel → opacity → solid fallback), rubber-band
 >   drag in virtual-screen coordinates spanning monitors, Esc cancels via a global
 >   `KeyEventDispatcher`, teardown in a `finally`. It **blocks and must not run on the EDT**
 >   (guarded; all call sites go through `BackgroundTask`), replacing the primary-display-only
->   `GUIUtil.captureSelectedArea()` drag — `ChatPanel`'s freehand capture gained multi-monitor
->   through `CaptureSupport.shoot` for free. **The projected-read invariant is load-bearing:**
+>   `GUIUtil.captureSelectedArea()` drag. **The projected-read invariant is load-bearing:**
 >   `AssistantStorage.getAllCaptures()` selects thumbnail but **not** `image`, so rows render
 >   thumbnails cheaply, and any send/view/rename must re-fetch via `full()`
 >   (`ctx.getCapture(guid)`) first — saving a row instance would null the stored png. **`full()`
@@ -217,15 +246,39 @@ has chosen to use.
 >   the only live one is in the text-to-speech endpoint), so text and vision sends both run at
 >   the provider's default. Do not reach for the 1024 to explain a truncated answer until that
 >   is fixed upstream.
-> - **Several images are PNG-encoded on the EDT.** `onSend` runs on the EDT and
->   `AIAPIProvider.asyncImageSend` loops `ImageIO.write` before the HTTP call goes async — one 4K
->   screenshot is a few hundred ms, and a batch of ticked areas freezes the UI for seconds. The
->   fix is to encode inside a `BackgroundTask` (or at attach time), not to cap the count.
-> - **A failed send loses the attached images.** `clearPendingImages()` runs right after
->   dispatch, and the async error callback (which fires later) restores only the composer text —
->   so a capture that cost a drag-select is gone and the retry sends text alone. The
->   **synchronous** throw path keeps them, because it returns before the clear; the two failure
->   modes differ. Same hole as `pendingSkills`, but images are expensive to recreate.
+> - **`CaptureSupport.shootAndSave` can leave the window hidden.** The save loop sits in the
+>   `finally` **before** `restoreWindow(owner)`, so any throw out of `toCapture` (png encode) or
+>   `ctx.saveCapture` (store write, or signed out) skips the restore and the assistant window
+>   stays invisible for the rest of the session — with no control left to bring it back. The
+>   window is also held hidden across every encode and DB write, not just the sweep. Restore
+>   first, then persist (and let a failed save report rather than abort the batch, the way the
+>   deleted `shootAll` did per area).
+> - **A failed send loses the attached images — now on every path.** `clearPendingImages()` runs
+>   right after dispatch and `failSend` restores only the composer text, so a capture that cost a
+>   drag-select is gone and the retry sends text alone. This used to be async-only; the image
+>   path is now entirely inside a `BackgroundTask`, so its synchronous-throw escape hatch is
+>   gone too. (Ticked **areas** survive, because the ticks are not cleared on send — only the
+>   already-shot pixels are lost.) Same hole as `pendingSkills`.
+> - **Wire images are full-resolution png.** `CaptureSupport.toStream` / `IMAGE_FORMAT` pin
+>   `"png"`, so a 4K area goes out at 4K — several MB per image, and providers downscale it
+>   anyway. `SnapShot.exportAsInputStream("jpg")` would cap the long edge at
+>   `GUIUtil.AI_IMAGE_MAX_DIMENSION` (1536) at `DEFAULT_JPG_QUALITY`; switching means changing
+>   `AIAPIProvider.IMAGE_TYPE` with it, since the media subtype it declares is a constant.
+> - **Auto-named areas collide.** Both `defineAreaRow` (chat) and `onDefineArea` (capture page)
+>   name a new area `Area <count + 1>`, so removing an area and adding another reuses a name.
+>   The name is the `SnapShot.sourceID` and therefore the `AICapture.fromArea` label, so two
+>   different rectangles can produce indistinguishable capture rows.
+> - **An all-skipped sweep still sends a vision request.** `takeSnapShots` silently drops areas
+>   whose rectangle is unset or empty; if every ticked area drops and no images are attached,
+>   `onSend` still calls `asyncImageSend` with a zero-length array instead of falling back to
+>   `asyncSend`. Not reachable today (`select()` only returns usable rectangles), but the guard
+>   is one `streams.length == 0` check.
+> - **Send-time capture thumbnails can land after the reply.** The shots are appended to the
+>   transcript from `BackgroundTask`'s done-callback while `asyncImageSend` is already in flight,
+>   so a fast provider's answer can be rendered first and the images appear below it.
+> - **The popup's *All areas* box reads ticked when the list is empty.** Removing the last row
+>   re-evaluates it as `rowBoxes.stream().allMatch(...)` over an empty list, which is `true`.
+>   Cosmetic only — the popup is rebuilt on each open.
 > - **`CapturePanel.full()` falls back to the projected row.** When `ctx.getCapture(guid)` misses
 >   — signed out, or the row was deleted elsewhere — `full()` returns the image-less projected
 >   instance, and `onRenameCapture` saves it, so `ds.update` writes a null `image` over the
@@ -266,8 +319,8 @@ split out of `AssistantPanel`, which is now just wiring:
 | Class | What it is |
 |---|---|
 | `AssistantPanel` | Wiring only: builds the six page panels, the sidebar, and the top-level `CardStack` |
-| `AssistantContext` | Swing-free state holder: injected services + current selection + caches + session capture areas |
-| `CaptureArea` | Session-only POJO: name, bounds, display, `selected` tick, lastUsed — never persisted |
+| `AssistantContext` | Swing-free state holder: injected services + current selection + caches + the session `CaptureAreaSet` + the session `ModelFilter` |
+| `ModelFilter` | Session model filter: two `TokenMatcher`s (include / `!`exclude) over a typed pattern list, falling back to the built-in non-chat markers |
 | `AIAPIProvider` | The `AIProvider` implementation over `io.xlogistx.api.ai.AIAPI` (+ inner `ModelCatalog`) |
 | `AssistantCallback` | `ConsumerCallback<NVGenericMap>` — payload → `AIResponse`, persist, hop to the EDT |
 | `AssistantMDDecoder` | Provider payload → renderable markdown (see §10.1) |
@@ -279,13 +332,21 @@ split out of `AssistantPanel`, which is now just wiring:
 | `panels/ProvidersPanel` | The four-card Providers page |
 | `panels/JobQueuePanel` | Stub (see the status block) |
 | `panels/CapturePanel` | The two-tab Capture page (see the status block) |
-| `panels/CaptureSupport` | Capture helpers: select/shoot/shootAll, PNG codec, thumbnails, sublabel/byte/time formatting |
+| `panels/CaptureSupport` | Capture helpers: select/shootAndSave, png encode + jpeg thumbnail, icon scaling, sublabel/byte/time formatting |
 | `panels/RegionOverlay` | Blocking multi-monitor drag-select overlay; `select()` must run off the EDT |
 | `panels/PanelSupport` | Shared row/format helpers (`timestamp`, `deleteConfirm`, provider combos) |
 
 `MarkDownViewerPanel` used to live here and is **gone** — markdown rendering is
 `io.xlogistx.gui.MDViewerPanel` from `xlogistx-gui-audio`, which is also where commonmark now
 comes from.
+
+The module's own **`CaptureArea` POJO is gone too**: capture areas are
+`io.xlogistx.gui.CaptureArea` (name / description / `Rectangle`, no tick and no `lastUsed`) held
+in an `io.xlogistx.gui.CaptureAreaSet`, and a shot is an `io.xlogistx.gui.SnapShot`
+(image + `sourceID` = the area name + sequence + timestamp, plus `exportAsInputStream(format)`).
+The set owns one lazily created, cached `Robot` and serializes sweeps on it; `takeSnapShots()`
+with **no arguments captures the whole set**, so every call site must pass an explicit, non-empty
+array or an intended "capture nothing" turns into "capture everything".
 
 ---
 
@@ -338,9 +399,10 @@ are buttons that paste their text into the composer for the subject to edit befo
 
 > **Implementation status.** The popup has four sections, not two, and the chips were never
 > built: **Skills for this message**, **Images for this message** (a checkbox per attached
-> image, uncheck to drop it, plus an *Attach image* file picker), and **Capture** (a fresh drag,
-> plus one row per session capture area — click to shoot and attach, `▶` to shoot and send).
-> **Job queue** is absent because the queue page itself is a stub. A message can carry any
+> image, uncheck to drop it, plus an *Attach image* file picker), and **Capture** (a fresh drag
+> that *defines* a new area, an *All areas* check-all, and one tick box + remove ✕ per session
+> capture area — ticked areas are shot in one sweep **when Send is pressed**, and the ticks
+> persist across sends). **Job queue** is absent because the queue page itself is a stub. A message can carry any
 > number of images; the attached image is display-and-wire only, so it leaves the transcript on
 > the next `refreshPrompt()` and never goes out with the flattened history. See the status block
 > at the top for the mechanics.
@@ -541,16 +603,18 @@ key name over `provider · baseURL · used by N providers`; that count comes fro
 which walks the **registrar** rather than the store, since the sublabel renders per row on the EDT.
 Selecting a row opens the provider **form** (`buildProviderForm`) on a new config seeded from the
 key's `provider` / `base-url` properties: Key (read-only) / Label / Provider type / Base URL /
-Default model. Below the picker, **New Key** opens a `create` card (`buildCreateProviderKey`) for a
+Default model — the **Default model row is hidden on the add path** (`hidemode 3`), because
+discovery has not run yet and the combo would be empty; it appears once the provider is edited
+after its first save. Below the picker, **New Key** opens a `create` card
+(`buildCreateProviderKey`) for a
 key NoSneak doesn't have yet: Label / Provider (the known types) / API Key / optional Base URL — no
 domain/app-id scope fields, that's Credentials vocabulary. It creates through
 `AICredentialSource.addAPIKey` (→ `Session.storeAPIKey` with `external = true` +
 `setAssistantEnabled`), then lands on the same form. The key is a full NoSneak credential —
-visible, editable, and deletable in Credentials.
-
-> **Known gap.** On the add path the form's **Default model** combo is empty: `showProviderForm`
-> only calls `fillModels` for an existing config, and discovery has not run yet. You save, reopen
-> the provider via edit, and only then can you pick from the discovered list.
+visible, editable, and deletable in Credentials, and key mutations made here reach that page
+live: `Session` fires a `"credentials"` event that `SubjectPanel` refreshes on. The assistant
+itself never deletes a credential — key deletion lives on the Credentials page's edit-API-key
+card (and its list rows), deliberately outside this module.
 
 Footer note on the list: keys come from NoSneak credentials; adding one here lets the assistant use it
 and discover its models; it is never stored separately.
@@ -636,7 +700,10 @@ name match so a chat saved before providers had ids still resolves). `setCurrent
 selection and fires `"currentChat"`; `deleteChat` fires it **only** when the deleted chat is the
 current one (matched by instance **or GUID**, nulling first, then firing — instance identity
 alone misses, because History refreshes hand out fresh instances whenever the cache hasn't seen
-the GUID yet); `resetContext()` clears the selection + both caches and
+the GUID yet); `resetContext()` clears the selection, **all three** caches, the session
+`ModelFilter` and the session
+`CaptureAreaSet` (`getCaptureAreaSet()` is the only accessor — the old
+`getCaptureAreas`/`addCaptureArea`/`removeCaptureArea` trio is gone), then
 fires `"currentChat"` so the transcript blanks. Panels subscribe via `onChange(prop, listener)`
 and re-render, so the Chat page never decides *which* chat to load — it renders whatever
 `currentChat()` is. The app supplies the concrete services (`SessionAICredentialSource`,
@@ -675,8 +742,10 @@ cleared on logout by `clearProviders()`.
   assigns the GUID on insert and every path upserts by GUID underneath). `getAllChats` /
   `getAllSkills` / `getAllProviderConfigs` return empty when signed out.
 - **Send path.** `onSend` validates chat / model / provider with user-visible dialogs, then calls
-  `AIProvider.asyncSend(wire, skillText, callback)` — or `asyncImageSend(wire, skillText,
-  callback, BufferedImage...)` when the message carries images — for the single bound provider
+  `AIProvider.asyncSend(wire, skillText, callback)` — or, when the message carries images or
+  ticked capture areas, hops into a `BackgroundTask` that shoots, encodes, and calls
+  `asyncImageSend(wire, skillText, callback, UByteArrayInputStream...)` from the worker thread —
+  for the single bound provider
   (`getProviders().lookup(chat.getProvider())`), where `wire` is a **second, throwaway**
   `AIRequest` carrying the flattened `Human:/Assistant:` transcript — the `AIRequest` stored on
   the `AIMessage` keeps the raw user text, so the transcript shows what was typed while the model
@@ -715,15 +784,19 @@ wire formats. `decode(payload)` runs, in order:
 `totalTokenCount`, else summing the prompt/input/completion/output/candidates spellings; `0`
 when absent.
 
-**Tests.** The module runs **54 green tests**: `AssistantMDDecoderTest` (29) renders through
+**Tests.** The module runs **60 green tests**: `AssistantMDDecoderTest` (29) renders through
 commonmark and asserts on the resulting HTML rather than on strings, so it checks the fix actually
 renders — plus fence fixtures in `src/test/resources/fence/`; `MDFileViewerTest` (7) covers the
 editor's commit/revert/dirty contract; `AssistantContextTest` (7) guards the canonical caches, the
 delete-fires-only-for-the-current-chat rule, `resetContext` (including session capture areas), and
 the capture round-trip, against an in-memory `AIRepository` that hands out a fresh instance per
-read like the real store does; `CaptureSupportTest` (7) pins the headless-safe capture helpers
-(`toCapture` field mapping and PNG round-trip, thumbnail edge, `scale`, `bytes`, `shortTime`,
-`region`/`usable`, `areaSublabel`); and `ChatBubbleSaveAsSkillTest` (4) covers the "Save as skill"
+read like the real store does; `CaptureSupportTest` (6) pins the headless-safe capture helpers
+(`toCapture` field mapping and png round-trip, thumbnail bounds, `bytes`, `shortTime`,
+`region`/`usable`, `areaSublabel` — the `scale` case went with the helper, which
+`GUIUtil.compressImage` replaced); `ModelFilterTest` (7) pins the model-filter grammar (blank →
+built-in markers, bare word → contains, glob include, `!` exclude, exclude-only, `*`,
+round-trip/clear, and a lone `!` being ignored rather than blocking everything); and
+`ChatBubbleSaveAsSkillTest` (4) covers the "Save as skill"
 affordance. `RegionOverlay` and the capture tab/toolbar/inline-rename behavior are **not**
 headless-testable — they need real windows and a mouse; use the `AssistantPanelTest` harness.
 

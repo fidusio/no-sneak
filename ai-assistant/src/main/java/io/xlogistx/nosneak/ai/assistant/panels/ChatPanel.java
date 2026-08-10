@@ -1,20 +1,24 @@
 package io.xlogistx.nosneak.ai.assistant.panels;
 
 import io.xlogistx.gui.BackgroundTask;
+import io.xlogistx.gui.CaptureArea;
 import io.xlogistx.gui.CardStack;
 import io.xlogistx.gui.GUIUtil;
 import io.xlogistx.gui.IconUtil;
 import io.xlogistx.gui.PanelBuilder;
+import io.xlogistx.gui.SnapShot;
 import io.xlogistx.nosneak.ai.AIProvider;
 import io.xlogistx.nosneak.ai.assistant.AssistantCallback;
 import io.xlogistx.nosneak.ai.assistant.AssistantContext;
-import io.xlogistx.nosneak.ai.assistant.CaptureArea;
 import io.xlogistx.nosneak.ai.model.*;
 import net.miginfocom.swing.MigLayout;
+import org.zoxweb.server.io.UByteArrayInputStream;
 import org.zoxweb.shared.util.NVEntity;
 
 import javax.imageio.ImageIO;
 import javax.swing.*;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.*;
 import java.awt.event.ActionEvent;
@@ -23,10 +27,13 @@ import java.awt.event.KeyEvent;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Consumer;
 
 import static io.xlogistx.nosneak.ai.assistant.AssistantUtil.chatBubble;
@@ -48,6 +55,7 @@ public class ChatPanel extends JPanel {
 
     private JLabel chatTitle;
     private JComboBox<String> modelSelector;
+    private JTextField modelFilterField;
 
     private JButton sendButton;
     private JButton attachSkillButton;
@@ -56,9 +64,11 @@ public class ChatPanel extends JPanel {
     private final List<BufferedImage> pendingImages = new ArrayList<>();
     private final List<String> pendingImageNames = new ArrayList<>();
     private static final int AREA_LIST_MAX_HEIGHT = 160;
+    private static final int COMPOSER_MIN_HEIGHT = 44;
+    private static final int COMPOSER_MAX_ROWS = 8;
 
     private final JFileChooser imageChooser = new JFileChooser();
-    private JButton captureButton;
+    private final Set<CaptureArea> tickedAreas = Collections.newSetFromMap(new IdentityHashMap<>());
 
     private final JCheckBox sendFullHistory = new JCheckBox("Send history", true);
 
@@ -161,6 +171,24 @@ public class ChatPanel extends JPanel {
         modelSelector = new JComboBox<>();
         modelSelector.setEditable(true);
 
+        modelFilterField = PanelBuilder.textField("Filter models", 12);
+        modelFilterField.putClientProperty("JTextField.leadingIcon", new IconUtil.SearchIcon(14));
+        modelFilterField.setToolTipText(
+                "Narrow the model list: gpt-4*, o3, !*preview*  (bare words match anywhere, ! excludes, blank hides non-chat models)");
+        modelFilterField.getDocument().addDocumentListener(new DocumentListener() {
+            public void insertUpdate(DocumentEvent e) {
+                applyModelFilter();
+            }
+
+            public void removeUpdate(DocumentEvent e) {
+                applyModelFilter();
+            }
+
+            public void changedUpdate(DocumentEvent e) {
+                applyModelFilter();
+            }
+        });
+
         sendFullHistory.setToolTipText(
                 "Checked: each request carries the whole conversation. Unchecked: only the new message is sent.");
 
@@ -171,6 +199,7 @@ public class ChatPanel extends JPanel {
         JPanel titlePanel = new JPanel(new FlowLayout());
         titlePanel.add(chatTitle);
         titlePanel.add(modelSelector);
+        titlePanel.add(modelFilterField);
         titlePanel.add(sendFullHistory);
         titlePanel.add(newChat);
 
@@ -193,10 +222,17 @@ public class ChatPanel extends JPanel {
         composer.getInputMap().put(
                 KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.SHIFT_DOWN_MASK), "insert-break");
 
-
-        JScrollPane composerScroll = new JScrollPane(composer,
-                JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
-        composerScroll.setPreferredSize(new Dimension(0, 44));
+        JScrollPane composerScroll = new JScrollPane(composer, JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER) {
+            @Override
+            public Dimension getPreferredSize() {
+                Insets in = getInsets();
+                Insets ci = composer.getInsets();
+                int row = composer.getFontMetrics(composer.getFont()).getHeight();
+                int max = row * COMPOSER_MAX_ROWS + ci.top + ci.bottom + in.top + in.bottom;
+                int want = composer.getPreferredSize().height + in.top + in.bottom;
+                return new Dimension(0, Math.max(COMPOSER_MIN_HEIGHT, Math.min(max, want)));
+            }
+        };
         composerScroll.setBorder(BorderFactory.createEmptyBorder());
         composerScroll.setOpaque(false);
         composerScroll.getViewport().setOpaque(false);
@@ -211,18 +247,9 @@ public class ChatPanel extends JPanel {
         attachSkillButton.setMargin(new Insets(0, 0, 0, 0));
         attachSkillButton.setPreferredSize(new Dimension(28, 28));
 
-        captureButton = new JButton(new IconUtil.CameraIcon(16));
-        captureButton.putClientProperty("JButton.buttonType", "toolBarButton");
-        captureButton.setFocusable(false);
-        captureButton.setMargin(new Insets(0, 0, 0, 0));
-        captureButton.setPreferredSize(new Dimension(28, 28));
-        captureButton.addActionListener(_ -> onCaptureButton());
-        refreshCaptureTooltip();
-
         JPanel attachButtons = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));
         attachButtons.setOpaque(false);
         attachButtons.add(attachSkillButton);
-        //attachButtons.add(captureButton);
 
         JPanel addSkillHolder = new JPanel(new BorderLayout());
         addSkillHolder.setOpaque(false);
@@ -244,11 +271,34 @@ public class ChatPanel extends JPanel {
         composerBar.add(inputBox, BorderLayout.CENTER);
         composerBar.add(sendButton, BorderLayout.EAST);
 
+        composer.getDocument().addDocumentListener(new DocumentListener() {
+            public void insertUpdate(DocumentEvent e) {
+                composerBar.revalidate();
+            }
+
+            public void removeUpdate(DocumentEvent e) {
+                composerBar.revalidate();
+            }
+
+            public void changedUpdate(DocumentEvent e) {
+                composerBar.revalidate();
+            }
+        });
+
         JPanel panel = new JPanel(new BorderLayout());
         panel.add(titlePanel, BorderLayout.NORTH);
         panel.add(transcriptScroll, BorderLayout.CENTER);
         panel.add(composerBar, BorderLayout.SOUTH);
         return panel;
+    }
+
+    private void applyModelFilter() {
+        Object selected = modelSelector.getSelectedItem();
+        ctx.setModelFilter(modelFilterField.getText());
+
+        AIChat chat = ctx.currentChat();
+        fillModels(ctx, modelSelector, chat != null ? chat.getProvider() : null);
+        if (selected != null) modelSelector.setSelectedItem(selected);
     }
 
     private void refreshPrompt() {
@@ -283,9 +333,10 @@ public class ChatPanel extends JPanel {
         if (sendButton == null || !sendButton.isEnabled()) return;
 
         final List<BufferedImage> images = new ArrayList<>(pendingImages);
+        final CaptureArea[] areas = areasToSend();
 
         String typed = composer.getText().trim();
-        if (typed.isEmpty() && images.isEmpty()) return;
+        if (typed.isEmpty() && images.isEmpty() && areas.length == 0) return;
         final String text = typed.isEmpty() ? "Describe this image." : typed;
 
         AIChat chat = ctx.currentChat();
@@ -357,39 +408,66 @@ public class ChatPanel extends JPanel {
 
         final AIChat sending = chat;
         sendButton.setEnabled(false);
-        try {
-            AssistantCallback callback = new AssistantCallback(ctx, sending, msg,
-                    resp -> {
-                        sendButton.setEnabled(true);
-                        if (sending == ctx.currentChat() && resp.getContent() != null && !resp.getContent().isEmpty())
-                            addMessage(resp.getContent(), false, latencyOf(resp), tokensOf(resp));
-                    }, err -> {
-                sendButton.setEnabled(true);
-                BackgroundTask.runCatching(this, null, () -> ctx.saveChat(sending), null);
-                if (sending == ctx.currentChat()) {
-                    refreshPrompt();
-                    if (composer.getText().isBlank()) composer.setText(text);
-                }
-                JOptionPane.showMessageDialog(this, "Send failed: " + err.getMessage(), "Send", JOptionPane.ERROR_MESSAGE);
-            });
-
-            if (!images.isEmpty())
-                p.asyncImageSend(wire, skillSb.toString(), callback, images.toArray(new BufferedImage[0]));
-            else p.asyncSend(wire, skillSb.toString(), callback);
-        } catch (Exception e) {
+        AssistantCallback callback = new AssistantCallback(ctx, sending, msg,
+                resp -> {
+                    sendButton.setEnabled(true);
+                    if (sending == ctx.currentChat() && resp.getContent() != null && !resp.getContent().isEmpty())
+                        addMessage(resp.getContent(), false, latencyOf(resp), tokensOf(resp));
+                }, err -> {
             sendButton.setEnabled(true);
-            sending.getMessages().remove(msg);
+            BackgroundTask.runCatching(this, null, () -> ctx.saveChat(sending), null);
             if (sending == ctx.currentChat()) {
                 refreshPrompt();
                 if (composer.getText().isBlank()) composer.setText(text);
             }
-            JOptionPane.showMessageDialog(this, "Send failed: " + e.getMessage(),
-                    "Send", JOptionPane.ERROR_MESSAGE);
-            return;
+            JOptionPane.showMessageDialog(this, "Send failed: " + err.getMessage(), "Send", JOptionPane.ERROR_MESSAGE);
+        });
+
+        String skill = skillSb.toString();
+        if (images.isEmpty() && areas.length == 0) {
+            try {
+                p.asyncSend(wire, skill, callback);
+            } catch (Exception e) {
+                failSend(sending, msg, text, e);
+                return;
+            }
+        } else {
+            Window window = SwingUtilities.getWindowAncestor(this);
+            BackgroundTask.run(this, null, () -> {
+                try {
+                    SnapShot[] snaps = (areas.length > 0)
+                            ? CaptureSupport.shootAndSave(ctx, window, areas)
+                            : new SnapShot[0];
+                    UByteArrayInputStream[] streams = new UByteArrayInputStream[images.size() + snaps.length];
+                    int i = 0;
+                    for (BufferedImage image : images) streams[i++] = CaptureSupport.toStream(image);
+                    for (SnapShot snap : snaps) streams[i++] = snap.exportAsInputStream(CaptureSupport.IMAGE_FORMAT);
+                    p.asyncImageSend(wire, skill, callback, streams);
+                    return snaps;
+                } catch (Exception e) {
+                    SwingUtilities.invokeLater(() -> failSend(sending, msg, text, e));
+                    return null;
+                }
+            }, snaps -> {
+                if (snaps == null) return;
+                for (SnapShot snap : snaps) addImage(snap.getImage());
+            });
         }
         BackgroundTask.runCatching(this, null, () -> ctx.saveChat(sending), null);
         pendingSkills.clear();
         clearPendingImages();
+    }
+
+    private void failSend(AIChat sending, AIMessage msg, String text, Exception e) {
+        sendButton.setEnabled(true);
+        sending.getMessages().remove(msg);
+        BackgroundTask.runCatching(this, null, () -> ctx.saveChat(sending), null);
+        if (sending == ctx.currentChat()) {
+            refreshPrompt();
+            if (composer.getText().isBlank()) composer.setText(text);
+        }
+        JOptionPane.showMessageDialog(this, "Send failed: " + e.getMessage(),
+                "Send", JOptionPane.ERROR_MESSAGE);
     }
 
     private void addMessage(String response, boolean user, Integer latency, Integer tokens) {
@@ -415,13 +493,7 @@ public class ChatPanel extends JPanel {
      * next refreshPrompt().
      */
     private void addImage(BufferedImage image) {
-        int max = 240;
-        double scale = Math.min(1.0, (double) max / Math.max(image.getWidth(), image.getHeight()));
-        Image scaled = image.getScaledInstance(
-                Math.max(1, (int) (image.getWidth() * scale)),
-                Math.max(1, (int) (image.getHeight() * scale)), Image.SCALE_SMOOTH);
-
-        JLabel thumb = new JLabel(new ImageIcon(scaled));
+        JLabel thumb = new JLabel(CaptureSupport.scaledIcon(image, 240, 240));
         thumb.setBorder(BorderFactory.createLineBorder(UIManager.getColor("Component.borderColor")));
         thumb.setToolTipText(image.getWidth() + "x" + image.getHeight());
         transcript.add(thumb, "alignx trailing");
@@ -472,12 +544,70 @@ public class ChatPanel extends JPanel {
         content.add(attachImageRow(popup));
 
         content.add(sectionLabel("Capture"), "gaptop 10");
-        content.add(captureOnceRow(popup));
+        content.add(defineAreaRow(popup));
+        content.add(areaSection(popup), "growx");
+
+        popup.add(content);
+        popup.show(attachSkillButton, 0, -popup.getPreferredSize().height);
+    }
+
+    private JComponent areaSection(JPopupMenu popup) {
+        CaptureArea[] all = ctx.getCaptureAreaSet().getCaptureAreas();
+        if (all.length == 0) {
+            JLabel none = new JLabel("No capture areas yet");
+            none.setEnabled(false);
+            return none;
+        }
 
         JPanel areas = new JPanel(new MigLayout("wrap 1, insets 0, gapy 2", "[grow]"));
         areas.setOpaque(false);
-        for (CaptureArea area : ctx.getCaptureAreas())
-            areas.add(areaRow(area, popup), "growx");
+
+        List<JCheckBox> rowBoxes = new ArrayList<>();
+        JCheckBox allBox = new JCheckBox("All areas", areasToSend().length == all.length);
+        allBox.setOpaque(false);
+        allBox.setToolTipText("Send every capture area with the next message");
+        allBox.addActionListener(_ -> {
+            boolean on = allBox.isSelected();
+            tickedAreas.clear();
+            if (on) Collections.addAll(tickedAreas, ctx.getCaptureAreaSet().getCaptureAreas());
+            for (JCheckBox box : rowBoxes) box.setSelected(on);
+            refreshSkillTooltip();
+        });
+
+        for (CaptureArea area : all) {
+            JCheckBox box = new JCheckBox(area.getName(), tickedAreas.contains(area));
+            box.setOpaque(false);
+            box.setToolTipText(CaptureSupport.areaSublabel(area) + ", captured when the message is sent");
+            box.addActionListener(_ -> {
+                if (box.isSelected()) tickedAreas.add(area);
+                else tickedAreas.remove(area);
+                allBox.setSelected(rowBoxes.stream().allMatch(AbstractButton::isSelected));
+                refreshSkillTooltip();
+            });
+            rowBoxes.add(box);
+
+            JButton remove = GUIUtil.iconButton(new IconUtil.DeleteIcon(14), true);
+            remove.setToolTipText("Remove this capture area");
+            remove.setFocusable(false);
+
+            JPanel row = new JPanel(new BorderLayout());
+            row.setOpaque(false);
+            row.add(box, BorderLayout.CENTER);
+            row.add(remove, BorderLayout.EAST);
+
+            remove.addActionListener(_ -> {
+                ctx.getCaptureAreaSet().removeCaptureAreas(area);
+                tickedAreas.remove(area);
+                rowBoxes.remove(box);
+                areas.remove(row);
+                allBox.setSelected(rowBoxes.stream().allMatch(AbstractButton::isSelected));
+                areas.revalidate();
+                areas.repaint();
+                popup.pack();
+                refreshSkillTooltip();
+            });
+            areas.add(row, "growx");
+        }
 
         JScrollPane areaScroll = new JScrollPane(areas);
         areaScroll.setBorder(BorderFactory.createEmptyBorder());
@@ -488,10 +618,12 @@ public class ChatPanel extends JPanel {
         areaScroll.setPreferredSize(new Dimension(
                 areas.getPreferredSize().width + 16,
                 Math.min(areas.getPreferredSize().height + 4, AREA_LIST_MAX_HEIGHT)));
-        content.add(areaScroll, "growx");
 
-        popup.add(content);
-        popup.show(attachSkillButton, 0, -popup.getPreferredSize().height);
+        JPanel section = new JPanel(new MigLayout("wrap 1, insets 0, gapy 2", "[grow]"));
+        section.setOpaque(false);
+        section.add(allBox);
+        section.add(areaScroll, "growx");
+        return section;
     }
 
     private JCheckBox imageRow(BufferedImage image, String name) {
@@ -522,100 +654,33 @@ public class ChatPanel extends JPanel {
         return button;
     }
 
-    /**
-     * The one-click path: re-shoots the area used last, or falls back to a drag when none is
-     * defined. It attaches rather than sends, because a saved rectangle points at whatever moved
-     * into that space since it was defined.
-     */
-    private void onCaptureButton() {
-        CaptureArea area = defaultArea();
-        if (area == null) capture(null, null, false);
-        else shootArea(area, false);
-    }
-
-    private void shootArea(CaptureArea area, boolean sendNow) {
-        area.setLastUsed(System.currentTimeMillis());
-        refreshCaptureTooltip();
-        capture(area.getBounds(), area.getName(), sendNow);
-    }
-
-    private CaptureArea defaultArea() {
-        CaptureArea latest = null;
-        for (CaptureArea area : ctx.getCaptureAreas())
-            if (latest == null || area.getLastUsed() >= latest.getLastUsed()) latest = area;
-        return latest;
-    }
-
-    private void refreshCaptureTooltip() {
-        if (captureButton == null) return;
-        CaptureArea area = defaultArea();
-        captureButton.setToolTipText(area == null
-                ? "Drag out a region and attach it to this message"
-                : "Capture " + area.getName() + " and attach it");
-    }
-
-    private JButton captureOnceRow(JPopupMenu popup) {
+    private JButton defineAreaRow(JPopupMenu popup) {
         JButton button = new JButton("Capture area...", new IconUtil.AreaIcon(14));
         button.putClientProperty("JButton.buttonType", "borderless");
         button.setHorizontalAlignment(SwingConstants.LEFT);
         button.setFocusable(false);
-        button.setToolTipText("Drag out a region and attach it to this message");
+        button.setToolTipText("Drag out a region and add it to the capture areas");
         button.addActionListener(_ -> {
             popup.setVisible(false);
-            capture(null, null, false);
+            Window window = SwingUtilities.getWindowAncestor(this);
+            BackgroundTask.run(this, null, () -> CaptureSupport.select(window), selection -> {
+                if (selection == null) return;
+                CaptureArea area = new CaptureArea(
+                        "Area " + (ctx.getCaptureAreaSet().getCaptureAreas().length + 1),
+                        selection.display(), selection.bounds());
+                ctx.getCaptureAreaSet().addCaptureAreas(area);
+                tickedAreas.add(area);
+                refreshSkillTooltip();
+            });
         });
         return button;
     }
 
-    private JPanel areaRow(CaptureArea area, JPopupMenu popup) {
-        JButton attach = new JButton(area.getName(), new IconUtil.CameraIcon(14));
-        attach.putClientProperty("JButton.buttonType", "borderless");
-        attach.setHorizontalAlignment(SwingConstants.LEFT);
-        attach.setFocusable(false);
-        attach.setToolTipText("Capture " + CaptureSupport.region(area.getBounds()) + " and attach it");
-        attach.addActionListener(_ -> {
-            popup.setVisible(false);
-            shootArea(area, false);
-        });
-
-        JButton send = GUIUtil.iconButton(new IconUtil.NextIcon(14), true);
-        send.setToolTipText("Capture and send straight away");
-        send.setFocusable(false);
-        send.addActionListener(_ -> {
-            popup.setVisible(false);
-            shootArea(area, true);
-        });
-
-        JPanel row = new JPanel(new BorderLayout());
-        row.setOpaque(false);
-        row.add(attach, BorderLayout.CENTER);
-        row.add(send, BorderLayout.EAST);
-        return row;
-    }
-
-    /**
-     * Shoots the region, saves it, and attaches it. The saved row is what makes the image
-     * recoverable later; the attached BufferedImage is what goes on the wire.
-     */
-    private void capture(Rectangle bounds, String areaName, boolean sendNow) {
-        Window window = SwingUtilities.getWindowAncestor(this);
-        String name = (areaName != null ? areaName : "Capture")
-                + " " + PanelSupport.timestamp(System.currentTimeMillis());
-
-        BackgroundTask.run(this, captureButton, () -> {
-            BufferedImage shot = CaptureSupport.shoot(window, bounds);
-            if (shot == null) return null;
-            ctx.saveCapture(CaptureSupport.toCapture(shot, name, areaName));
-            return shot;
-        }, shot -> {
-            if (shot == null) {
-                JOptionPane.showMessageDialog(this, "Nothing was selected. Drag out an area to capture it.",
-                        "Capture", JOptionPane.INFORMATION_MESSAGE);
-                return;
-            }
-            attachImage(shot, name);
-            if (sendNow) onSend();
-        });
+    private CaptureArea[] areasToSend() {
+        List<CaptureArea> out = new ArrayList<>();
+        for (CaptureArea area : ctx.getCaptureAreaSet().getCaptureAreas())
+            if (tickedAreas.contains(area)) out.add(area);
+        return out.toArray(new CaptureArea[0]);
     }
 
     private void chooseImage() {
@@ -721,8 +786,9 @@ public class ChatPanel extends JPanel {
 
     private void refreshSkillTooltip() {
         if (attachSkillButton == null) return;
-        if (pendingSkills.isEmpty() && pendingImages.isEmpty()) {
-            attachSkillButton.setToolTipText("Attach skills or images to the next message");
+        CaptureArea[] areas = areasToSend();
+        if (pendingSkills.isEmpty() && pendingImages.isEmpty() && areas.length == 0) {
+            attachSkillButton.setToolTipText("Attach skills, images or capture areas to the next message");
             return;
         }
         StringBuilder names = new StringBuilder();
@@ -734,14 +800,19 @@ public class ChatPanel extends JPanel {
             if (!names.isEmpty()) names.append(", ");
             names.append(image);
         }
+        for (CaptureArea area : areas) {
+            if (!names.isEmpty()) names.append(", ");
+            names.append(area.getName());
+        }
         attachSkillButton.setToolTipText("Attached to the next message: " + names);
     }
 
     public void reset() {
         sendFullHistory.setSelected(true);
+        modelFilterField.setText("");
         pendingSkills.clear();
+        tickedAreas.clear();
         clearPendingImages();
-        refreshCaptureTooltip();
         composer.setText("");
         promptCards.show("empty");
     }

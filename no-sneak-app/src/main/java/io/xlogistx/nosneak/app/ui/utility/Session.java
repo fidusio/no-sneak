@@ -228,6 +228,7 @@ public class Session {
         if (label != null && !label.isBlank()) key.setName(label.trim());
         if (description != null && !description.isBlank()) key.setDescription(description.trim());
         domainSecurityManager.createCredential(subjectIdentifier, key);
+        pcs.firePropertyChange("credentials", null, key);
         return key;
     }
 
@@ -255,6 +256,7 @@ public class Session {
         if (key == null) throw new SecurityException("Empty Key");
 
         domainSecurityManager.deleteCredential(key);
+        pcs.firePropertyChange("credentials", null, key);
     }
 
 
@@ -270,6 +272,7 @@ public class Session {
         key.setAPIKey(fresh.getAPIKey());
 
         domainSecurityManager.updateCredential(subjectIdentifier, key);
+        pcs.firePropertyChange("credentials", null, key);
     }
 
     public boolean isExternalKey(APIKey<String> key) {
@@ -474,6 +477,7 @@ public class Session {
         props.build(APIKeyInfo.HEADER_NAME, headerName == null ? "" : headerName.trim());
 
         domainSecurityManager.updateCredential(subjectIdentifier, apiKey);
+        pcs.firePropertyChange("credentials", null, apiKey);
     }
 
     /**
@@ -565,5 +569,14 @@ public class Session {
      */
     public void onAuthChange(PropertyChangeListener l) {
         pcs.addPropertyChangeListener("authenticated", l);
+    }
+
+    /**
+     * Registers a listener for the {@code "credentials"} change event, fired after an API key is
+     * stored, edited, rotated, or deleted — including through the AI assistant's credential
+     * source. Mutators run off the EDT, so listeners touching Swing must hop to it themselves.
+     */
+    public void onCredentialsChange(PropertyChangeListener l) {
+        pcs.addPropertyChangeListener("credentials", l);
     }
 }

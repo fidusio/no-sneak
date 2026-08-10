@@ -120,6 +120,8 @@ public class SubjectPanel extends JPanel {
             apiKeySection.refresh();
             populateProfile();
             if (!(boolean) e.getNewValue()) {
+                cardStack.show("Profile");
+                profileButton.setSelected(true);
                 credentialCards.show("list");
                 currentPwd.setText("");
                 newPwd.setText("");
@@ -148,6 +150,14 @@ public class SubjectPanel extends JPanel {
                 addrCountry.setSelectedIndex(-1);
             }
         });
+
+        // API keys can also be created and deleted from the AI assistant's Providers page, so the
+        // credential rows refresh on the session's credentials event, not only on this panel's
+        // own mutations. Fired off the EDT — hop before touching Swing.
+        ctx.session().onCredentialsChange(_ -> SwingUtilities.invokeLater(() -> {
+            passwordSection.refresh();
+            apiKeySection.refresh();
+        }));
 
         add(PanelBuilder.buildDefaultSplitPanel(cardStack.view(), profileButton, credentialButton, backupButton));
     }
@@ -839,7 +849,15 @@ public class SubjectPanel extends JPanel {
                     PanelBuilder.addRow(panel, "Provider", keyProvider);
                     PanelBuilder.addRow(panel, "Base URL", keyURI);
 
-                    PanelBuilder.addRow(panel, "", submit);
+                    JButton deleteKey = new JButton("Delete", new IconUtil.DeleteIcon(16));
+                    deleteKey.setToolTipText("Permanently delete this API key");
+                    deleteKey.addActionListener(_ -> onDeleteAPIKey(selectedKey));
+
+                    JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+                    actions.setOpaque(false);
+                    actions.add(submit);
+                    actions.add(deleteKey);
+                    PanelBuilder.addRow(panel, "", actions);
                 }
         );
     }
@@ -964,6 +982,11 @@ public class SubjectPanel extends JPanel {
         BackgroundTask.runCatching(this, null,
                 () -> ctx.session().deleteAPIKey(key),
                 () -> {
+                    if (selectedKey == key) {
+                        selectedKey = null;
+                        editKeySecret.setText("");
+                        credentialCards.show("list");
+                    }
                     apiKeySection.refresh();
                     JOptionPane.showMessageDialog(this, "API key Deleted.");
                 });

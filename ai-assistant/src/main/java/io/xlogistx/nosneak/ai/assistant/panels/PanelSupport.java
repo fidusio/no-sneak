@@ -4,6 +4,7 @@ import io.xlogistx.nosneak.ai.AIException;
 import io.xlogistx.nosneak.ai.AIProvider;
 import io.xlogistx.nosneak.ai.assistant.AIAPIProvider;
 import io.xlogistx.nosneak.ai.assistant.AssistantContext;
+import io.xlogistx.nosneak.ai.assistant.ModelFilter;
 import org.zoxweb.shared.util.SUS;
 
 import javax.swing.*;
@@ -15,10 +16,6 @@ import java.time.format.DateTimeFormatter;
 public final class PanelSupport {
 
     private static final DateTimeFormatter ROW_TIMESTAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
-
-    private static final String[] NON_CHAT_MODEL_MARKERS = {
-            "whisper", "tts", "embedding", "moderation", "dall-e", "davinci", "babbage",
-            "audio", "realtime", "image", "transcribe"};
 
     private PanelSupport() {
     }
@@ -52,24 +49,20 @@ public final class PanelSupport {
         box.setSelectedItem(p != null ? p.getID() : ref);
     }
 
-    private static boolean isChatModel(String modelID) {
-        if (modelID == null) return false;
-        String m = modelID.toLowerCase();
-        for (String marker : NON_CHAT_MODEL_MARKERS) {
-            if (m.contains(marker)) return false;
-        }
-        return true;
+    public static void fillModels(AssistantContext ctx, JComboBox<String> box, String providerRef) {
+        fillModels(ctx, box, providerRef, true);
     }
 
-    public static void fillModels(AssistantContext ctx, JComboBox<String> box, String providerRef) {
+    public static void fillModels(AssistantContext ctx, JComboBox<String> box, String providerRef,
+                                  boolean sessionFilter) {
         box.removeAllItems();
         AIProvider p = ctx.lookupProvider(providerRef);
         if (p == null) return;
         try {
             String[] models = p.getModelCatalog().models();
-            // @TODO match models with TokenMatcher instead of the marker list
             if (models != null) for (String m : models) {
-                if (isChatModel(m)) box.addItem(m);
+                if (sessionFilter ? ctx.getModelFilter().accepts(m) : ModelFilter.isChatModel(m))
+                    box.addItem(m);
             }
         } catch (AIException _) {
         }

@@ -1,27 +1,23 @@
 package io.xlogistx.nosneak.ai.assistant.panels;
 
+import io.xlogistx.gui.CaptureArea;
 import io.xlogistx.gui.GUIUtil;
+import io.xlogistx.gui.SnapShot;
 import io.xlogistx.nosneak.ai.assistant.AssistantContext;
-import io.xlogistx.nosneak.ai.assistant.CaptureArea;
 import io.xlogistx.nosneak.ai.model.AICapture;
+import org.zoxweb.server.io.UByteArrayInputStream;
 
 import javax.imageio.ImageIO;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.List;
 
 public final class CaptureSupport {
-
-    record ShootResult(int saved, List<String> failures) {
-    }
 
     static final String IMAGE_FORMAT = "png";
     static final int THUMBNAIL_EDGE = 200;
@@ -42,50 +38,29 @@ public final class CaptureSupport {
         }
     }
 
-    static BufferedImage shoot(Window owner, Rectangle preset) throws Exception {
+    static SnapShot[] shootAndSave(AssistantContext ctx, Window owner, CaptureArea[] areas)
+            throws Exception {
         hideWindow(owner);
+        SnapShot[] snaps = new SnapShot[0];
         try {
-            Rectangle area = preset;
-            if (area == null) {
-                RegionOverlay.Selection selection = drag();
-                area = (selection != null) ? selection.bounds() : null;
-            }
-            if (!usable(area)) return null;
-            return GUIUtil.captureSelectedArea(area);
+            snaps = ctx.getCaptureAreaSet().takeSnapShots(areas);
+            return snaps;
         } finally {
+            for (SnapShot snap : snaps)
+                ctx.saveCapture(toCapture(snap.getImage(),
+                        snap.getSourceID() + " " + shortTime(snap.getTimestamp()), snap.getSourceID()));
             restoreWindow(owner);
         }
     }
 
-    static ShootResult shootAll(AssistantContext ctx, Window owner, List<CaptureArea> areas, long now)
-            throws Exception {
-        int saved = 0;
-        List<String> failures = new ArrayList<>();
-        hideWindow(owner);
-        try {
-            Robot robot = new Robot();
-            for (CaptureArea area : areas) {
-                try {
-                    if (!usable(area.getBounds()))
-                        throw new IllegalStateException("area has no usable bounds");
-                    BufferedImage shot = robot.createScreenCapture(area.getBounds());
-                    ctx.saveCapture(toCapture(shot, area.getName() + " " + shortTime(now), area.getName()));
-                    area.setLastUsed(now);
-                    saved++;
-                } catch (Exception e) {
-                    failures.add(area.getName() + ": " + e.getMessage());
-                }
-            }
-        } finally {
-            restoreWindow(owner);
-        }
-        return new ShootResult(saved, failures);
+    static UByteArrayInputStream toStream(BufferedImage image) throws IOException {
+        return new SnapShot(null, 0, null, image).exportAsInputStream(IMAGE_FORMAT);
     }
 
     static AICapture toCapture(BufferedImage image, String name, String areaName) throws IOException {
         if (image == null) return null;
 
-        byte[] png = toPNG(image);
+        byte[] png = toStream(image).readAllBytes();
         AICapture capture = new AICapture();
         capture.setName(name);
         capture.setFromArea(areaName);
@@ -93,43 +68,13 @@ public final class CaptureSupport {
         capture.setHeight(image.getHeight());
         capture.setNumBytes(png.length);
         capture.setImage(png);
-        capture.setThumbnail(toPNG(scale(image, THUMBNAIL_EDGE)));
+        capture.setThumbnail(GUIUtil.compressImage(image, THUMBNAIL_EDGE, GUIUtil.DEFAULT_JPG_QUALITY).readAllBytes());
         return capture;
     }
 
-    static byte[] toPNG(BufferedImage image) throws IOException {
-        if (image == null) return null;
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        if (!ImageIO.write(image, IMAGE_FORMAT, out))
-            throw new IOException("cannot encode the image as " + IMAGE_FORMAT);
-        return out.toByteArray();
-    }
-
-    static BufferedImage toImage(byte[] png) throws IOException {
-        if (png == null || png.length == 0) return null;
-        return ImageIO.read(new ByteArrayInputStream(png));
-    }
-
-    static BufferedImage scale(BufferedImage image, int maxEdge) {
-        if (image == null) return null;
-
-        int longest = Math.max(image.getWidth(), image.getHeight());
-        if (longest <= maxEdge) return image;
-
-        double factor = (double) maxEdge / longest;
-        int width = Math.max(1, (int) Math.round(image.getWidth() * factor));
-        int height = Math.max(1, (int) Math.round(image.getHeight() * factor));
-
-        BufferedImage scaled = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
-        Graphics2D g = scaled.createGraphics();
-        try {
-            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-            g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
-            g.drawImage(image, 0, 0, width, height, null);
-        } finally {
-            g.dispose();
-        }
-        return scaled;
+    static BufferedImage toImage(byte[] bytes) throws IOException {
+        if (bytes == null || bytes.length == 0) return null;
+        return ImageIO.read(new ByteArrayInputStream(bytes));
     }
 
     static String region(Rectangle area) {
@@ -138,12 +83,20 @@ public final class CaptureSupport {
     }
 
     static boolean usable(Rectangle area) {
-        return area != null && area.width > 0 && area.height > 0;
+        return area != null && !area.isEmpty();
+    }
+
+    static ImageIcon scaledIcon(BufferedImage image, int maxWidth, int maxHeight) {
+        double factor = Math.min(1.0, Math.min(
+                (double) maxWidth / image.getWidth(), (double) maxHeight / image.getHeight()));
+        int width = Math.max(1, (int) Math.round(image.getWidth() * factor));
+        int height = Math.max(1, (int) Math.round(image.getHeight() * factor));
+        return new ImageIcon(image.getScaledInstance(width, height, Image.SCALE_SMOOTH));
     }
 
     static String areaSublabel(CaptureArea area) {
-        String region = region(area.getBounds());
-        String display = area.getDisplay();
+        String region = region(area.getCaptureArea());
+        String display = area.getDescription();
         return (display == null || display.isBlank()) ? region : display + "  ·  " + region;
     }
 

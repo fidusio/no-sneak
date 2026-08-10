@@ -208,8 +208,11 @@ The **Profile** screen is itself a nested `CardStack` (`profileCards`, built by
     Description are required**. Saved via `Session.changeAPIDetails(key, label, description,
     domainID, appID, provider, baseURI, authScheme, headerName)` — App ID / Domain ID persist
     when both non-blank (re-validated through the AppID filters); `authScheme`/`headerName` are
-    not on the form but round-trip unchanged from the stored key. **Delete**
-    (`Session.deleteAPIKey`) confirms first, runs off the EDT, and refreshes. **Rotate**
+    not on the form but round-trip unchanged from the stored key. **Delete** sits beside Save in
+    the card's action row (and on every list row) and runs the same `onDeleteAPIKey`:
+    `Session.deleteAPIKey` after a confirm, off the EDT, then refresh — and when the deleted key
+    is the one the card is editing it clears `selectedKey`, blanks the revealed secret, and flips
+    back to the list, so the card can't be left showing a row that no longer exists. **Rotate**
     (`Session.rotateAPIKey`, disabled for external keys) is wired but **commented out of the
     card** (`keyView.add(rotateKey)`) — read the `external`-flag hazard under *Security
     hardening* before putting it back.
@@ -394,6 +397,15 @@ Account data (backed by `DomainSecurityManager`, keyed off the signed-in subject
 
 State changes fire an `"authenticated"` property event; listeners subscribe via `onAuthChange(...)`
 — how `AppFrame` toggles the menu bar and `AppShell`/`SubjectPanel` react on login/logout.
+API-key mutations (`storeAPIKey` / `changeAPIDetails` / `rotateAPIKey` / `deleteAPIKey`) also fire
+a `"credentials"` event (`onCredentialsChange(...)`), which is how a key created or deleted from
+the **AI assistant's** Providers page shows up in `SubjectPanel`'s Credentials list without a
+re-login. The mutators run off the EDT, so that event fires off the EDT too — listeners hop via
+`SwingUtilities.invokeLater` before touching Swing. **`setAssistantEnabled` deliberately does not
+fire it**: the assistant flips that property on every provider add/remove and nothing on the
+Credentials page renders it, so broadcasting would be a refresh storm for no visible change. `SubjectPanel`'s logout branch also resets
+the section selector back to **Profile** (`cardStack.show("Profile")` + re-selecting the toggle),
+so a re-login always lands on the profile view rather than whatever section was open at logout.
 
 ### `SessionAICredentialSource` (in `ui.assistant`)
 The adapter that lets the `ai-assistant` module reach NoSneak's keys without depending on

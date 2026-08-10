@@ -82,11 +82,17 @@ AIChat  ──has many──▶  AIMessage  ──is──▶  { AIRequest, AIRe
   relabelled. Its **GUID is `AIProvider.getID()`**, which is what `AIChat.provider` stores and
   what the registrar is keyed by. The assistant never persists a secret — only this row.
 - **`AICapture`** (`NVC_AI_CAPTURE`) — a saved screenshot: `fromArea` / `width` / `height` /
-  `numBytes` / `thumbnail` (png bytes) / `image` (png bytes), plus the inherited `name` and
-  `creationTime`. It sits **outside** the conversation model — a capture is not attached to an
+  `numBytes` / `thumbnail` / `image` (png bytes), plus the inherited `name` and
+  `creationTime`. The two byte fields are **not the same format**: `image` is the full-size png
+  (and `numBytes` counts *it*), while `thumbnail` is a **jpeg** — `GUIUtil.compressImage(image,
+  200, DEFAULT_JPG_QUALITY)`, which also flattens alpha to `TYPE_INT_RGB`. Nothing reads either
+  by extension (`CaptureSupport.toImage` goes through `ImageIO.read`), so the mismatch is
+  harmless, but do not assume "png bytes" when exporting. It sits **outside** the conversation
+  model — a capture is not attached to an
   `AIChat` or an `AIMessage`, so sending one to a chat copies the pixels onto the wire and
   leaves no record on the turn. `fromArea` is a **copied string label**, not a reference, so the
-  session `CaptureArea` it came from can be renamed or deleted without touching the row.
+  session `io.xlogistx.gui.CaptureArea` it came from can be renamed or deleted without touching
+  the row.
   **`image` is the reason reads are projected:** `AssistantStorage.getAllCaptures()` selects
   `thumbnail` but not `image`, so any code that saves a row it got from a list read must
   re-fetch the full row first or `ds.update` writes a null png over the stored one.
@@ -135,16 +141,20 @@ drops the nested entity on JSON round-trip.
   ```java
   AIResponse send(AIRequest req, String skill) throws AIException;
   void asyncSend(AIRequest req, String skill, ConsumerCallback<NVGenericMap> callback) throws AIException;
-  void asyncImageSend(AIRequest req, String skill, ConsumerCallback<NVGenericMap> callback, BufferedImage... image) throws AIException;
+  void asyncImageSend(AIRequest req, String skill, ConsumerCallback<NVGenericMap> callback, UByteArrayInputStream... images) throws AIException;
   ```
 
-  `asyncImageSend` is **varargs**, so one message can carry several images; `AIAPIProvider`
-  PNG-encodes each into its own `UByteArrayOutputStream` and hands the array to
-  `AIAPI.asyncVisionCompletion`, which emits one `image_url` content block per image. Two things
-  follow from the encoding being **synchronous on the caller's thread**: the UI must not call it
-  from the EDT with large screenshots, and there is no image counterpart to the sync `send`.
-  Note also that the images are **not** part of the `AIRequest`, so nothing about them is
-  persisted with the turn — the same gap `skill` has.
+  `asyncImageSend` is **varargs**, so one message can carry several images. It takes
+  **already-encoded bytes**, not `BufferedImage`s: the caller encodes (the assistant does it off
+  the EDT inside a `BackgroundTask`, via `SnapShot.exportAsInputStream`), and `AIAPIProvider`
+  only forwards the array to `AIAPI.asyncVisionCompletion`, which emits one `image_url` content
+  block per image. The media subtype it declares is `AIAPIProvider.IMAGE_TYPE` — a **constant**,
+  so every stream handed in must actually be that format (png today); there is no per-image type
+  argument. Two consequences of the earlier `BufferedImage` shape are now gone (encoding no
+  longer happens on the caller's thread, and an image can be encoded once and re-sent), but the
+  rest still holds: there is no image counterpart to the sync `send`, and the images are **not**
+  part of the `AIRequest`, so nothing about them is persisted with the turn — the same gap
+  `skill` has.
 
   plus `getModelCatalog()`, `setAPIKey` / `getAPIKey`, `setHTTPAPICaller` /
   `getHTTPAPICaller` (the request goes out through `io.xlogistx.api.ai.AIAPI`, built by

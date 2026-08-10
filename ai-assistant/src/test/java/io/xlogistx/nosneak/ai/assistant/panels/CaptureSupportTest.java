@@ -1,6 +1,6 @@
 package io.xlogistx.nosneak.ai.assistant.panels;
 
-import io.xlogistx.nosneak.ai.assistant.CaptureArea;
+import io.xlogistx.gui.CaptureArea;
 import io.xlogistx.nosneak.ai.model.AICapture;
 import org.junit.jupiter.api.Test;
 
@@ -52,16 +52,6 @@ public class CaptureSupportTest {
     }
 
     @Test
-    public void scaleKeepsSmallImagesAndAspectRatio() {
-        BufferedImage small = image(100, 80);
-        assertSame(small, CaptureSupport.scale(small, 200));
-
-        BufferedImage scaled = CaptureSupport.scale(image(400, 200), 200);
-        assertEquals(200, scaled.getWidth());
-        assertEquals(100, scaled.getHeight());
-    }
-
-    @Test
     public void bytesFormats() {
         assertEquals("0 B", CaptureSupport.bytes(0));
         assertEquals("998 B", CaptureSupport.bytes(998));
@@ -92,10 +82,10 @@ public class CaptureSupportTest {
     @Test
     public void areaSublabelIncludesDisplayWhenPresent() {
         CaptureArea area = new CaptureArea();
-        area.setBounds(new Rectangle(120, 180, 640, 360));
+        area.setCaptureArea(new Rectangle(120, 180, 640, 360));
         assertEquals("640x360 at 120,180", CaptureSupport.areaSublabel(area));
 
-        area.setDisplay("Display 1");
+        area.setDescription("Display 1");
         assertEquals("Display 1  ·  640x360 at 120,180", CaptureSupport.areaSublabel(area));
     }
 }
