@@ -16,6 +16,8 @@ import java.io.IOException;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
 
 public final class CaptureSupport {
 
@@ -38,19 +40,27 @@ public final class CaptureSupport {
         }
     }
 
-    static SnapShot[] shootAndSave(AssistantContext ctx, Window owner, CaptureArea[] areas)
+    /**
+     * Shoots every area in one sweep and persists each shot. The window is restored before anything
+     * is encoded or written, so a failed save cannot leave the assistant invisible.
+     */
+    static AICapture[] shootAndSave(AssistantContext ctx, Window owner, CaptureArea[] areas)
             throws Exception {
         hideWindow(owner);
-        SnapShot[] snaps = new SnapShot[0];
+        SnapShot[] snaps;
         try {
             snaps = ctx.getCaptureAreaSet().takeSnapShots(areas);
-            return snaps;
         } finally {
-            for (SnapShot snap : snaps)
-                ctx.saveCapture(toCapture(snap.getImage(),
-                        snap.getSourceID() + " " + shortTime(snap.getTimestamp()), snap.getSourceID()));
             restoreWindow(owner);
         }
+
+        List<AICapture> saved = new ArrayList<>();
+        for (SnapShot snap : snaps) {
+            AICapture capture = ctx.saveCapture(toCapture(snap.getImage(),
+                    snap.getSourceID() + " " + shortTime(snap.getTimestamp()), snap.getSourceID()));
+            if (capture != null) saved.add(capture);
+        }
+        return saved.toArray(new AICapture[0]);
     }
 
     static UByteArrayInputStream toStream(BufferedImage image) throws IOException {

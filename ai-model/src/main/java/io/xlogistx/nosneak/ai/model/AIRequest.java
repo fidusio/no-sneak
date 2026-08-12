@@ -13,7 +13,8 @@ public class AIRequest extends PropertyDAO {
         CONTENT(NVConfigManager.createNVConfig("content", "content to send to an ai", "Content", false, false, String.class)),
         CORRELATION_ID(NVConfigManager.createNVConfig("correlation_id", "id to connect request with responses", "CorrelationID", false, false, String.class)),
         PROVIDER_SESSION_ID(NVConfigManager.createNVConfig("provider_session_id", "id to send to stateful ai for context", "ProviderSessionID", false, false, String.class)),
-        MAX_TOKENS(NVConfigManager.createNVConfig("max_tokens", "the max number of tokens the request should use", "MaxTokens", false, false, Integer.class));
+        MAX_TOKENS(NVConfigManager.createNVConfig("max_tokens", "the max number of tokens the request should use", "MaxTokens", false, false, Integer.class)),
+        ATTACHMENTS(NVConfigManager.createNVConfigEntity("attachments", "sources sent with this turn", "Attachments", false, true, AISource[].class, NVConfigEntity.ArrayType.LIST));
 
         private final NVConfig nvc;
 
@@ -82,5 +83,14 @@ public class AIRequest extends PropertyDAO {
 
     public void setMaxTokens(Integer maxTokens) {
         setValue(Param.MAX_TOKENS, maxTokens);
+    }
+
+    public ArrayValues<NVEntity> getAttachments() {
+        return lookup(Param.ATTACHMENTS);
+    }
+
+    public AIRequest addAttachment(AISource source) {
+        getAttachments().add(source);
+        return this;
     }
 }

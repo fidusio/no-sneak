@@ -58,8 +58,8 @@ public class AssistantPanel extends JPanel {
         providersPanel.setOnProvidersChanged(historyPanel::refreshProviderCombos);
         skillsPanel.setOnSkillRemoved(chatPanel::dropPendingSkill);
 
-        capturePanel.setOnSendToChat((image, name) -> {
-            chatPanel.attachImage(image, name);
+        capturePanel.setOnSendToChat(capture -> {
+            chatPanel.attachCapture(capture);
             chatPanel.showPrompt();
             cardStack.show("chat");
             chatButton.setSelected(true);

@@ -13,7 +13,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 import static io.xlogistx.nosneak.ai.assistant.panels.PanelSupport.deleteConfirm;
 
@@ -32,6 +32,7 @@ public class CapturePanel extends JPanel {
 
     private JButton defineAreaButton;
     private JButton captureButton;
+    private JButton deleteAllButton;
     private JToggleButton areasTab;
     private JToggleButton capturesTab;
     private JPanel areasContent;
@@ -42,7 +43,7 @@ public class CapturePanel extends JPanel {
     private CaptureArea editingArea;
     private AICapture previewed;
 
-    private BiConsumer<BufferedImage, String> onSendToChat;
+    private Consumer<AICapture> onSendToChat;
 
     public CapturePanel(AssistantContext ctx) {
         this.ctx = ctx;
@@ -52,7 +53,7 @@ public class CapturePanel extends JPanel {
         refreshAreas();
     }
 
-    public void setOnSendToChat(BiConsumer<BufferedImage, String> onSendToChat) {
+    public void setOnSendToChat(Consumer<AICapture> onSendToChat) {
         this.onSendToChat = onSendToChat;
     }
 
@@ -66,7 +67,14 @@ public class CapturePanel extends JPanel {
         captureButton.setEnabled(false);
         captureButton.addActionListener(_ -> onCapture());
 
+        deleteAllButton = new JButton("Delete all", new IconUtil.DeleteIcon(16));
+        deleteAllButton.setToolTipText("Delete every saved capture");
+        deleteAllButton.setVisible(false);
+        deleteAllButton.setEnabled(false);
+        deleteAllButton.addActionListener(_ -> onDeleteAllCaptures());
+
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        buttons.add(deleteAllButton);
         buttons.add(defineAreaButton);
         buttons.add(captureButton);
 
@@ -77,14 +85,14 @@ public class CapturePanel extends JPanel {
         areasTab = new JToggleButton("Capture area selection", true);
         areasTab.setFocusable(false);
         areasTab.addActionListener(_ -> {
-            captureCards.show("areas");
+            showAreas();
             refreshAreas();
         });
 
         capturesTab = new JToggleButton("Captures");
         capturesTab.setFocusable(false);
         capturesTab.addActionListener(_ -> {
-            captureCards.show("captures");
+            showCaptures();
             refreshCaptures();
         });
 
@@ -203,6 +211,7 @@ public class CapturePanel extends JPanel {
         }
         capturesContent.revalidate();
         capturesContent.repaint();
+        deleteAllButton.setEnabled(!captures.isEmpty());
     }
 
     private JPanel areaRow(CaptureArea area) {
@@ -397,14 +406,7 @@ public class CapturePanel extends JPanel {
 
     private void onSendToChat(AICapture capture) {
         if (capture == null || capture.getGUID() == null) return;
-        BackgroundTask.run(this, null, () -> CaptureSupport.toImage(full(capture).getImage()), image -> {
-            if (image == null) {
-                JOptionPane.showMessageDialog(this, "That capture has no stored image.",
-                        "Capture", JOptionPane.WARNING_MESSAGE);
-                return;
-            }
-            if (onSendToChat != null) onSendToChat.accept(image, captureLabel(capture));
-        });
+        if (onSendToChat != null) onSendToChat.accept(capture);
     }
 
     /**
@@ -441,6 +443,24 @@ public class CapturePanel extends JPanel {
         });
     }
 
+    private void onDeleteAllCaptures() {
+        if (captures.isEmpty()) return;
+        int count = captures.size();
+        int res = JOptionPane.showConfirmDialog(this,
+                "Delete all " + count + " capture" + (count == 1 ? "" : "s")
+                        + "? This permanently removes them.",
+                "Delete all captures", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
+        if (res != JOptionPane.OK_OPTION) return;
+
+        List<AICapture> doomed = new ArrayList<>(captures);
+        BackgroundTask.runCatching(this, deleteAllButton, () -> {
+            for (AICapture capture : doomed) ctx.deleteCapture(capture);
+        }, () -> {
+            showCaptures();
+            refreshCaptures();
+        });
+    }
+
     private AICapture full(AICapture projected) {
         AICapture stored = ctx.getCapture(projected.getGUID());
         return (stored != null) ? stored : projected;
@@ -450,6 +470,7 @@ public class CapturePanel extends JPanel {
         areasTab.setSelected(true);
         previewed = null;
         previewImage.setIcon(null);
+        deleteAllButton.setVisible(false);
         captureCards.show("areas");
     }
 
@@ -457,6 +478,7 @@ public class CapturePanel extends JPanel {
         capturesTab.setSelected(true);
         previewed = null;
         previewImage.setIcon(null);
+        deleteAllButton.setVisible(true);
         captureCards.show("captures");
     }
 

@@ -1,5 +1,6 @@
 package io.xlogistx.nosneak.ai.assistant;
 
+import io.xlogistx.gui.IconUtil;
 import io.xlogistx.gui.MDViewerPanel;
 import org.zoxweb.shared.util.NVGenericMap;
 
@@ -47,7 +48,7 @@ public class AssistantUtil {
                 label.setForeground(UIManager.getColor("Label.disabledForeground"));
                 south.add(label);
             }
-            if (!user && onSaveAsSkill != null) {
+            if (onSaveAsSkill != null) {
                 JButton saveAsSkill = new JButton("Save as skill");
                 saveAsSkill.putClientProperty("JButton.buttonType", "borderless");
                 saveAsSkill.setFont(saveAsSkill.getFont().deriveFont(saveAsSkill.getFont().getSize2D() - 2f));
@@ -57,10 +58,37 @@ public class AssistantUtil {
                 saveAsSkill.addActionListener(_ -> onSaveAsSkill.run());
                 south.add(saveAsSkill);
             }
+            if (markdown != null) {
+                JButton copyMarkdown = new JButton(new IconUtil.CopyIcon(16));
+                copyMarkdown.putClientProperty("JButton.buttonType", "borderless");
+                copyMarkdown.setFont(copyMarkdown.getFont().deriveFont(copyMarkdown.getFont().getSize2D() - 2f));
+                copyMarkdown.setForeground(UIManager.getColor("Label.disabledForeground"));
+                copyMarkdown.setFocusable(false);
+                copyMarkdown.setToolTipText("Copy the response text");
+                copyMarkdown.addActionListener(_ -> copyResponse(pane));
+                south.add(copyMarkdown);
+
+                JButton convertMDToPDF = new JButton(new IconUtil.RefreshIcon(16));
+                convertMDToPDF.putClientProperty("JButton.buttonType", "borderless");
+                convertMDToPDF.setFont(convertMDToPDF.getFont().deriveFont(convertMDToPDF.getFont().getSize2D() - 2f));
+                convertMDToPDF.setForeground(UIManager.getColor("Label.disabledForeground"));
+                convertMDToPDF.setFocusable(false);
+                convertMDToPDF.setToolTipText("Convert the MD to a PDF");
+                // add action to the button
+                //convertMDToPDF.addActionListener(_ -> );
+                south.add(convertMDToPDF);
+            }
             bubble.add(south, BorderLayout.SOUTH);
         }
 
         return bubble;
+    }
+
+    private static void copyResponse(JEditorPane pane) {
+        boolean selected = pane.getSelectionStart() != pane.getSelectionEnd();
+        if (!selected) pane.selectAll();
+        pane.copy();
+        if (!selected) pane.select(0, 0);
     }
 
     private static String detailLine(Integer latency, Integer tokens) {

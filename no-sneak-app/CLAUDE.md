@@ -31,6 +31,12 @@ scanner and file-sharing screens are still placeholders.
 > rows) with **multi-image attachment** from the composer, and full
 > **History + Skills + Provider CRUD** are wired now — see `ai-assistant/CLAUDE.md`.)
 
+**`LOADING.md`** (this directory) maps *when* the running app does work — what is built or fetched
+eagerly at startup and login, what is deferred, and what is re-queried on every call — across
+`no-sneak-app` + `ai-assistant` + `ai-model`. Read it before diagnosing startup or login latency,
+a stale list, or before adding another projected store read; its §5 is the set of rules those
+decisions have to keep.
+
 ## Layout
 
 ```

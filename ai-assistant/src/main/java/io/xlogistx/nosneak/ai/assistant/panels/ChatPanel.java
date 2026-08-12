@@ -6,7 +6,6 @@ import io.xlogistx.gui.CardStack;
 import io.xlogistx.gui.GUIUtil;
 import io.xlogistx.gui.IconUtil;
 import io.xlogistx.gui.PanelBuilder;
-import io.xlogistx.gui.SnapShot;
 import io.xlogistx.nosneak.ai.AIProvider;
 import io.xlogistx.nosneak.ai.assistant.AssistantCallback;
 import io.xlogistx.nosneak.ai.assistant.AssistantContext;
@@ -61,13 +60,13 @@ public class ChatPanel extends JPanel {
     private JButton attachSkillButton;
     private final List<AISkill> pendingSkills = new ArrayList<>();
 
-    private final List<BufferedImage> pendingImages = new ArrayList<>();
-    private final List<String> pendingImageNames = new ArrayList<>();
+    private final List<AISource> pendingSources = new ArrayList<>();
     private static final int AREA_LIST_MAX_HEIGHT = 160;
     private static final int COMPOSER_MIN_HEIGHT = 44;
     private static final int COMPOSER_MAX_ROWS = 8;
 
     private final JFileChooser imageChooser = new JFileChooser();
+    private final JFileChooser fileChooser = new JFileChooser();
     private final Set<CaptureArea> tickedAreas = Collections.newSetFromMap(new IdentityHashMap<>());
 
     private final JCheckBox sendFullHistory = new JCheckBox("Send history", true);
@@ -98,12 +97,25 @@ public class ChatPanel extends JPanel {
     }
 
     /**
-     * Attaches an image to the next message, replacing whatever was attached before.
+     * Stores the image as a capture and attaches a reference to it, so the turn it goes out with
+     * can record what was sent.
      */
     public void attachImage(BufferedImage image, String name) {
         if (image == null) return;
-        pendingImages.add(image);
-        pendingImageNames.add((name == null || name.isBlank()) ? "image" : name);
+
+        BackgroundTask.run(this, null,
+                () -> ctx.saveCapture(CaptureSupport.toCapture(image, name, name)),
+                this::attachCapture);
+    }
+
+    /**
+     * Attaches an already stored capture. The bytes stay in the store; the source only holds its GUID.
+     */
+    public void attachCapture(AICapture capture) {
+        AISource source = SourceSupport.fromCapture(capture);
+        if (source == null) return;
+
+        pendingSources.add(source);
         refreshSkillTooltip();
     }
 
@@ -318,7 +330,10 @@ public class ChatPanel extends JPanel {
             for (NVEntity e : chat.getMessages().values()) {
                 AIMessage m = (AIMessage) e;
                 AIRequest req = m.getAIRequest();
-                if (req != null && req.getContent() != null) addMessage(req.getContent(), true, null, null);
+                if (req != null && req.getContent() != null) {
+                    addMessage(req.getContent(), true, null, null);
+                    addAttachments(req);
+                }
                 AIResponse res = m.getAIResponse();
                 if (res != null && res.getContent() != null)
                     addMessage(res.getContent(), false, latencyOf(res), tokensOf(res));
@@ -332,12 +347,14 @@ public class ChatPanel extends JPanel {
 
         if (sendButton == null || !sendButton.isEnabled()) return;
 
-        final List<BufferedImage> images = new ArrayList<>(pendingImages);
+        final List<AISource> sources = new ArrayList<>(pendingSources);
+        final List<AISource> imageSources = sources.stream().filter(AISource::isImage).toList();
+        final List<AISource> textSources = sources.stream().filter(s -> !s.isImage()).toList();
         final CaptureArea[] areas = areasToSend();
 
         String typed = composer.getText().trim();
-        if (typed.isEmpty() && images.isEmpty() && areas.length == 0) return;
-        final String text = typed.isEmpty() ? "Describe this image." : typed;
+        if (typed.isEmpty() && sources.isEmpty() && areas.length == 0) return;
+        final String text = typed.isEmpty() ? defaultPrompt(imageSources, textSources, areas) : typed;
 
         AIChat chat = ctx.currentChat();
         if (chat == null) {
@@ -365,12 +382,12 @@ public class ChatPanel extends JPanel {
         request.setModel(sel.toString());
         chat.setModel(sel.toString());
 
+        for (AISource source : sources) request.addAttachment(source);
+
         AIMessage msg = new AIMessage(request);
         chat.addMessage(msg);
         addMessage(text, true, null, null);
-        for (BufferedImage i : images) {
-            if (i != null) addImage(i);
-        }
+        addAttachments(sources);
 
         composer.setText("");
         composer.requestFocusInWindow();
@@ -405,6 +422,11 @@ public class ChatPanel extends JPanel {
             if (!skillSb.isEmpty()) skillSb.append("\n\n");
             skillSb.append("<skill>").append(s.getContent()).append("</skill>");
         }
+        String sourceBlock = SourceSupport.block(textSources);
+        if (!sourceBlock.isEmpty()) {
+            if (!skillSb.isEmpty()) skillSb.append("\n\n");
+            skillSb.append(sourceBlock);
+        }
 
         final AIChat sending = chat;
         sendButton.setEnabled(false);
@@ -424,7 +446,7 @@ public class ChatPanel extends JPanel {
         });
 
         String skill = skillSb.toString();
-        if (images.isEmpty() && areas.length == 0) {
+        if (imageSources.isEmpty() && areas.length == 0) {
             try {
                 p.asyncSend(wire, skill, callback);
             } catch (Exception e) {
@@ -435,27 +457,54 @@ public class ChatPanel extends JPanel {
             Window window = SwingUtilities.getWindowAncestor(this);
             BackgroundTask.run(this, null, () -> {
                 try {
-                    SnapShot[] snaps = (areas.length > 0)
+                    AICapture[] shot = (areas.length > 0)
                             ? CaptureSupport.shootAndSave(ctx, window, areas)
-                            : new SnapShot[0];
-                    UByteArrayInputStream[] streams = new UByteArrayInputStream[images.size() + snaps.length];
-                    int i = 0;
-                    for (BufferedImage image : images) streams[i++] = CaptureSupport.toStream(image);
-                    for (SnapShot snap : snaps) streams[i++] = snap.exportAsInputStream(CaptureSupport.IMAGE_FORMAT);
-                    p.asyncImageSend(wire, skill, callback, streams);
-                    return snaps;
+                            : new AICapture[0];
+
+                    List<AISource> shotSources = new ArrayList<>();
+                    for (AICapture capture : shot) {
+                        AISource source = SourceSupport.fromCapture(capture);
+                        if (source != null) shotSources.add(source);
+                    }
+
+                    List<UByteArrayInputStream> streams = new ArrayList<>();
+                    for (AISource source : imageSources) {
+                        UByteArrayInputStream stream = imageStream(source);
+                        if (stream != null) streams.add(stream);
+                    }
+                    for (AICapture capture : shot)
+                        if (capture.getImage() != null) streams.add(new UByteArrayInputStream(capture.getImage()));
+
+                    if (streams.isEmpty()) p.asyncSend(wire, skill, callback);
+                    else p.asyncImageSend(wire, skill, callback, streams.toArray(new UByteArrayInputStream[0]));
+
+                    return shotSources;
                 } catch (Exception e) {
                     SwingUtilities.invokeLater(() -> failSend(sending, msg, text, e));
                     return null;
                 }
-            }, snaps -> {
-                if (snaps == null) return;
-                for (SnapShot snap : snaps) addImage(snap.getImage());
+            }, shotSources -> {
+                if (shotSources == null || shotSources.isEmpty()) return;
+                for (AISource source : shotSources) request.addAttachment(source);
+                addAttachments(shotSources);
+                BackgroundTask.runCatching(this, null, () -> ctx.saveChat(sending), null);
             });
         }
         BackgroundTask.runCatching(this, null, () -> ctx.saveChat(sending), null);
         pendingSkills.clear();
-        clearPendingImages();
+        clearPendingSources();
+    }
+
+    private UByteArrayInputStream imageStream(AISource source) {
+        AICapture capture = ctx.getCapture(source.getCaptureGUID());
+        return (capture != null && capture.getImage() != null)
+                ? new UByteArrayInputStream(capture.getImage())
+                : null;
+    }
+
+    private static String defaultPrompt(List<AISource> imageSources, List<AISource> textSources, CaptureArea[] areas) {
+        if (!imageSources.isEmpty() || areas.length > 0) return "Describe this image.";
+        return textSources.size() == 1 ? "Review the attached source." : "Review the attached sources.";
     }
 
     private void failSend(AIChat sending, AIMessage msg, String text, Exception e) {
@@ -489,16 +538,50 @@ public class ChatPanel extends JPanel {
     }
 
     /**
-     * Display only: the image is not part of the stored message, so it leaves the transcript on the
-     * next refreshPrompt().
+     * Renders what a turn was sent with. Image sources get an empty thumbnail slot up front and the
+     * pixels loaded into it off the EDT, so the rows keep their order whatever the store does.
      */
-    private void addImage(BufferedImage image) {
-        JLabel thumb = new JLabel(CaptureSupport.scaledIcon(image, 240, 240));
-        thumb.setBorder(BorderFactory.createLineBorder(UIManager.getColor("Component.borderColor")));
-        thumb.setToolTipText(image.getWidth() + "x" + image.getHeight());
-        transcript.add(thumb, "alignx trailing");
+    private void addAttachments(List<AISource> sources) {
+        for (AISource source : sources) {
+            if (!source.isImage()) {
+                transcript.add(sourceChip(source), "alignx trailing");
+                continue;
+            }
+
+            JLabel thumb = new JLabel();
+            thumb.setBorder(BorderFactory.createLineBorder(UIManager.getColor("Component.borderColor")));
+            thumb.setToolTipText(source.getName());
+            transcript.add(thumb, "alignx trailing");
+
+            String guid = source.getCaptureGUID();
+            BackgroundTask.run(this, null, () -> {
+                AICapture capture = ctx.getCapture(guid);
+                return (capture != null) ? CaptureSupport.toImage(capture.getThumbnail()) : null;
+            }, image -> {
+                if (image == null) return;
+                thumb.setIcon(CaptureSupport.scaledIcon(image, 240, 240));
+                thumb.revalidate();
+                thumb.repaint();
+            });
+        }
         transcript.revalidate();
         transcript.repaint();
+    }
+
+    private void addAttachments(AIRequest request) {
+        List<AISource> sources = new ArrayList<>();
+        for (NVEntity e : request.getAttachments().values()) sources.add((AISource) e);
+        if (!sources.isEmpty()) addAttachments(sources);
+    }
+
+    private JComponent sourceChip(AISource source) {
+        JLabel chip = new JLabel(source.getName());
+        chip.setToolTipText(SourceSupport.sublabel(source));
+        chip.setForeground(UIManager.getColor("Label.disabledForeground"));
+        chip.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(UIManager.getColor("Component.borderColor")),
+                BorderFactory.createEmptyBorder(2, 6, 2, 6)));
+        return chip;
     }
 
     private static Integer latencyOf(AIResponse res) {
@@ -538,10 +621,11 @@ public class ChatPanel extends JPanel {
             }
         }
 
-        content.add(sectionLabel("Images for this message"), "gaptop 10");
-        for (int i = 0; i < pendingImages.size(); i++)
-            content.add(imageRow(pendingImages.get(i), pendingImageNames.get(i)));
+        content.add(sectionLabel("Sources for this message"), "gaptop 10");
+        for (AISource source : pendingSources) content.add(sourceRow(source));
         content.add(attachImageRow(popup));
+        content.add(attachFileRow(popup));
+        content.add(attachURLRow(popup));
 
         content.add(sectionLabel("Capture"), "gaptop 10");
         content.add(defineAreaRow(popup));
@@ -626,19 +710,41 @@ public class ChatPanel extends JPanel {
         return section;
     }
 
-    private JCheckBox imageRow(BufferedImage image, String name) {
-        JCheckBox box = new JCheckBox(name, true);
+    private JCheckBox sourceRow(AISource source) {
+        JCheckBox box = new JCheckBox(source.getName(), true);
         box.setOpaque(false);
-        box.setToolTipText(image.getWidth() + "x" + image.getHeight() + ", uncheck to drop it");
+        box.setToolTipText(SourceSupport.sublabel(source) + ", uncheck to drop it");
         box.addActionListener(_ -> {
-            int i = pendingImages.indexOf(image);
-            if (i >= 0) {
-                pendingImages.remove(i);
-                pendingImageNames.remove(i);
-            }
+            pendingSources.remove(source);
             refreshSkillTooltip();
         });
         return box;
+    }
+
+    private JButton attachFileRow(JPopupMenu popup) {
+        JButton button = new JButton("Attach file");
+        button.putClientProperty("JButton.buttonType", "borderless");
+        button.setHorizontalAlignment(SwingConstants.LEFT);
+        button.setFocusable(false);
+        button.setToolTipText("Send the contents of a text file with this message");
+        button.addActionListener(_ -> {
+            popup.setVisible(false);
+            chooseFile();
+        });
+        return button;
+    }
+
+    private JButton attachURLRow(JPopupMenu popup) {
+        JButton button = new JButton("Add URL");
+        button.putClientProperty("JButton.buttonType", "borderless");
+        button.setHorizontalAlignment(SwingConstants.LEFT);
+        button.setFocusable(false);
+        button.setToolTipText("Fetch a page and send its text with this message");
+        button.addActionListener(_ -> {
+            popup.setVisible(false);
+            promptForURL();
+        });
+        return button;
     }
 
     private JButton attachImageRow(JPopupMenu popup) {
@@ -702,9 +808,48 @@ public class ChatPanel extends JPanel {
         }
     }
 
-    private void clearPendingImages() {
-        pendingImages.clear();
-        pendingImageNames.clear();
+    private void chooseFile() {
+        fileChooser.setDialogTitle("Attach file");
+        fileChooser.setMultiSelectionEnabled(true);
+        if (fileChooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) return;
+
+        File[] files = fileChooser.getSelectedFiles();
+        BackgroundTask.run(this, null, () -> {
+            List<AISource> read = new ArrayList<>();
+            for (File file : files) {
+                if (SourceSupport.isImageFile(file)) {
+                    BufferedImage image = ImageIO.read(file);
+                    if (image != null)
+                        read.add(SourceSupport.fromCapture(
+                                ctx.saveCapture(CaptureSupport.toCapture(image, file.getName(), file.getName()))));
+                } else {
+                    read.add(SourceSupport.fromFile(file));
+                }
+            }
+            return read;
+        }, sources -> {
+            if (sources == null) return;
+            for (AISource source : sources) if (source != null) pendingSources.add(source);
+            refreshSkillTooltip();
+        });
+    }
+
+    private void promptForURL() {
+        String url = JOptionPane.showInputDialog(this, "Fetch a page and attach its text", "Add URL",
+                JOptionPane.PLAIN_MESSAGE);
+        if (url == null || url.isBlank()) return;
+
+        String trimmed = url.trim();
+        String target = trimmed.matches("(?i)^https?://.*") ? trimmed : "https://" + trimmed;
+        BackgroundTask.run(this, null, () -> SourceSupport.fromURL(target), source -> {
+            if (source == null) return;
+            pendingSources.add(source);
+            refreshSkillTooltip();
+        });
+    }
+
+    private void clearPendingSources() {
+        pendingSources.clear();
         refreshSkillTooltip();
     }
 
@@ -787,8 +932,8 @@ public class ChatPanel extends JPanel {
     private void refreshSkillTooltip() {
         if (attachSkillButton == null) return;
         CaptureArea[] areas = areasToSend();
-        if (pendingSkills.isEmpty() && pendingImages.isEmpty() && areas.length == 0) {
-            attachSkillButton.setToolTipText("Attach skills, images or capture areas to the next message");
+        if (pendingSkills.isEmpty() && pendingSources.isEmpty() && areas.length == 0) {
+            attachSkillButton.setToolTipText("Attach skills, sources or capture areas to the next message");
             return;
         }
         StringBuilder names = new StringBuilder();
@@ -796,9 +941,9 @@ public class ChatPanel extends JPanel {
             if (!names.isEmpty()) names.append(", ");
             names.append(s.getName());
         }
-        for (String image : pendingImageNames) {
+        for (AISource source : pendingSources) {
             if (!names.isEmpty()) names.append(", ");
-            names.append(image);
+            names.append(source.getName());
         }
         for (CaptureArea area : areas) {
             if (!names.isEmpty()) names.append(", ");
@@ -812,7 +957,7 @@ public class ChatPanel extends JPanel {
         modelFilterField.setText("");
         pendingSkills.clear();
         tickedAreas.clear();
-        clearPendingImages();
+        clearPendingSources();
         composer.setText("");
         promptCards.show("empty");
     }
