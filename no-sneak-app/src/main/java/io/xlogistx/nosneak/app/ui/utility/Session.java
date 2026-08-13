@@ -1,18 +1,19 @@
 package io.xlogistx.nosneak.app.ui.utility;
 
+import io.xlogistx.nosneak.v2.data.ProbeContent;
+import io.xlogistx.nosneak.v2.data.ReportContent;
+import org.zoxweb.server.net.NIOSocket;
 import org.zoxweb.server.security.CryptoUtil;
 import org.zoxweb.server.security.HashUtil;
+import org.zoxweb.server.task.TaskUtil;
+import org.zoxweb.shared.api.APIDataStore;
 import org.zoxweb.shared.app.AppIDDefault;
-import org.zoxweb.shared.app.AppVersionDAO;
 import org.zoxweb.shared.crypto.CIPassword;
 import org.zoxweb.shared.crypto.CryptoConst;
 import org.zoxweb.shared.data.PropertyDAO;
 import org.zoxweb.shared.filters.FilterType;
 import org.zoxweb.shared.security.*;
-import org.zoxweb.shared.util.GetName;
-import org.zoxweb.shared.util.NVBoolean;
-import org.zoxweb.shared.util.NVGenericMap;
-import org.zoxweb.shared.util.NVGenericMapList;
+import org.zoxweb.shared.util.*;
 
 import javax.crypto.SecretKey;
 import java.beans.PropertyChangeListener;
@@ -42,12 +43,18 @@ public class Session {
     private static final String ADDRESSES = "addresses";
     private final PropertyChangeSupport pcs = new PropertyChangeSupport(this);
     private final DomainSecurityManager domainSecurityManager;
+    private final APIDataStore<?, ?> ds;
     private boolean authenticated;
     private String principalID;
     private SubjectIdentifier subjectIdentifier;
+    private NIOSocket nio;
 
     public DomainSecurityManager getDomainSecurityManager() {
         return domainSecurityManager;
+    }
+
+    public NIOSocket getNio() {
+        return nio;
     }
 
     public enum APIKeyInfo implements GetName {
@@ -78,6 +85,12 @@ public class Session {
      */
     public Session(DomainSecurityManager domainSecurityManager) {
         this.domainSecurityManager = domainSecurityManager;
+        ds = domainSecurityManager.getDataStore();
+        try {
+            nio = new NIOSocket(TaskUtil.defaultTaskProcessor(), TaskUtil.defaultTaskScheduler());
+        } catch (Exception e) {
+            System.err.println("Error: " + e);
+        }
     }
 
 
@@ -579,4 +592,54 @@ public class Session {
     public void onCredentialsChange(PropertyChangeListener l) {
         pcs.addPropertyChangeListener("credentials", l);
     }
+
+    public ReportContent saveScanResult(ReportContent reportContent) {
+        if (SUS.isNotEmpty(reportContent.getGUID())) {
+            reportContent.setLastTimeUpdated(System.currentTimeMillis());
+            return ds.update(reportContent);
+        }
+        reportContent.setSubjectGUID(getSubjectGUID());
+        return ds.insert(reportContent);
+    }
+
+    public void deleteScanResult(ReportContent reportContent) {
+        ds.delete(reportContent, true);
+    }
+
+    public ReportContent getScanResult(String guid) {
+        List<ReportContent> found = ds.userSearchByID(getSubjectGUID(), ReportContent.NVC_REPORT_CONTENT, guid);
+        return found.isEmpty() ? null : found.getFirst();
+    }
+
+    public List<ReportContent> getAllScanResults() {
+        String o = getSubjectGUID();
+        if (SUS.isEmpty(o)) return List.of();
+        return ds.userSearch(o, ReportContent.NVC_REPORT_CONTENT, null);
+    }
+
+
+    public ProbeContent saveProbe(ProbeContent probeContent) {
+        if (SUS.isNotEmpty(probeContent.getGUID())) {
+            probeContent.setLastTimeUpdated(System.currentTimeMillis());
+            return ds.update(probeContent);
+        }
+        probeContent.setSubjectGUID(getSubjectGUID());
+        return ds.insert(probeContent);
+    }
+
+    public void deleteProbe(ProbeContent probeContent) {
+        ds.delete(probeContent, true);
+    }
+
+    public ProbeContent getProbe(String guid) {
+        List<ProbeContent> found = ds.userSearchByID(getSubjectGUID(), ProbeContent.NVC_PROBE_CONTENT, guid);
+        return found.isEmpty() ? null : found.getFirst();
+    }
+
+    public List<ProbeContent> getAllProbes() {
+        String o = getSubjectGUID();
+        if (SUS.isEmpty(o)) return List.of();
+        return ds.userSearch(o, ProbeContent.NVC_PROBE_CONTENT, null);
+    }
+
 }
