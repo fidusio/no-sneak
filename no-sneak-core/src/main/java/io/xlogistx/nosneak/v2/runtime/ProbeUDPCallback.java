@@ -3,6 +3,7 @@ package io.xlogistx.nosneak.v2.runtime;
 import org.zoxweb.server.logging.LogWrapper;
 import org.zoxweb.server.net.DataPacket;
 import org.zoxweb.server.net.common.UDPSessionCallback;
+import org.zoxweb.server.net.ssl.SSLConfigInt;
 
 import java.nio.ByteBuffer;
 
@@ -54,7 +55,7 @@ public class ProbeUDPCallback extends UDPSessionCallback {
     }
 
     @Override
-    public void sslHandshakeSuccessful() {
+    public void sslHandshakeSuccessful(SSLConfigInt config) {
         // Not applicable to UDP.
     }
 }

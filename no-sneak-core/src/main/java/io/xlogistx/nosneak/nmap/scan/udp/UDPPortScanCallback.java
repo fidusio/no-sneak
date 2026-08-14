@@ -8,6 +8,7 @@ import org.zoxweb.server.io.ByteBufferUtil;
 import org.zoxweb.server.logging.LogWrapper;
 import org.zoxweb.server.net.DataPacket;
 import org.zoxweb.server.net.common.UDPSessionCallback;
+import org.zoxweb.server.net.ssl.SSLConfigInt;
 import org.zoxweb.server.task.TaskUtil;
 import org.zoxweb.shared.util.Const;
 
@@ -282,7 +283,7 @@ public class UDPPortScanCallback extends UDPSessionCallback {
     }
 
     @Override
-    public void sslHandshakeSuccessful() throws IOException {
+    public void sslHandshakeSuccessful(SSLConfigInt config) throws IOException {
 
     }
 

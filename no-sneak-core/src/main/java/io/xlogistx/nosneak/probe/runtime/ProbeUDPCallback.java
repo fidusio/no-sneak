@@ -3,6 +3,7 @@ package io.xlogistx.nosneak.probe.runtime;
 import org.zoxweb.server.logging.LogWrapper;
 import org.zoxweb.server.net.DataPacket;
 import org.zoxweb.server.net.common.UDPSessionCallback;
+import org.zoxweb.server.net.ssl.SSLConfigInt;
 
 import java.io.IOException;
 
@@ -33,7 +34,7 @@ public class ProbeUDPCallback extends UDPSessionCallback {
     }
 
     @Override
-    public void sslHandshakeSuccessful() throws IOException {
+    public void sslHandshakeSuccessful(SSLConfigInt config) throws IOException {
         // Not applicable to UDP (no TLS handshake on this transport).
     }
 
