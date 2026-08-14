@@ -542,13 +542,20 @@ public final class NMapScanner {
     }
 
     private static ProbeChecker buildChecker(NIOSocket nio, NMapConfig cfg, int to, ScanReport report) {
+        // The catalog is bundled + caller-supplied definitions. ProbeChecker's constructor does
+        // NOT sort — only withBundled() does, via loadBundled — and orderedCandidates preserves
+        // input order within each tier, so the merged list has to be re-sorted here or an extra
+        // probe's priority is silently ignored.
+        List<ProbeDefinition> catalog = new ArrayList<>(ProbeDefinitionLoader.loadBundled());
+        catalog.addAll(cfg.extraProbes);
+        catalog.sort((a, b) -> Integer.compare(b.getPriority(), a.getPriority()));
+
         if (cfg.probeNames == null || cfg.probeNames.isEmpty()) {
-            return ProbeChecker.withBundled(nio).timeoutInSec(to);
+            return new ProbeChecker(nio, catalog).timeoutInSec(to);
         }
-        List<ProbeDefinition> bundled = ProbeDefinitionLoader.loadBundled();
         List<ProbeDefinition> subset = new ArrayList<>();
         Set<String> matched = new LinkedHashSet<>();
-        for (ProbeDefinition d : bundled) {
+        for (ProbeDefinition d : catalog) {
             if (cfg.probeNames.contains(d.getName())) {
                 subset.add(d);
                 matched.add(d.getName());
@@ -563,8 +570,8 @@ public final class NMapScanner {
         }
         if (subset.isEmpty()) {
             report.warnings.add("no requested probe matched; falling back to all "
-                    + bundled.size() + " bundled probes");
-            return ProbeChecker.withBundled(nio).timeoutInSec(to);
+                    + catalog.size() + " probes");
+            return new ProbeChecker(nio, catalog).timeoutInSec(to);
         }
         return new ProbeChecker(nio, subset).timeoutInSec(to);
     }

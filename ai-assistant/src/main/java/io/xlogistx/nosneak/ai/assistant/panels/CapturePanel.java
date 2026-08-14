@@ -256,7 +256,7 @@ public class CapturePanel extends JPanel {
             refreshAreas();
         });
 
-        JButton redraw = GUIUtil.iconButton(new IconUtil.UpdateIcon(16));
+        JButton redraw = GUIUtil.iconButton(new IconUtil.AreaIcon(16));
         redraw.setToolTipText("Redraw this area");
         redraw.addActionListener(_ -> onRedrawArea(area));
 

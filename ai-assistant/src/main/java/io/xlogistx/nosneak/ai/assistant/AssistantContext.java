@@ -16,6 +16,18 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Swing-free state holder for the assistant: the injected services (credential source, repository,
+ * provider registrar) plus the current selection and a few caches. Panels subscribe with
+ * {@link #onChange(String, java.beans.PropertyChangeListener)} and re-render, so no page decides
+ * <i>which</i> chat to load — each renders whatever {@link #currentChat()} is.
+ * <p>
+ * <b>The GUID-keyed caches are why identity comparisons work.</b> The store hands out a fresh
+ * instance on every read, so without deduping, a chat fetched twice would be two objects and
+ * {@code ==} against the current selection would silently fail. {@code canonical(...)} keeps the
+ * <i>first</i> instance seen for a GUID, so an in-memory edit survives a list refresh — with the
+ * trade-off that a row changed elsewhere is not picked up until the cache is cleared.
+ */
 public class AssistantContext {
     private final AICredentialSource credentials;
     private final AIRepository repository;

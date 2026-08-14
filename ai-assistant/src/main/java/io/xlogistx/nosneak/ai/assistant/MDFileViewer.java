@@ -22,6 +22,22 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
+/**
+ * A standalone markdown editor: a mono text area on the left, a live preview on the right, and an
+ * optional metadata form (name / description / type) above them. Re-usable anywhere a markdown
+ * string needs editing — it is the skills editor today, and knows nothing about skills.
+ * <p>
+ * Preview re-renders on a 250 ms timer restarted per keystroke, so typing does not reparse per
+ * character; Save, Cancel and {@code setMarkdown} render immediately.
+ * <p>
+ * <b>Use one instance per host, not one per card.</b> A Swing component has exactly one parent, so
+ * putting the same viewer on two cards silently moves it — that is why the skills page has a
+ * single editor reused for both create and edit rather than a pair.
+ * <p>
+ * <b>Open file loads into the buffer; it does not link to the file.</b> The load counts as an edit,
+ * not a commit, so Cancel still returns to the original text and nothing reaches the host until
+ * Save. There is no write-to-disk path.
+ */
 public class MDFileViewer extends JPanel {
 
     private static final int PREVIEW_DELAY = 250;
@@ -69,7 +85,7 @@ public class MDFileViewer extends JPanel {
     private final JTextArea editor = new JTextArea();
     private final MDViewerPanel viewer = new MDViewerPanel();
     private final JButton save = new JButton("Save", new IconUtil.SaveIcon(16));
-    private final JButton cancel = new JButton(new IconUtil.BackIcon(24));
+    private final JButton cancel = new JButton(new IconUtil.CancelIcon(24));
     private final JButton open = new JButton("Open file");
     private final JLabel status = new JLabel();
     private final TitledBorder editorBorder = BorderFactory.createTitledBorder("Markdown");
@@ -359,21 +375,41 @@ public class MDFileViewer extends JPanel {
         });
     }
 
+    /**
+     * Fires on Save with the markdown alone — for a host with no metadata rows. Prefer
+     * {@link #setOnCommit} when you have used {@link #withName} and friends; both fire if both
+     * are set.
+     */
     public MDFileViewer setOnSave(Consumer<String> onSave) {
         this.onSave = onSave;
         return this;
     }
 
+    /**
+     * Fires on Save with the markdown <i>and</i> the metadata rows (name / description / type)
+     * bundled as one {@link MDDocument}. This is the persistence hook for a host using
+     * {@link #withName}, {@link #withDescription} or {@link #withTypes}.
+     */
     public MDFileViewer setOnCommit(Consumer<MDDocument> onCommit) {
         this.onCommit = onCommit;
         return this;
     }
 
+    /**
+     * Gate run <b>before</b> the save callbacks; returning false cancels the save and leaves the
+     * editor open with its content intact. The validator is responsible for telling the subject
+     * why it refused — this class shows no message of its own.
+     */
     public MDFileViewer setValidator(Predicate<MDDocument> validator) {
         this.validator = validator;
         return this;
     }
 
+    /**
+     * Runs on Cancel — <b>after</b> the editor has already reverted to the last committed text and
+     * field values. A host that only wants "go back" therefore does not need to reload anything to
+     * undo the edits.
+     */
     public MDFileViewer setOnCancel(Runnable onCancel) {
         this.onCancel = onCancel;
         return this;

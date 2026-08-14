@@ -3,6 +3,19 @@ package io.xlogistx.nosneak.ai.model;
 import org.zoxweb.shared.data.PropertyDAO;
 import org.zoxweb.shared.util.*;
 
+/**
+ * One conversation. The transcript is <b>pair-based, not role-tagged</b>: a chat holds an ordered
+ * list of {@link AIMessage}, and each of those is one request/response pair. There is no role
+ * field anywhere — the request half is the user side and the response half is the assistant side.
+ * <p>
+ * Its identity is the inherited <b>GUID</b>. Do not key anything on {@code referenceID}: that
+ * field is deprecated in zoxweb and the H2P store never sets it, so {@code getReferenceID()} is
+ * always null on a persisted chat.
+ * <p>
+ * {@code provider} holds an {@link AIProviderConfig}'s GUID (which is also
+ * {@code AIProvider.getID()}), not a provider name — labels are editable and two providers may
+ * share one.
+ */
 public class AIChat extends PropertyDAO {
 
     public enum Param implements GetNVConfig {

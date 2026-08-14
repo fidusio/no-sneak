@@ -119,6 +119,12 @@ drops the nested entity on JSON round-trip.
   tests. A whole **new entity** is fine — `AIProviderConfig` got its own table, which
   `CREATE TABLE IF NOT EXISTS` creates on first use against an existing store. It is only
   *new params on an existing entity* that break.
+  > **This is a property of the H2P store, not of this module**, so it governs every
+  > `PropertyDAO` the app persists — including `no-sneak-core`'s `ProbeContent` / `ReportContent`
+  > (`io.xlogistx.nosneak.v2.data`), which `no-sneak-app`'s `Session` writes to the same store.
+  > `ProbeContent` currently has a single `content` param and wants several more; that is cheap
+  > only until a `probe_content` table exists somewhere. See `no-sneak-app/CLAUDE.md` → *Scan
+  > panel*.
 - **None of these DAOs collide with the inherited `PropertyDAO` chain**, and new params must
   keep it that way. The reserved attribute names are `guid` / `subject_guid`
   (`ReferenceIDDAO`), `name` (`SetNameDAO`), `description` (`SetNameDescriptionDAO`),

@@ -11,6 +11,20 @@ import org.zoxweb.shared.util.SUS;
 
 import java.util.List;
 
+/**
+ * Persistence for the assistant — chats, skills, provider configs and captures — over the same
+ * encrypted H2 store the security layer uses, scoped to the signed-in subject.
+ * <p>
+ * <b>Every save is an upsert keyed on {@code getGUID()}</b>: non-empty updates, empty stamps the
+ * owner and inserts (the store assigns the GUID). It must be {@code getGUID()} and never
+ * {@code getReferenceID()} — that field is deprecated in zoxweb and the store never sets it, so
+ * branching on it made every save an insert and duplicated the row on each edit.
+ * <p>
+ * Updates also stamp {@code lastTimeUpdated} explicitly, because the store only writes a timestamp
+ * when the current one is 0 — it records creation and never advances "last updated" on its own.
+ * The insert branch deliberately leaves it alone so a new row's created and updated times do not
+ * land a millisecond apart.
+ */
 public class AssistantStorage implements AIRepository {
     private final APIDataStore<?, ?> ds;
     private final Session session;
@@ -131,6 +145,17 @@ public class AssistantStorage implements AIRepository {
         return found.isEmpty() ? null : found.getFirst();
     }
 
+    /**
+     * <b>A projected read — it deliberately omits {@code image}</b>, so rows carry a thumbnail and
+     * no full-size PNG. Listing captures otherwise pulls every screenshot in the account into
+     * memory to draw a list.
+     * <p>
+     * That creates an obligation on the save path: {@code saveCapture}'s update branch is
+     * {@code ds.update}, which writes <i>every</i> column, so persisting a row that came from here
+     * writes a null over the stored PNG. Anything that mutates a capture must re-read it through
+     * {@link #getCapture(String)} first — and must handle that read returning null (signed out, or
+     * deleted meanwhile) by bailing, <b>not</b> by falling back to the projected instance.
+     */
     @Override
     public List<AICapture> getAllCaptures() {
         String o = owner();

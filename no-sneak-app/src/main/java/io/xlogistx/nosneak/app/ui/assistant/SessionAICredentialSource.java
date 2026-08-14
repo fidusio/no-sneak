@@ -9,6 +9,17 @@ import org.zoxweb.shared.security.SubjectAPIKey;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Lets the {@code ai-assistant} module reach NoSneak's API keys without depending on this one —
+ * it implements the assistant's credential interface over a {@link io.xlogistx.nosneak.app.ui.utility.Session}.
+ * <p>
+ * The assistant <b>never stores a secret</b>: keys stay ordinary NoSneak credentials owned by the
+ * session, and the assistant only records which ones it may use (the {@code assistant-enabled}
+ * property) plus its own provider rows. A key is used only once the subject picks it — nothing is
+ * auto-enabled.
+ * <p>
+ * Key identity is always the <b>GUID</b>, never the name, which is editable.
+ */
 public class SessionAICredentialSource implements AICredentialSource {
     private final Session session;
 

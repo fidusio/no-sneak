@@ -5,7 +5,13 @@ import org.zoxweb.shared.data.PropertyDAO;
 import org.zoxweb.shared.util.*;
 
 /**
- *
+ * One exchange — a single provider round trip. Holds an {@link AIRequest} and the
+ * {@link AIResponse} it produced; the response half stays null until the provider replies (or
+ * forever, if the send failed).
+ * <p>
+ * <b>Roles are implicit in the pair</b>, which is why there is no role field. A multi-step or
+ * tool-using turn is several {@code AIMessage}s in a row, so "request" means "model input this
+ * round" — user text <i>or</i> a tool result — not strictly what a human typed.
  */
 public class AIMessage extends PropertyDAO {
 

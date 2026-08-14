@@ -70,6 +70,12 @@ public class AIResponse extends PropertyDAO {
         setValue(Param.PROVIDER_SESSION_ID, sessionID);
     }
 
+    /**
+     * Total tokens the provider reported, or <b>0 when it reported none</b> — this is null-safe on
+     * purpose, so a response persisted before the field existed stays readable instead of throwing
+     * on unbox. A 0 therefore means "not reported", not "cost nothing"; not every provider sends a
+     * usage block.
+     */
     public int getTokens() {
         Integer tokens = lookupValue(Param.TOKENS);
         return tokens == null ? 0 : tokens;
@@ -79,6 +85,11 @@ public class AIResponse extends PropertyDAO {
         setValue(Param.TOKENS, tokens);
     }
 
+    /**
+     * Milliseconds from dispatch to reply, or 0 when unset (same null-safety as
+     * {@link #getTokens()}). Measured from when the callback was constructed, so it includes time
+     * queued in the API executor, not just time on the wire.
+     */
     public long getLatency() {
         Long latency = lookupValue(Param.LATENCY);
         return latency == null ? 0 : latency;

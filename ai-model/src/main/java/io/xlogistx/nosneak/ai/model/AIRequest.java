@@ -61,6 +61,10 @@ public class AIRequest extends PropertyDAO {
         setValue(Param.CONTENT, content);
     }
 
+    /**
+     * Joins one request to the response(s) it produced. Only meaningful once a send fans out to
+     * several providers — with a single provider the pairing is already the {@link AIMessage}.
+     */
     public String getCorrelationID() {
         return lookupValue(Param.CORRELATION_ID);
     }
@@ -69,6 +73,14 @@ public class AIRequest extends PropertyDAO {
         setValue(Param.CORRELATION_ID, correlationID);
     }
 
+    /**
+     * A <i>stateful</i> provider's resume handle — a different thing from
+     * {@link #getCorrelationID()}. Null for a fresh or stateless chat; a provider that keeps
+     * server-side context mints one on its first response, and replaying it lets later turns skip
+     * resending the transcript. Stateless providers ignore it and get the flattened history.
+     * <p>
+     * Nothing captures it off a response today, so every chat is effectively stateless.
+     */
     public String getProviderSessionID() {
         return lookupValue(Param.PROVIDER_SESSION_ID);
     }

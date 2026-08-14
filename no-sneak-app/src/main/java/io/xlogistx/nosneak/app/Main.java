@@ -76,6 +76,7 @@ public class Main {
             addWindowListener(new WindowAdapter() {
                 @Override
                 public void windowClosing(WindowEvent e) {
+                    ctx.session().closeNio();
                     domainSecurityManager.getDataStore().close();
                 }
             });

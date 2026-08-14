@@ -78,6 +78,20 @@ public class AIAPIProvider implements AIProvider {
         return api;
     }
 
+    /**
+     * Re-asserts <i>this</i> provider's base URL and models-auth encoder before every call, and
+     * must be used by every path that touches the wire.
+     * <p>
+     * <b>Why this exists:</b> zoxweb's {@code HTTPAPIManager.buildAPICaller} hands every
+     * {@code AIAPI} in the {@code ai-api} domain the <b>same shared endpoint instances</b>, and
+     * both {@code updateURL} and the Anthropic models-auth special case <i>mutate</i> them. So
+     * constructing any provider silently rebinds every other provider's URL — the symptom is
+     * adding a second key mid-session and watching the first provider's sends start going to the
+     * wrong host.
+     * <p>
+     * This is a workaround, not a fix: a small race remains if two providers hit the wire
+     * concurrently. The real fix is per-caller endpoint copies in zoxweb-core.
+     */
     private AIAPI bound() {
         api.updateURL(getBaseURL());
         api.lookupEndPoint(AIAPIBuilder.Command.MODELS.getName()).setAuthorizationEncoder(

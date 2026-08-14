@@ -1,5 +1,9 @@
 # no-sneak
 
+> **Picking this project up?** `PENDING-ISSUES.md` at the repo root is the handoff index of open
+> work — it points at every per-module open-items list and records the 2026-08-13 code-review
+> findings against the then-uncommitted scan-panel and AI-assistant changes.
+
 Security tooling for assessing what a network endpoint exposes — TLS posture, **post-quantum
 readiness**, and running services — plus a Swing front-end and an AI-assistant layer.
 

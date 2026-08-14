@@ -2,8 +2,8 @@
 
 Swing desktop front-end for the NoSneak security tooling. Contains the application entry point
 and the **`ui`** package that wires together the screens, navigation, and the session/security
-layer. It began as a UX prototype but now runs a **real** session/security layer; the PQC
-scanner and file-sharing screens are still placeholders.
+layer. It began as a UX prototype but now runs a **real** session/security layer and a **working
+network scanner screen** over `no-sneak-core`; the PQC file-sharing screen is still a placeholder.
 
 > **Status.** The session layer (`ui.utility.Session`) is backed by zoxweb's
 > **`DomainSecurityManagerDefault`** — a real `DomainSecurityManager` over an **encrypted H2**
@@ -20,8 +20,15 @@ scanner and file-sharing screens are still placeholders.
 > their property bag. All blocking `Session` calls run **off the EDT** via
 > `BackgroundTask.runCatching` (failures surface as a dialog from the thrown `SecurityException`).
 >
+> **The `SCAN` screen is real now.** `ScanPanel` fronts `no-sneak-core`'s v2 engine: the command
+> box takes the full `NMap` CLI surface through `NMap.parseCommand`, a probe selector ticks
+> bundled and subject-authored probes into the run, results persist as `ReportContent` rows, and
+> probes persist as `ProbeContent` rows (both DAOs live in `no-sneak-core`'s
+> `io.xlogistx.nosneak.v2.data`). It is also wired to the assistant **both ways** — a scan result
+> can be sent into a chat, and a chat response can be saved back as a probe. See `ScanPanel` below.
+>
 > **Still stubbed:** passkey (login/register are empty `void` no-ops), the security-manager admin
-> tables, the scanner/file-sharing screens, and — in the AI assistant — the Job-queue page and
+> tables, the PQC file-sharing screen, and — in the AI assistant — the Job-queue page and
 > the multi-model compare path. (The assistant's provider discovery,
 > the user-picked provider flow — a provider is now its own persisted **`AIProviderConfig`**
 > record borrowing a credential by GUID, so one key can back several providers and
@@ -49,7 +56,7 @@ io.xlogistx.nosneak.app
     ├── PQCRegistryPanel.java      ← PQC file-sharing registry view
     ├── SubjectPanel.java          ← subject account view (master–detail)
     ├── SubjectSecManagerPanel.java← security-manager admin view (master–detail)
-    ├── ScanPanel.java             ← network scanner view (placeholder)
+    ├── ScanPanel.java             ← network scanner: command box, probe selector, results, probe editor
     ├── MenuBarFactory.java        ← builds the application menu bar
     ├── assistant/                 ← app-side bindings for the ai-assistant module
     │   ├── SessionAICredentialSource.java ← the subject's API keys + which are assistant-enabled (AICredentialSource)
@@ -88,7 +95,8 @@ the frame is sized off that one regardless of where it opens),
 which creates the single `AppContext` from the manager, builds the menu bar via `MenuBarFactory`,
 and installs `AppShell` as the content pane. The menu bar starts hidden and is toggled by
 `session().onAuthChange(...)` — it only appears once authenticated. `AppFrame` is `EXIT_ON_CLOSE`
-and adds a `windowClosing` handler that calls `domainSecurityManager.getDataStore().close()`, so the
+and adds a `windowClosing` handler that calls `ctx.session().closeNio()` and then
+`domainSecurityManager.getDataStore().close()`, so the
 encrypted H2 store is flushed/closed on exit rather than left to the JVM teardown. (The datastore is
 closed on **app close only**, not on logout — logout keeps it open for the next sign-in.)
 
@@ -109,6 +117,12 @@ calls `assistantPanel.reloadProviders()` + `refreshHistory()` + `refreshSkills()
 `refreshHistory()` + `refreshSkills()` (empty-owner → cleared) + `clearProviders()` + `resetPanel()`
 (blanks the composer/transcript and drops the previous subject's selection). The footer (left:
 `session: … | subject: …`, right: status) also subscribes to auth changes. Starts on `LOGIN`.
+
+**`AppShell` is also where the scanner and the assistant are joined**, and the order matters:
+`assistantPanel` is built first, then `ScanPanel` takes `assistantPanel::sendToChat`, then
+`assistantPanel.addSaveTarget("probe", scanPanel::saveProbeFromEditor)` registers the reverse
+direction. Both are plain callbacks, so the dependency stays one-way (`no-sneak-app →
+ai-assistant`) in both directions of the data flow.
 
 The `ASSISTANT` card is the `ai-assistant` module's
 `io.xlogistx.nosneak.ai.assistant.AssistantPanel`, constructed with an `AssistantContext`:
@@ -223,10 +237,14 @@ The **Profile** screen is itself a nested `CardStack` (`profileCards`, built by
     card** (`keyView.add(rotateKey)`) — read the `external`-flag hazard under *Security
     hardening* before putting it back.
 
-> **Icon buttons.** Credential/identifier/address actions render as `io.xlogistx.gui.IconUtil`
-> SVG icons with tooltips: **EditIcon** (pencil), **DeleteIcon** (trash), **RefreshIcon**
-> (rotate/regenerate), **CopyIcon** → **SaveIcon** check on success, **VisibleIcon/InvisibleIcon**
-> (reveal), **SearchIcon** (`SubjectSecManagerPanel`), and **BackIcon** (`PanelBuilder.detail`).
+> **Icon buttons.** Actions render as `io.xlogistx.gui.IconUtil` SVG icons with tooltips, and the
+> vocabulary is deliberately one-meaning-per-icon: **EditIcon** (pencil), **DeleteIcon** (trash),
+> **RefreshIcon** (rotate/regenerate **only** — restore-from-backup uses **RollbackIcon**),
+> **CopyIcon** → **CheckIcon** on success, **VisibleIcon/InvisibleIcon** (reveal, and as a pair
+> they are the mask toggle), **VisibleIcon** alone = view/open a row, **NextIcon** = advance with
+> this row (open chat, send to chat), **SearchIcon**, **BackIcon** (`PanelBuilder.detail`),
+> **InfoIcon** (usage), **RunIcon** (run a scan), **AreaIcon** (define/redraw a capture area),
+> **CancelIcon** (discards edits — distinct from BackIcon, which promises not to).
 > Icon-only buttons come from **`GUIUtil.iconButton(Icon)`**, which sizes tight to the icon; the
 > back arrow is **32×32**, action icons **16×16**. Primary/confirming buttons keep their text; the
 > save-style ones (Save Changes, Change password, Save address) also carry a **SaveIcon**.
@@ -252,8 +270,63 @@ Reached from **View → Subject Security Manager**.
 > view over all subjects/permissions/roles/grants.
 
 ### `ScanPanel`
-The `SCAN` screen — network scanner view. Placeholder ("NOT IMPLEMENTED"); intended to front the
-NMap/PQC scanning backend.
+The `SCAN` screen — the front end for `no-sneak-core`'s v2 scanning engine. Same master–detail
+shape as the other screens (`buildDefaultSplitPanel` + a `CardStack`), with three selectors —
+**Scanner** / **Result List** / **Probe Library** — over five cards: `Scan`, `Probe`, `Result`,
+`View_scan`, `Edit_probe`.
+
+Constructed as `new ScanPanel(ctx, assistantPanel::sendToChat)`; the second argument is a
+`BiConsumer<String,String>` (content, name), so the panel can hand a report to the assistant
+without `no-sneak-app` reaching into it for anything else.
+
+**Scanner card.** A `Command` text field plus Run and a usage button, over a split of the probe
+selector (left) and the raw result text (right).
+
+- **The command box is the real CLI.** `NMap.parseCommand(String)` — extracted from `NMap.main`
+  so the two cannot drift — accepts `-p`, `-sV`, `-Pn`, `-sn`, `-PR`, `-PE`, `--probes`,
+  `--icmp-probes`, `--max-inflight`, `--max-rate`, `-t`. The output-file flags (`-oN`…`-oA`) are
+  **rejected**, not ignored: a caller holding a string has nowhere to write. Parsing happens on
+  the EDT (it is instant and non-blocking) and a bad command shows a dialog with the message plus
+  `NMap.usageText()`, rather than reaching `BackgroundTask`'s generic "Unexpected error".
+- **Ticked probes are merged into the command, not applied behind it.** `effectiveCommand(...)`
+  appends `-sV --probes a,b` (or bare `-sV` when everything is ticked) and the *effective* string
+  is what runs, what is shown in the muted `effective:` line under the field, and what is stored
+  with the report. Ticking implies `-sV` deliberately: `probeStage` returns early when
+  `probeScan` is false, so ticked probes with no `-sV` would silently do nothing.
+- Subject-authored probes additionally ride along as `NMapConfig.extraProbes` (parsed
+  `ProbeDefinition`s), which is what lets `buildChecker` resolve their names at all.
+- **The scan itself** is `scanNetwork(NMapConfig)` → `NMapScanner.scan` on `Session.getNio()`,
+  bounded by the shared `NMap.maxWaitMs(cfg)`, rendered as JSON. It runs through `BackgroundTask`
+  and **throws** rather than swallowing, so a failure is a dialog and no row is written.
+
+**Probe selector.** A rebuilt-per-refresh panel of checkboxes in two sections — *Bundled probes*
+(the 18 classpath definitions, loaded once off the EDT and cached) and *My probes* (stored
+`ProbeContent` rows) — each with an "All" box and an empty state. **Ticks are keyed by probe
+name**, held in a plain `Set<String>` on the panel: not identity (the stored rows are fresh
+instances on every read) and not GUID (bundled definitions have none), and the name is exactly
+what `cfg.probe(name)` takes. The All box is placed after the empty-list early return, so
+`allMatch` over an empty list can never read as ticked.
+
+**Result List / View scan.** A `ListSection` over `Session.getAllScanResults()` — a **projected**
+read that omits `content` — with rows labelled by target and a sublabel of
+`<full command>  ·  <timestamp>`. Row actions are *Send to chat*, *View*, and remove. Both View
+and Send **re-fetch the full row** by GUID first and bail with a dialog if it misses; sending a
+list instance would attach empty content.
+
+**Probe Library / Edit probe.** A searchable `ListSection` over `Session.getAllProbes()` with
+add, edit and remove. Both save paths — the editor's Save and `saveProbeFromEditor` (the
+assistant's) — go through one `fillProbe(...)` helper that strips a markdown fence, runs
+`ProbeDefinitionLoader.parse` (so `validate` rejects unknown actions, dangling transitions and
+unreachable terminals), and **takes the name from the parsed definition**. That last part is
+load-bearing: the engine matches `--probes` on the name *inside* the JSON, so a typed name that
+disagrees yields a probe you can tick but that resolves to `unknown probe '…' (ignored)`.
+
+> **Two-way assistant wiring.** Out: the scan panel, the result rows and the View card all call
+> `setSendToChat(content, name)` → the injected `BiConsumer` → `AssistantPanel.sendToChat`, then
+> navigate to `ASSISTANT`. A missing chat throws a `SecurityException` whose message the panel
+> shows. In: `AppShell` registers `assistantPanel.addSaveTarget("probe", scanPanel::saveProbeFromEditor)`,
+> which puts **probe** in the skill editor's "Save as" combo — choosing it routes the editor's
+> content here instead of to the skill store. See `ai-assistant/CLAUDE.md` §5.
 
 ### `MenuBarFactory` & the navigation model
 Builds the `JMenuBar`: `File`, `View`, `Tools`, `Help`, and a right-aligned `Mode` menu (with a
@@ -401,6 +474,28 @@ Account data (backed by `DomainSecurityManager`, keyed off the signed-in subject
 - `saveProfile(Map)` / `loadProfile(String...)` — name/DOB only (flat keys) in the subject's
   property bag, persisted via `updateSubjectID`.
 
+Scan data (`ReportContent` / `ProbeContent`, both from `no-sneak-core`'s
+`io.xlogistx.nosneak.v2.data`, owner-scoped by subjectGUID and stored in the same H2P
+`APIDataStore`). `saveScanResult` / `saveProbe` branch on `getGUID()` — non-empty updates and
+stamps `lastTimeUpdated`, empty stamps the owner and inserts — the same upsert-by-GUID shape
+`AssistantStorage` uses, and for the same reason (see the timestamp note in `ai-model/CLAUDE.md`).
+`getAllScanResults` / `getAllProbes` return empty when signed out.
+
+> **`getAllScanResults()` is a projected read** — it names its columns and **omits `content`**,
+> because a single `/24` report is ~53 KB of JSON and the list only renders a name, the command
+> and a timestamp. That creates the same save-path obligation `getAllCaptures` has:
+> `saveScanResult`'s update branch is `ds.update`, which writes every column, so it **throws**
+> rather than nulling `content` if handed a row that came from the list. Anything that needs the
+> body — view, send-to-chat — must re-read through `getScanResult(guid)` first and handle a miss.
+> `getAllProbes` is deliberately *not* projected: probe bodies are small and the editor needs them.
+
+The scanner also borrows a **shared `NIOSocket`** from the session. `getNio()` opens it on first
+use (a subject who never scans never pays for a selector and its reader threads) and throws an
+`IllegalStateException` if it cannot, rather than leaving a null field for a later NPE;
+`closeNio()` is called from `AppFrame`'s `windowClosing` alongside the datastore. It is built on
+`TaskUtil.default*`, so this class is the app's composition root for those pools in the same way
+`NMap.main` is the CLI's.
+
 State changes fire an `"authenticated"` property event; listeners subscribe via `onAuthChange(...)`
 — how `AppFrame` toggles the menu bar and `AppShell`/`SubjectPanel` react on login/logout.
 API-key mutations (`storeAPIKey` / `changeAPIDetails` / `rotateAPIKey` / `deleteAPIKey`) also fire
@@ -544,7 +639,10 @@ Main.AppFrame
         ├─ PQCRegistryPanel     (MAIN)                                  │ onAuthChange
         ├─ SubjectPanel         (SUBJECT)                               │  → nav to SUBJECT
         ├─ SubjectSecManagerPanel (MANAGER)                            │  + show menu bar
-        ├─ ScanPanel            (SCAN)                                  │  (logout → LOGIN)
+        ├─ ScanPanel            (SCAN)     → no-sneak-core v2 engine    │  (logout → LOGIN)
+        │        │      ▲                                              │
+        │        │      └── addSaveTarget("probe", …)  ── response → probe
+        │        └───────── sendToChat(content, name) ── report → chat  │
         └─ AssistantPanel       (ASSISTANT) ← AssistantContext          │
                                                               Session ◄─┘
 ```
@@ -608,6 +706,26 @@ All target-only, because the model has nowhere to store them: per-identifier **s
   or Street** is filled. Still target-only: a consistent convention across profile + address forms
   marking mandatory fields with a trailing `*` and everything else explicitly optional.
 
+### Scan panel (`ScanPanel`)
+- **`ProbeContent` carries one param.** Just `content`. Everything the list and selector would
+  want to show or search on — `service`, `transport`, `ports`, `priority`, `port_scoped`,
+  `enabled` — means parsing every blob per row on the EDT. **This is time-sensitive:** H2P's
+  `ensureTable` is `CREATE TABLE IF NOT EXISTS` with no `ALTER TABLE`, so once a `probe_content`
+  table exists in a store, adding a param makes every save fail until the store is dropped or the
+  column added by hand. See the note in `ai-model/CLAUDE.md`.
+- **A scan cannot be cancelled.** `future.get` times out but the scan keeps running — pcap
+  handles, in-flight connects and the `HostScanner` session all continue with nothing holding a
+  reference. `IconUtil.StopIcon` is unused and waiting for this.
+- **Reports go on the wire as JSON.** `send to chat` attaches the stored render verbatim, so a
+  `/24` is ~53 KB (~15k tokens). The `NORMAL` render is far more compact and more legible to a
+  model, but the `ScanReport` is not stored — only its JSON — so switching means also persisting
+  the normal render at scan time. Cheaper to decide before the store fills up.
+- **`ScanPanelTest` is an empty `try {} catch {}`** that passes unconditionally. The logic worth
+  testing moved into `NMap` / `ProbeDefinitionLoader` and is covered there, so this should
+  probably be deleted rather than filled in.
+- **The probe editor's title field is now output, not input** — `fillProbe` overwrites it from the
+  parsed definition. It should be made read-only or relabelled so that reads as intentional.
+
 ### Subject Security Manager (`SubjectSecManagerPanel`)
 - **All tables are empty stubs** and **search is not wired.** Bind the Subjects / Permissions /
   Roles / Role groups / Grants tables to the `DomainSecurityManager` catalog (`getPermissions()`,
@@ -662,10 +780,11 @@ ordered by priority.
   `withReference=false` to `ds.delete`, so H2P removes the chat row and the join rows but never
   the child entities — every `ai_message` / `ai_request` / `ai_response` row survives, forever.
   Not fixed; confirm the cascade semantics before flipping it to `true`.
-- **Clearing the Provider field silently unlinks a key from the assistant.**
-  `changeAPIDetails` writes `""` rather than removing the property, `resolveType("")` returns
-  null, `AIAPIProvider.create` returns null, and `reloadProviders` skips the key — while
-  `assistant-enabled` stays `true`, so nothing tells the subject why it vanished.
+- **Clearing the Provider field still unlinks a key from the assistant** — but no longer
+  silently. `changeAPIDetails` writes `""` rather than removing the property, `resolveType("")`
+  returns null, `AIAPIProvider.create` returns null, and `reloadProviders` skips the key while
+  `assistant-enabled` stays `true`. The skip is now **reported** at login ("unrecognized provider
+  type"), so the symptom is explained; writing `""` in the first place is the part still to fix.
 - **Every registration failure reads "That username is already taken"**
   (`registerUsernamePassword` catches `SecurityException` broadly), so a store or IO failure is
   misreported as a duplicate.

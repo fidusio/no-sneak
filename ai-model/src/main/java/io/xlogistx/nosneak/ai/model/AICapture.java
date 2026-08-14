@@ -3,6 +3,24 @@ package io.xlogistx.nosneak.ai.model;
 import org.zoxweb.shared.data.PropertyDAO;
 import org.zoxweb.shared.util.*;
 
+/**
+ * A saved screenshot.
+ * <p>
+ * <b>The two byte fields are different formats.</b> {@code image} is the full-size PNG and
+ * {@code numBytes} counts <i>it</i>; {@code thumbnail} is a <b>JPEG</b> (produced by
+ * {@code GUIUtil.compressImage}, which also flattens alpha). Nothing reads either by extension,
+ * so the mismatch is harmless in-app — but do not assume "PNG bytes" when exporting.
+ * <p>
+ * {@code fromArea} is a <b>copied label</b>, not a reference: the capture area it came from can be
+ * renamed or deleted without affecting this row.
+ * <p>
+ * A capture sits outside the conversation model — it is not attached to a chat or a message. It
+ * reaches a turn only by being wrapped in an {@link AISource}.
+ * <p>
+ * <b>Reads of this entity are usually projected.</b> Listing captures omits {@code image} because
+ * it is heavy, so a row from a list has a thumbnail and a null PNG. Anything that <i>saves</i> a
+ * capture must re-fetch the full row first, or the update writes that null over the stored image.
+ */
 public class AICapture extends PropertyDAO {
 
     public enum Param implements GetNVConfig {

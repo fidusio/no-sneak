@@ -3,6 +3,19 @@ package io.xlogistx.nosneak.ai.model;
 import org.zoxweb.shared.data.PropertyDAO;
 import org.zoxweb.shared.util.*;
 
+/**
+ * A <i>configured provider</i> — the thing the assistant actually sends through, as distinct from
+ * the credential it borrows a secret from.
+ * <p>
+ * The split exists so that <b>one credential can back several providers</b> (the same key pointed
+ * at two base URLs, or relabelled per use), and so a provider's identity survives being renamed.
+ * {@code keyGUID} is therefore a <b>GUID, never a key name</b> — labels are editable.
+ * <p>
+ * This row's <b>GUID is {@code AIProvider.getID()}</b>, which is what {@link AIChat} stores in its
+ * {@code provider} field and what the provider registrar is keyed by.
+ * <p>
+ * No secret is ever stored here.
+ */
 public class AIProviderConfig extends PropertyDAO {
 
     public enum Param implements GetNVConfig {

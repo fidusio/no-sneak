@@ -11,6 +11,17 @@ import io.xlogistx.nosneak.app.ui.assistant.SessionAICredentialSource;
 import javax.swing.*;
 import java.awt.*;
 
+/**
+ * The root content pane: a {@code CardLayout} host with one card per {@link Navigator.Screen},
+ * plus the footer status bar. Every screen is constructed here, before login — {@code Navigator}
+ * controls visibility only, never construction.
+ * <p>
+ * This is also where the scanner and the assistant are joined, and <b>the order is load-bearing</b>:
+ * the assistant is built first so {@code ScanPanel} can take its {@code sendToChat} hook, then the
+ * assistant is handed {@code scanPanel::saveProbeFromEditor} for the reverse direction. Both
+ * directions are plain callbacks, which is what keeps the module dependency one-way
+ * ({@code no-sneak-app → ai-assistant}) even though data flows both ways.
+ */
 public class AppShell extends JPanel {
     private final CardLayout cards = new CardLayout();
     private final JPanel content = new JPanel(cards);
@@ -28,7 +39,9 @@ public class AppShell extends JPanel {
         content.add(new LoginPanel(ctx), Navigator.Screen.LOGIN.name());
         content.add(new PQCRegistryPanel(ctx), Navigator.Screen.MAIN.name());
         content.add(new SubjectPanel(ctx), Navigator.Screen.SUBJECT.name());
-        content.add(new ScanPanel(ctx), Navigator.Screen.SCAN.name());
+        ScanPanel scanPanel = new ScanPanel(ctx, assistantPanel::sendToChat);
+        assistantPanel.addSaveTarget("probe", scanPanel::saveProbeFromEditor);
+        content.add(scanPanel, Navigator.Screen.SCAN.name());
         content.add(new SubjectSecManagerPanel(ctx), Navigator.Screen.MANAGER.name());
         content.add(assistantPanel, Navigator.Screen.ASSISTANT.name());
 

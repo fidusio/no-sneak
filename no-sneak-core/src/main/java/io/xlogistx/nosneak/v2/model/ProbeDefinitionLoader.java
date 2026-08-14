@@ -70,14 +70,17 @@ public final class ProbeDefinitionLoader {
      * @throws IllegalArgumentException if the resource is missing or invalid
      */
     public static ProbeDefinition load(String resourcePath) {
-        String json = readResource(resourcePath);
+        return parse(readResource(resourcePath), resourcePath);
+    }
+
+    public static ProbeDefinition parse(String json, String source) {
         ProbeDefinition def;
         try {
             def = GSONUtil.fromJSONDefault(json, ProbeDefinition.class);
         } catch (Exception e) {
-            throw new IllegalArgumentException("Malformed probe JSON at " + resourcePath + ": " + e.getMessage(), e);
+            throw new IllegalArgumentException("Malformed probe JSON at " + source + ": " + e.getMessage(), e);
         }
-        validate(def, resourcePath);
+        validate(def, source);
         return def;
     }
 
@@ -94,14 +97,7 @@ public final class ProbeDefinitionLoader {
         } catch (Exception e) {
             throw new IllegalArgumentException("Cannot read probe file " + filePath + ": " + e.getMessage(), e);
         }
-        ProbeDefinition def;
-        try {
-            def = GSONUtil.fromJSONDefault(json, ProbeDefinition.class);
-        } catch (Exception e) {
-            throw new IllegalArgumentException("Malformed probe JSON at " + filePath + ": " + e.getMessage(), e);
-        }
-        validate(def, filePath);
-        return def;
+        return parse(json, filePath);
     }
 
     /** Load, validate, and priority-sort a set of filesystem probe files. */

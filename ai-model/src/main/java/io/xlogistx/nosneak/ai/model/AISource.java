@@ -3,6 +3,22 @@ package io.xlogistx.nosneak.ai.model;
 import org.zoxweb.shared.data.PropertyDAO;
 import org.zoxweb.shared.util.*;
 
+/**
+ * Something attached to a message: a file's text, a URL's text, pasted text, or an image.
+ * <p>
+ * Which fields are populated depends on {@link SourceType}, and the combinations are not
+ * interchangeable:
+ * <ul>
+ *   <li>{@code FILE} / {@code URL} — {@code locator} is the path or URL, {@code content} is the
+ *       extracted text.</li>
+ *   <li>{@code TEXT} — {@code content} only; there is no locator, because nothing on disk
+ *       corresponds to it.</li>
+ *   <li>{@code IMAGE} — {@code content} is null and {@code captureGUID} points at the
+ *       {@link AICapture} holding the bytes. The pixels are <b>never</b> stored here.</li>
+ * </ul>
+ * Text sources are flattened into the outgoing prompt; image sources are resolved through their
+ * capture and sent as image parts.
+ */
 public class AISource extends PropertyDAO {
 
     public enum SourceType implements GetName {

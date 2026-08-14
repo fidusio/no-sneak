@@ -3,6 +3,20 @@ package io.xlogistx.nosneak.ai.model;
 import org.zoxweb.shared.data.PropertyDAO;
 import org.zoxweb.shared.util.*;
 
+/**
+ * A reusable instruction set. {@code content} is the instruction text as a plain string, so a
+ * skill authored in markdown is stored verbatim — there is no file reference and no export.
+ * <p>
+ * <b>{@link SkillType} is not cosmetic</b> — it decides what the composer does when a skill is
+ * checked: an {@code MD_SKILL} is <i>attached</i> (flattened into the system-prompt argument the
+ * provider receives), while a {@code PROMPT_SKILL} has its text <i>inserted into the message box</i>
+ * for the subject to edit before sending. A prompt skill is deliberately never also attached, or
+ * the same text would go out twice.
+ * <p>
+ * One consequence worth knowing: prompt-skill text is persisted as ordinary message content, but
+ * an attached md skill is recorded nowhere — {@link AIRequest} has no field for it, so the stored
+ * transcript cannot tell you what the model was actually instructed with.
+ */
 public class AISkill extends PropertyDAO {
 
     public enum SkillType implements GetName{

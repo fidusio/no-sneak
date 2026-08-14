@@ -56,6 +56,8 @@ public class ProvidersPanel extends JPanel {
     private AIProviderConfig editingConfig;
     private APIKey<String> editingKey;
 
+    private final List<String> reloadIssues = new ArrayList<>();
+
     public JComponent buildProviderCardsPanel() {
         providerCards.add(buildProviderPanel(), "list");
         providerCards.add(buildAddProvider(), "add");
@@ -277,6 +279,7 @@ public class ProvidersPanel extends JPanel {
     }
 
     public void reloadProviders() {
+        reloadIssues.clear();
         BackgroundTask.run(this, null, () -> {
             List<AIProviderConfig> configs = ctx.getAllProviderConfigs();
             if (configs.isEmpty()) configs = adoptEnabledKeys();
@@ -291,12 +294,20 @@ public class ProvidersPanel extends JPanel {
             for (AIProviderConfig cfg : configs) {
                 if (!cfg.isEnabled()) continue;
                 APIKey<String> key = keysByGUID.get(cfg.getKeyGUID());
-                if (key == null) continue;
+                if (key == null) {
+                    reloadIssues.add(cfg.getName() + ": its credential is no longer available");
+                    continue;
+                }
                 AIAPIProvider p = AIAPIProvider.create(cfg, key);
-                if (p == null) continue;
+                if (p == null) {
+                    reloadIssues.add(cfg.getName() + ": unrecognized provider type '"
+                            + cfg.getProviderType() + "'");
+                    continue;
+                }
                 try {
                     p.getModelCatalog().refresh();
-                } catch (Exception ignore) {
+                } catch (Exception e) {
+                    reloadIssues.add(cfg.getName() + ": " + e.getMessage());
                 }
                 built.add(p);
             }
@@ -305,8 +316,11 @@ public class ProvidersPanel extends JPanel {
             ctx.clearProviders();
             for (AIProvider p : built) ctx.getProviders().put(p.getID(), p);
             refreshProviderViews();
+            if (!reloadIssues.isEmpty()) {
+                JOptionPane.showMessageDialog(this, String.join("\n", reloadIssues),
+                        "Provider Error", JOptionPane.ERROR_MESSAGE);
+            }
         });
-
     }
 
     /**

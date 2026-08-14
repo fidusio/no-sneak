@@ -100,7 +100,7 @@ io.xlogistx.nosneak.v2
 └── tools/                  DMTool · NoSneakUtil
 
 src/main/resources/v2/probes/   18 bundled probe definitions (becomes /probes/ at merge)
-src/test/java/io/xlogistx/nosneak/v2/   79 pure, no-network tests
+src/test/java/io/xlogistx/nosneak/v2/   112 pure, no-network tests
 ```
 
 ## Build, test, verify

@@ -11,6 +11,7 @@ import io.xlogistx.nosneak.ai.assistant.panels.SkillsPanel;
 
 import javax.swing.*;
 import java.awt.*;
+import java.util.function.BiConsumer;
 
 public class AssistantPanel extends JPanel {
 
@@ -126,6 +127,32 @@ public class AssistantPanel extends JPanel {
 
     public void refreshSkills() {
         skillsPanel.refreshSkills();
+    }
+
+    /**
+     * Offers another destination in the skill editor's "Save as" combo. The handler receives the
+     * editor's name and content; what it does with them is the host's business.
+     */
+    public void addSaveTarget(String label, BiConsumer<String, String> handler) {
+        skillsPanel.addSaveTarget(label, handler);
+    }
+
+    /**
+     * Attaches {@code text} to the next message and shows the Chat page — the way another screen
+     * hands content to the assistant (the scanner sends scan reports through here).
+     * <p>
+     * {@code name} becomes the attachment's visible label, so keep it short: it renders as a chip
+     * in the transcript, and an over-long one used to push the conversation off-screen.
+     *
+     * @throws SecurityException if there is no chat open, or the text is blank — an attachment
+     *                           with nowhere to land is otherwise silently dropped. The caller is
+     *                           expected to show the message.
+     */
+    public void sendToChat(String text, String name) {
+        chatPanel.attachText(text, name);
+        chatPanel.showPrompt();
+        cardStack.show("chat");
+        chatButton.setSelected(true);
     }
 
     public void resetPanel() {

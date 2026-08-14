@@ -7,7 +7,7 @@ public class ProbeContent extends PropertyDAO {
 
     public enum Param
             implements GetNVConfig {
-        CONTENT(NVConfigManager.createNVConfig("content", "The content of the report", "Content", false, true, String.class));
+        CONTENT(NVConfigManager.createNVConfig("content", "The content of the probe", "Content", false, true, String.class));
         private final NVConfig nvc;
 
         Param(NVConfig nvc) {
@@ -22,7 +22,7 @@ public class ProbeContent extends PropertyDAO {
 
     public static final NVConfigEntity NVC_PROBE_CONTENT = new NVConfigEntityPortable("probe_content",
             null,
-            "ReportContent",
+            "ProbeContent",
             true,
             false,
             false,
@@ -39,10 +39,10 @@ public class ProbeContent extends PropertyDAO {
 
 
     public String getContent() {
-        return lookupValue(ReportContent.Param.CONTENT);
+        return lookupValue(Param.CONTENT);
     }
 
     public void setContent(String content) {
-        setValue(ReportContent.Param.CONTENT, content);
+        setValue(Param.CONTENT, content);
     }
 }

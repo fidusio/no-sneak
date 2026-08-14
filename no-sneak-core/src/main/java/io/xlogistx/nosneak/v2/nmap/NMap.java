@@ -106,64 +106,83 @@ public final class NMap {
         }
     }
 
+    public static NMapConfig parseArgs(Map<OutputFormat, String> outputs, String... args) {
+        NMapConfig cfg = new NMapConfig();
+        boolean discoveryOnly = false;
+        for (int i = 0; i < args.length; i++) {
+            String a = args[i];
+            switch (a) {
+                case "-p":             cfg.ports(parsePorts(argOf(args, ++i, a))); break;
+                case "-sV":            cfg.probeScan(true); break;
+                case "--probes":       for (String n : argOf(args, ++i, a).split(",")) cfg.probe(n.trim()); break;
+                case "-Pn":            cfg.discovery(false); break;
+                case "-sn":            discoveryOnly = true; break;
+                case "--no-icmp":      cfg.discoveryIcmp(false); break;
+                case "--no-arp":       cfg.discoveryArp(false); break;
+                case "--no-tcp-ping":  cfg.discoveryTcp(false); break;
+                case "-PR":            cfg.discoveryTcp(false).discoveryIcmp(false).discoveryArp(true); break;
+                case "-PE":            cfg.discoveryTcp(false).discoveryArp(false).discoveryIcmp(true); break;
+                case "--icmp-probes":  cfg.icmpProbes(intArg(args, ++i, a)); break;
+                case "--max-inflight": cfg.maxInFlight = intArg(args, ++i, a); break;
+                case "--max-rate":     cfg.maxPerSec = intArg(args, ++i, a); break;
+                case "-t":             cfg.timeoutInSec(intArg(args, ++i, a)); break;
+                case "-oN":            outputs.put(OutputFormat.NORMAL, argOf(args, ++i, a)); break;
+                case "-oX":            outputs.put(OutputFormat.XML, argOf(args, ++i, a)); break;
+                case "-oG":            outputs.put(OutputFormat.GREPABLE, argOf(args, ++i, a)); break;
+                case "-oJ":            outputs.put(OutputFormat.JSON, argOf(args, ++i, a)); break;
+                case "-oC":            outputs.put(OutputFormat.CSV, argOf(args, ++i, a)); break;
+                case "-oA": {
+                    String base = argOf(args, ++i, a);
+                    for (OutputFormat f : OutputFormat.values()) {
+                        outputs.put(f, base + "." + f.extension());
+                    }
+                    break;
+                }
+                default:
+                    if (a.startsWith("-")) {
+                        throw new IllegalArgumentException("unknown option: " + a);
+                    }
+                    cfg.target(a);
+            }
+        }
+        if (cfg.targets.isEmpty()) {
+            throw new IllegalArgumentException("at least one target is required");
+        }
+        if (discoveryOnly) {
+            cfg.ports(new int[0]); // no ports → discovery only
+        }
+        return cfg;
+    }
+
+    public static NMapConfig parseCommand(String command) {
+        String trimmed = command != null ? command.trim() : "";
+        if (trimmed.isEmpty()) {
+            throw new IllegalArgumentException("at least one target is required");
+        }
+        return parseArgs(new UnwritableOutputs(), trimmed.split("\\s+"));
+    }
+
+    private static final class UnwritableOutputs extends LinkedHashMap<OutputFormat, String> {
+        @Override
+        public String put(OutputFormat key, String value) {
+            throw new IllegalArgumentException("output-file options are not supported here");
+        }
+    }
+
     public static void main(String... args) {
         if (args.length < 1) {
             usage();
             return;
         }
-        NMapConfig cfg = new NMapConfig();
-        boolean discoveryOnly = false;
+        NMapConfig cfg;
         Map<OutputFormat, String> outputs = new LinkedHashMap<>();
         try {
-            for (int i = 0; i < args.length; i++) {
-                String a = args[i];
-                switch (a) {
-                    case "-p":             cfg.ports(parsePorts(argOf(args, ++i, a))); break;
-                    case "-sV":            cfg.probeScan(true); break;
-                    case "--probes":       for (String n : argOf(args, ++i, a).split(",")) cfg.probe(n.trim()); break;
-                    case "-Pn":            cfg.discovery(false); break;
-                    case "-sn":            discoveryOnly = true; break;
-                    case "--no-icmp":      cfg.discoveryIcmp(false); break;
-                    case "--no-arp":       cfg.discoveryArp(false); break;
-                    case "--no-tcp-ping":  cfg.discoveryTcp(false); break;
-                    case "-PR":            cfg.discoveryTcp(false).discoveryIcmp(false).discoveryArp(true); break;
-                    case "-PE":            cfg.discoveryTcp(false).discoveryArp(false).discoveryIcmp(true); break;
-                    case "--icmp-probes":  cfg.icmpProbes(intArg(args, ++i, a)); break;
-                    case "--max-inflight": cfg.maxInFlight = intArg(args, ++i, a); break;
-                    case "--max-rate":     cfg.maxPerSec = intArg(args, ++i, a); break;
-                    case "-t":             cfg.timeoutInSec(intArg(args, ++i, a)); break;
-                    case "-oN":            outputs.put(OutputFormat.NORMAL, argOf(args, ++i, a)); break;
-                    case "-oX":            outputs.put(OutputFormat.XML, argOf(args, ++i, a)); break;
-                    case "-oG":            outputs.put(OutputFormat.GREPABLE, argOf(args, ++i, a)); break;
-                    case "-oJ":            outputs.put(OutputFormat.JSON, argOf(args, ++i, a)); break;
-                    case "-oC":            outputs.put(OutputFormat.CSV, argOf(args, ++i, a)); break;
-                    case "-oA": {
-                        String base = argOf(args, ++i, a);
-                        for (OutputFormat f : OutputFormat.values()) {
-                            outputs.put(f, base + "." + f.extension());
-                        }
-                        break;
-                    }
-                    default:
-                        if (a.startsWith("-")) {
-                            throw new IllegalArgumentException("unknown option: " + a);
-                        }
-                        cfg.target(a);
-                }
-            }
+            cfg = parseArgs(outputs, args);
         } catch (IllegalArgumentException e) {
             System.err.println(e.getMessage());
             usage();
             System.exit(2);
             return;
-        }
-        if (cfg.targets.isEmpty()) {
-            usage();
-            System.exit(2);
-            return;
-        }
-        if (discoveryOnly) {
-            cfg.ports(new int[0]); // no ports → discovery only
         }
 
         NIOSocket nio = null;
@@ -199,7 +218,7 @@ public final class NMap {
     }
 
     /** Generous upper bound: (waves through the rate/parallelism cap) × per-connection budget. */
-    private static long maxWaitMs(NMapConfig cfg) {
+    public static long maxWaitMs(NMapConfig cfg) {
         int hosts = Math.max(1, NMapScanner.expand(cfg.targets).size());
         int ports = (cfg.ports != null ? cfg.ports.length : DEFAULT_PORTS.length)
                 + NMapScanner.DEFAULT_DISCOVERY_PORTS.length + 1;
@@ -212,21 +231,26 @@ public final class NMap {
         return Math.max(byPar, byRate);
     }
 
+    public static String usageText() {
+        return """
+                Usage: NMap <target...> [options]
+                  target         host | IP | CIDR (10.0.0.0/24) | range (10.0.0.1-50)
+                  -p <spec>      ports: 22,80,443 or 1-1024 (default: common ports)
+                  -sV            probe scan: service/version/TLS/PQC on open ports
+                  --probes a,b   restrict probe scan to named probes
+                  -Pn            skip host discovery (all targets up)
+                  -sn            discovery only (no port scan)
+                  -PR            ARP/NDP discovery only (on-link; yields remote MAC)
+                  -PE            ICMP-echo discovery only
+                  --no-icmp / --no-arp / --no-tcp-ping   turn one method off
+                  --icmp-probes N   echo requests per host (pipelined; default 2)
+                  --max-inflight N / --max-rate N   rate limits
+                  -t <sec>       per-connection timeout (default 5)
+                  -oN/-oX/-oG/-oJ/-oC <file>   write Normal/XML/Grepable/JSON/CSV
+                  -oA <base>     write all formats to base.<ext>""";
+    }
+
     private static void usage() {
-        System.out.println("Usage: NMap <target...> [options]");
-        System.out.println("  target         host | IP | CIDR (10.0.0.0/24) | range (10.0.0.1-50)");
-        System.out.println("  -p <spec>      ports: 22,80,443 or 1-1024 (default: common ports)");
-        System.out.println("  -sV            probe scan: service/version/TLS/PQC on open ports");
-        System.out.println("  --probes a,b   restrict probe scan to named probes");
-        System.out.println("  -Pn            skip host discovery (all targets up)");
-        System.out.println("  -sn            discovery only (no port scan)");
-        System.out.println("  -PR            ARP/NDP discovery only (on-link; yields remote MAC)");
-        System.out.println("  -PE            ICMP-echo discovery only");
-        System.out.println("  --no-icmp / --no-arp / --no-tcp-ping   turn one method off");
-        System.out.println("  --icmp-probes N   echo requests per host (pipelined; default 2)");
-        System.out.println("  --max-inflight N / --max-rate N   rate limits");
-        System.out.println("  -t <sec>       per-connection timeout (default 5)");
-        System.out.println("  -oN/-oX/-oG/-oJ/-oC <file>   write Normal/XML/Grepable/JSON/CSV");
-        System.out.println("  -oA <base>     write all formats to base.<ext>");
+        System.out.println(usageText());
     }
 }

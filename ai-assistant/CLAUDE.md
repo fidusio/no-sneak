@@ -207,6 +207,21 @@ has chosen to use.
 >   capture lists — rows are hand-rolled (checkbox/thumbnail slots don't fit `ListSection`) and
 >   the lists are session-sized. Note macOS needs Screen Recording permission for
 >   `Robot.createScreenCapture` — without it captures come back blank with no exception.
+> - **The module has two outward hooks, and they are the whole coupling to the scanner.**
+>   **`AssistantPanel.sendToChat(text, name)`** attaches plain text as a pending `AISource` and
+>   flips to the Chat card — `no-sneak-app` hands it to `ScanPanel` so a scan report can be sent
+>   into a conversation. It throws a `SecurityException` (message shown by the caller) when there
+>   is no current chat, since an attachment with nowhere to land is silently lost otherwise.
+>   **`AssistantPanel.addSaveTarget(label, BiConsumer<String,String>)`** registers an extra
+>   destination in the skill editor's **"Save as"** combo; the app registers `"probe"` there, so a
+>   response can be saved into the probe store instead of the skill store (§5). The handler takes
+>   `(name, content)` rather than an `MDDocument` deliberately: the host never references this
+>   module's editor types, and this module never learns what a probe is — it has no view of
+>   `no-sneak-core` and could not validate one anyway.
+> - **A message is persisted before dispatch.** `onSend` saves the chat right after
+>   `chat.addMessage(msg)`, not only from the response callback, so a turn that is never answered
+>   (provider down, logout while in flight) survives. `failSend` still *removes* the message on a
+>   provider error and re-saves — see the rough edges.
 > - **Session reset is wired.** On logout `no-sneak-app` calls `clearProviders()` (wipes the
 >   registrar) + `resetPanel()` → `context.resetContext()` (nulls `currentChat` / credential /
 >   model, clears the chat + skill caches, fires `currentChat` so the transcript clears) and
@@ -226,6 +241,21 @@ has chosen to use.
 > `AssistantContext(SessionAICredentialSource, AssistantStorage(session))` and passes it to
 > `AssistantPanel` on its `ASSISTANT` screen. The dependency is one-way
 > (`no-sneak-app → ai-assistant → ai-model`).
+>
+> **Every row added to the transcript must be width-capped.** The transcript is a `MigLayout`
+> panel inside a `JScrollPane` with `HORIZONTAL_SCROLLBAR_NEVER`. Bubbles carry
+> `wmin 0, wmax 60%` (user, trailing) or `growx, wmin 0, wmax 92%` (assistant, leading); the
+> attachment rows — `sourceChip` and image thumbnails — go in through the shared
+> `ATTACHMENT_CONSTRAINT` for the same reason. An **uncapped** row sizes to its content, which
+> sets the panel's preferred width past the viewport; because chips and user bubbles are
+> `alignx trailing`, they are then positioned off-screen with no horizontal scrollbar to reach
+> them, and the only way to see them is to widen the window. Measured: a 1400px chip against a
+> 597px viewport pushed the user's bubble 817px out of view. The `wmin 0` matters too — MigLayout
+> will not shrink a component below its reported minimum, and a `JEditorPane` reports the width of
+> its widest unbreakable content. Chip text is additionally ellipsized at 48 chars with the full
+> name in the tooltip, since `wmax` alone clips mid-word with no indication anything was cut.
+> Callers should keep attachment names short for the same reason — `ScanPanel` sends a scan's
+> targets, not its full command line.
 >
 > **Known rough edges** (see the code, not yet fixed):
 > - **No send timeout or cancel.** If the provider never invokes the callback, the Send button
@@ -296,11 +326,27 @@ has chosen to use.
 >   block), but reads `0` for any provider that omits one.
 > - **The transcript re-renders in full on every `currentChat` change** (`refreshPrompt` clears
 >   and rebuilds every bubble). Fine at current lengths; it is an `MDViewerPanel` per message.
-> - **Discovery failures are swallowed.** Both `reloadProviders` and `onSaveProviderConfig` catch
->   and ignore every `getModelCatalog().refresh()` exception, so a rejected or expired key still
->   registers — just with an empty model list and no message. §6's "401, key rejected" status
->   chip is design intent, not built; the closest thing today is the row sublabel reading
->   `0 models · never synced`, plus a model combo that will not populate.
+> - **`addMessage` always scrolls to the bottom** (`v.setValue(v.getMaximum())`). When a reply is
+>   taller than the viewport — routine once a scan report is attached — that lands past the end of
+>   the answer with the request scrolled off the top. Scrolling to the *top* of the new bubble
+>   would show where the answer begins with the request just above it.
+> - **`AssistantUtil`'s convert-to-PDF button has no action listener** (`addActionListener` is
+>   commented out), so every assistant bubble renders a clickable control that does nothing.
+> - **A provider whose discovery failed still registers**, with an empty catalog — so sends
+>   against it fail, and `failSend` then removes the message (below). `reloadProviders` no longer
+>   swallows the reason: it collects a line per failure — a refresh exception, a `keyGUID` that no
+>   longer resolves, an unrecognized provider type — into `reloadIssues` (cleared at entry, or it
+>   accumulates across every login and every provider save) and shows them **once from the
+>   done-callback**, on the EDT. Building the dialog inside the `Callable` would put Swing on the
+>   worker thread and block discovery mid-loop behind a modal. `onSaveProviderConfig` still
+>   swallows its own refresh exception. §6's per-row "401, key rejected" chip is still design
+>   intent; dropping a provider on a failed refresh is deliberately *not* done, because a
+>   transient blip at login would unlink a working key until the next reload.
+> - **`failSend` removes the user's message.** Any provider error pulls the unanswered `AIMessage`
+>   back out of the chat, re-saves, and re-renders — so a broken key reads to the subject as
+>   "my messages disappear". It restores the composer text only if the composer is still blank, so
+>   typing while a send is in flight loses the original. Arguably correct (it undoes a failed
+>   turn), but it is the visible half of the bullet above.
 > - **A sublabel lambda runs per row, on the EDT, on every refresh and every keystroke in the
 >   search box.** Keep them to fields already in memory. `providersUsing` (walks the registrar)
 >   is safe; `AssistantContext.configsUsing` (a store query) is not — the two exist separately on
@@ -326,7 +372,7 @@ split out of `AssistantPanel`, which is now just wiring:
 | `AssistantMDDecoder` | Provider payload → renderable markdown (see §10.1) |
 | `AssistantUtil` | `chatBubble(...)` — a rounded bubble around an `io.xlogistx.gui.MDViewerPanel` |
 | `MDFileViewer` | Split markdown editor: editor left, live `MDViewerPanel` preview right (see §5.1) |
-| `panels/ChatPanel` | The Prompt page: transcript, composer, `+` popup (skills / images / capture), pending image list, `onSend` |
+| `panels/ChatPanel` | The Prompt page: transcript, composer, `+` popup (skills / images / capture), pending image list, `onSend`, `attachText` |
 | `panels/ChatHistoryPanel` | History list + create/edit cards |
 | `panels/SkillsPanel` | Skills list + the `MDFileViewer` editor card |
 | `panels/ProvidersPanel` | The four-card Providers page |
@@ -502,10 +548,24 @@ Data-access options: `Scan data`, `Scan data and host inventory`, `Findings only
 > instance is why the old creator/editor pair had to go — a Swing component cannot sit on two
 > cards, and the duplicated combos silently read each other's selection.
 >
-> `onSaveSkill(MDDocument)` is the only persistence point: it rejects a blank name with a dialog,
+> **The type combo is a destination picker, not just a skill attribute.** It is populated from the
+> `SkillType` values **plus** any labels registered through `addSaveTarget(label, BiConsumer)`, so
+> it reads `md skill` / `prompt skill` / `probe` once `no-sneak-app` has registered the scanner.
+> `targetLabel(...)` renders `GetName` values by name and anything else by `toString`, and the row
+> is labelled **"Save as"**. The `withTypes(...)` call lives in `showSkillEditorFields` — i.e. it
+> is rebuilt on **every open**, not once in `buildSkillEditor` — because a host registers its
+> targets *after* this panel is constructed, so a combo built at construction would never show
+> them. `MDFileViewer` needs no changes for any of this: `withTypes` is already
+> `Collection<? extends T>` and `MDDocument.getType()` already returns `Object`.
+>
+> `onSaveSkill(MDDocument)` is the only persistence point, and it **dispatches first**: a selected
+> type that is not a `SkillType` routes to the registered handler with `(name, markdown)` and
+> returns before touching the skill store. Otherwise it rejects a blank name with a dialog,
 > then writes name + description + type (`document.typeAs()`) + instructions onto
 > `selectedSkill` (or a fresh `AISkill` when creating) and saves off the EDT via
-> `BackgroundTask.runCatching(..., skillEditor.getSaveButton(), ...)`. Cancel calls the viewer's
+> `BackgroundTask.runCatching(..., skillEditor.getSaveButton(), ...)`. Note the validator still
+> only checks for a blank name — an injected target validates its own content and reports its own
+> failure, so a rejected probe leaves the editor open with the text intact. Cancel calls the viewer's
 > `revert()` before the handler, so backing out leaves the cached `AISkill` unmutated — the same
 > guarantee the old per-page buffer gave, now enforced inside the editor. Note the skills page is
 > **not** wrapped in an outer `JScrollPane` (unlike the other pages) — the editor's `JSplitPane`

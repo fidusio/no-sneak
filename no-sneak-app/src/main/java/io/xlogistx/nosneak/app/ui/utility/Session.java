@@ -12,6 +12,7 @@ import org.zoxweb.shared.crypto.CIPassword;
 import org.zoxweb.shared.crypto.CryptoConst;
 import org.zoxweb.shared.data.PropertyDAO;
 import org.zoxweb.shared.filters.FilterType;
+import org.zoxweb.shared.io.SharedIOUtil;
 import org.zoxweb.shared.security.*;
 import org.zoxweb.shared.util.*;
 
@@ -53,10 +54,49 @@ public class Session {
         return domainSecurityManager;
     }
 
-    public NIOSocket getNio() {
+    /**
+     * The scanning socket, shared by every scan and opened on first use — a subject who never
+     * opens the scan screen never pays for a selector or its reader threads.
+     * <p>
+     * Callers run off the EDT, so a failure to open surfaces as an {@link IllegalStateException}
+     * that {@code BackgroundTask} turns into a dialog, rather than leaving a null field for a
+     * later NPE somewhere unrelated.
+     *
+     * @see #closeNio()
+     */
+    public synchronized NIOSocket getNio() {
+        if (nio == null) {
+            try {
+                nio = new NIOSocket(TaskUtil.defaultTaskProcessor(), TaskUtil.defaultTaskScheduler());
+            } catch (Exception e) {
+                throw new IllegalStateException("Could not open the scanning socket: " + e.getMessage(), e);
+            }
+        }
         return nio;
     }
 
+    /**
+     * Closes the scanning socket if it was ever opened; a later {@link #getNio()} reopens it.
+     * Called from the frame's window-closing handler beside the datastore close — not on logout,
+     * since the store stays open across sign-outs too.
+     */
+    public synchronized void closeNio() {
+        SharedIOUtil.close(nio);
+        nio = null;
+    }
+
+    /**
+     * Keys for the AI-assistant metadata kept on an API key's property bag.
+     * <p>
+     * <b>Only some of these are live.</b> {@code PROVIDER} and {@code BASE_URL} seed a new
+     * {@code AIProviderConfig} when a key is first linked, and {@code ASSISTANT_ENABLED} records
+     * whether the subject has linked the key at all.
+     * <p>
+     * {@code AUTH_SCHEME} and {@code HEADER_NAME} are <b>vestigial</b>: they are still written by
+     * the Add/Edit key forms and round-tripped unchanged, but nothing reads them when building a
+     * request — the provider resolves everything from its {@code AIProviderConfig} now. Setting
+     * them has no effect on what goes over the wire.
+     */
     public enum APIKeyInfo implements GetName {
         PROVIDER("provider"),
         BASE_URL("base-url"),
@@ -86,11 +126,6 @@ public class Session {
     public Session(DomainSecurityManager domainSecurityManager) {
         this.domainSecurityManager = domainSecurityManager;
         ds = domainSecurityManager.getDataStore();
-        try {
-            nio = new NIOSocket(TaskUtil.defaultTaskProcessor(), TaskUtil.defaultTaskScheduler());
-        } catch (Exception e) {
-            System.err.println("Error: " + e);
-        }
     }
 
 
@@ -593,8 +628,21 @@ public class Session {
         pcs.addPropertyChangeListener("credentials", l);
     }
 
+    /**
+     * Upsert by GUID: an existing row is updated (and stamped as modified, since the store only
+     * ever sets a timestamp when it is still 0), a new one gets the owner and is inserted with the
+     * store assigning its GUID.
+     *
+     * @throws IllegalStateException if asked to update a row with no content — that means it came
+     *                               from {@link #getAllScanResults()}, and saving it would write
+     *                               the missing body over the stored one.
+     */
     public ReportContent saveScanResult(ReportContent reportContent) {
         if (SUS.isNotEmpty(reportContent.getGUID())) {
+            if (SUS.isEmpty(reportContent.getContent())) {
+                throw new IllegalStateException("Refusing to save a scan result with no content — "
+                        + "re-read it with getScanResult(guid) before saving a row that came from getAllScanResults()");
+            }
             reportContent.setLastTimeUpdated(System.currentTimeMillis());
             return ds.update(reportContent);
         }
@@ -611,10 +659,21 @@ public class Session {
         return found.isEmpty() ? null : found.getFirst();
     }
 
+    /**
+     * <b>A projected read — it omits {@code content}.</b> A single /24 report is ~53 KB of JSON and
+     * the list only renders a name, the command and a timestamp, so pulling bodies would mean
+     * loading every scan in the account to draw a list.
+     * <p>
+     * Rows from here are therefore <b>not saveable</b>: {@link #saveScanResult} throws rather than
+     * letting {@code ds.update} write the missing content over the stored row. Anything that needs
+     * the body — viewing, sending to a chat — must re-read through {@link #getScanResult(String)}
+     * and handle a null (deleted meanwhile, or signed out).
+     */
     public List<ReportContent> getAllScanResults() {
         String o = getSubjectGUID();
         if (SUS.isEmpty(o)) return List.of();
-        return ds.userSearch(o, ReportContent.NVC_REPORT_CONTENT, null);
+        return ds.userSearch(o, ReportContent.NVC_REPORT_CONTENT,
+                List.of("subject_guid", "name", "description", "creation_ts", "last_update_ts", "properties"));
     }
 
 

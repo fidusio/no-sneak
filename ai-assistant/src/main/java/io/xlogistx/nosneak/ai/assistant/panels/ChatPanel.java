@@ -62,6 +62,14 @@ public class ChatPanel extends JPanel {
 
     private final List<AISource> pendingSources = new ArrayList<>();
     private static final int AREA_LIST_MAX_HEIGHT = 160;
+    /**
+     * Attachment rows carry a caller-supplied name, so they must be width-capped like the bubbles.
+     * Unconstrained, one long name sets the transcript's preferred width past the viewport, and
+     * since these rows and the user's bubbles are trailing-aligned they land off-screen — with
+     * HORIZONTAL_SCROLLBAR_NEVER there is nothing to scroll back with.
+     */
+    private static final String ATTACHMENT_CONSTRAINT = "wmin 0, wmax 60%, alignx trailing";
+    private static final int CHIP_MAX_CHARS = 48;
     private static final int COMPOSER_MIN_HEIGHT = 44;
     private static final int COMPOSER_MAX_ROWS = 8;
 
@@ -386,6 +394,9 @@ public class ChatPanel extends JPanel {
 
         AIMessage msg = new AIMessage(request);
         chat.addMessage(msg);
+        // Persist before dispatch: the response callback is the only other save point, so a turn
+        // that never gets answered (provider down, logout while in flight) would otherwise vanish.
+        BackgroundTask.runCatching(this, null, () -> ctx.saveChat(chat), null);
         addMessage(text, true, null, null);
         addAttachments(sources);
 
@@ -525,8 +536,8 @@ public class ChatPanel extends JPanel {
                     if (onSaveAsSkill != null) onSaveAsSkill.accept(response);
                 });
         String cons = user
-                ? "wmax 60%, alignx trailing"
-                : "growx, wmax 92%, alignx leading";
+                ? "wmin 0, wmax 60%, alignx trailing"
+                : "growx, wmin 0, wmax 92%, alignx leading";
         transcript.add(bubble, cons);
         transcript.revalidate();
         transcript.repaint();
@@ -544,14 +555,14 @@ public class ChatPanel extends JPanel {
     private void addAttachments(List<AISource> sources) {
         for (AISource source : sources) {
             if (!source.isImage()) {
-                transcript.add(sourceChip(source), "alignx trailing");
+                transcript.add(sourceChip(source), ATTACHMENT_CONSTRAINT);
                 continue;
             }
 
             JLabel thumb = new JLabel();
             thumb.setBorder(BorderFactory.createLineBorder(UIManager.getColor("Component.borderColor")));
             thumb.setToolTipText(source.getName());
-            transcript.add(thumb, "alignx trailing");
+            transcript.add(thumb, ATTACHMENT_CONSTRAINT);
 
             String guid = source.getCaptureGUID();
             BackgroundTask.run(this, null, () -> {
@@ -574,9 +585,14 @@ public class ChatPanel extends JPanel {
         if (!sources.isEmpty()) addAttachments(sources);
     }
 
+    private static String ellipsize(String text, int max) {
+        if (text == null) return "";
+        return text.length() <= max ? text : text.substring(0, max - 1) + "…";
+    }
+
     private JComponent sourceChip(AISource source) {
-        JLabel chip = new JLabel(source.getName());
-        chip.setToolTipText(SourceSupport.sublabel(source));
+        JLabel chip = new JLabel(ellipsize(source.getName(), CHIP_MAX_CHARS));
+        chip.setToolTipText(source.getName() + " — " + SourceSupport.sublabel(source));
         chip.setForeground(UIManager.getColor("Label.disabledForeground"));
         chip.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(UIManager.getColor("Component.borderColor")),
@@ -950,6 +966,15 @@ public class ChatPanel extends JPanel {
             names.append(area.getName());
         }
         attachSkillButton.setToolTipText("Attached to the next message: " + names);
+    }
+
+    public void attachText(String text, String name) {
+        if (text == null || text.isBlank())
+            throw new SecurityException("There is nothing to send.");
+        if (ctx.currentChat() == null)
+            throw new SecurityException("Open a chat first (Chat History > + New Chat)");
+        pendingSources.add(SourceSupport.fromText(text, name));
+        refreshSkillTooltip();
     }
 
     public void reset() {

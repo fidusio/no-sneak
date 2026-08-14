@@ -68,7 +68,7 @@ public class AssistantUtil {
                 copyMarkdown.addActionListener(_ -> copyResponse(pane));
                 south.add(copyMarkdown);
 
-                JButton convertMDToPDF = new JButton(new IconUtil.RefreshIcon(16));
+                JButton convertMDToPDF = new JButton(new IconUtil.FileIcon(16));
                 convertMDToPDF.putClientProperty("JButton.buttonType", "borderless");
                 convertMDToPDF.setFont(convertMDToPDF.getFont().deriveFont(convertMDToPDF.getFont().getSize2D() - 2f));
                 convertMDToPDF.setForeground(UIManager.getColor("Label.disabledForeground"));

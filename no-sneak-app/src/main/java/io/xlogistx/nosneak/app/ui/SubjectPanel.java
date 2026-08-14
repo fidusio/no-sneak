@@ -198,7 +198,7 @@ public class SubjectPanel extends JPanel {
         panel.add(note, "width 100::480");
 
         JComboBox<String> mode = new JComboBox<>(RESTORE_MODES);
-        JButton restore = new JButton("Restore backup", new IconUtil.RefreshIcon(16));
+        JButton restore = new JButton("Restore backup", new IconUtil.RollbackIcon(16));
         JLabel status = new JLabel(" ");
         status.setForeground(UIManager.getColor("Label.disabledForeground"));
 
@@ -630,7 +630,7 @@ public class SubjectPanel extends JPanel {
         copy.addActionListener(_ -> {
             Toolkit.getDefaultToolkit().getSystemClipboard()
                     .setContents(new StringSelection(genKey.getText()), null);
-            copy.setIcon(new IconUtil.SaveIcon(16));
+            copy.setIcon(new IconUtil.CheckIcon(16));
             copy.setToolTipText("Copied!");
         });
         JButton refresh = GUIUtil.iconButton(new IconUtil.RefreshIcon(16));

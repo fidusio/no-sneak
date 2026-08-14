@@ -8,9 +8,15 @@ import io.xlogistx.nosneak.ai.assistant.MDFileViewer;
 import io.xlogistx.nosneak.ai.model.AISkill;
 import org.zoxweb.shared.util.SUS;
 
+import org.zoxweb.shared.util.GetName;
+
 import javax.swing.*;
 import java.awt.*;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 import static io.xlogistx.nosneak.ai.assistant.panels.PanelSupport.blankTo;
@@ -20,6 +26,29 @@ public class SkillsPanel extends JPanel {
     private final AssistantContext ctx;
 
     private Consumer<AISkill> onSkillRemoved;
+
+    /**
+     * Extra destinations offered by the editor's type combo alongside the skill types, keyed by
+     * the label shown there. The handler takes (name, content) rather than an {@code MDDocument}
+     * so a host can register one without depending on this module's editor types.
+     */
+    private final Map<String, BiConsumer<String, String>> saveTargets = new LinkedHashMap<>();
+
+    /**
+     * Offers another destination in the editor's "Save as" combo, alongside the skill types.
+     * Choosing it routes the editor's content to {@code handler} — as {@code (name, content)} —
+     * instead of saving a skill.
+     * <p>
+     * The handler takes plain strings rather than an {@code MDDocument} so a host can register one
+     * without depending on this module's editor types, and so this module never has to know what
+     * the destination is. The app registers {@code "probe"} here.
+     * <p>
+     * Register before the editor is <i>opened</i>, not before it is built — the combo is rebuilt
+     * on every open precisely so late registrations appear.
+     */
+    public void addSaveTarget(String label, BiConsumer<String, String> handler) {
+        if (label != null && handler != null) saveTargets.put(label, handler);
+    }
 
     public SkillsPanel(AssistantContext ctx) {
         this.ctx = ctx;
@@ -65,8 +94,6 @@ public class SkillsPanel extends JPanel {
         skillEditor.setTitle("Skill instructions");
         skillEditor.withName("Name", "");
         skillEditor.withDescription("Description", "");
-        skillEditor.withTypes("Type", List.of(AISkill.SkillType.values()),
-                AISkill.SkillType.MD_SKILL, AISkill.SkillType::getName);
         skillEditor.setValidator(this::validateSkill);
         skillEditor.setOnCommit(this::onSaveSkill);
         skillEditor.setOnCancel(() -> {
@@ -97,6 +124,14 @@ public class SkillsPanel extends JPanel {
     }
 
     private void onSaveSkill(MDFileViewer.MDDocument document) {
+        Object type = document.getType();
+        if (!(type instanceof AISkill.SkillType)) {
+            BiConsumer<String, String> target = saveTargets.get(targetLabel(type));
+            if (target != null) {
+                target.accept(document.getName().trim(), document.getMarkdown());
+                return;
+            }
+        }
         AISkill skill = selectedSkill != null ? selectedSkill : new AISkill();
         String oldName = skill.getName();
         String oldDescription = skill.getDescription();
@@ -160,11 +195,22 @@ public class SkillsPanel extends JPanel {
 
     private void showSkillEditorFields(AISkill skill, String saveText) {
         skillEditor.setSaveText(saveText);
+        // Rebuilt per open, not once at construction: a host registers its save targets after
+        // this panel is built, so a combo populated in buildSkillEditor would never show them.
+        List<Object> targets = new ArrayList<>(List.of(AISkill.SkillType.values()));
+        targets.addAll(saveTargets.keySet());
+        skillEditor.withTypes("Save as", targets,
+                skill != null && skill.getSkillType() != null ? skill.getSkillType() : AISkill.SkillType.MD_SKILL,
+                SkillsPanel::targetLabel);
         skillEditor.setDocumentName(skill != null ? skill.getName() : "");
         skillEditor.setDescription(skill != null ? skill.getDescription() : "");
         skillEditor.setSelectedType(skill != null && skill.getSkillType() != null
                 ? skill.getSkillType() : AISkill.SkillType.MD_SKILL);
         skillEditor.setMarkdown(skill != null ? skill.getContent() : "");
+    }
+
+    private static String targetLabel(Object value) {
+        return value instanceof GetName named ? named.getName() : String.valueOf(value);
     }
 
     private void onRemoveSkill(AISkill skill) {

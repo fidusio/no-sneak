@@ -6,9 +6,9 @@ the next person can answer "why is login slow" or "why is this list stale" witho
 three modules.
 
 Scope is the desktop app as a whole — `no-sneak-app` plus the `ai-assistant` and `ai-model`
-modules it mounts — because the interesting loading decisions cross those boundaries. Nothing in
-`no-sneak-core` or `no-sneak-net` is reached from the UI yet, so the scanner engine does not
-appear here.
+modules it mounts, and now `no-sneak-core` too: `ScanPanel` drives the v2 engine, so probe
+definitions, the shared `NIOSocket` and scan reports are part of the loading picture.
+`no-sneak-net` is still reached only *through* the engine, never from the UI.
 
 > **Line references are as of commit `ad7e4f4`** and will drift. The class and method names are
 > the durable part; grep for those if a number is stale.
@@ -72,11 +72,25 @@ zero-configs check is the only thing gating it.
   off the EDT (`CapturePanel.java:167-190`).
 - **The full transcript, on every `currentChat` change.** `refreshPrompt()` clears and rebuilds
   every bubble, each an `MDViewerPanel` (`ChatPanel.java:304`).
+- **Scan results and probes, on login.** `ScanPanel`'s `onAuthChange` runs `reloadScanResults()`
+  and `reloadProbes()`, both through `BackgroundTask`. The scan-result read is **projected** (see
+  §2); the probe read is not, deliberately — probe bodies are small and the editor needs them.
+  The same background pass loads the **18 bundled probe definitions** once and caches them, so
+  the classpath JSON is parsed a single time per session rather than per selector rebuild.
 
 ---
 
 ## 2. Lazy — deferred until actually needed
 
+- **The scanner's `NIOSocket`.** `Session.getNio()` opens it on first use and caches it, so a
+  subject who never opens the scan screen never pays for a selector or its reader threads. It
+  throws an `IllegalStateException` if it cannot open, rather than leaving a null field behind for
+  a later NPE, and `closeNio()` runs from `AppFrame`'s `windowClosing` beside the datastore close.
+- **Scan report bodies.** `Session.getAllScanResults()` is a **projected read** that omits
+  `content` — a `/24` report is ~53 KB of JSON and the list renders only a name, the command and a
+  timestamp. Same obligation as captures below: view and send-to-chat re-read through
+  `getScanResult(guid)` and bail if it misses, and `saveScanResult` **throws** rather than writing
+  a null `content` if handed a projected row.
 - **Capture full-size PNG.** The deliberate one, and the pattern to copy.
   `AssistantStorage.getAllCaptures()` is a **projected read** that names its columns and omits
   `image` (`AssistantStorage.java:135-140`), so rows carry a thumbnail and nothing heavier. The
@@ -137,10 +151,11 @@ Three of the above are cost rather than design. In rough order of payoff:
    treatment for chats needs either a persisted count field or a projection plus a count query,
    and `ChatHistoryPanel.java:144` is the only caller that forces the full graph.
 2. **Login should not fan out N synchronous HTTP calls.** Discovery per provider at login makes
-   sign-in latency scale with provider count, and every failure is discarded silently — the only
-   symptom a subject sees is a row reading `0 models · never synced`. Discovering on first use of
-   a provider (the catalog already caches, so it would happen once) makes login independent of
-   provider count and gives an obvious place to report the failure.
+   sign-in latency scale with provider count. Failures are no longer *silent* — `reloadProviders`
+   collects them and reports once on the EDT — but they are still paid for at sign-in, and a
+   provider whose discovery failed still registers with an empty catalog. Discovering on first use
+   of a provider (the catalog already caches, so it would happen once) makes login independent of
+   provider count and gives the failure an obvious place to land.
 3. **Screens could be built on first navigation.** Everything is constructed before login today.
    The `CardLayout` shape does not require that — cards can be added on first `show`. This is the
    least urgent of the three; it costs startup time but nothing recurring.

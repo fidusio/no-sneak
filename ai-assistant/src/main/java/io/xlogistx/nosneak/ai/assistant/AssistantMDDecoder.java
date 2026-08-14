@@ -10,6 +10,29 @@ import org.zoxweb.shared.util.SUS;
 
 import java.util.Arrays;
 
+/**
+ * Turns a provider's raw JSON payload into markdown the chat bubble can render. This is the only
+ * class that understands provider wire formats — {@code asyncSend} hands back an untyped
+ * {@link NVGenericMap}, so every response shape (OpenAI {@code choices[].message.content},
+ * Anthropic content blocks, Gemini {@code candidates}) is unpicked here.
+ * <p>
+ * {@link #decode} runs three stages in order:
+ * <ol>
+ *   <li><b>Extract</b> the text, falling back to rendering the raw JSON in a fence rather than
+ *       showing nothing, so an unknown shape still surfaces something debuggable.</li>
+ *   <li><b>Repair</b> — {@link #unwrapOuterFence} (a model asked for "a markdown file" answers
+ *       with the whole document inside one fence, which would otherwise render as a grey box),
+ *       {@link #repairWrapperFences} (widens a wrapper whose inner blocks use a backtick run at
+ *       least as long as its own), then {@link #neutralizeImages}.</li>
+ *   <li><b>Truncation</b> — checks the provider's finish reason and appends a note.</li>
+ * </ol>
+ * {@link #neutralizeImages} is a <b>security control, not formatting</b>: rewriting
+ * {@code ![alt](url)} to a plain link means a model's answer can never make the viewer issue an
+ * outbound image fetch to a URL of the model's choosing.
+ * <p>
+ * Note the output is what gets <i>persisted</i>, so the provider's original text is not recovered
+ * later. Repair is idempotent, so re-decoding does not compound.
+ */
 public class AssistantMDDecoder implements DataDecoder<NVGenericMap, String> {
 
     public static final AssistantMDDecoder SINGLETON = new AssistantMDDecoder();

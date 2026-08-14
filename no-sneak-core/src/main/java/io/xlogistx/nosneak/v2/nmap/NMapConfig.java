@@ -1,5 +1,7 @@
 package io.xlogistx.nosneak.v2.nmap;
 
+import io.xlogistx.nosneak.v2.model.ProbeDefinition;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -34,8 +36,10 @@ public final class NMapConfig {
 
     /** Stage 2: run the probe engine on open ports to identify service/version/TLS/PQC. */
     public boolean probeScan = false;
-    /** Probe subset by name; {@code null}/empty → all bundled probes. */
+    /** Probe subset by name; {@code null}/empty → every probe in the catalog. */
     public final List<String> probeNames = new ArrayList<>();
+    /** Definitions to scan with alongside the bundled ones; they join the catalog {@link #probeNames} resolves against. */
+    public final List<ProbeDefinition> extraProbes = new ArrayList<>();
 
     /** Rate limit: max simultaneously-open connections ({@code <=0} = unlimited). */
     public int maxInFlight = 0;
@@ -54,6 +58,7 @@ public final class NMapConfig {
     public NMapConfig icmpProbes(int n) { this.icmpProbes = n > 0 ? n : 1; return this; }
     public NMapConfig probeScan(boolean b) { this.probeScan = b; return this; }
     public NMapConfig probe(String name) { if (name != null && !name.isEmpty()) probeNames.add(name); return this; }
+    public NMapConfig extraProbe(ProbeDefinition d) { if (d != null) extraProbes.add(d); return this; }
     public NMapConfig rate(int maxInFlight, int maxPerSec) { this.maxInFlight = maxInFlight; this.maxPerSec = maxPerSec; return this; }
     public NMapConfig timeoutInSec(int s) { this.timeoutSec = s > 0 ? s : 5; return this; }
 }
