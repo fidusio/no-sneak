@@ -16,6 +16,15 @@ this module.
 
 ---
 
+## Scope of the engine
+
+Assessment only, and that bounds the code: a probe **connects, exchanges the minimum the protocol
+needs, and records facts**. It does not exploit what it finds, guess credentials, fuzz, or try to
+evade logging, and the scanner stays rate-limited and bounded because a scan must never become the
+outage it was run to prevent. The vulnerability checklist in `ACTION-PLAN.md` is a *detection*
+backlog — evidence from versions, extensions and negotiated parameters. Full rules: the repo root
+`CLAUDE.md` → *Operating scope*.
+
 ## Where to read next
 
 | Doc | Covers |

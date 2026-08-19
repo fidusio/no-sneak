@@ -127,8 +127,10 @@ work can resume across sessions. Checkboxes track remediation.
   `WindowScanEngine` are empty subclasses of `RawScanEngine`, which just does a TCP
   connect (Java NIO can't do raw sockets, `RawScanEngine.java:21-27`). Subclass Javadoc
   falsely claims "delegates to nmap -sS / requires root." `isAvailable()` always true
-  while `requiresPrivileges()` reports true — contradictory. Fix: either implement via
-  JNI/pcap, or remove these types and stop advertising them.
+  while `requiresPrivileges()` reports true — contradictory. "Stealth" here is nmap's
+  own name for its raw scan types, not a goal of this project. **Resolution taken in
+  v2: the types are deleted and no longer advertised**, and `-sS/-sF/-sX/-sN/-sA` are
+  rejected with a clear error; no evasion capability is built or planned.
 - [ ] **B3 — `service/` and `os/` packages are entirely dead code.** `ServiceDetector`
   + 6 probes (`HTTP/SSH/FTP/SMTP/TLS/GenericBanner`) and `OSDetector`/`OSFingerprint`
   are never instantiated by the scan pipeline. `-sV` only captures a raw banner string
@@ -694,6 +696,16 @@ the framework-native `HTTPURLCallback` + `HTTPNIOSocket` for truly event-driven,
    Goal: parity with the SSL Labs / `testssl.sh` posture report. All probes
    must honor the no-sneak rules (pure NIO callbacks, BC TLS API, exactly-once
    completion, soft-fail/bounded, never hang the scan).
+
+   **Rules every check on this list must honour, on top of the engine rules above:**
+   each item is answered by *observation* — advertised version, extension presence,
+   negotiated parameters, alert behaviour on an ordinary handshake — never by
+   exploiting the weakness. No check may attempt to read peer memory, extract
+   plaintext, corrupt session state, or drive a target into an error loop, and
+   nothing on this list justifies an unbounded or unthrottled connection budget.
+   Where a finding is not decidable without an exploit attempt (Heartbleed,
+   Ticketbleed), report it from version/extension evidence with explicit confidence
+   and stop there. Anything that cannot be established that way stays unimplemented.
 
    **a. Padding-oracle & CBC family**
    - [ ] POODLE (SSLv3 padding oracle)

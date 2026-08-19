@@ -25,6 +25,22 @@ not reappear in code, module descriptors, or launch flags.
 > list, split per platform**, and is the right entry point for picking up work or handing it to
 > whoever owns a given machine. Sections §7 and §2.1 predate the macOS redesign — read §13.14 and
 > §13.20 before trusting them.
+
+> **Wire discipline — non-negotiable, and several of these are already load-bearing in the code.**
+> This subsystem sends raw frames, which makes it the one place in the repo where carelessness is
+> measured in other people's outages:
+> - **Our own addresses only.** Source MAC and source IP are the sending interface's. Nothing here
+>   forges an identity, and no evasion, decoy, or attribution-obscuring behaviour gets built.
+> - **No amplification.** The network and directed-broadcast addresses of a range are skipped by
+>   `sweep` (§13.18) — pinging a directed broadcast is answered by every host on the segment at
+>   once, which on a security appliance is indistinguishable from an attack.
+> - **Paced and bounded.** `maxInFlight` and `maxPacketsPerSecond` exist so a sweep disturbs a
+>   segment as little as possible; they are safety limits, not tuning knobs.
+> - **Passive observation is local-segment, capability-reported, and not a packet log.** It learns
+>   IP↔MAC bindings from traffic already on our own wire; it must not grow into capture-and-store.
+> - **On-link means authorized.** ARP/NDP only mean anything on a segment the operator controls,
+>   which is also the authorization boundary this module assumes.
+
 **Runtime:** OpenJDK 25 (FFM stable API). Source targets JDK 25.
 **Architectures:** 64-bit only — `x86-64` and `aarch64`/`arm64`. 32-bit is out of scope and unsupported by the platform (FFM has no 32-bit linker implementation; `Linker.nativeLinker()` throws `UnsupportedOperationException`, and the Windows x86-32 port was removed in JDK 24 / JEP 479).
 **Deployment:** ARM aarch64 Ubuntu 20.04 appliance, **running as root** (primary). Dev/secondary: macOS (Intel + Apple Silicon), Windows 10/11 (x86-64 + arm64).

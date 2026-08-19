@@ -5,6 +5,11 @@ below stay authoritative for their areas; the "Code review findings" section rec
 in the uncommitted working tree on this date (scan panel + AI assistant changes, post-`bf072b9`)
 that are not written down anywhere else.*
 
+> **Before picking anything up:** the repo root `CLAUDE.md` → *Operating scope* states what this
+> tooling does and does not do (assessment and detection only — no exploitation, credential
+> attacks, DoS, or evasion). Finding 1 below is a data-boundary defect, which is the other half of
+> the same rule set.
+
 ## Where the existing open-work lists live
 
 | Area | Authoritative list |

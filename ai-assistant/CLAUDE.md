@@ -7,6 +7,14 @@ The assistant owns **no** API keys and adds **no** AI connections of its own. It
 external `AICredentialSource` (the NoSneak credential store) and keeps a list of the ones the subject
 has chosen to use.
 
+> **What crosses the trust boundary.** This window is the only outbound path in the product, and
+> it is deliberately narrow: the subject picks the provider, the subject supplies the credential
+> (the assistant owns none), and **only what the subject attaches** — a message, a capture, a scan
+> report — is sent. Scan reports describe the subject's own network, so an accidental attachment or
+> a chat left visible across a logout is a data leak, not a UI glitch; session reset
+> (`clearProviders` / `resetPanel`) is a security control. Nothing here sends telemetry, and no code
+> path may attach stored data the subject did not choose.
+
 > **Implementation status.** This document is the UI design spec; the sidebar labels have drifted
 > from it (`AssistantPanel` currently uses **Chat / Capture / Job Queue / History / Skills /
 > Providers** toggle buttons rather than the nav table in §1). What is wired today:

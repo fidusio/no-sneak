@@ -7,6 +7,41 @@
 Security tooling for assessing what a network endpoint exposes — TLS posture, **post-quantum
 readiness**, and running services — plus a Swing front-end and an AI-assistant layer.
 
+## Operating scope — read this before changing anything
+
+no-sneak is **defensive assessment tooling**. It answers *"what does this endpoint expose, and how
+good is its posture"* for an operator assessing infrastructure they own, administer, or have been
+authorized to test. Everything it ships is observational: open a connection, complete an ordinary
+protocol handshake, read what the peer volunteers, record it, report it.
+
+**In scope** — TLS/PQC handshake assessment, certificate chain trust and revocation, protocol and
+cipher enumeration, service/version identification through declared probes, ICMP/ARP/NDP host
+discovery on a segment the operator controls, grading, and reporting.
+
+**Out of scope, permanently.** These are design constraints, not backlog items:
+
+- **No exploitation.** Vulnerability work here is *detection*: infer exposure from advertised
+  versions, extension presence, negotiated parameters, and ordinary handshake behaviour. Never
+  send input meant to read a peer's memory, corrupt its state, or execute code on it.
+- **No credential attacks.** No password or key guessing, spraying, brute force, or capture.
+- **No denial of service.** No flooding, amplification, resource exhaustion, or fuzzing of a live
+  target. The rate limits, bounded concurrency, timeouts and soft-fails are safety properties —
+  they are not overhead to optimise away.
+- **No evasion.** Nothing is built to be hard to observe, log, or attribute. Traffic leaves under
+  our own addresses. nmap's `-sS/-sF/-sX/-sN/-sA` flags and the word "stealth" appear in this repo
+  only as **legacy nmap vocabulary** in v1 notes and CLI-compatibility text; v2 rejects those flags
+  with a clear error and those engine classes are deleted rather than implemented.
+- **No persistence, C2, or exfiltration.** The tool runs, reports and exits. Results stay in the
+  local encrypted store unless the operator deliberately sends them somewhere.
+
+**Data handling.** Everything a subject produces is scoped to that subject in the encrypted H2
+store. Scan reports carry network topology and are sensitive: they cross a trust boundary only when
+the subject attaches one to a chat, under the subject's own provider credentials. Any path that
+shows one subject's data to another is a defect, not a feature — see `PENDING-ISSUES.md` finding 1.
+
+A change that would cross one of those lines is out of scope for this repo: say so, and propose the
+detection-only or narrower-design version instead.
+
 Five modules, one-way dependencies (`no-sneak-app → ai-assistant → ai-model`):
 
 | Module | What it is | Orientation |

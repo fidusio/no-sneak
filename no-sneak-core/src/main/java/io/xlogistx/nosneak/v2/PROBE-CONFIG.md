@@ -20,6 +20,12 @@ cipher suites, key-exchange classification (classical vs PQC-hybrid), and a lett
 non-TLS probes (ssh, ftp, http, databases, dns, …) identify the service and, where possible, its
 version.
 
+> **Probe scope.** Probes identify — connect, exchange the minimum the protocol needs, handshake,
+> match, record. No credential guessing, no crash/overflow/fuzz input, no CVE exploitation, no
+> resource exhaustion; a service that can only be identified that way gets no probe. The action
+> library is fixed and trusted for exactly this reason: JSON selects and configures behaviour, it
+> never executes code. See the repo root `CLAUDE.md` → *Operating scope*.
+
 ## How a scan runs
 
 `ProbeChecker` probes a `host:port` by running JSON-defined probes concurrently on a shared
@@ -358,7 +364,9 @@ The old app's live path was only TCP-connect + UDP (both NIO); its `service/` an
 subsystems and `raw/` SYN/FIN/… engines were dead/stub code. v2 decisions:
 - **Service/version = v2 JSON probes** (`-sV`), strictly superior to the old banner grab → done.
 - **Raw scans** (`-sS/-sF/-sN/-sX/-sA`/Window): **reject with a clear error**; real raw scans
-  come later via a native raw-socket layer (JDK 25 Panama FFM, no external lib).
+  come later via a native raw-socket layer (JDK 25 Panama FFM, no external lib). The flag names
+  are nmap's; what a raw layer buys here is *accurate port state* (open vs filtered) on networks
+  the operator is authorized to scan — not evasion, which stays out of scope.
 - **OS detection** (`-O`): open-port **heuristic only** (best-effort, low confidence). True
   TCP/IP-stack fingerprinting needs raw packets → same FFM layer.
 - **ARP ping / remote MAC**: **DONE — no longer deferred.** The old reasoning was right about the

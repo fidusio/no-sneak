@@ -44,6 +44,15 @@ eagerly at startup and login, what is deferred, and what is re-queried on every 
 a stale list, or before adding another projected store read; its §5 is the set of rules those
 decisions have to keep.
 
+## Data boundary
+
+Two properties this module owns, and every screen has to keep them: **the store is encrypted and
+opened with the subject's own credentials**, and **everything in it is scoped to the subject who
+created it** — scan reports, probes, chats, captures, keys. Logout must leave nothing of the
+previous subject on screen or in a panel field; the ScanPanel gap in `PENDING-ISSUES.md` finding 1
+is what that failure looks like. Scan reports are network topology: they leave the machine only
+when the subject attaches one to a chat themselves. Nothing here uploads, phones home, or syncs.
+
 ## Layout
 
 ```

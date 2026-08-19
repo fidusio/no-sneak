@@ -5,6 +5,12 @@ interfaces, with **no provider or store implementations**. `ai-assistant` (the S
 `no-sneak-app` (the concrete `AICredentialSource` / `AIRepository`) depend on this module;
 it depends on neither. The dependency is one-way: `no-sneak-app → ai-assistant → ai-model`.
 
+> **Contract-level rule.** These DAOs carry a subject's chats, captures, skills and — through
+> attachments — their scan reports, and the interfaces are the seam an implementation binds to.
+> Every store implementation is **owner-scoped**, and every credential belongs to the subject, never
+> to the product. A DAO or interface change that widens who can read whose rows is a security
+> change; treat it as one.
+
 Two packages:
 
 - **`io.xlogistx.nosneak.ai.model`** — concrete, JSON-serializable `PropertyDAO`s (the

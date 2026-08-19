@@ -8,6 +8,15 @@ The scanner's differentiator is PQC: alongside an SSL-Labs-style assessment it r
 server negotiates ML-KEM hybrid key exchange today, which matters for CNSA 2.0 timeline
 compliance and for harvest-now-decrypt-later exposure.
 
+## Intended use
+
+An assessment tool, for endpoints you own, administer, or are authorized to test. It observes —
+handshakes, certificates, banners, liveness — and reports. It deliberately does **not** exploit
+findings, guess credentials, flood or fuzz a target, or try to be hard to notice; those are
+permanent design constraints, written out in `CLAUDE.md` → *Operating scope*. Scan output is
+sensitive (it describes your network) and stays in the local encrypted store unless you send it
+somewhere yourself.
+
 ## Modules
 
 | Module | What it is |

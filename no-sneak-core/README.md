@@ -222,6 +222,15 @@ A comprehensive SSL/TLS security scanner that replicates SSL Labs functionality 
 
 ## 5. VULNERABILITY SCANNING
 
+> **Detection, not exploitation.** Every item below is a *posture* finding: is this endpoint
+> configured or versioned such that the named weakness applies. The evidence is what the server
+> advertises and negotiates — protocol versions, extensions, cipher suites, compression, ticket and
+> renegotiation behaviour, certificate contents. No check may send input designed to read the
+> peer's memory, corrupt its state, crash it, or extract plaintext, and no check may exceed the
+> bounded, rate-limited connection budget the scanner already enforces. Where a weakness cannot be
+> established without an actual exploit attempt (Heartbleed's memory read is the obvious one),
+> report it from version and extension evidence, mark the confidence — and do not attempt it.
+
 ### 5.1 Protocol Vulnerabilities
 - POODLE (SSLv3 CBC padding oracle)
 - BEAST (TLS 1.0 CBC IV)

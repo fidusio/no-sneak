@@ -31,6 +31,15 @@
 
 ---
 
+> **What a probe may do — binding on every probe, hand-written or model-written.** A probe
+> **identifies** a service. It may connect, send the minimum the protocol needs to elicit a banner
+> or reach a handshake, upgrade to TLS, match patterns, and record facts. It may **not**: guess or
+> send credentials, send input designed to crash, hang, corrupt or overflow the peer, fuzz, loop to
+> exhaust a resource, or carry an exploit for any CVE. If a protocol can only be identified by
+> doing one of those, the correct answer is "no probe" — say so instead of writing it. Probes run
+> against endpoints the operator is authorized to assess; keeping them innocuous is part of what
+> makes that true.
+
 ## 1. What a probe does
 
 A probe is a directed graph of **states**. Entering a state runs its one **action**. The action
