@@ -40,7 +40,7 @@ public class ProbeUDPCallback extends UDPSessionCallback {
         if (dataPacket == null) {
             return;
         }
-        ByteBuffer buf = dataPacket.getBuffer();
+        ByteBuffer buf = dataPacket.getIOBuffers().getInBuffer();
         if (buf == null || buf.remaining() <= 0) {
             return;
         }

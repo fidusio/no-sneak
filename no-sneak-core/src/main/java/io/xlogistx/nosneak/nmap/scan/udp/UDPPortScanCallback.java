@@ -178,7 +178,7 @@ public class UDPPortScanCallback extends UDPSessionCallback {
 
             // Extract banner from response
             String banner = null;
-            ByteBuffer buffer = dp.getBuffer();
+            ByteBuffer buffer = dp.getIOBuffers().getInBuffer();
             if (buffer != null && buffer.hasRemaining()) {
                 byte[] data = ByteBufferUtil.toBytes(buffer, false);
                 if (data.length > 0) {
