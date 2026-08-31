@@ -4,7 +4,7 @@
 > work — it points at every per-module open-items list and records the 2026-08-13 code-review
 > findings against the then-uncommitted scan-panel and AI-assistant changes.
 
-Security tooling for assessing what a network endpoint exposes — TLS posture, **post-quantum
+Assessment tooling for what a network endpoint exposes — TLS posture, **post-quantum
 readiness**, and running services — plus a Swing front-end and an AI-assistant layer.
 
 ## Operating scope — read this before changing anything
@@ -48,7 +48,7 @@ Five modules, one-way dependencies (`no-sneak-app → ai-assistant → ai-model`
 |---|---|---|
 | **`no-sneak-core`** | The scanning engine (TLS/PQC + protocol probes + network scanner) | `no-sneak-core/CLAUDE.md` |
 | **`no-sneak-net`** | Host discovery (ICMP/ARP/NDP over FFM) — built; Linux and Windows verified on live hardware | `no-sneak-net/CLAUDE.md` |
-| **`no-sneak-app`** | Swing desktop front-end, session/security layer | `no-sneak-app/CLAUDE.md` |
+| **`no-sneak-app`** | Swing desktop front-end, session/access layer | `no-sneak-app/CLAUDE.md` |
 | **`ai-assistant`** | Swing window to send network data to third-party AI models and compare | `ai-assistant/CLAUDE.md` |
 | **`ai-model`** | The backend contract (DAOs + service interfaces, no implementations) | `ai-model/CLAUDE.md` |
 

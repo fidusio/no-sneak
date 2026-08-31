@@ -12,7 +12,7 @@ has chosen to use.
 > (the assistant owns none), and **only what the subject attaches** — a message, a capture, a scan
 > report — is sent. Scan reports describe the subject's own network, so an accidental attachment or
 > a chat left visible across a logout is a data leak, not a UI glitch; session reset
-> (`clearProviders` / `resetPanel`) is a security control. Nothing here sends telemetry, and no code
+> (`clearProviders` / `resetPanel`) is a data-isolation control. Nothing here sends telemetry, and no code
 > path may attach stored data the subject did not choose.
 
 > **Implementation status.** This document is the UI design spec; the sidebar labels have drifted

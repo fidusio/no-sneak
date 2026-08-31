@@ -1,6 +1,6 @@
 # no-sneak
 
-Security tooling for assessing what a network endpoint actually exposes — its TLS posture, its
+Assessment tooling for what a network endpoint actually exposes — its TLS posture, its
 **post-quantum readiness**, and the services running on it — plus a desktop front-end and an
 AI-assistant layer for interpreting the results.
 
@@ -23,7 +23,7 @@ somewhere yourself.
 |---|---|
 | **`no-sneak-core`** | The scanning engine: TLS/PQC assessment, JSON-declared protocol probes, and a staged network scanner — all on one non-blocking state-machine core. Start with its `README.md`. |
 | **`no-sneak-net`** | Host discovery below the port scan: ICMP/ICMPv6 liveness, ARP/NDP layer-2 identity, IP↔MAC cache, CIDR sweep. JDK 25 FFM, no packet library. See its `README.md`. |
-| **`no-sneak-app`** | Swing desktop front-end — entry point, screens, navigation, and the session/security layer. See `CLAUDE.md`. |
+| **`no-sneak-app`** | Swing desktop front-end — entry point, screens, navigation, and the session/access layer. See `CLAUDE.md`. |
 | **`ai-assistant`** | Swing window that lets the subject send their own network data to third-party AI models and compare answers. Owns no API keys. See `CLAUDE.md`. |
 | **`ai-model`** | The backend contract the assistant binds to: value DAOs and service interfaces, no provider or store implementations. See `CLAUDE.md`. |
 
@@ -57,7 +57,7 @@ java io.xlogistx.nosneak.v2.nmap.NMap example.com -p 22,80,443 -sV
 `no-sneak-core` is mid-migration to **v2** (`io.xlogistx.nosneak.v2`), a from-scratch rebuild on a
 single non-blocking core. v2 is feature-complete against v1 and additionally produces certificate
 chain-trust, revocation, protocol/cipher enumeration and grading; v1 is frozen and is deleted when
-the maintainer merges. Vulnerability scanning, HTTP security-header analysis and CNSA 2.0
+the maintainer merges. Vulnerability scanning, HTTP response-header analysis and CNSA 2.0
 compliance rules are not implemented yet — see `no-sneak-core/ACTION-PLAN.md`.
 
 `no-sneak-net` is new and **requires JDK 25** (FFM), unlike the rest of the reactor. Its API, codecs,

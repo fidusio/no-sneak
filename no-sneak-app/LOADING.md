@@ -22,10 +22,10 @@ definitions, the shared `NIOSocket` and scan reports are part of the loading pic
 | What | Where | Note |
 |---|---|---|
 | H2 datastore opened + `connect()` | `Main.java:42-44` | From `ds.*` params, else after the setup screen. **Held open across logout**; closed only in `windowClosing` (`Main.java:76-81`). |
-| `OPSecUtil.singleton()` + credential types | `Main.java:94-99` | On every security-manager build. |
+| `OPSecUtil.singleton()` + credential types | `Main.java:94-99` | On every `DomainSecurityManager` build. |
 | FlatLaf, Roboto, theme defaults | `Main.java:48-51` | Before the EDT hop. |
 | Menu bar | `Main.java:83-85` | Fully built at frame construction, then `setVisible(false)` until auth. |
-| Login-screen favicon | `LoginPanel.java:94` | An outbound `https://xlogistx.io/favicon.ico` fetch during construction. Eager **and** off-machine — see the security-hardening list in `CLAUDE.md`. |
+| Login-screen favicon | `LoginPanel.java:94` | An outbound `https://xlogistx.io/favicon.ico` fetch during construction. Eager **and** off-machine — see the hardening list in `CLAUDE.md`. |
 
 ### Screens
 

@@ -1,8 +1,8 @@
 # io.xlogistx.nosneak.app
 
-Swing desktop front-end for the NoSneak security tooling. Contains the application entry point
-and the **`ui`** package that wires together the screens, navigation, and the session/security
-layer. It began as a UX prototype but now runs a **real** session/security layer and a **working
+Swing desktop front-end for the NoSneak assessment tooling. Contains the application entry point
+and the **`ui`** package that wires together the screens, navigation, and the session/access
+layer. It began as a UX prototype but now runs a **real** session/access layer and a **working
 network scanner screen** over `no-sneak-core`; the PQC file-sharing screen is still a placeholder.
 
 > **Status.** The session layer (`ui.utility.Session`) is backed by zoxweb's
@@ -27,7 +27,7 @@ network scanner screen** over `no-sneak-core`; the PQC file-sharing screen is st
 > `io.xlogistx.nosneak.v2.data`). It is also wired to the assistant **both ways** — a scan result
 > can be sent into a chat, and a chat response can be saved back as a probe. See `ScanPanel` below.
 >
-> **Still stubbed:** passkey (login/register are empty `void` no-ops), the security-manager admin
+> **Still stubbed:** passkey (login/register are empty `void` no-ops), the ACL admin
 > tables, the PQC file-sharing screen, and — in the AI assistant — the Job-queue page and
 > the multi-model compare path. (The assistant's provider discovery,
 > the user-picked provider flow — a provider is now its own persisted **`AIProviderConfig`**
@@ -58,13 +58,13 @@ when the subject attaches one to a chat themselves. Nothing here uploads, phones
 ```
 io.xlogistx.nosneak.app
 ├── Main.java                      ← entry point; opens the H2P store (ds.* params or setup screen) + JFrame
-└── ui/                            ← UI (screens, menu, session/security wiring)
+└── ui/                            ← UI (screens, menu, session/access wiring)
     ├── AppShell.java              ← root content pane, CardLayout host (mounts ai-assistant's AssistantPanel)
     ├── LoginPanel.java            ← login/register screen (method + mode toggle)
     ├── DataStoreSetupPanel.java   ← first-run screen: choose location + DB/encryption credentials
     ├── PQCRegistryPanel.java      ← PQC file-sharing registry view
     ├── SubjectPanel.java          ← subject account view (master–detail)
-    ├── SubjectSecManagerPanel.java← security-manager admin view (master–detail)
+    ├── SubjectSecManagerPanel.java← ACL admin view (master–detail)
     ├── ScanPanel.java             ← network scanner: command box, probe selector, results, probe editor
     ├── MenuBarFactory.java        ← builds the application menu bar
     ├── assistant/                 ← app-side bindings for the ai-assistant module
@@ -139,7 +139,7 @@ The `ASSISTANT` card is the `ai-assistant` module's
 AssistantStorage(ctx.session())))` (`AssistantStorage` takes the `Session` and reads the H2P
 `APIDataStore` off it). The context holds
 the credential source, the chat/skill repository (`AssistantStorage`, over the same H2P `APIDataStore`
-the security manager uses), an internally built `AIProviderRegistrar`, and the current
+that `DomainSecurityManager` uses), an internally built `AIProviderRegistrar`, and the current
 chat/credential/model selection. This is the **only** coupling point — the dependency runs
 `no-sneak-app → ai-assistant`, never the reverse.
 
@@ -243,8 +243,8 @@ The **Profile** screen is itself a nested `CardStack` (`profileCards`, built by
     is the one the card is editing it clears `selectedKey`, blanks the revealed secret, and flips
     back to the list, so the card can't be left showing a row that no longer exists. **Rotate**
     (`Session.rotateAPIKey`, disabled for external keys) is wired but **commented out of the
-    card** (`keyView.add(rotateKey)`) — read the `external`-flag hazard under *Security
-    hardening* before putting it back.
+    card** (`keyView.add(rotateKey)`) — read the `external`-flag hazard under
+    *Hardening* before putting it back.
 
 > **Icon buttons.** Actions render as `io.xlogistx.gui.IconUtil` SVG icons with tooltips, and the
 > vocabulary is deliberately one-meaning-per-icon: **EditIcon** (pencil), **DeleteIcon** (trash),
@@ -261,7 +261,7 @@ The **Profile** screen is itself a nested `CardStack` (`profileCards`, built by
 > `src/main/resources/icons/*.svg` files are no longer referenced and can be removed.
 
 ### `SubjectSecManagerPanel`
-The `MANAGER` screen — an admin view over the security model (the UI front for zoxweb's
+The `MANAGER` screen — an admin view over the access-control model (the UI front for zoxweb's
 `DomainSecurityManager`). Same master–detail shape as `SubjectPanel`, with five sections, each a
 header + description + search bar + `JTable` (wrapped in a `JScrollPane`, with a trailing
 unlabeled actions column reserved for per-row controls):
@@ -273,7 +273,7 @@ unlabeled actions column reserved for per-row controls):
 - **Grants** — permission/role/role-group grants bound to subjects (Subject, Grant Type, Granted).
 
 All tables are empty `DefaultTableModel` stubs; search and the actions column are not wired.
-Reached from **View → Subject Security Manager**.
+Reached from **View → ACL Tool**.
 
 > Scope: `SubjectPanel` manages **your own** account; `SubjectSecManagerPanel` is the **admin**
 > view over all subjects/permissions/roles/grants.
@@ -346,7 +346,7 @@ The app uses **two independent navigation layers**, deliberately separate:
 
 - **Top menu bar** — app-level destinations. The **View** menu drives the `Navigator` between
   top-level screens: *Network scanner* → `SCAN`, *PQC file sharing* → `MAIN`, *Subject Profile* →
-  `SUBJECT`, *Subject Security Manager* → `MANAGER`, *AI Chat* → `ASSISTANT`. (There is no
+  `SUBJECT`, *ACL Tool* → `MANAGER`, *AI Chat* → `ASSISTANT`. (There is no
   separate "Subject" menu.)
 - **Left selector inside a panel** — sub-section switching *within* a screen, via a local
   `CardStack` (e.g. `SubjectPanel`'s Profile / Credentials). Local to the panel; does **not** go
@@ -355,11 +355,11 @@ The app uses **two independent navigation layers**, deliberately separate:
 The top menu chooses *which screen*; a panel's left selector chooses *which section*. They are
 separate `CardLayout`s (the in-panel ones wrapped by `CardStack`).
 
-### Security backend — `DomainSecurityManagerDefault` (zoxweb)
+### Access-control backend — `DomainSecurityManagerDefault` (zoxweb)
 `Main.createDomainSecManager(dataStore)` constructs
 `org.zoxweb.server.security.DomainSecurityManagerDefault` over the encrypted H2 `H2PDataStore`,
 registers `CIPassword` and `SubjectAPIKey` as credential types, and passes it to `AppContext` →
-`Session`. It implements the full security model — subject/principal/credential CRUD, the
+`Session`. It implements the full access-control model — subject/principal/credential CRUD, the
 permission/role/role-group catalog, and grants — with the keying the code relies on:
 `login(principalID, credential)` resolves the principal to its subject and validates the
 `PASSWORD` `CIPassword` via `SecUtil.isPasswordValid` (throws `SecurityException` on mismatch);
@@ -735,14 +735,14 @@ All target-only, because the model has nowhere to store them: per-identifier **s
 - **The probe editor's title field is now output, not input** — `fillProbe` overwrites it from the
   parsed definition. It should be made read-only or relabelled so that reads as intentional.
 
-### Subject Security Manager (`SubjectSecManagerPanel`)
+### ACL Tool (`SubjectSecManagerPanel`)
 - **All tables are empty stubs** and **search is not wired.** Bind the Subjects / Permissions /
   Roles / Role groups / Grants tables to the `DomainSecurityManager` catalog (`getPermissions()`,
   `getRoles()`, `getRoleGroups()`, the grant getters) and make the per-section search bars filter.
   The backend exists; the H2 store has no seeded catalog data.
 
-### Security hardening
-From a security pass over the app's own code (issues fixable here, not in the zoxweb dependency),
+### Hardening
+From a review pass over the app's own code (issues fixable here, not in the zoxweb dependency),
 ordered by priority.
 
 - ~~**A third-party key can be stored without the `external` flag**~~ — **fixed.**

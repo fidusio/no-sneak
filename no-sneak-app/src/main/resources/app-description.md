@@ -1,6 +1,6 @@
 # NoSneak
 
-Security tooling for assessing what a network endpoint exposes — TLS posture, **post-quantum
+Assessment tooling for what a network endpoint exposes — TLS posture, **post-quantum
 readiness**, and running services — with an AI assistant layer for making sense of the results.
 
 ## What it does

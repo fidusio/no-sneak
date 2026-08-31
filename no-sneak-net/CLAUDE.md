@@ -33,7 +33,7 @@ not reappear in code, module descriptors, or launch flags.
 >   forges an identity, and no evasion, decoy, or attribution-obscuring behaviour gets built.
 > - **No amplification.** The network and directed-broadcast addresses of a range are skipped by
 >   `sweep` (§13.18) — pinging a directed broadcast is answered by every host on the segment at
->   once, which on a security appliance is indistinguishable from an attack.
+>   once, which to a monitoring appliance is indistinguishable from an attack.
 > - **Paced and bounded.** `maxInFlight` and `maxPacketsPerSecond` exist so a sweep disturbs a
 >   segment as little as possible; they are safety limits, not tuning knobs.
 > - **Passive observation is local-segment, capability-reported, and not a packet log.** It learns
@@ -1564,7 +1564,7 @@ Package `io.xlogistx.nosneak.net.util`. Pure Java. Shared by all three backends.
 - Aging: entries expire after a configurable TTL since `lastSeen`. Lazy expiry on read, plus an optional scheduled daemon sweep.
 - Provenance: `ResolveSource` (§3.4). Passive and kernel-table updates refresh `lastSeen` and may upgrade state.
 - State machine: `INCOMPLETE` (solicited, no reply yet) → `REACHABLE` (fresh reply/observation) → `STALE` (TTL passed) → evicted.
-- **Conflict detection:** if an observation reports a different MAC for an IP that is currently `REACHABLE` with a different MAC, record it rather than silently overwriting. On a security appliance an IP↔MAC change is either a legitimate DHCP/failover event or ARP spoofing, and the fingerprinting layer wants to know. A `conflictCount` on `Entry` plus a `lastConflictAt` is enough for v1.
+- **Conflict detection:** if an observation reports a different MAC for an IP that is currently `REACHABLE` with a different MAC, record it rather than silently overwriting. On a monitoring appliance an IP↔MAC change is either a legitimate DHCP/failover event or ARP spoofing, and the fingerprinting layer wants to know. A `conflictCount` on `Entry` plus a `lastConflictAt` is enough for v1.
 
 ### 9.2 Skeleton
 
@@ -1923,7 +1923,7 @@ Decisions the sketch in §3.8 did not pin down:
 
 Also added: `usableInterfaces()` (up, addressed, non-loopback — the usual argument to `open`) and `Discovery.forTarget(InetAddress)`, which picks the opened backend that has an address on-link.
 
-**A live sweep exposed a safety gap §13.2 had left owed.** The `/29` run probed both `10.0.0.0` and the range's last address, because `CidrRange.hosts()` yields every address by design and nothing was skipping the local network and directed broadcast. **Pinging a directed broadcast is answered by every host on the segment at once** — amplification, and on a security appliance indistinguishable from an attack.
+**A live sweep exposed a safety gap §13.2 had left owed.** The `/29` run probed both `10.0.0.0` and the range's last address, because `CidrRange.hosts()` yields every address by design and nothing was skipping the local network and directed broadcast. **Pinging a directed broadcast is answered by every host on the segment at once** — amplification, and to a monitoring appliance indistinguishable from an attack.
 
 Fixed with `NicBinding.isNetworkOrBroadcast`, backed by `LocalAddress.networkAddress()` / `broadcastAddress()`, and sweep now skips those addresses. The test is deliberately against **the interface's own prefix, not the swept range's**: sweeping a `/29` inside a `/24` must not lose two legitimate hosts to a guess about where the subnet boundary is. Empty for IPv6, which has no broadcast, and for `/31` and `/32`, which designate no spare addresses. Eight unit tests pin it, so the rule is verified without ever having to actually ping a broadcast address.
 

@@ -8,7 +8,7 @@ it depends on neither. The dependency is one-way: `no-sneak-app → ai-assistant
 > **Contract-level rule.** These DAOs carry a subject's chats, captures, skills and — through
 > attachments — their scan reports, and the interfaces are the seam an implementation binds to.
 > Every store implementation is **owner-scoped**, and every credential belongs to the subject, never
-> to the product. A DAO or interface change that widens who can read whose rows is a security
+> to the product. A DAO or interface change that widens who can read whose rows is an access-control
 > change; treat it as one.
 
 Two packages:
