@@ -2,6 +2,7 @@ package io.xlogistx.nosneak.nmap.scan.tcp;
 
 import io.xlogistx.nosneak.nmap.util.PortResult;
 import io.xlogistx.nosneak.nmap.util.PortState;
+import org.zoxweb.server.net.ssl.SSLConfigInt;
 import org.zoxweb.shared.io.SharedIOUtil;
 import org.zoxweb.server.logging.LogWrapper;
 import org.zoxweb.server.net.common.TCPSessionCallback;
@@ -63,6 +64,11 @@ public class TCPPortScanCallback extends TCPSessionCallback {
         }
 
         completeWithOpen(responseTime);
+    }
+
+    @Override
+    protected void sslUpgraded(SSLConfigInt sslConfig) throws IOException {
+
     }
 
     /**

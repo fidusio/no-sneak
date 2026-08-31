@@ -1,6 +1,7 @@
 package io.xlogistx.nosneak.v2.service;
 
 import io.xlogistx.common.http.HTTPProtocolHandler;
+import io.xlogistx.common.http.SimpleProtoSession;
 import io.xlogistx.http.EndpointsUtil;
 import io.xlogistx.http.NIOHTTPServer;
 import io.xlogistx.nosneak.v2.ProbeChecker;
@@ -29,11 +30,10 @@ import org.zoxweb.shared.util.NVGenericMap;
 import org.zoxweb.shared.util.ResourceManager;
 
 import java.util.Collections;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 
 /**
  * REST endpoint that runs the v2 probe engine against a {@code domain[:port]} and returns the
@@ -160,9 +160,15 @@ public class Checker {
         HTTPProtocolHandler hph = EndpointsUtil.SINGLETON.getProtocolHandler();
 
         // Hold the connection: not closeable, and not reset, until the response is written.
-        ScanSession session = new ScanSession();
-        hph.setConnectionSession(session);
-        Responder responder = new Responder(hph, session);
+        // An authenticated request already carries a session (ShiroSession); an anonymous one
+        // gets a SimpleProtoSession, which never touches the Shiro session store.
+        Responder responder = new Responder(hph);
+        ProtoSession<?, ?> protoSession = hph.getConnectionSession();
+        if (protoSession == null) {
+            protoSession = new SimpleProtoSession<String>();
+            hph.setConnectionSession(protoSession);
+        }
+        protoSession.addCloseMonitor(responder);
 
         // The sweep has no deadline of its own, and a candidate that never calls back would
         // otherwise hold the connection open until the client gives up.
@@ -190,82 +196,21 @@ public class Checker {
     }
 
     /**
-     * Keeps the HTTP connection alive while the scan runs. {@code canClose()} stays false until
-     * the response has been written, which is what stops {@code NIOHTTPServer} from resetting the
-     * protocol handler and closing the socket as soon as the endpoint method returns.
-     */
-    private static final class ScanSession implements ProtoSession<Object, String> {
-        private final NVGenericMap properties = new NVGenericMap("properties");
-        private final Set<AutoCloseable> autoCloseables = new LinkedHashSet<>();
-        private final AtomicBoolean responded = new AtomicBoolean(false);
-        private final AtomicBoolean closed = new AtomicBoolean(false);
-
-        void responded() {
-            responded.set(true);
-        }
-
-        @Override
-        public Object getSession() {
-            return this;
-        }
-
-        @Override
-        public boolean canClose() {
-            return responded.get();
-        }
-
-        @Override
-        public Set<AutoCloseable> getAutoCloseables() {
-            return autoCloseables;
-        }
-
-        @Override
-        public boolean attach() {
-            return true;
-        }
-
-        @Override
-        public boolean detach() {
-            return true;
-        }
-
-        @Override
-        public void close() {
-            if (closed.compareAndSet(false, true)) {
-                // setConnectionSession registered the protocol handler here, so this releases
-                // the connection and its buffers.
-                SharedIOUtil.close(autoCloseables.toArray(new AutoCloseable[0]));
-            }
-        }
-
-        @Override
-        public boolean isClosed() {
-            return closed.get();
-        }
-
-        @Override
-        public String getSubjectID() {
-            return null;
-        }
-
-        @Override
-        public NVGenericMap getProperties() {
-            return properties;
-        }
-    }
-
-    /**
      * Writes the deferred response exactly once, from whichever thread finishes first — the probe
      * callback or the backstop deadline — then releases the connection.
      */
-    private static final class Responder {
+    private static final class Responder implements Supplier<Boolean> {
         private final HTTPProtocolHandler hph;
-        private final ScanSession session;
+        private final AtomicBoolean finished = new AtomicBoolean(false);
         private final AtomicBoolean written = new AtomicBoolean(false);
 
-        Responder(HTTPProtocolHandler hph, ScanSession session) {
+        Responder(HTTPProtocolHandler hph) {
             this.hph = hph;
-            this.session = session;
+        }
+
+        public Boolean get()
+        {
+            return finished.get();
         }
 
         void write(HTTPStatusCode status, NVGenericMap body) {
@@ -304,7 +249,7 @@ public class Checker {
                 }
             } finally {
                 // Released in this order: the session may only be closed once it is closeable.
-                session.responded();
+                finished.set(true);
                 hph.expire();
                 SharedIOUtil.close(hph);
             }

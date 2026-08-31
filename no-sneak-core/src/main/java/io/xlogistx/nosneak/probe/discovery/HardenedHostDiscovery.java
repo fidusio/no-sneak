@@ -3,6 +3,7 @@ package io.xlogistx.nosneak.probe.discovery;
 import org.zoxweb.server.logging.LogWrapper;
 import org.zoxweb.server.net.NIOSocket;
 import org.zoxweb.server.net.common.TCPSessionCallback;
+import org.zoxweb.server.net.ssl.SSLConfigInt;
 import org.zoxweb.server.task.TaskUtil;
 import org.zoxweb.shared.net.IPAddress;
 
@@ -111,6 +112,11 @@ public class HardenedHostDiscovery {
         protected void connectedFinished() throws IOException {
             markUp.run();
             try { close(); } catch (Exception ignored) { }
+        }
+
+        @Override
+        protected void sslUpgraded(SSLConfigInt sslConfig) throws IOException {
+
         }
 
         @Override

@@ -3,6 +3,7 @@ package io.xlogistx.nosneak.scanners;
 import org.bouncycastle.tls.*;
 import org.bouncycastle.tls.crypto.impl.bc.BcTlsCrypto;
 import org.zoxweb.server.logging.LogWrapper;
+import org.zoxweb.server.net.ssl.SSLConfigInt;
 import org.zoxweb.shared.net.IPAddress;
 
 import java.io.IOException;
@@ -17,6 +18,11 @@ import java.util.Vector;
 public class VersionProbeCallback extends TLSProbeCallback {
 
     public static final LogWrapper log = new LogWrapper(VersionProbeCallback.class).setEnabled(false);
+
+    @Override
+    protected void sslUpgraded(SSLConfigInt sslConfig) throws IOException {
+
+    }
 
     /**
      * Listener for version probe results.

@@ -2,6 +2,7 @@ package io.xlogistx.nosneak.v2.runtime;
 
 import org.zoxweb.server.logging.LogWrapper;
 import org.zoxweb.server.net.common.TCPSessionCallback;
+import org.zoxweb.server.net.ssl.SSLConfigInt;
 import org.zoxweb.shared.net.IPAddress;
 
 import java.io.IOException;
@@ -43,6 +44,11 @@ public class ProbeTCPCallback extends TCPSessionCallback {
     @Override
     protected void connectedFinished() throws IOException {
         context.onConnected(this);
+    }
+
+    @Override
+    protected void sslUpgraded(SSLConfigInt sslConfig) throws IOException {
+
     }
 
     @Override

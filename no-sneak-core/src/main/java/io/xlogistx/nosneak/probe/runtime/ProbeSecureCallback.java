@@ -3,6 +3,7 @@ package io.xlogistx.nosneak.probe.runtime;
 import org.zoxweb.server.logging.LogWrapper;
 import org.zoxweb.server.net.BaseChannelOutputStream;
 import org.zoxweb.server.net.common.TCPSessionCallback;
+import org.zoxweb.server.net.ssl.SSLConfigInt;
 import org.zoxweb.server.net.ssl.SSLContextInfo;
 import org.zoxweb.shared.net.IPAddress;
 
@@ -58,6 +59,11 @@ public class ProbeSecureCallback extends TCPSessionCallback {
         // Base class runs sslUpgrade() before this, so connectedFinished fires only
         // after a successful TLS handshake (see TCPSessionCallback.connected/sslUpgrade).
         session.onSecureConnected(this);
+    }
+
+    @Override
+    protected void sslUpgraded(SSLConfigInt sslConfig) throws IOException {
+
     }
 
     @Override

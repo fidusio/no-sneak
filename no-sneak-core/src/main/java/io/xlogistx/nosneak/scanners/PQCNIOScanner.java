@@ -3,6 +3,7 @@ package io.xlogistx.nosneak.scanners;
 import io.xlogistx.nosneak.scanners.PQCConnectionHelper.PQCHandshakeState;
 import org.bouncycastle.tls.Certificate;
 import org.bouncycastle.tls.crypto.TlsCertificate;
+import org.zoxweb.server.net.ssl.SSLConfigInt;
 import org.zoxweb.shared.io.SharedIOUtil;
 import org.zoxweb.server.logging.LogWrapper;
 import org.zoxweb.server.net.common.TCPSessionCallback;
@@ -96,6 +97,11 @@ public class PQCNIOScanner extends TCPSessionCallback {
 
         // Start handshake via state machine
         stateMachine.publish(PQCHandshakeState.START, smCallback);
+    }
+
+    @Override
+    protected void sslUpgraded(SSLConfigInt sslConfig) throws IOException {
+
     }
 
     /**
