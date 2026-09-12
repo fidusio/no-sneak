@@ -1,153 +1,67 @@
 package io.xlogistx.nosneak.nmap.output;
 
-import io.xlogistx.nosneak.nmap.util.PortResult;
-import io.xlogistx.nosneak.nmap.util.PortState;
-import io.xlogistx.nosneak.nmap.util.ScanResult;
-import org.zoxweb.shared.util.SharedStringUtil;
+import io.xlogistx.nosneak.nmap.ScanReport;
+import io.xlogistx.nosneak.nmap.ScanReport.HostReport;
+import io.xlogistx.nosneak.nmap.ScanReport.PortReport;
+import io.xlogistx.nosneak.nmap.ScanReport.RenderSelection;
 
-import java.io.IOException;
-import java.io.OutputStream;
-import java.io.Writer;
-import java.util.StringJoiner;
+import java.util.Locale;
 
 /**
- * Grepable output formatter (similar to nmap -oG).
- * One line per host, easy to grep/awk/cut.
+ * nmap grepable (.gnmap) — a header comment, one line per host, a footer comment.
+ * <p>
+ * {@code Host: <ip> (<hostname>)} carries the reverse-DNS name when one was found and empty
+ * parentheses otherwise, exactly as nmap does, so a {@code cut -d' ' -f2} stays stable. Port
+ * fields are {@code port/state/proto/reason/rtt//service//}: nmap's {@code owner} slot carries
+ * the reason and its {@code rpc} slot the round-trip time ({@code 25ms}, or empty when the port
+ * never connected), so an existing {@code cut -d/} on the first three fields and on the service
+ * still works. {@code Ignored State} follows {@link HostReport#portsToRender}, the same collapse
+ * rule as every other format.
  */
-public class GrepableFormatter implements OutputFormatter {
-
-    private static final String LINE_SEP = System.lineSeparator();
+public final class GrepableFormatter implements OutputFormatter {
 
     @Override
-    public OutputFormat getFormat() {
+    public OutputFormat format() {
         return OutputFormat.GREPABLE;
     }
 
     @Override
-    public String format(ScanReport report) {
+    public String render(ScanReport r) {
         StringBuilder sb = new StringBuilder();
-
-        // Header
-        sb.append("# ").append(report.getScannerName());
-        sb.append(" ").append(report.getScannerVersion());
-        sb.append(" scan initiated ").append(report.getStartTimeFormatted());
-        if (report.getCommandLine() != null) {
-            sb.append(" as: ").append(report.getCommandLine());
+        sb.append("# Nmap-compatible scan initiated ").append(ScanReport.nmapTime(r.startTimeMs));
+        if (r.commandLine != null) sb.append(" as: ").append(r.commandLine);
+        sb.append('\n');
+        for (HostReport h : r.hosts) {
+            sb.append("Host: ").append(h.ip != null ? h.ip : h.host)
+              .append(" (").append(h.hostname != null ? h.hostname : "").append(')');
+            if (!h.up) {
+                sb.append("\tStatus: Down\n");
+                continue;
+            }
+            sb.append("\tStatus: Up");
+            sb.append("\tPorts: ");
+            RenderSelection sel = h.portsToRender(r.config);
+            boolean first = true;
+            for (PortReport p : sel.shown) {
+                if (!first) sb.append(", ");
+                first = false;
+                sb.append(p.port).append('/').append(p.state.label()).append('/').append(p.protocol)
+                  .append('/').append(p.reason == null ? "" : p.reason)
+                  .append('/').append(p.rttMs >= 0 ? p.rttMs + "ms" : "")
+                  .append("//").append(p.serviceName()).append("//");
+            }
+            String notShown = sel.notShown();
+            sb.append("\tIgnored State: ").append(notShown == null ? "0 closed, 0 filtered" : notShown);
+            if (h.mac != null) sb.append("\tMAC: ").append(h.mac);
+            sb.append('\n');
         }
-        sb.append(LINE_SEP);
-
-        // Each host on one line
-        for (ScanResult host : report.getHostResults()) {
-            formatHost(sb, host);
-        }
-
-        // Footer
-        sb.append("# ").append(report.getScannerName());
-        sb.append(" done at ").append(report.getEndTimeFormatted());
-        sb.append(" -- ").append(report.getHostCount()).append(" IP address");
-        if (report.getHostCount() != 1) sb.append("es");
-        sb.append(" (").append(report.getHostsUpCount()).append(" host");
-        if (report.getHostsUpCount() != 1) sb.append("s");
-        sb.append(" up) scanned in ");
-        sb.append(String.format("%.2f", report.getDurationSec())).append(" seconds");
-        sb.append(LINE_SEP);
-
+        int total = r.hosts.size();
+        int up = r.hostsUp();
+        sb.append("# NoSneak done at ").append(ScanReport.nmapTime(r.endTimeMs))
+          .append(" -- ").append(total).append(" IP address").append(total == 1 ? "" : "es")
+          .append(" (").append(up).append(" host").append(up == 1 ? "" : "s")
+          .append(" up) scanned in ").append(String.format(Locale.US, "%.2f", r.durationSec()))
+          .append(" seconds\n");
         return sb.toString();
-    }
-
-    private void formatHost(StringBuilder sb, ScanResult host) {
-        sb.append("Host: ");
-
-        // IP address
-        if (host.getIpAddress() != null) {
-            sb.append(host.getIpAddress());
-        } else {
-            sb.append(host.getTarget());
-        }
-
-        // Hostname
-        sb.append(" (");
-        if (host.getHostname() != null) {
-            sb.append(host.getHostname());
-        }
-        sb.append(")");
-
-        // Status
-        sb.append("\tStatus: ");
-        sb.append(host.isHostUp() ? "Up" : "Down");
-
-        // Ports
-        sb.append("\tPorts: ");
-
-        StringJoiner ports = new StringJoiner(", ");
-        for (PortResult port : host.getPortResults()) {
-            if (port.getState() == PortState.OPEN ||
-                port.getState() == PortState.OPEN_FILTERED ||
-                port.getState() == PortState.UNFILTERED) {
-
-                StringBuilder portStr = new StringBuilder();
-                portStr.append(port.getPort());
-                portStr.append("/").append(port.getState().getDisplayName());
-                portStr.append("/").append(port.getProtocol());
-
-                // Service
-                portStr.append("//");
-                if (port.hasService()) {
-                    portStr.append(port.getService().getServiceName());
-                }
-                portStr.append("//");
-
-                ports.add(portStr.toString());
-            }
-        }
-
-        sb.append(ports.toString());
-
-        // Ignored ports summary
-        int closed = host.getClosedPortCount();
-        int filtered = host.getFilteredPortCount();
-
-        if (closed > 0 || filtered > 0) {
-            sb.append("\tIgnored State: ");
-            if (closed > 0) {
-                sb.append(closed).append(" closed");
-            }
-            if (closed > 0 && filtered > 0) {
-                sb.append(", ");
-            }
-            if (filtered > 0) {
-                sb.append(filtered).append(" filtered");
-            }
-        }
-
-        // OS guess
-        if (host.getOsFingerprint() != null && host.getOsFingerprint().hasMatches()) {
-            sb.append("\tOS: ").append(host.getOsFingerprint().getBestMatch().getOsName());
-        }
-
-        sb.append(LINE_SEP);
-    }
-
-    @Override
-    public void formatTo(ScanReport report, OutputStream out) {
-        try {
-            out.write(SharedStringUtil.getBytes(format(report)));
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to write grepable output", e);
-        }
-    }
-
-    @Override
-    public void formatTo(ScanReport report, Writer writer) {
-        try {
-            writer.write(format(report));
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to write grepable output", e);
-        }
-    }
-
-    @Override
-    public String getMimeType() {
-        return "text/plain";
     }
 }

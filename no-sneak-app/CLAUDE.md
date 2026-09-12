@@ -20,11 +20,11 @@ network scanner screen** over `no-sneak-core`; the PQC file-sharing screen is st
 > their property bag. All blocking `Session` calls run **off the EDT** via
 > `BackgroundTask.runCatching` (failures surface as a dialog from the thrown `SecurityException`).
 >
-> **The `SCAN` screen is real now.** `ScanPanel` fronts `no-sneak-core`'s v2 engine: the command
+> **The `SCAN` screen is real now.** `ScanPanel` fronts the `no-sneak-core` engine: the command
 > box takes the full `NMap` CLI surface through `NMap.parseCommand`, a probe selector ticks
 > bundled and subject-authored probes into the run, results persist as `ReportContent` rows, and
 > probes persist as `ProbeContent` rows (both DAOs live in `no-sneak-core`'s
-> `io.xlogistx.nosneak.v2.data`). It is also wired to the assistant **both ways** — a scan result
+> `io.xlogistx.nosneak.data`). It is also wired to the assistant **both ways** — a scan result
 > can be sent into a chat, and a chat response can be saved back as a probe. See `ScanPanel` below.
 >
 > **Still stubbed:** passkey (login/register are empty `void` no-ops), the ACL admin
@@ -281,7 +281,7 @@ Reached from **View → ACL Tool**.
 > view over all subjects/permissions/roles/grants.
 
 ### `ScanPanel`
-The `SCAN` screen — the front end for `no-sneak-core`'s v2 scanning engine. Same master–detail
+The `SCAN` screen — the front end for the `no-sneak-core` scanning engine. Same master–detail
 shape as the other screens (`buildDefaultSplitPanel` + a `CardStack`), with three selectors —
 **Scanner** / **Result List** / **Probe Library** — over five cards: `Scan`, `Probe`, `Result`,
 `View_scan`, `Edit_probe`.
@@ -503,7 +503,7 @@ Account data (backed by `DomainSecurityManager`, keyed off the signed-in subject
   property bag, persisted via `updateSubjectID`.
 
 Scan data (`ReportContent` / `ProbeContent`, both from `no-sneak-core`'s
-`io.xlogistx.nosneak.v2.data`, owner-scoped by subjectGUID and stored in the same H2P
+`io.xlogistx.nosneak.data`, owner-scoped by subjectGUID and stored in the same H2P
 `APIDataStore`). `saveScanResult` / `saveProbe` branch on `getGUID()` — non-empty updates and
 stamps `lastTimeUpdated`, empty stamps the owner and inserts — the same upsert-by-GUID shape
 `AssistantStorage` uses, and for the same reason (see the timestamp note in `ai-model/CLAUDE.md`).
@@ -667,7 +667,7 @@ Main.AppFrame
         ├─ PQCRegistryPanel     (MAIN)                                  │ onAuthChange
         ├─ SubjectPanel         (SUBJECT)                               │  → nav to SUBJECT
         ├─ SubjectSecManagerPanel (MANAGER)                            │  + show menu bar
-        ├─ ScanPanel            (SCAN)     → no-sneak-core v2 engine    │  (logout → LOGIN)
+        ├─ ScanPanel            (SCAN)     → no-sneak-core engine       │  (logout → LOGIN)
         │        │      ▲                                              │
         │        │      └── addSaveTarget("probe", …)  ── response → probe
         │        └───────── sendToChat(content, name) ── report → chat  │

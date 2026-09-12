@@ -1,212 +1,140 @@
 package io.xlogistx.nosneak.nmap.output;
 
-import io.xlogistx.nosneak.nmap.util.PortResult;
-import io.xlogistx.nosneak.nmap.util.PortState;
-import io.xlogistx.nosneak.nmap.util.ScanResult;
-import org.zoxweb.shared.util.SharedStringUtil;
-
-import java.io.IOException;
-import java.io.OutputStream;
-import java.io.Writer;
+import io.xlogistx.nosneak.grade.Grade;
+import io.xlogistx.nosneak.nmap.ScanReport;
+import io.xlogistx.nosneak.nmap.ScanReport.HostReport;
+import io.xlogistx.nosneak.nmap.ScanReport.PortReport;
+import io.xlogistx.nosneak.nmap.ScanReport.RenderSelection;
+import io.xlogistx.nosneak.result.ProbeResult;
 
 /**
- * Normal console output formatter (human-readable).
- * Similar to nmap's default output format.
+ * nmap-style human-readable console output.
+ * <p>
+ * Every listed port carries its {@code reason} (why the scanner decided the state — {@code
+ * connected}, {@code conn-refused}, {@code reset}, {@code no-route}, {@code timeout}, {@code
+ * error:<Class>}) and, when measured, the connect round-trip time. Which ports are listed and
+ * which are collapsed into "Not shown" is {@link HostReport#portsToRender}'s decision, shared by
+ * every formatter, so {@code --open} means the same thing in all of them.
+ * <p>
+ * A down host is printed as one line, {@code Host <target> is down (<reason>)}, so a report over
+ * a range says what happened to every target rather than only the live ones. Warnings are always
+ * printed; {@code -v} adds a run header (start time and command line) and, per live host, how
+ * many TCP and UDP ports were scanned.
  */
-public class NormalFormatter implements OutputFormatter {
-
-    private static final String LINE_SEP = System.lineSeparator();
+public final class NormalFormatter implements OutputFormatter {
 
     @Override
-    public OutputFormat getFormat() {
+    public OutputFormat format() {
         return OutputFormat.NORMAL;
     }
 
     @Override
-    public String format(ScanReport report) {
+    public String render(ScanReport r) {
         StringBuilder sb = new StringBuilder();
-
-        // Header
-        sb.append("Starting ").append(report.getScannerName());
-        sb.append(" ").append(report.getScannerVersion());
-        sb.append(" at ").append(report.getStartTimeFormatted());
-        sb.append(LINE_SEP);
-
-        if (report.getCommandLine() != null) {
-            sb.append("Command: ").append(report.getCommandLine()).append(LINE_SEP);
+        boolean verbose = r.config != null && r.config.verbose;
+        if (verbose) {
+            sb.append("Starting NoSneak ").append(ScanReport.VERSION).append(" at ")
+              .append(ScanReport.nmapTime(r.startTimeMs));
+            if (r.commandLine != null) sb.append(" as: ").append(r.commandLine);
+            sb.append('\n');
         }
-
-        sb.append(LINE_SEP);
-
-        // Each host
-        for (ScanResult host : report.getHostResults()) {
-            formatHost(sb, host);
-            sb.append(LINE_SEP);
-        }
-
-        // Warnings
-        for (String warning : report.getWarnings()) {
-            sb.append("WARNING: ").append(warning).append(LINE_SEP);
-        }
-
-        // Summary
-        sb.append(LINE_SEP);
-        sb.append(report.getSummary());
-        sb.append(LINE_SEP);
-
-        return sb.toString();
-    }
-
-    private void formatHost(StringBuilder sb, ScanResult host) {
-        // Host header
-        sb.append("Scan report for ");
-        sb.append(host.getTarget());
-        if (host.getIpAddress() != null && !host.getIpAddress().equals(host.getTarget())) {
-            sb.append(" (").append(host.getIpAddress()).append(")");
-        }
-        sb.append(LINE_SEP);
-
-        // Host status
-        if (!host.isHostUp()) {
-            sb.append("Host is down");
-            if (host.getHostUpReason() != null) {
-                sb.append(" (").append(host.getHostUpReason()).append(")");
+        sb.append("NMap scan report - ").append(r.hosts.size()).append(" target(s), ")
+          .append(r.hostsUp()).append(" up");
+        if (r.durationMs() > 0) sb.append(", ").append(r.durationMs() / 1000.0).append("s");
+        sb.append('\n');
+        for (HostReport h : r.hosts) {
+            if (!h.up) {
+                sb.append('\n').append("Host ").append(h.host);
+                if (h.ip != null && !h.ip.equals(h.host)) sb.append(" (").append(h.ip).append(')');
+                sb.append(" is down");
+                if (h.reason != null) sb.append(" (").append(h.reason).append(')');
+                sb.append('\n');
+                continue;
             }
-            sb.append(LINE_SEP);
-            return;
-        }
-
-        sb.append("Host is up");
-        // Show latency in seconds like real nmap
-        long latencyMs = host.getDurationMs();
-        if (latencyMs > 0) {
-            sb.append(" (").append(String.format("%.4fs latency", latencyMs / 1000.0)).append(")");
-        }
-        sb.append(".");
-        sb.append(LINE_SEP);
-
-        // Show MAC address if available (from ARP discovery)
-        if (host.getMacAddress() != null) {
-            sb.append("MAC Address: ").append(host.getMacAddress().toUpperCase());
-            sb.append(LINE_SEP);
-        }
-
-        // Port summary
-        int open = host.getOpenPortCount();
-        int closed = host.getClosedPortCount();
-        int filtered = host.getFilteredPortCount();
-
-        if (closed > 0 && closed == host.getTotalPortCount()) {
-            sb.append("All ").append(closed).append(" scanned ports are closed");
-            sb.append(LINE_SEP);
-            return;
-        }
-
-        if (filtered > 0 && filtered == host.getTotalPortCount()) {
-            sb.append("All ").append(filtered).append(" scanned ports are filtered");
-            sb.append(LINE_SEP);
-            return;
-        }
-
-        // Show summary of not shown ports
-        int notShown = closed + filtered;
-        if (notShown > 0) {
-            sb.append("Not shown: ");
-            if (closed > 0) {
-                sb.append(closed).append(" closed");
-                if (filtered > 0) sb.append(", ");
+            sb.append('\n').append("Host ").append(h.host);
+            if (h.ip != null && !h.ip.equals(h.host)) sb.append(" (").append(h.ip).append(')');
+            sb.append(" is up");
+            if (h.latencyMs >= 0) sb.append(" (").append(h.latencyMs / 1000.0).append("s latency)");
+            if (h.reason != null) sb.append(" [").append(h.reason).append(']');
+            sb.append('\n');
+            if (h.hostname != null) sb.append("  Hostname: ").append(h.hostname).append('\n');
+            if (h.mac != null) sb.append("  MAC Address: ").append(h.mac).append('\n');
+            if (verbose) {
+                sb.append("  Scanned: ").append(h.countProtocol("tcp")).append(" tcp, ")
+                  .append(h.countProtocol("udp")).append(" udp port(s)\n");
             }
-            if (filtered > 0) {
-                sb.append(filtered).append(" filtered");
+
+            RenderSelection sel = h.portsToRender(r.config);
+            String notShown = sel.notShown();
+            if (notShown != null) {
+                sb.append("  Not shown: ").append(notShown).append('\n');
             }
-            sb.append(" ports").append(LINE_SEP);
-        }
-
-        // Port table header
-        if (open > 0 || hasInterestingPorts(host)) {
-            sb.append(String.format("%-10s %-8s %-12s %s", "PORT", "STATE", "SERVICE", "VERSION"));
-            sb.append(LINE_SEP);
-
-            // Port details - show open and interesting ports
-            for (PortResult port : host.getPortResults()) {
-                if (shouldShowPort(port)) {
-                    formatPort(sb, port);
+            if (!sel.shown.isEmpty()) {
+                sb.append(String.format("  %-10s %-9s %-14s %-8s %s%n",
+                        "PORT", "STATE", "REASON", "RTT", "SERVICE / VERSION / TLS"));
+                for (PortReport p : sel.shown) {
+                    sb.append(String.format("  %-10s %-9s %-14s %-8s %s%n",
+                            p.port + "/" + p.protocol, p.state.label(),
+                            p.reason == null ? "" : p.reason, rtt(p), service(p)));
                 }
             }
         }
-
-        // OS detection
-        if (host.getOsFingerprint() != null) {
-            sb.append(LINE_SEP);
-            sb.append("OS: ").append(host.getOsFingerprint()).append(LINE_SEP);
+        for (String w : r.warnings) {
+            sb.append("Warning: ").append(w).append('\n');
         }
+        sb.append('\n').append(summary(r)).append('\n');
+        return sb.toString();
     }
 
-    private boolean hasInterestingPorts(ScanResult host) {
-        for (PortResult port : host.getPortResults()) {
-            if (shouldShowPort(port)) {
-                return true;
+    /** {@code "25 ms"}, or empty when the port never connected (a connect scan measures nothing else). */
+    static String rtt(PortReport p) {
+        return p.rttMs >= 0 ? p.rttMs + " ms" : "";
+    }
+
+    /** Closing stats line: what was scanned, what answered, and how long it took. */
+    static String summary(ScanReport r) {
+        int openPorts = 0;
+        int hostsWithOpen = 0;
+        int macs = 0;
+        for (HostReport h : r.hosts) {
+            int open = h.openPorts().size();
+            openPorts += open;
+            if (open > 0) {
+                hostsWithOpen++;
+            }
+            if (h.mac != null) {
+                macs++;
             }
         }
-        return false;
-    }
-
-    private boolean shouldShowPort(PortResult port) {
-        // Show open, open|filtered, and unfiltered ports
-        return port.getState() == PortState.OPEN ||
-               port.getState() == PortState.OPEN_FILTERED ||
-               port.getState() == PortState.UNFILTERED;
-    }
-
-    private void formatPort(StringBuilder sb, PortResult port) {
-        // PORT column
-        String portStr = port.getPort() + "/" + port.getProtocol();
-        sb.append(String.format("%-10s ", portStr));
-
-        // STATE column
-        sb.append(String.format("%-8s ", port.getState().getDisplayName()));
-
-        // SERVICE column
-        String service = "";
-        if (port.hasService()) {
-            service = port.getService().getServiceName();
+        StringBuilder sb = new StringBuilder("NMap done: ");
+        sb.append(r.hosts.size()).append(" target(s) scanned, ")
+          .append(r.hostsUp()).append(" host(s) up");
+        if (macs > 0) {
+            sb.append(" (").append(macs).append(" with MAC)");
         }
-        sb.append(String.format("%-12s ", service));
+        if (openPorts > 0) {
+            sb.append(", ").append(openPorts).append(" open port(s) on ")
+              .append(hostsWithOpen).append(" host(s)");
+        }
+        sb.append(" in ").append(String.format("%.2f", r.durationMs() / 1000.0)).append(" seconds");
+        return sb.toString();
+    }
 
-        // VERSION column
-        if (port.hasService() && port.getService().hasProduct()) {
-            sb.append(port.getService().getProduct());
-            if (port.getService().getVersion() != null) {
-                sb.append(" ").append(port.getService().getVersion());
+    static String service(PortReport p) {
+        StringBuilder sb = new StringBuilder(p.serviceName());
+        ProbeResult pr = p.probe;
+        if (pr != null && pr.isComplete()) {
+            String ver = pr.getServiceVersion();
+            if (ver != null && !ver.isEmpty()) sb.append("  ").append(ver);
+            if (pr.getTlsState() != ProbeResult.TlsState.NONE) {
+                sb.append("  [").append(pr.getTlsState()).append(" pqc=").append(pr.getPqcStatus());
+                if (pr.getCertValidity() != null) sb.append(" cert=").append(pr.getCertValidity());
+                if (pr.getCertChainTrust() != null) sb.append('/').append(pr.getCertChainTrust());
+                sb.append(' ').append(Grade.of(pr)).append(']');
             }
-            if (port.getService().getExtraInfo() != null) {
-                sb.append(" (").append(port.getService().getExtraInfo()).append(")");
-            }
+        } else if (p.banner != null && !p.banner.isEmpty()) {
+            sb.append("  ").append(p.banner.replaceAll("[\\r\\n]+", " ").trim());
         }
-
-        sb.append(LINE_SEP);
-    }
-
-    @Override
-    public void formatTo(ScanReport report, OutputStream out) {
-        try {
-            out.write(SharedStringUtil.getBytes(format(report)));
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to write output", e);
-        }
-    }
-
-    @Override
-    public void formatTo(ScanReport report, Writer writer) {
-        try {
-            writer.write(format(report));
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to write output", e);
-        }
-    }
-
-    @Override
-    public String getMimeType() {
-        return "text/plain";
+        return sb.toString();
     }
 }

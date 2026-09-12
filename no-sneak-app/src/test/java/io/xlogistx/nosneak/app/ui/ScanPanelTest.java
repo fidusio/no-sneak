@@ -1,10 +1,10 @@
 package io.xlogistx.nosneak.app.ui;
 
-import io.xlogistx.nosneak.v2.data.ProbeContent;
-import io.xlogistx.nosneak.v2.model.ProbeDefinition;
-import io.xlogistx.nosneak.v2.model.ProbeDefinitionLoader;
-import io.xlogistx.nosneak.v2.nmap.NMap;
-import io.xlogistx.nosneak.v2.nmap.NMapConfig;
+import io.xlogistx.nosneak.data.ProbeContent;
+import io.xlogistx.nosneak.model.ProbeDefinition;
+import io.xlogistx.nosneak.model.ProbeDefinitionLoader;
+import io.xlogistx.nosneak.nmap.NMap;
+import io.xlogistx.nosneak.nmap.NMapConfig;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashSet;

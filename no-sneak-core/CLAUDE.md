@@ -4,15 +4,13 @@ The scanning engine: a **TLS/PQC posture scanner** and a **network scanner**, bo
 JSON-declared, fully non-blocking state machine. Everything else in the repo is a front-end over
 this module.
 
-> **Status (2026-07-26).** The module exists twice. **`io.xlogistx.nosneak.v2` is the module
-> going forward** — a from-scratch rebuild on a single non-blocking core. When the maintainer
-> merges, the v1 packages (`nmap`, `probe`, `scanners`, `services`, `tools`) are **deleted** and
-> v2's package path collapses to `io.xlogistx.nosneak`. That is why **no v2 class carries a `v2`
-> suffix** — the names are already final.
->
-> **The consequence that matters: anything v1 has and v2 lacks is a regression, not a TODO.**
-> Do not fix v1 bugs; v1 is frozen. Treat `ACTION-PLAN.md`'s findings as a coverage checklist
-> against v2 (it now carries a table saying which are moot, open, or fixed).
+> **Status (2026-09-12): merged, one generation.** This module was rebuilt from scratch on a
+> single non-blocking core while the original packages stayed frozen beside it; on 2026-09-12 the
+> original packages (`nmap`, `probe`, `scanners`, `services`, `tools`), their tests and their
+> resources were deleted and the rebuild's package collapsed from `io.xlogistx.nosneak.v2` to
+> `io.xlogistx.nosneak`. Everything the deleted generation had was carried across first —
+> `V1-V2-MERGE-ANALYSIS.md` records what, and how. `ACTION-PLAN.md` is pre-merge history; its
+> only live part is the vulnerability-scanning checklist.
 
 ---
 
@@ -29,12 +27,12 @@ backlog — evidence from versions, extensions and negotiated parameters. Full r
 
 | Doc | Covers |
 |---|---|
-| `src/main/java/io/xlogistx/nosneak/v2/PLAN.md` | **Start here.** v2 migration status, phase log, architecture decisions, and the running verification record |
-| `src/main/java/io/xlogistx/nosneak/v2/PROBE-CONFIG.md` | v2 reference: action library, candidate selection, bundled probes, result fields, tests, deferrals |
-| `PROBE-CONFIG.md` | Probe-authoring tutorial (written for v1; the DSL is unchanged in v2) |
-| `V1-V2-MERGE-ANALYSIS.md` | **Read before the merge.** Code-verified v1-vs-v2 comparison: verdict, per-subsystem ledgers, the 18 regressions to close before v1 is deleted, and the rename retarget list |
+| `PLAN.md` | **Start here.** The dated engineering log: architecture decisions, each fix wave, and the running verification record |
+| `PROBE-CONFIG.md` | The reference: action library, candidate selection, bundled probes, result fields, tests, deferrals |
+| `PROBE-DEFINITION.md` | **The probe-definition guide — the file to hand an AI as a skill** to generate a `probe.json`: schema, every action incl. the deep-TLS ones, budgets, validation rules, recipes, worked examples, self-check |
+| `V1-V2-MERGE-ANALYSIS.md` | History of the merge: the code-verified comparison of the two generations, what the deleted one had, and how each item was carried across (paths in it are pre-merge) |
 
-| `ACTION-PLAN.md` | v1 history, the open-defect checklist, and the SSL-Labs parity backlog |
+| `ACTION-PLAN.md` | Pre-merge history and the SSL-Labs vulnerability-check backlog |
 | `README.md` | Module overview + the full scanner requirements document |
 
 ## Architecture
@@ -79,7 +77,7 @@ Only the BC path can classify PQC — JSSE does not surface the negotiated key-e
 
 ## Non-negotiable rules
 
-1. **v2 never references v1**, and no v2 class name contains "v2".
+1. **One generation.** No class, package or resource path carries a generation suffix; the deleted engine is never reintroduced from history.
 2. **Nothing blocks.** No `Thread.sleep`, no blocking sockets, no `future.join()/get()` on a live
    path. Every wait is a task on `TaskUtil.defaultTaskScheduler()`; every connection is on the
    shared `NIOSocket`. (The CLI/test convenience wrappers block by design and say so.)
@@ -93,10 +91,10 @@ Only the BC path can classify PQC — JSSE does not surface the negotiated key-e
    values, so a `false` boolean silently vanishes and becomes indistinguishable from "not
    checked". Render with `toJSONGenericMap(m, true, true, false)` where you control the renderer.
 
-## Layout (v2)
+## Layout
 
 ```
-io.xlogistx.nosneak.v2
+io.xlogistx.nosneak
 ├── ProbeChecker            library API + CLI: two-tier candidate selection, concurrent sweep
 ├── model/                  ProbeDefinition · ProbeState · PatternRule · ProbeDefinitionLoader (validates)
 ├── runtime/                ProbeContext (the engine's config object) · ProbeEngine · Fanout · ParallelJoin
@@ -110,8 +108,9 @@ io.xlogistx.nosneak.v2
 ├── service/                Checker — REST /check-qdz/{domain}/{detailed}
 └── tools/                  DMTool · NoSneakUtil
 
-src/main/resources/v2/probes/   18 bundled + 2 unbundled probe definitions (becomes /probes/ at merge)
-src/test/java/io/xlogistx/nosneak/v2/   365 pure, no-network tests in 31 classes (2026-09-12)
+src/main/resources/probes/   18 bundled + 2 unbundled probe definitions
+src/test/java/io/xlogistx/nosneak/   368 pure, no-network tests in 32 classes (2026-09-12) + NoSneakNIOHTTPServer harness;
+                                    model/ProbeDefinitionGuideTest pins PROBE-DEFINITION.md to the loader
 ```
 
 ## Build, test, verify
@@ -120,11 +119,11 @@ src/test/java/io/xlogistx/nosneak/v2/   365 pure, no-network tests in 31 classes
 mvn clean install -pl no-sneak-core -am
 
 # tests are skipped by the parent pom (xlogistx-mvn sets <skipTests>true</skipTests>)
-mvn -pl no-sneak-core test -DskipTests=false -Dtest='io.xlogistx.nosneak.v2.**'
+mvn -pl no-sneak-core test -DskipTests=false -Dtest='io.xlogistx.nosneak.**'
 
 # live check against a real endpoint
 mvn -pl no-sneak-core dependency:build-classpath -Dmdep.outputFile=cp.txt -DincludeScope=runtime
-java -cp "target/classes;$(cat cp.txt)" io.xlogistx.nosneak.v2.ProbeChecker example.com 443
+java -cp "target/classes;$(cat cp.txt)" io.xlogistx.nosneak.ProbeChecker example.com 443
 ```
 
 **Environment gotcha that will mislead you:** if a TLS-intercepting proxy is installed locally
@@ -147,10 +146,8 @@ deliberately touch no sockets.
    callbacks so each branch (banner match, `nomatch`, `timeout`, STARTTLS, reconnect) is assertable
    without a live server. The only significant untested area.
 3. **HTTP security headers + CNSA 2.0 compliance** — the remaining Sprint 4/5 features.
-4. **Merge chores** (do these when the maintainer merges, not before): `/v2/probes/` → `/probes/`
-   with `ProbeDefinitionLoader.BUNDLED`; move `PLAN.md`/`PROBE-CONFIG.md` out of the source tree to
-   the module root; repoint `src/test/resources/http_server_config.json` from
-   `services.QDZChecker` to `v2.service.Checker`.
+4. **Merge chores** — done 2026-09-12 (packages collapsed, `/probes/` bundled, docs at the module
+   root, `http_server_config.json` on `service.Checker`).
 5. **Smaller open items** — `DMTool`'s stale hardcoded Mongo URL (C1). The rest of the old list
    is done: named-group enumeration, network OCSP + CRL, weak/insecure cipher candidates (now
    per-probe toggles), UDP scan, timing templates, `--top-ports`; `-O` and raw SYN scans are

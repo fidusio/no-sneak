@@ -6,20 +6,17 @@ generations of the code — see *Status* below.
 
 ## Status
 
-**v2 (`io.xlogistx.nosneak.v2`) is the module going forward.** It is a from-scratch rebuild on a
-single non-blocking core (zoxweb `NIOSocket` + trigger `StateMachine`, no `MonoStateMachine`,
-nothing that blocks a thread on I/O). At merge the maintainer deletes the v1 packages
-(`nmap`, `probe`, `scanners`, `services`, `tools`) and v2's package path collapses to
-`io.xlogistx.nosneak` — which is why no v2 class carries a `v2` suffix. **v1 is frozen**: it
-still works, but it takes no new features and its remaining defects are catalogued in
-`ACTION-PLAN.md` only as a checklist of behaviour v2 must reproduce before v1 disappears.
+**One code base (since 2026-09-12).** The engine was rebuilt from scratch on a single non-blocking
+core (`NIOSocket` + trigger `StateMachine`, nothing that blocks a thread on I/O); the rebuild has
+replaced the original packages, which are deleted. `V1-V2-MERGE-ANALYSIS.md` records what the
+deleted generation had and how it was carried across; `ACTION-PLAN.md` is pre-merge history.
 
 | Doc | Covers |
 |---|---|
-| `src/main/java/io/xlogistx/nosneak/v2/PLAN.md` | v2 migration status, architecture decisions, verification log |
-| `src/main/java/io/xlogistx/nosneak/v2/PROBE-CONFIG.md` | v2 probe DSL, action library, bundled probes, result fields, tests |
-| `PROBE-CONFIG.md` (this directory) | probe-authoring guide — written for v1, still the best DSL tutorial |
-| `ACTION-PLAN.md` (this directory) | v1 history + the open-defect checklist v2 inherits |
+| `PLAN.md` (this directory) | dated engineering log: architecture decisions, fix waves, verification record |
+| `PROBE-CONFIG.md` (this directory) | probe DSL reference, action library, bundled probes, result fields, tests |
+| `PROBE-DEFINITION.md` (this directory) | the probe-definition guide — give it to an AI as a skill to generate a `probe.json` |
+| `ACTION-PLAN.md` (this directory) | pre-merge history + the vulnerability-check backlog |
 | this file | module overview + the full scanner requirements document (below) |
 
 ## What it does today
@@ -41,14 +38,14 @@ security-header analysis, and CNSA 2.0 compliance rules. See `ACTION-PLAN.md`.
 
 ```bash
 # identify the service/TLS posture on a host:port
-java io.xlogistx.nosneak.v2.ProbeChecker <host> <port> [timeoutSec] [--all] [--udp] [probe.json …]
+java io.xlogistx.nosneak.ProbeChecker <host> <port> [timeoutSec] [--all] [--udp] [probe.json …]
 
 # staged network scan (host discovery -> ports -> service/version/TLS)
-java io.xlogistx.nosneak.v2.nmap.NMap <target…> [-p 22,80,443] [-sV] [-Pn] [-oA base]
+java io.xlogistx.nosneak.nmap.NMap <target…> [-p 22,80,443] [-sV] [-Pn] [-oA base]
 ```
 
 Embed with `NMapScanner.scan(nioSocket, config, callback)` or `ProbeChecker.check(...)`; the REST
-endpoint is `v2/service/Checker` (`/check-qdz/{domain}/{detailed}`).
+endpoint is `service/Checker` (`/check-qdz/{domain}/{detailed}`).
 
 ## Dependencies
 
@@ -63,12 +60,12 @@ cryptographic library** and all reusable crypto helpers belong in `opsec/OPSecUt
 mvn clean install -pl no-sneak-core -am
 
 # tests are skipped by the parent pom; override to run them
-mvn -pl no-sneak-core test -DskipTests=false -Dtest='io.xlogistx.nosneak.v2.**'
+mvn -pl no-sneak-core test -DskipTests=false -Dtest='io.xlogistx.nosneak.**'
 ```
 
 If a TLS-intercepting proxy is active locally, Maven cannot reach central and every scanned
 certificate reads `UNTRUSTED_ROOT`; import the proxy's root into a copy of the JDK `cacerts` and
-point `javax.net.ssl.trustStore` at it. Details in the v2 `PROBE-CONFIG.md` → *Tests*.
+point `javax.net.ssl.trustStore` at it. Details in `PROBE-CONFIG.md` → *Tests*.
 
 ---
 

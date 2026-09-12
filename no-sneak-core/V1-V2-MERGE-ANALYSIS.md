@@ -6,6 +6,11 @@ to move across before the other is deleted.** Every claim below was verified in 
 from `CLAUDE.md`, `v2/PLAN.md` or `ACTION-PLAN.md`. Citations are `file:line` under
 `src/main/java/io/xlogistx/nosneak/`.
 
+> **Merged 2026-09-12.** Everything below describes the tree *before* the merge: the v1 packages
+> are now deleted and every `v2/…` path in this document is `io.xlogistx.nosneak/…` today
+> (`v2/runtime/ProbeContext` → `runtime/ProbeContext`, `/v2/probes/` → `/probes/`). Kept verbatim as the
+> record of why the parity pass was needed and what it changed.
+
 ## Verdict
 
 **Keep v2. Delete v1.** v2 is smaller, tested, non-blocking, policy-compliant, and the only side

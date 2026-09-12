@@ -1,5 +1,5 @@
 {
-  "name": "postgresql",
+  "name": "postgres-db",
   "service": "postgresql",
   "transport": "tcp",
   "ports": [5432],

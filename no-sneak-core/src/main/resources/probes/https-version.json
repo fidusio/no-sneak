@@ -3,7 +3,7 @@
   "service": "https",
   "transport": "tcp",
   "ports": [443, 8443],
-  "priority": 45,
+  "priority": 68,
   "start": "connect",
   "states": {
     "connect": { "action": "tls-connect", "on": { "connected": "get", "error": "fail", "timeout": "fail" } },

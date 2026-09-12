@@ -46,19 +46,18 @@ break both Maven's HTTPS and certificate-trust results.
 
 ```bash
 # what is running on this host:port, and how good is its TLS?
-java io.xlogistx.nosneak.v2.ProbeChecker example.com 443
+java io.xlogistx.nosneak.ProbeChecker example.com 443
 
 # staged network scan with service/version/TLS identification
-java io.xlogistx.nosneak.v2.nmap.NMap example.com -p 22,80,443 -sV
+java io.xlogistx.nosneak.nmap.NMap example.com -p 22,80,443 -sV
 ```
 
 ## Status
 
-`no-sneak-core` is mid-migration to **v2** (`io.xlogistx.nosneak.v2`), a from-scratch rebuild on a
-single non-blocking core. v2 is feature-complete against v1 and additionally produces certificate
-chain-trust, revocation, protocol/cipher enumeration and grading; v1 is frozen and is deleted when
-the maintainer merges. Vulnerability scanning, HTTP response-header analysis and CNSA 2.0
-compliance rules are not implemented yet — see `no-sneak-core/ACTION-PLAN.md`.
+`no-sneak-core` was rebuilt from scratch on a single non-blocking core and the rebuild replaced the
+original engine on 2026-09-12; the module is now one code base at `io.xlogistx.nosneak` that
+produces service/version identification, TLS/PQC posture, certificate chain-trust, revocation,
+protocol/cipher/group enumeration and grading. See `no-sneak-core/CLAUDE.md`.
 
 `no-sneak-net` is new and **requires JDK 25** (FFM), unlike the rest of the reactor. Its API, codecs,
 cache, factory wiring, `HostScan` CLI and both the Windows and Linux backends are done and verified

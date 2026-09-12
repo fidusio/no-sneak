@@ -18,8 +18,8 @@ that are not written down anywhere else.*
 
 | Area | Authoritative list |
 |---|---|
-| Scanning engine (v2 rebuild) | `no-sneak-core/ACTION-PLAN.md` → *Pending Issues / Next Steps* (item 1, vulnerability-check checklist, is the largest remaining gap) |
-| v1→v2 parity / probe engine | `no-sneak-core/PROBE-CONFIG.md` (remaining parity items) |
+| Scanning engine | `no-sneak-core/ACTION-PLAN.md` → *Pending Issues / Next Steps* (item 1, vulnerability-check checklist, is the largest remaining gap) |
+| Probe engine reference / deferrals | `no-sneak-core/PROBE-CONFIG.md` → *Known deferrals* |
 | Host discovery | `no-sneak-net/CLAUDE.md` §13.21 — open items split per platform. **As of 2026-09-11 every code item there is fixed** (§13.22 sweep admission; §13.23-A/B/C the rest); what remains is M1/M9/L1 (need a Mac / the appliance / a v6 segment — **Linux IPv6/NDP has still never touched a wire**) and S6 (by design). Next steps for this module are rows N1–N5 in the priority matrix at the bottom of this file. |
 | App loading/session | `no-sneak-app/LOADING.md` |
 
@@ -129,12 +129,12 @@ anything ships.
 
 ## Also known at handoff (pre-existing, tracked elsewhere)
 
-- **v1 packages in `no-sneak-core` are frozen** — never fix v1 bugs; anything v1 has that v2 lacks
+- ~~v1 packages in `no-sneak-core` are frozen~~ **Merged 2026-09-12; the old packages are gone.** (was: never fix v1 bugs; anything v1 has that v2 lacks
   is a regression. See `no-sneak-core/CLAUDE.md` for the routing.
 - **Vulnerability scanning (A11)** is still the largest v2 gap — checklist in
   `ACTION-PLAN.md` → *Pending Issues / Next Steps* item 1.
-- **Named-group enumeration (A12)** is partly open — v2 enumerates versions and cipher suites only.
-- **Stale Mongo default (C1)** — `v2/tools/DMTool:38` keeps `mongodb://localhost:27017/…` as
+- ~~Named-group enumeration (A12)~~ **Done** — `enumerate-groups` ships (`supported-groups`, `server-group-preference`).
+- **Stale Mongo default (C1)** — `tools/DMTool:38` keeps `mongodb://localhost:27017/…` as
   `DB_URL`; overridable, stale default rather than a bug.
 - **Linux IPv6/NDP** in `no-sneak-net` compiles and has tests but has never been verified on real
   hardware — distrust it until it moves packets (§13.21).
@@ -189,7 +189,7 @@ assuming the no-op is correct.
 | `v2` | 61 | 7.6k |
 | v1 (`nmap`, `probe`, `scanners`, `services`, `tools`) | 95 | 16.0k |
 
-Four of the fourteen core test files (`scanners/`, `probe/`) target v1 and go with it at merge.
+~~Four of the fourteen core test files (`scanners/`, `probe/`) target v1 and go with it at merge.~~ Gone with the 2026-09-12 merge; the table above is the pre-merge size.
 
 ### Suggested order
 
@@ -229,6 +229,13 @@ never a hand-written writer; the BCJSSE `tls-connect` engine comes from SunJSSE 
 published `bctls` 1.86 jar is broken on JDK 9+ — `BcjsseEngineCreationTest`'s canary fails the day
 a fixed jar is on the classpath, which is the signal to remove that workaround.
 
+**Merge done (2026-09-12, later the same day):** the original packages, their five test files
+and `src/main/resources/probes/` (old set) plus the orphan `services-categories-info.json` are
+deleted; the rebuild's package collapsed to `io.xlogistx.nosneak`; bundled probes are at
+`/probes/`; `PLAN.md`/`PROBE-CONFIG.md` moved to the module root (the old authoring tutorial is
+`PROBE-DEFINITION.md`); the app, the server test config and the docs are retargeted. Whole repo
+compiles; 365 tests green under the new package; CLIs verified live.
+
 **Merge analysis and parity pass (2026-09-12):** `no-sneak-core/V1-V2-MERGE-ANALYSIS.md` is the
 code-verified v1-vs-v2 comparison. Verdict: keep v2, delete v1. The 18 regressions its §4 listed
 (stapled-OCSP fallthrough, the TLS-1.3-classical vs ≤1.2 PQC split, enumeration toggles, down
@@ -236,7 +243,7 @@ hosts in Normal/CSV, CLI aliases, per-octet ranges, XML metadata, reverse DNS, �
 closed the same day** — see its "Status after the fix pass" section. v2 is now 365 pure tests in
 31 classes, all green; the whole repo compiles. **What is left is the merge itself**: delete the
 five v1 packages and their five test files, collapse `v2` → `io.xlogistx.nosneak`, move
-`/v2/probes/` → `/probes/`, and retarget the files in that document's §2.
+`/probes/` → `/probes/`, and retarget the files in that document's §2.
 
 The filterable matrix page (same rows, live-updated during the work):
 https://claude.ai/code/artifact/ad7da1cc-7807-4109-ad77-cb166e70596e

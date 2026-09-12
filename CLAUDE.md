@@ -29,7 +29,7 @@ discovery on a segment the operator controls, grading, and reporting.
   they are not overhead to optimise away.
 - **No evasion.** Nothing is built to be hard to observe, log, or attribute. Traffic leaves under
   our own addresses. nmap's `-sS/-sF/-sX/-sN/-sA` flags and the word "stealth" appear in this repo
-  only as **legacy nmap vocabulary** in v1 notes and CLI-compatibility text; v2 rejects those flags
+  only as **legacy nmap vocabulary** in pre-merge notes and CLI-compatibility text; the scanner rejects those flags
   with a clear error and those engine classes are deleted rather than implemented.
 - **No persistence, C2, or exfiltration.** The tool runs, reports and exits. Results stay in the
   local encrypted store unless the operator deliberately sends them somewhere.
@@ -67,17 +67,16 @@ brought up on Apple Silicon on 2026-07-29 and now has runtime evidence like the 
 sweep over wired and Wi-Fi, and passive observe all moved packets (§13.20). One claim still lacks a
 wire and is the one to distrust: **Linux IPv6/NDP** (written, never on a wire).
 
-## The one thing to know before touching `no-sneak-core`
+## `no-sneak-core` is one code base now
 
-That module exists **twice**. `io.xlogistx.nosneak.v2` is the rebuild that replaces it; the v1
-packages (`nmap`, `probe`, `scanners`, `services`, `tools`) are **frozen and deleted when the
-maintainer merges**, at which point v2's package path collapses to `io.xlogistx.nosneak` (hence no
-v2 class carries a `v2` suffix — the names are final).
-
-**So: never fix v1 bugs, and treat anything v1 has that v2 lacks as a regression rather than a
-TODO.** (As of 2026-09-12 there is nothing left in that category — see
-`no-sneak-core/V1-V2-MERGE-ANALYSIS.md`; the merge is now purely the deletion and rename.) Read `no-sneak-core/CLAUDE.md` first; it routes to the migration plan, the probe reference,
-and the open-work list.
+Until 2026-09-12 the module carried two generations side by side: the original packages and a
+from-scratch non-blocking rebuild under `io.xlogistx.nosneak.v2`. **The merge is done.** The
+original packages (`nmap`, `probe`, `scanners`, `services`, `tools`) and their tests are deleted,
+the rebuild lives at `io.xlogistx.nosneak`, and the bundled probes are at `/probes/`. There is no
+`v2` package, no `v2` class name and no frozen code left. `no-sneak-core/V1-V2-MERGE-ANALYSIS.md`
+is the record of what the deleted generation had, and how each of those things was carried across
+before deletion; `no-sneak-core/ACTION-PLAN.md` is pre-merge history. Read `no-sneak-core/CLAUDE.md`
+first; it routes to the plan log, the probe reference, and the open-work list.
 
 ## Build and test
 
@@ -86,7 +85,7 @@ mvn clean install                        # everything
 mvn clean install -pl no-sneak-core -am  # just the engine
 
 # tests are skipped by the parent pom (xlogistx-mvn); override to run them
-mvn -pl no-sneak-core test -DskipTests=false -Dtest='io.xlogistx.nosneak.v2.**'
+mvn -pl no-sneak-core test -DskipTests=false -Dtest='io.xlogistx.nosneak.**'
 ```
 
 External dependencies are zoxweb (`org.zoxweb.*`) and the `io-xlogistx` modules (`common`, `core`,

@@ -1,161 +1,75 @@
 package io.xlogistx.nosneak.nmap.output;
 
-import io.xlogistx.nosneak.nmap.util.PortResult;
-import io.xlogistx.nosneak.nmap.util.ScanResult;
-import org.zoxweb.shared.util.SharedStringUtil;
-
-import java.io.IOException;
-import java.io.OutputStream;
-import java.io.Writer;
+import io.xlogistx.nosneak.nmap.ScanReport;
+import io.xlogistx.nosneak.nmap.ScanReport.HostReport;
+import io.xlogistx.nosneak.nmap.ScanReport.PortReport;
+import io.xlogistx.nosneak.result.ProbeResult;
 
 /**
- * CSV output formatter.
- * One row per port, suitable for spreadsheet import.
+ * CSV — one row per (host, listed port), and one row per down host with the port columns blank
+ * so a consumer sees every target that was scanned, not only the ones that answered.
+ * <p>
+ * The two newest columns, {@code reason} and {@code rttms}, are appended at the end so a
+ * consumer that reads by position keeps working; {@code rttms} is empty when the port never
+ * connected. Which ports are listed follows {@link HostReport#portsToRender}, the same rule as
+ * every other format; collapsed states have no row here (CSV has no summary line).
  */
-public class CSVFormatter implements OutputFormatter {
+public final class CSVFormatter implements OutputFormatter {
 
-    private static final String LINE_SEP = System.lineSeparator();
-    private static final String DELIMITER = ",";
+    static final String HEADER =
+            "host,ip,hostname,mac,port,protocol,state,service,version,tls,pqc,grade,banner,reason,rttms";
 
     @Override
-    public OutputFormat getFormat() {
+    public OutputFormat format() {
         return OutputFormat.CSV;
     }
 
     @Override
-    public String format(ScanReport report) {
+    public String render(ScanReport r) {
         StringBuilder sb = new StringBuilder();
-
-        // Header row
-        sb.append("host,ip,hostname,mac,port,protocol,state,service,product,version,banner,response_time_ms");
-        sb.append(LINE_SEP);
-
-        // Data rows - one per port
-        for (ScanResult host : report.getHostResults()) {
-            if (!host.isHostUp()) {
-                // Include down hosts with no port data
-                appendRow(sb, host, null);
+        sb.append(HEADER).append('\n');
+        for (HostReport h : r.hosts) {
+            if (!h.up) {
+                // A down host is a fact worth a row: host/ip/hostname/mac, every port column empty.
+                row(sb, h.host, nz(h.ip), nz(h.hostname), nz(h.mac),
+                        "", "", "", "", "", "", "", "", "", "", "");
                 continue;
             }
-
-            if (host.getPortResults().isEmpty()) {
-                // Host up but no ports scanned
-                appendRow(sb, host, null);
-            } else {
-                for (PortResult port : host.getPortResults()) {
-                    appendRow(sb, host, port);
-                }
+            for (PortReport p : h.portsToRender(r.config).shown) {
+                ProbeResult pr = p.probe;
+                String version = pr != null ? nz(pr.getServiceVersion()) : "";
+                String tls = pr != null && pr.getTlsState() != ProbeResult.TlsState.NONE
+                        ? pr.getTlsState().name() : "";
+                String pqc = pr != null && pr.getTlsState() != ProbeResult.TlsState.NONE
+                        ? String.valueOf(pr.getPqcStatus()) : "";
+                String grade = pr != null && pr.getTlsState() != ProbeResult.TlsState.NONE
+                        ? io.xlogistx.nosneak.grade.Grade.of(pr).toString() : "";
+                row(sb, h.host, nz(h.ip), nz(h.hostname), nz(h.mac),
+                        String.valueOf(p.port), p.protocol, p.state.label(), p.serviceName(),
+                        version, tls, pqc, grade, nz(p.banner),
+                        nz(p.reason), p.rttMs >= 0 ? String.valueOf(p.rttMs) : "");
             }
         }
-
         return sb.toString();
     }
 
-    private void appendRow(StringBuilder sb, ScanResult host, PortResult port) {
-        // host
-        appendField(sb, host.getTarget());
-        sb.append(DELIMITER);
-
-        // ip
-        appendField(sb, host.getIpAddress());
-        sb.append(DELIMITER);
-
-        // hostname
-        appendField(sb, host.getHostname());
-        sb.append(DELIMITER);
-
-        // mac
-        appendField(sb, host.getMacAddress() != null ? host.getMacAddress().toUpperCase() : null);
-        sb.append(DELIMITER);
-
-        if (port != null) {
-            // port
-            sb.append(port.getPort());
-            sb.append(DELIMITER);
-
-            // protocol
-            appendField(sb, port.getProtocol());
-            sb.append(DELIMITER);
-
-            // state
-            appendField(sb, port.getState().getDisplayName());
-            sb.append(DELIMITER);
-
-            // service
-            if (port.hasService()) {
-                appendField(sb, port.getService().getServiceName());
-                sb.append(DELIMITER);
-
-                // product
-                appendField(sb, port.getService().getProduct());
-                sb.append(DELIMITER);
-
-                // version
-                appendField(sb, port.getService().getVersion());
-            } else {
-                sb.append(DELIMITER).append(DELIMITER).append(DELIMITER);
-            }
-            sb.append(DELIMITER);
-
-            // banner
-            appendField(sb, port.getBanner());
-            sb.append(DELIMITER);
-
-            // response_time_ms
-            if (port.getResponseTimeMs() >= 0) {
-                sb.append(port.getResponseTimeMs());
-            }
-        } else {
-            // No port data - empty columns
-            sb.append(DELIMITER); // port
-            sb.append(DELIMITER); // protocol
-            appendField(sb, host.isHostUp() ? "up" : "down"); // state
-            sb.append(DELIMITER).append(DELIMITER).append(DELIMITER).append(DELIMITER).append(DELIMITER);
-        }
-
-        sb.append(LINE_SEP);
+    private static String nz(String s) {
+        return s == null ? "" : s;
     }
 
-    private void appendField(StringBuilder sb, String value) {
-        if (value == null) {
-            return;
+    private static void row(StringBuilder sb, String... cells) {
+        for (int i = 0; i < cells.length; i++) {
+            if (i > 0) sb.append(',');
+            sb.append(quote(cells[i]));
         }
-
-        // Escape and quote if necessary
-        boolean needsQuoting = value.contains(",") ||
-                               value.contains("\"") ||
-                               value.contains("\n") ||
-                               value.contains("\r");
-
-        if (needsQuoting) {
-            sb.append("\"");
-            sb.append(value.replace("\"", "\"\""));
-            sb.append("\"");
-        } else {
-            sb.append(value);
-        }
+        sb.append('\n');
     }
 
-    @Override
-    public void formatTo(ScanReport report, OutputStream out) {
-        try {
-            out.write(SharedStringUtil.getBytes(format(report)));
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to write CSV output", e);
+    private static String quote(String s) {
+        String v = s == null ? "" : s.replaceAll("[\\r\\n]+", " ");
+        if (v.contains(",") || v.contains("\"")) {
+            v = "\"" + v.replace("\"", "\"\"") + "\"";
         }
-    }
-
-    @Override
-    public void formatTo(ScanReport report, Writer writer) {
-        try {
-            writer.write(format(report));
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to write CSV output", e);
-        }
-    }
-
-    @Override
-    public String getMimeType() {
-        return "text/csv";
+        return v;
     }
 }

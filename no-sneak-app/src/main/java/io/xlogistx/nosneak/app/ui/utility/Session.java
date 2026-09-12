@@ -1,7 +1,7 @@
 package io.xlogistx.nosneak.app.ui.utility;
 
-import io.xlogistx.nosneak.v2.data.ProbeContent;
-import io.xlogistx.nosneak.v2.data.ReportContent;
+import io.xlogistx.nosneak.data.ProbeContent;
+import io.xlogistx.nosneak.data.ReportContent;
 import org.zoxweb.server.net.NIOSocket;
 import org.zoxweb.server.security.CryptoUtil;
 import org.zoxweb.server.security.HashUtil;

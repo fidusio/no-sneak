@@ -6,7 +6,7 @@ the next person can answer "why is login slow" or "why is this list stale" witho
 three modules.
 
 Scope is the desktop app as a whole — `no-sneak-app` plus the `ai-assistant` and `ai-model`
-modules it mounts, and now `no-sneak-core` too: `ScanPanel` drives the v2 engine, so probe
+modules it mounts, and now `no-sneak-core` too: `ScanPanel` drives the core engine, so probe
 definitions, the shared `NIOSocket` and scan reports are part of the loading picture.
 `no-sneak-net` is still reached only *through* the engine, never from the UI.
 

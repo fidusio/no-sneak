@@ -3,16 +3,16 @@ package io.xlogistx.nosneak.app.ui;
 import io.xlogistx.gui.*;
 import io.xlogistx.nosneak.app.ui.utility.AppContext;
 import io.xlogistx.nosneak.app.ui.utility.Navigator;
-import io.xlogistx.nosneak.v2.data.ProbeContent;
-import io.xlogistx.nosneak.v2.data.ReportContent;
-import io.xlogistx.nosneak.v2.model.ProbeDefinition;
-import io.xlogistx.nosneak.v2.model.ProbeDefinitionLoader;
+import io.xlogistx.nosneak.data.ProbeContent;
+import io.xlogistx.nosneak.data.ReportContent;
+import io.xlogistx.nosneak.model.ProbeDefinition;
+import io.xlogistx.nosneak.model.ProbeDefinitionLoader;
 
-import io.xlogistx.nosneak.v2.nmap.NMap;
-import io.xlogistx.nosneak.v2.nmap.NMapConfig;
-import io.xlogistx.nosneak.v2.nmap.NMapScanner;
-import io.xlogistx.nosneak.v2.nmap.ScanReport;
-import io.xlogistx.nosneak.v2.nmap.output.OutputFormat;
+import io.xlogistx.nosneak.nmap.NMap;
+import io.xlogistx.nosneak.nmap.NMapConfig;
+import io.xlogistx.nosneak.nmap.NMapScanner;
+import io.xlogistx.nosneak.nmap.ScanReport;
+import io.xlogistx.nosneak.nmap.output.OutputFormat;
 import net.miginfocom.swing.MigLayout;
 import org.zoxweb.shared.task.CallableConsumerTask;
 import org.zoxweb.shared.util.SUS;
@@ -60,7 +60,7 @@ import java.util.regex.Pattern;
  * Everything the previous subject left on screen is cleared on every login and logout
  * ({@link #resetPanel()}): a scan report is that subject's network topology.
  *
- * @see io.xlogistx.nosneak.v2.nmap.NMap#parseCommand(String)
+ * @see io.xlogistx.nosneak.nmap.NMap#parseCommand(String)
  */
 public class ScanPanel extends JPanel {
     private static final DateTimeFormatter STAMP =

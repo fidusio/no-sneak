@@ -33,7 +33,8 @@ import org.zoxweb.shared.util.SUS;
  * </ul>
  * The optional {@code db-url} param overrides the default MongoDB connection.
  */
-public class DMTool {
+public class
+DMTool {
     private static final LogWrapper log = new LogWrapper(DMTool.class);
     private static final String DB_URL = "mongodb://localhost:27017/xlog_datastore_test?replicaSet=rs0";
 

@@ -8,7 +8,7 @@
   "start": "connect",
   "states": {
     "connect": { "action": "connect", "on": { "connected": "tls", "error": "fail", "timeout": "fail" } },
-    "tls":     { "action": "tls-handshake", "mode": "jsse", "on": { "handshaked": "pqc", "error": "fail", "timeout": "fail" } },
+    "tls":     { "action": "tls-handshake", "mode": "classical", "on": { "handshaked": "pqc", "error": "fail", "timeout": "fail" } },
     "pqc":     { "action": "pqc-check", "on": { "done": "record" } },
     "record":  { "action": "record", "note": "https-classical", "on": { "done": "done" } },
     "done":    { "action": "done" },

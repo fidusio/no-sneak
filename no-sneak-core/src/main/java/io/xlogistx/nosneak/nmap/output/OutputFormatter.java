@@ -1,42 +1,30 @@
 package io.xlogistx.nosneak.nmap.output;
 
-import java.io.OutputStream;
-import java.io.Writer;
+import io.xlogistx.nosneak.nmap.ScanReport;
 
-/**
- * Interface for scan report formatters.
- */
+import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+
+/** Renders a {@link ScanReport} to a specific textual format. */
 public interface OutputFormatter {
 
-    /**
-     * Get the output format this formatter produces
-     */
-    OutputFormat getFormat();
+    OutputFormat format();
+
+    String render(ScanReport report);
 
     /**
-     * Format a scan report to a string
+     * Renders the report and writes it to {@code out} as UTF-8. The stream is flushed, not
+     * closed — the caller owns it. Every format is text, so there is one encoding rule here
+     * rather than one per renderer.
      */
-    String format(ScanReport report);
+    default void formatTo(ScanReport report, OutputStream out) throws IOException {
+        out.write(render(report).getBytes(StandardCharsets.UTF_8));
+        out.flush();
+    }
 
-    /**
-     * Format a scan report to an output stream
-     */
-    void formatTo(ScanReport report, OutputStream out);
-
-    /**
-     * Format a scan report to a writer
-     */
-    void formatTo(ScanReport report, Writer writer);
-
-    /**
-     * Get the MIME type for this format
-     */
-    String getMimeType();
-
-    /**
-     * Check if this formatter supports streaming output
-     */
-    default boolean supportsStreaming() {
-        return false;
+    /** The media type of {@link #render}'s output: {@code text/plain}, {@code application/xml}, {@code application/json} or {@code text/csv}. */
+    default String mimeType() {
+        return format().mimeType();
     }
 }

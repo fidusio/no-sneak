@@ -1,97 +1,38 @@
 package io.xlogistx.nosneak.nmap.output;
 
-/**
- * Supported output formats for scan results.
- */
+/** Supported scan-report output formats (matches the CLI {@code -oN/-oX/-oG/-oJ/-oC} flags). */
 public enum OutputFormat {
-    /**
-     * Normal console output (human-readable)
-     */
-    NORMAL("-oN", "Normal output", ".txt"),
+    NORMAL("txt", "text/plain"),
+    JSON("json", "application/json"),
+    XML("xml", "application/xml"),
+    CSV("csv", "text/csv"),
+    GREPABLE("gnmap", "text/plain");
 
-    /**
-     * JSON output
-     */
-    JSON("-oJ", "JSON output", ".json"),
+    private final String ext;
+    private final String mimeType;
 
-    /**
-     * XML output (nmap-compatible)
-     */
-    XML("-oX", "XML output", ".xml"),
-
-    /**
-     * CSV output
-     */
-    CSV("-oC", "CSV output", ".csv"),
-
-    /**
-     * Grepable output (similar to nmap -oG)
-     */
-    GREPABLE("-oG", "Grepable output", ".gnmap"),
-
-    /**
-     * All formats
-     */
-    ALL("-oA", "All formats", "");
-
-    private final String flag;
-    private final String description;
-    private final String extension;
-
-    OutputFormat(String flag, String description, String extension) {
-        this.flag = flag;
-        this.description = description;
-        this.extension = extension;
+    OutputFormat(String ext, String mimeType) {
+        this.ext = ext;
+        this.mimeType = mimeType;
     }
 
-    public String getFlag() {
-        return flag;
+    public String extension() {
+        return ext;
     }
 
-    public String getDescription() {
-        return description;
+    /** The media type a consumer should label this format with (no charset parameter; every renderer is UTF-8). */
+    public String mimeType() {
+        return mimeType;
     }
 
-    public String getExtension() {
-        return extension;
-    }
-
-    /**
-     * Parse output format from flag or name
-     */
-    public static OutputFormat parse(String value) {
-        if (value == null || value.isEmpty()) {
-            return NORMAL;
+    public static OutputFormatter formatter(OutputFormat f) {
+        switch (f) {
+            case JSON:     return new JSONFormatter();
+            case XML:      return new XMLFormatter();
+            case CSV:      return new CSVFormatter();
+            case GREPABLE: return new GrepableFormatter();
+            case NORMAL:
+            default:       return new NormalFormatter();
         }
-
-        String normalized = value.trim().toUpperCase();
-
-        // Try direct name match
-        try {
-            return valueOf(normalized);
-        } catch (IllegalArgumentException ignored) {
-        }
-
-        // Try flag match
-        for (OutputFormat format : values()) {
-            if (format.flag.equalsIgnoreCase(value) ||
-                format.flag.substring(1).equalsIgnoreCase(value)) {
-                return format;
-            }
-        }
-
-        return NORMAL;
-    }
-
-    /**
-     * Get filename with appropriate extension
-     */
-    public String getFilename(String baseName) {
-        return baseName + extension;
-    }
-
-    @Override
-    public String toString() {
-        return flag + " (" + description + ")";
     }
 }

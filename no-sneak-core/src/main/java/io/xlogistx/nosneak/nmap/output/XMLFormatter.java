@@ -1,230 +1,162 @@
 package io.xlogistx.nosneak.nmap.output;
 
-import io.xlogistx.nosneak.nmap.os.OSFingerprint;
-import io.xlogistx.nosneak.nmap.util.PortResult;
-import io.xlogistx.nosneak.nmap.util.ScanResult;
-import org.zoxweb.shared.util.SharedStringUtil;
+import io.xlogistx.nosneak.nmap.NMap;
+import io.xlogistx.nosneak.nmap.PortState;
+import io.xlogistx.nosneak.nmap.ScanReport;
+import io.xlogistx.nosneak.nmap.ScanReport.HostReport;
+import io.xlogistx.nosneak.nmap.ScanReport.PortReport;
+import io.xlogistx.nosneak.nmap.ScanReport.RenderSelection;
+import io.xlogistx.nosneak.result.ProbeResult;
 
-import java.io.IOException;
-import java.io.OutputStream;
-import java.io.Writer;
+import java.util.Arrays;
+import java.util.Locale;
+import java.util.Map;
+import java.util.TreeSet;
 
 /**
- * XML output formatter (nmap-compatible format).
+ * nmap-compatible XML output, with the run metadata nmap consumers key on: the {@code nmaprun}
+ * DOCTYPE, {@code scanner}/{@code args}/{@code start}/{@code startstr}/{@code version} on the
+ * root, one {@code <scaninfo>} per protocol scanned ({@code type="connect"} for TCP, {@code udp}
+ * when UDP ports were named), {@code starttime}/{@code endtime} on each host, a PTR
+ * {@code <hostnames>} block when the reverse lookup answered, and {@code <runstats>} with
+ * {@code finished time/timestr/elapsed/summary} and {@code hosts up/down/total}.
+ * <p>
+ * {@code <state state="..." reason="..."/>} is nmap's own shape. Two additions nmap does not
+ * have: a {@code rttms} attribute on {@code <port>} when the connect round-trip was measured
+ * (nmap keeps RTT at host level only), and {@code <extraports>} for every state collapsed into a
+ * count, which nmap does emit and readers such as ndiff expect.
  */
-public class XMLFormatter implements OutputFormatter {
-
-    private static final String LINE_SEP = System.lineSeparator();
-    private static final String INDENT = "  ";
+public final class XMLFormatter implements OutputFormatter {
 
     @Override
-    public OutputFormat getFormat() {
+    public OutputFormat format() {
         return OutputFormat.XML;
     }
 
     @Override
-    public String format(ScanReport report) {
+    public String render(ScanReport r) {
         StringBuilder sb = new StringBuilder();
-
-        // XML header
-        sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>").append(LINE_SEP);
-        sb.append("<!DOCTYPE nmaprun>").append(LINE_SEP);
-
-        // Root element
-        sb.append("<nmaprun");
-        attr(sb, "scanner", report.getScannerName());
-        attr(sb, "args", report.getCommandLine());
-        attr(sb, "start", String.valueOf(report.getStartTimeMs() / 1000));
-        attr(sb, "startstr", report.getStartTimeFormatted());
-        attr(sb, "version", report.getScannerVersion());
-        sb.append(">").append(LINE_SEP);
-
-        // Scan info
-        sb.append(INDENT).append("<scaninfo");
-        if (report.getConfig() != null) {
-            attr(sb, "type", report.getConfig().getPrimaryScanType().name().toLowerCase());
-            attr(sb, "protocol", report.getConfig().getPrimaryScanType().getProtocol());
+        sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+        sb.append("<!DOCTYPE nmaprun>\n");
+        sb.append("<nmaprun scanner=\"").append(ScanReport.SCANNER)
+          .append("\" args=\"").append(esc(r.commandLine))
+          .append("\" start=\"").append(r.startTimeMs / 1000)
+          .append("\" startstr=\"").append(esc(ScanReport.nmapTime(r.startTimeMs)))
+          .append("\" version=\"").append(ScanReport.VERSION).append("\">\n");
+        int[] tcp = portsScanned(r, "tcp");
+        sb.append("  <scaninfo type=\"connect\" protocol=\"tcp\" numservices=\"").append(tcp.length)
+          .append("\" services=\"").append(rangeString(tcp)).append("\"/>\n");
+        int[] udp = portsScanned(r, "udp");
+        if (udp.length > 0) {
+            sb.append("  <scaninfo type=\"udp\" protocol=\"udp\" numservices=\"").append(udp.length)
+              .append("\" services=\"").append(rangeString(udp)).append("\"/>\n");
         }
-        sb.append("/>").append(LINE_SEP);
-
-        // Hosts
-        for (ScanResult host : report.getHostResults()) {
-            formatHost(sb, host);
+        for (HostReport h : r.hosts) {
+            sb.append("  <host");
+            if (h.startTimeMs > 0) sb.append(" starttime=\"").append(h.startTimeMs / 1000).append('"');
+            if (h.endTimeMs > 0) sb.append(" endtime=\"").append(h.endTimeMs / 1000).append('"');
+            sb.append(">\n");
+            sb.append("    <status state=\"").append(h.up ? "up" : "down")
+              .append("\" reason=\"").append(esc(h.reason)).append("\"/>\n");
+            String addr = h.ip != null ? h.ip : h.host;
+            sb.append("    <address addr=\"").append(esc(addr))
+              .append("\" addrtype=\"").append(addr.indexOf(':') >= 0 ? "ipv6" : "ipv4").append("\"/>\n");
+            if (h.mac != null) {
+                sb.append("    <address addr=\"").append(esc(h.mac)).append("\" addrtype=\"mac\"/>\n");
+            }
+            if (h.hostname != null) {
+                sb.append("    <hostnames><hostname name=\"").append(esc(h.hostname))
+                  .append("\" type=\"PTR\"/></hostnames>\n");
+            }
+            if (h.up) {
+                RenderSelection sel = h.portsToRender(r.config);
+                sb.append("    <ports>\n");
+                for (Map.Entry<PortState, Integer> e : sel.hidden.entrySet()) {
+                    sb.append("      <extraports state=\"").append(e.getKey().label())
+                      .append("\" count=\"").append(e.getValue()).append("\"/>\n");
+                }
+                for (PortReport p : sel.shown) {
+                    sb.append("      <port protocol=\"").append(p.protocol).append("\" portid=\"")
+                      .append(p.port).append('"');
+                    if (p.rttMs >= 0) {
+                        sb.append(" rttms=\"").append(p.rttMs).append('"');
+                    }
+                    sb.append(">\n");
+                    sb.append("        <state state=\"").append(p.state.label())
+                      .append("\" reason=\"").append(esc(p.reason)).append("\"/>\n");
+                    ProbeResult pr = p.probe;
+                    sb.append("        <service name=\"").append(esc(p.serviceName()));
+                    if (pr != null && pr.getServiceVersion() != null) {
+                        sb.append("\" version=\"").append(esc(pr.getServiceVersion()));
+                    }
+                    if (pr != null && pr.getTlsState() != ProbeResult.TlsState.NONE) {
+                        sb.append("\" tunnel=\"ssl\" tls=\"").append(pr.getTlsState())
+                          .append("\" pqc=\"").append(pr.getPqcStatus());
+                    }
+                    sb.append("\"/>\n");
+                    sb.append("      </port>\n");
+                }
+                sb.append("    </ports>\n");
+            }
+            sb.append("  </host>\n");
         }
-
-        // Run stats
-        sb.append(INDENT).append("<runstats>").append(LINE_SEP);
-        sb.append(INDENT).append(INDENT).append("<finished");
-        attr(sb, "time", String.valueOf(report.getEndTimeMs() / 1000));
-        attr(sb, "timestr", report.getEndTimeFormatted());
-        attr(sb, "elapsed", String.format("%.2f", report.getDurationSec()));
-        attr(sb, "summary", report.getSummary());
-        sb.append("/>").append(LINE_SEP);
-
-        sb.append(INDENT).append(INDENT).append("<hosts");
-        attr(sb, "up", String.valueOf(report.getHostsUpCount()));
-        attr(sb, "down", String.valueOf(report.getHostsDownCount()));
-        attr(sb, "total", String.valueOf(report.getHostCount()));
-        sb.append("/>").append(LINE_SEP);
-        sb.append(INDENT).append("</runstats>").append(LINE_SEP);
-
-        // Close root
-        sb.append("</nmaprun>").append(LINE_SEP);
-
+        sb.append("  <runstats>\n");
+        sb.append("    <finished time=\"").append(r.endTimeMs / 1000)
+          .append("\" timestr=\"").append(esc(ScanReport.nmapTime(r.endTimeMs)))
+          .append("\" elapsed=\"").append(String.format(Locale.US, "%.2f", r.durationSec()))
+          .append("\" summary=\"").append(esc(r.summary())).append("\"/>\n");
+        sb.append("    <hosts up=\"").append(r.hostsUp()).append("\" down=\"").append(r.hostsDown())
+          .append("\" total=\"").append(r.hosts.size()).append("\"/>\n");
+        sb.append("  </runstats>\n");
+        sb.append("</nmaprun>\n");
         return sb.toString();
     }
 
-    private void formatHost(StringBuilder sb, ScanResult host) {
-        sb.append(INDENT).append("<host");
-        attr(sb, "starttime", String.valueOf(host.getStartTimeMs() / 1000));
-        attr(sb, "endtime", String.valueOf(host.getEndTimeMs() / 1000));
-        sb.append(">").append(LINE_SEP);
-
-        // Status
-        sb.append(INDENT).append(INDENT).append("<status");
-        attr(sb, "state", host.isHostUp() ? "up" : "down");
-        attr(sb, "reason", host.getHostUpReason());
-        sb.append("/>").append(LINE_SEP);
-
-        // Address
-        sb.append(INDENT).append(INDENT).append("<address");
-        attr(sb, "addr", host.getIpAddress() != null ? host.getIpAddress() : host.getTarget());
-        attr(sb, "addrtype", "ipv4");
-        sb.append("/>").append(LINE_SEP);
-
-        // MAC Address
-        if (host.getMacAddress() != null) {
-            sb.append(INDENT).append(INDENT).append("<address");
-            attr(sb, "addr", host.getMacAddress().toUpperCase());
-            attr(sb, "addrtype", "mac");
-            sb.append("/>").append(LINE_SEP);
+    /**
+     * The ports the scan was asked for, per protocol: from the config when the report carries one
+     * ({@code null} TCP ports meaning the default set), else the union of what the hosts record.
+     */
+    static int[] portsScanned(ScanReport r, String protocol) {
+        if (r.config != null) {
+            int[] p = "udp".equals(protocol) ? r.config.udpPorts
+                    : (r.config.ports != null ? r.config.ports : NMap.DEFAULT_PORTS);
+            return p == null ? new int[0] : p;
         }
-
-        // Hostnames
-        if (host.getHostname() != null) {
-            sb.append(INDENT).append(INDENT).append("<hostnames>").append(LINE_SEP);
-            sb.append(INDENT).append(INDENT).append(INDENT).append("<hostname");
-            attr(sb, "name", host.getHostname());
-            attr(sb, "type", "PTR");
-            sb.append("/>").append(LINE_SEP);
-            sb.append(INDENT).append(INDENT).append("</hostnames>").append(LINE_SEP);
-        }
-
-        // Ports
-        if (!host.getPortResults().isEmpty()) {
-            sb.append(INDENT).append(INDENT).append("<ports>").append(LINE_SEP);
-
-            // Extra ports summary
-            int closed = host.getClosedPortCount();
-            int filtered = host.getFilteredPortCount();
-            if (closed > 0) {
-                sb.append(INDENT).append(INDENT).append(INDENT).append("<extraports");
-                attr(sb, "state", "closed");
-                attr(sb, "count", String.valueOf(closed));
-                sb.append("/>").append(LINE_SEP);
+        TreeSet<Integer> union = new TreeSet<>();
+        for (HostReport h : r.hosts) {
+            for (PortReport p : h.ports) {
+                if (protocol.equalsIgnoreCase(p.protocol)) union.add(p.port);
             }
-            if (filtered > 0) {
-                sb.append(INDENT).append(INDENT).append(INDENT).append("<extraports");
-                attr(sb, "state", "filtered");
-                attr(sb, "count", String.valueOf(filtered));
-                sb.append("/>").append(LINE_SEP);
-            }
-
-            // Individual ports
-            for (PortResult port : host.getPortResults()) {
-                if (port.isOpen() || port.getState().isPotentiallyOpen()) {
-                    formatPort(sb, port);
-                }
-            }
-
-            sb.append(INDENT).append(INDENT).append("</ports>").append(LINE_SEP);
         }
-
-        // OS
-        if (host.getOsFingerprint() != null && host.getOsFingerprint().hasMatches()) {
-            sb.append(INDENT).append(INDENT).append("<os>").append(LINE_SEP);
-            OSFingerprint.OSMatch match = host.getOsFingerprint().getBestMatch();
-            sb.append(INDENT).append(INDENT).append(INDENT).append("<osmatch");
-            attr(sb, "name", match.getOsName());
-            attr(sb, "accuracy", String.valueOf(match.getAccuracy()));
-            sb.append("/>").append(LINE_SEP);
-            sb.append(INDENT).append(INDENT).append("</os>").append(LINE_SEP);
-        }
-
-        sb.append(INDENT).append("</host>").append(LINE_SEP);
+        int[] out = new int[union.size()];
+        int i = 0;
+        for (int p : union) out[i++] = p;
+        return out;
     }
 
-    private void formatPort(StringBuilder sb, PortResult port) {
-        sb.append(INDENT).append(INDENT).append(INDENT).append("<port");
-        attr(sb, "protocol", port.getProtocol());
-        attr(sb, "portid", String.valueOf(port.getPort()));
-        sb.append(">").append(LINE_SEP);
-
-        // State
-        sb.append(INDENT).append(INDENT).append(INDENT).append(INDENT).append("<state");
-        attr(sb, "state", port.getState().getDisplayName());
-        attr(sb, "reason", port.getReason());
-        if (port.getTtl() >= 0) {
-            attr(sb, "reason_ttl", String.valueOf(port.getTtl()));
+    /** nmap's {@code services} attribute: sorted, runs collapsed — {@code 1-1024,8080,8443}. */
+    static String rangeString(int[] ports) {
+        int[] sorted = ports.clone();
+        Arrays.sort(sorted);
+        StringBuilder sb = new StringBuilder();
+        int i = 0;
+        while (i < sorted.length) {
+            int from = sorted[i];
+            int to = from;
+            while (i + 1 < sorted.length && sorted[i + 1] == to + 1) {
+                to = sorted[++i];
+            }
+            if (sb.length() > 0) sb.append(',');
+            sb.append(from);
+            if (to != from) sb.append('-').append(to);
+            i++;
         }
-        sb.append("/>").append(LINE_SEP);
-
-        // Service
-        if (port.hasService()) {
-            sb.append(INDENT).append(INDENT).append(INDENT).append(INDENT).append("<service");
-            attr(sb, "name", port.getService().getServiceName());
-            if (port.getService().getProduct() != null) {
-                attr(sb, "product", port.getService().getProduct());
-            }
-            if (port.getService().getVersion() != null) {
-                attr(sb, "version", port.getService().getVersion());
-            }
-            if (port.getService().getExtraInfo() != null) {
-                attr(sb, "extrainfo", port.getService().getExtraInfo());
-            }
-            attr(sb, "method", port.getService().getMethod());
-            attr(sb, "conf", String.valueOf(port.getService().getConfidence() / 10));
-            sb.append("/>").append(LINE_SEP);
-        }
-
-        sb.append(INDENT).append(INDENT).append(INDENT).append("</port>").append(LINE_SEP);
+        return sb.toString();
     }
 
-    private void attr(StringBuilder sb, String name, String value) {
-        if (value != null) {
-            sb.append(" ").append(name).append("=\"").append(escapeXml(value)).append("\"");
-        }
-    }
-
-    private String escapeXml(String s) {
+    private static String esc(String s) {
         if (s == null) return "";
-        return s.replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;")
-                .replace("\"", "&quot;")
-                .replace("'", "&apos;");
-    }
-
-    @Override
-    public void formatTo(ScanReport report, OutputStream out) {
-        try {
-            out.write(SharedStringUtil.getBytes(format(report)));
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to write XML output", e);
-        }
-    }
-
-    @Override
-    public void formatTo(ScanReport report, Writer writer) {
-        try {
-            writer.write(format(report));
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to write XML output", e);
-        }
-    }
-
-    @Override
-    public String getMimeType() {
-        return "application/xml";
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                .replace("\"", "&quot;").replaceAll("[\\r\\n]+", " ");
     }
 }
