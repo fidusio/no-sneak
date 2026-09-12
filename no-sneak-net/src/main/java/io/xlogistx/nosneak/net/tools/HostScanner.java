@@ -426,7 +426,10 @@ public final class HostScanner implements Closeable {
     /**
      * Sweeps a range through whichever bound interface has it on-link, falling back
      * to the first interface for an off-link range — where ARP cannot apply and the
-     * result is whatever ICMP finds.
+     * result is whatever ICMP finds. For such a range the backend also withholds the
+     * range's own first and last address (it cannot know the remote subnetting, and a
+     * directed broadcast must never be echoed), so {@link SweepSummary#total()} is the
+     * count actually probed — a {@code /24} reads 254, not 256 (§13.23-C).
      * <p>
      * Records stream to {@code onHost} on a dispatcher thread as they arrive; the
      * future carries the totals. Concurrent sweeps are allowed and each is paced

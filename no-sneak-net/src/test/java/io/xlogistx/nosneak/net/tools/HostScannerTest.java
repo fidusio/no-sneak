@@ -11,6 +11,7 @@ import io.xlogistx.nosneak.net.common.ResolveResult;
 import io.xlogistx.nosneak.net.common.ResolveSource;
 import io.xlogistx.nosneak.net.common.SweepOptions;
 import io.xlogistx.nosneak.net.common.SweepSummary;
+import io.xlogistx.nosneak.net.util.IpMacCache;
 
 import org.junit.jupiter.api.Test;
 
@@ -38,6 +39,32 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class HostScannerTest {
 
     private static final InetAddress IP = InetAddress.ofLiteral("10.0.0.1");
+
+    /** The cache table observe --cache prints (§13.23-E): one line per entry, dash for unknowns. */
+    @Test
+    public void cacheRenderersShowWhatPassiveLearningKnows() {
+        Instant now = Instant.parse("2026-09-11T12:00:10Z");
+        IpMacCache.Entry learned = new IpMacCache.Entry(
+                IP, MacAddress.parse("aa:bb:cc:dd:ee:ff"), IpMacCache.State.REACHABLE,
+                ResolveSource.PASSIVE, now.minusSeconds(8), now.minusSeconds(2), 2, now.minusSeconds(2));
+        String line = HostScanFormat.cacheEntry(learned, now);
+        assertTrue(line.contains("10.0.0.1"), line);
+        assertTrue(line.contains("aa:bb:cc:dd:ee:ff"), line);
+        assertTrue(line.contains("REACHABLE"), line);
+        assertTrue(line.contains("PASSIVE"), line);
+        assertTrue(line.contains("8.0s ago"), line);
+        assertTrue(line.contains("2.0s ago"), line);
+        assertTrue(line.trim().endsWith("2"), "conflict count is the last column: " + line);
+
+        IpMacCache.Entry incomplete = new IpMacCache.Entry(
+                IP, null, IpMacCache.State.INCOMPLETE, null, now, now, 0, null);
+        String dash = HostScanFormat.cacheEntry(incomplete, now);
+        assertTrue(dash.contains(" - "), "no MAC renders as a dash: " + dash);
+        assertTrue(dash.contains("INCOMPLETE"), dash);
+
+        assertEquals("6 observation(s), 27 neighbour(s) in cache", HostScanFormat.observeSummary(6, 27));
+        assertTrue(HostScanFormat.cacheHeader().contains("CONFLICTS"));
+    }
 
     private static Throwable causeOf(CompletableFuture<?> f) {
         ExecutionException e = assertThrows(ExecutionException.class, f::get);
@@ -154,9 +181,8 @@ public class HostScannerTest {
         PingResult r = PingResult.of(IP, List.of(PingProbe.replied(1, Duration.ofMillis(2))), null);
         assertTrue(HostScanFormat.pingLine(r).contains("1/1 received"));
 
-        ResolveResult rr = new ResolveResult(IP, Optional.of(MacAddress.parse("aa:bb:cc:dd:ee:ff")),
-                                             ResolveOutcome.RESOLVED, ResolveSource.ACTIVE_ARP,
-                                             Duration.ofMillis(11));
+        ResolveResult rr = ResolveResult.resolved(IP, MacAddress.parse("aa:bb:cc:dd:ee:ff"),
+                                                  ResolveSource.ACTIVE_ARP, Duration.ofMillis(11));
         String resolved = HostScanFormat.resolve(rr);
         assertTrue(resolved.contains("aa:bb:cc:dd:ee:ff"), resolved);
         assertTrue(resolved.contains("RESOLVED"), resolved);

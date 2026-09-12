@@ -501,7 +501,10 @@ public class ChatPanel extends JPanel {
                 BackgroundTask.runCatching(this, null, () -> ctx.saveChat(sending), null);
             });
         }
-        BackgroundTask.runCatching(this, null, () -> ctx.saveChat(sending), null);
+        // No save here: the chat was persisted before dispatch (above), the response is
+        // persisted by AssistantCallback, and a capture-carrying send saves once more after the
+        // attachments land. A second unconditional save on another worker raced the first for a
+        // chat with no GUID yet and inserted a duplicate row.
         pendingSkills.clear();
         clearPendingSources();
     }

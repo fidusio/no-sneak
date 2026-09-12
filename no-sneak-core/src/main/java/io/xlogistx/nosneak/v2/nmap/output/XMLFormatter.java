@@ -1,11 +1,22 @@
 package io.xlogistx.nosneak.v2.nmap.output;
 
+import io.xlogistx.nosneak.v2.nmap.PortState;
 import io.xlogistx.nosneak.v2.nmap.ScanReport;
 import io.xlogistx.nosneak.v2.nmap.ScanReport.HostReport;
 import io.xlogistx.nosneak.v2.nmap.ScanReport.PortReport;
+import io.xlogistx.nosneak.v2.nmap.ScanReport.RenderSelection;
 import io.xlogistx.nosneak.v2.result.ProbeResult;
 
-/** nmap-compatible XML output. */
+import java.util.Map;
+
+/**
+ * nmap-compatible XML output.
+ * <p>
+ * {@code <state state="..." reason="..."/>} is nmap's own shape. Two additions nmap does not
+ * have: a {@code rttms} attribute on {@code <port>} when the connect round-trip was measured
+ * (nmap keeps RTT at host level only), and {@code <extraports>} for every state collapsed into a
+ * count, which nmap does emit and readers such as ndiff expect.
+ */
 public final class XMLFormatter implements OutputFormatter {
 
     @Override
@@ -33,10 +44,19 @@ public final class XMLFormatter implements OutputFormatter {
                   .append("\"/></hostnames>\n");
             }
             if (h.up) {
+                RenderSelection sel = h.portsToRender(r.config);
                 sb.append("    <ports>\n");
-                for (PortReport p : h.openPorts()) {
+                for (Map.Entry<PortState, Integer> e : sel.hidden.entrySet()) {
+                    sb.append("      <extraports state=\"").append(e.getKey().label())
+                      .append("\" count=\"").append(e.getValue()).append("\"/>\n");
+                }
+                for (PortReport p : sel.shown) {
                     sb.append("      <port protocol=\"").append(p.protocol).append("\" portid=\"")
-                      .append(p.port).append("\">\n");
+                      .append(p.port).append('"');
+                    if (p.rttMs >= 0) {
+                        sb.append(" rttms=\"").append(p.rttMs).append('"');
+                    }
+                    sb.append(">\n");
                     sb.append("        <state state=\"").append(p.state.label())
                       .append("\" reason=\"").append(esc(p.reason)).append("\"/>\n");
                     ProbeResult pr = p.probe;

@@ -169,4 +169,20 @@ class PcapLayoutTest {
             assertTrue(p.searchPaths() != null, p.name());
         }
     }
+
+    /**
+     * §13.17 measured the difference between {@code arp or icmp or icmp6} and
+     * {@code arp or ip or ip6} at 2 versus 9 neighbours in identical 60 s listens. The
+     * two pcap backends then held their own copies and drifted (§13.21 M1/S2); one
+     * constant pinned here is what stops that happening a third time.
+     */
+    @Test
+    @DisplayName("the discovery filter covers both IP families and is not narrowed to ICMP")
+    void discoveryFilterCoversBothFamiliesAndIsNotNarrowedToIcmp() {
+        String f = PcapHandle.DISCOVERY_FILTER;
+        assertTrue(f.contains("arp"), f);
+        assertTrue(f.contains("ip6"), "general IPv6 traffic is where Apple devices announce themselves: " + f);
+        assertTrue(f.matches(".*\\bip\\b.*"), "general IPv4 traffic is what finds broadcast-suppressed hosts: " + f);
+        assertTrue(!f.contains("icmp"), "icmp is a subset of ip; naming it narrows nothing and invites drift: " + f);
+    }
 }

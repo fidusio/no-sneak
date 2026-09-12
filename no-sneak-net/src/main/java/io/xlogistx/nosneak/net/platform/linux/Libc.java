@@ -64,10 +64,13 @@ final class Libc {
 
     // ---- errno (§4.7) ----
     static final int EPERM = 1;
+    static final int EINTR = 4;
     static final int ENXIO = 6;
+    static final int EBADF = 9;
     static final int EAGAIN = 11;            // == EWOULDBLOCK on Linux
     static final int EACCES = 13;
     static final int EINVAL = 22;
+    static final int ENOTSOCK = 88;
     static final int ENETDOWN = 100;
     static final int ENETUNREACH = 101;
     static final int EHOSTUNREACH = 113;
@@ -205,10 +208,13 @@ final class Libc {
     static String errnoName(int errno) {
         return switch (errno) {
             case EPERM -> "EPERM";
+            case EINTR -> "EINTR";
             case ENXIO -> "ENXIO";
+            case EBADF -> "EBADF";
             case EAGAIN -> "EAGAIN/EWOULDBLOCK";
             case EACCES -> "EACCES";
             case EINVAL -> "EINVAL";
+            case ENOTSOCK -> "ENOTSOCK";
             case ENETDOWN -> "ENETDOWN";
             case ENETUNREACH -> "ENETUNREACH";
             case EHOSTUNREACH -> "EHOSTUNREACH";
@@ -216,9 +222,20 @@ final class Libc {
         };
     }
 
-    /** True when a {@code -1} from {@code recvfrom} is just the receive timeout expiring. */
+    /**
+     * True when a {@code -1} from {@code recvfrom} is just the receive timeout expiring —
+     * or a signal interrupting the call, which is the same "nothing happened" tick.
+     */
     static boolean isTimeout(int errno) {
-        return errno == EAGAIN;
+        return errno == EAGAIN || errno == EINTR;
+    }
+
+    /**
+     * True when the descriptor itself is gone: the fd-reuse race §4.4 warns about, or a
+     * socket closed underneath the reader. There is nothing to retry (§13.23-B).
+     */
+    static boolean isDeadDescriptor(int errno) {
+        return errno == EBADF || errno == ENOTSOCK;
     }
 
     /** Host-to-network order for a 16-bit value. */
@@ -300,15 +317,7 @@ final class Libc {
     static void setIcmp6Filter(Arena arena, MemorySegment state, int fd, int... passTypes)
             throws DiscoveryException {
         MemorySegment filter = arena.allocate(ICMP6_FILTER_BYTES);
-        for (int word = 0; word < ICMP6_FILTER_WORDS; word++) {
-            filter.set(JAVA_INT, word * 4L, 0xFFFFFFFF);
-        }
-        for (int type : passTypes) {
-            int word = (type >>> 5) & 7;
-            int bit = type & 31;
-            int current = filter.get(JAVA_INT, word * 4L);
-            filter.set(JAVA_INT, word * 4L, current & ~(1 << bit));
-        }
+        fillIcmp6Filter(filter, passTypes);
         try {
             int rc = (int) Handles.SETSOCKOPT.invokeExact(state, fd, IPPROTO_ICMPV6, ICMP6_FILTER,
                                                   filter, ICMP6_FILTER_BYTES);
@@ -320,6 +329,24 @@ final class Libc {
             throw e;
         } catch (Throwable t) {
             throw new DiscoveryException("setsockopt(ICMP6_FILTER) downcall failed", t);
+        }
+    }
+
+    /**
+     * The pure half of {@link #setIcmp6Filter}: writes the {@code struct icmp6_filter}
+     * bitmap into {@code filter} ({@link #ICMP6_FILTER_BYTES} bytes). Block-all first,
+     * then clear {@code word = type >>> 5, bit = type & 31} for each passed type.
+     * Separated so the arithmetic can be pinned without a socket ({@code Icmp6FilterTest}).
+     */
+    static void fillIcmp6Filter(MemorySegment filter, int... passTypes) {
+        for (int word = 0; word < ICMP6_FILTER_WORDS; word++) {
+            filter.set(JAVA_INT, word * 4L, 0xFFFFFFFF);
+        }
+        for (int type : passTypes) {
+            int word = (type >>> 5) & 7;
+            int bit = type & 31;
+            int current = filter.get(JAVA_INT, word * 4L);
+            filter.set(JAVA_INT, word * 4L, current & ~(1 << bit));
         }
     }
 

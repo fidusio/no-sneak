@@ -12,21 +12,26 @@ import java.util.Optional;
  * answers a ping.
  *
  * @param source  meaningful only when {@code outcome == RESOLVED}
- * @param elapsed wall time for the whole call including retransmissions. On the
- *                macOS backend this measures the neighbor-table poll loop rather
- *                than a solicitation round trip, because there is no solicitation
- *                to time
+ * @param elapsed wall time for the whole call including retransmissions
+ * @param detail  the native explanation behind a non-RESOLVED outcome — pcap's text for a
+ *                refused injection, the errno name for a failed {@code sendto}, the reader's
+ *                cause of death — or empty. The module has no logger, so this is the only
+ *                place that text can reach a caller (§4.7). Never set on a RESOLVED result
  */
 public record ResolveResult(
         InetAddress target,
         Optional<MacAddress> mac,
         ResolveOutcome outcome,
         ResolveSource source,
-        Duration elapsed) {
+        Duration elapsed,
+        Optional<String> detail) {
 
     public ResolveResult {
         if (mac == null) {
             mac = Optional.empty();
+        }
+        if (detail == null) {
+            detail = Optional.empty();
         }
     }
 
@@ -37,11 +42,22 @@ public record ResolveResult(
 
     public static ResolveResult resolved(InetAddress target, MacAddress mac,
                                          ResolveSource source, Duration elapsed) {
-        return new ResolveResult(target, Optional.of(mac), ResolveOutcome.RESOLVED, source, elapsed);
+        return new ResolveResult(target, Optional.of(mac), ResolveOutcome.RESOLVED, source, elapsed,
+                                 Optional.empty());
     }
 
     public static ResolveResult notResolved(InetAddress target, ResolveOutcome outcome,
                                             Duration elapsed) {
-        return new ResolveResult(target, Optional.empty(), outcome, null, elapsed);
+        return notResolved(target, outcome, elapsed, null);
+    }
+
+    /**
+     * @param detail why, in the words of the layer that failed; {@code null} when there is
+     *               nothing more to say than the outcome itself
+     */
+    public static ResolveResult notResolved(InetAddress target, ResolveOutcome outcome,
+                                            Duration elapsed, String detail) {
+        return new ResolveResult(target, Optional.empty(), outcome, null, elapsed,
+                                 Optional.ofNullable(detail));
     }
 }

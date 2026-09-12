@@ -41,6 +41,11 @@ public class ProbeTCPCallback extends TCPSessionCallback {
         return connectionIndex;
     }
 
+    /** The owning context — a test seam so a scripted transport can push events back. */
+    ProbeContext context() {
+        return context;
+    }
+
     @Override
     protected void connectedFinished() throws IOException {
         context.onConnected(this);

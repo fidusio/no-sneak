@@ -28,34 +28,33 @@ import static java.lang.foreign.ValueLayout.JAVA_SHORT;
  * layout is precisely the kind of error that fails silently, which is why these
  * are declared separately rather than shared with {@code platform.linux}.
  * <p>
- * No {@code ioctl} and no BPF. Active L2 on Darwin would mean {@code /dev/bpf*},
- * which is root-owned, exclusive-open and {@code ioctl}-configured — variadic,
- * hitting the arm64 {@code firstVariadicArg} hazard. {@code sysctl} is
- * non-variadic, unprivileged and pure libc, which is the whole argument for the
- * neighbor-table approach.
+ * This is the ICMP pinger's libc ONLY (§7.5): datagram ICMP sockets, {@code sendto},
+ * {@code recvfrom}, {@code setsockopt}. Layer 2 on macOS is libpcap through
+ * {@link DarwinPcapBackend} (§13.14), not the kernel neighbour table — the
+ * {@code sysctl}/{@code PF_ROUTE} design this class was first written for is retired,
+ * and its handles and constants were removed with it (§13.23-C). No {@code ioctl}:
+ * it is variadic, which is the arm64 {@code firstVariadicArg} hazard.
  */
 final class DarwinLibc {
 
     // ---- constants (§7.1) ----
     static final int AF_INET = 2;
     static final int AF_INET6 = 30;          // NOT 10 as on Linux, nor 23 as on Windows
-    static final int AF_LINK = 18;
     static final int SOCK_DGRAM = 2;
     static final int IPPROTO_ICMP = 1;
     static final int IPPROTO_ICMPV6 = 58;
     static final int SOL_SOCKET = 0xFFFF;    // NOT 1 as on Linux
     static final int SO_RCVTIMEO = 0x1006;   // NOT 20 as on Linux
-    static final int CTL_NET = 4;
-    static final int PF_ROUTE = 17;
-    static final int NET_RT_FLAGS = 2;
-    static final int RTF_LLINFO = 0x400;
 
     // ---- errno (BSD values; several differ from Linux) ----
     static final int EPERM = 1;
+    static final int EINTR = 4;
     static final int ENXIO = 6;
+    static final int EBADF = 9;
     static final int EACCES = 13;
     static final int EINVAL = 22;
     static final int EAGAIN = 35;            // 11 on Linux
+    static final int ENOTSOCK = 38;          // 88 on Linux
     static final int EPROTONOSUPPORT = 43;   // 93 on Linux
     static final int EAFNOSUPPORT = 47;      // 97 on Linux
     static final int ENETDOWN = 50;          // 100 on Linux
@@ -118,14 +117,6 @@ final class DarwinLibc {
                 FunctionDescriptor.of(JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, ADDRESS, JAVA_INT));
         static final MethodHandle CLOSE = bind("close",
                 FunctionDescriptor.of(JAVA_INT, JAVA_INT));
-        /**
-         * {@code sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp,
-         * void *newp, size_t newlen)} — non-variadic, which is the entire reason
-         * this is reachable from FFM on arm64 at all.
-         */
-        static final MethodHandle SYSCTL = bind("sysctl",
-                FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, ADDRESS, ADDRESS,
-                                      ADDRESS, JAVA_LONG));
     }
 
     private DarwinLibc() {
@@ -155,10 +146,13 @@ final class DarwinLibc {
     static String errnoName(int errno) {
         return switch (errno) {
             case EPERM -> "EPERM";
+            case EINTR -> "EINTR";
             case ENXIO -> "ENXIO";
+            case EBADF -> "EBADF";
             case EACCES -> "EACCES";
             case EINVAL -> "EINVAL";
             case EAGAIN -> "EAGAIN";
+            case ENOTSOCK -> "ENOTSOCK";
             case EPROTONOSUPPORT -> "EPROTONOSUPPORT";
             case EAFNOSUPPORT -> "EAFNOSUPPORT";
             case ENETDOWN -> "ENETDOWN";
@@ -168,8 +162,14 @@ final class DarwinLibc {
         };
     }
 
+    /** The SO_RCVTIMEO tick, or a signal interrupting the call — both mean "nothing yet". */
     static boolean isTimeout(int errno) {
-        return errno == EAGAIN;
+        return errno == EAGAIN || errno == EINTR;
+    }
+
+    /** The descriptor is gone; nothing to retry (§13.23-B). */
+    static boolean isDeadDescriptor(int errno) {
+        return errno == EBADF || errno == ENOTSOCK;
     }
 
     /**

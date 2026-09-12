@@ -40,6 +40,33 @@ public final class PcapHandle implements AutoCloseable {
      */
     public static final int READ_TIMEOUT_MS = 10;
 
+    /**
+     * The one capture filter every pcap-backed discovery object installs.
+     * <p>
+     * Broader than it looks necessary, and simpler than what it replaced.
+     * {@code "arp or icmp or icmp6"} captured exactly what a backend answers with
+     * and nothing it could LEARN from — so a host that ignores broadcast ARP had no
+     * way of telling us where it lived, and needed the OS neighbour table to be
+     * findable at all (§13.16). Since {@code icmp} is a subset of {@code ip} and
+     * {@code icmp6} of {@code ip6}, widening to every IP frame is one clause shorter
+     * AND gives passive learning something to work with: every frame names its
+     * sender's MAC in the Ethernet header, whatever it carries. Measured on Windows
+     * (§13.17): two identical 60 s listens found 2 neighbours with the narrow filter
+     * and 9 with this one.
+     * <p>
+     * This is the Linux {@code ETH_P_IP} learner's coverage (§13.13), reached through
+     * the one handle each backend already owns rather than a second socket. The cost
+     * is capture volume, and the risk that matters is not CPU but DROPS: a full pcap
+     * buffer loses frames, and a lost ARP reply is a resolve that times out.
+     * Non-promiscuous capture bounds this — we see broadcast, multicast, and traffic
+     * addressed to us, not the whole segment.
+     * <p>
+     * One constant, not one per backend: the two backends each held their own string
+     * and drifted (§13.21 M1/S2), and the drift was exactly the family this measurement
+     * showed matters most.
+     */
+    public static final String DISCOVERY_FILTER = "arp or ip or ip6";
+
     private final Pcap.Handles h;
     private final PcapPlatform platform;
     private final String deviceName;
@@ -149,23 +176,34 @@ public final class PcapHandle implements AutoCloseable {
      * (§12.7). Do not add a second injection path.
      *
      * @return true when the frame was accepted by the driver
+     * @see #trySend(byte[])
      */
-    public synchronized boolean send(byte[] frame) {
+    public boolean send(byte[] frame) {
+        return trySend(frame) == null;
+    }
+
+    /**
+     * Injects a complete Ethernet frame and says why if the driver refused it.
+     * <p>
+     * The refusal text is read from {@code pcap_geterr} INSIDE the monitor, before any
+     * other send on this handle can overwrite it — the old {@code send()} + {@code lastError()}
+     * pair released the lock in between, so a concurrent send could hand a caller a
+     * stranger's error (§13.23-B).
+     *
+     * @return null when the driver accepted the frame; otherwise pcap's explanation, the
+     *         downcall failure, or "handle closed"
+     */
+    public synchronized String trySend(byte[] frame) {
         if (closed) {
-            return false;
+            return "pcap handle for " + deviceName + " is closed";
         }
         try (Arena scratch = Arena.ofConfined()) {
             MemorySegment buf = scratch.allocateFrom(JAVA_BYTE, frame);
             int rc = (int) h.sendPacket().invokeExact(pcap, buf, frame.length);
-            return rc == 0;
+            return rc == 0 ? null : "pcap_sendpacket on " + deviceName + ": " + Pcap.lastError(h, pcap);
         } catch (Throwable t) {
-            return false;
+            return "pcap_sendpacket downcall failed: " + t;
         }
-    }
-
-    /** The driver's explanation for the last failure, for diagnostics. */
-    public String lastError() {
-        return Pcap.lastError(h, pcap);
     }
 
     /**
@@ -188,7 +226,7 @@ public final class PcapHandle implements AutoCloseable {
                 if (closed) {
                     return null;
                 }
-                throw new DiscoveryException("pcap_next_ex returned " + rc + ": " + lastError());
+                throw new DiscoveryException("pcap_next_ex returned " + rc + ": " + Pcap.lastError(h, pcap));
             }
             MemorySegment header = headerHolder.get(ADDRESS, 0)
                                               .reinterpret(platform.pktHdr().byteSize());

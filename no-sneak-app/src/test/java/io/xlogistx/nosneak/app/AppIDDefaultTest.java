@@ -52,10 +52,11 @@ public class AppIDDefaultTest {
     }
 
     @Test
-    public void collapsesSubdomainToRegistrableDomain() {
-        // The domain filter keeps only the last two labels.
+    public void keepsSubdomainAsRegistered() {
+        // The domain filter validates and lower-cases; it never computes a registrable
+        // domain. The registered row is the scope boundary, so a subdomain is its own scope.
         AppIDDefault app = new AppIDDefault("sub.example.com", "myapp123");
-        assertEquals("example.com", app.getDomainID(), "a subdomain must collapse to the registrable domain");
+        assertEquals("sub.example.com", app.getDomainID(), "a subdomain must be kept as registered");
     }
 
     @Test

@@ -4,7 +4,6 @@ import io.xlogistx.nosneak.net.codecs.ArpPacket;
 import io.xlogistx.nosneak.net.codecs.Icmp6;
 import io.xlogistx.nosneak.net.codecs.Ipv4Header;
 import io.xlogistx.nosneak.net.codecs.Ipv6Header;
-import io.xlogistx.nosneak.net.codecs.TtlDistance;
 import io.xlogistx.nosneak.net.common.CidrRange;
 import io.xlogistx.nosneak.net.common.DiscoveryCapabilities;
 import io.xlogistx.nosneak.net.common.DiscoveryException;
@@ -24,6 +23,12 @@ import io.xlogistx.nosneak.net.common.Subscription;
 import io.xlogistx.nosneak.net.common.SweepOptions;
 import io.xlogistx.nosneak.net.common.SweepSummary;
 import io.xlogistx.nosneak.net.util.IpMacCache;
+import io.xlogistx.nosneak.net.util.PassiveLearning;
+import io.xlogistx.nosneak.net.util.PendingResolve;
+import io.xlogistx.nosneak.net.util.RecvErrors;
+import io.xlogistx.nosneak.net.util.SweepDriver;
+import io.xlogistx.nosneak.net.util.SweepTargets;
+import org.zoxweb.shared.util.RateController;
 
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
@@ -41,7 +46,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -121,6 +125,15 @@ public final class LinuxHostDiscovery implements HostDiscovery {
     /** Set once by the factory, before publication (§3.2). */
     private volatile ICMPPing pinger;
     private volatile boolean promiscuous;
+
+    /**
+     * Why a reader died, or null while it lives (§13.23-B). The ARP and NDP readers each
+     * serve a family's resolves; the IPv4 learner only feeds hints, so its death degrades
+     * passive coverage but fails nothing.
+     */
+    private volatile String arpReaderFailure;
+    private volatile String ndpReaderFailure;
+    private volatile String ipReaderFailure;
 
 
     private LinuxHostDiscovery(NicBinding binding, int arpSocket, int ndpSocket, int ipSocket,
@@ -213,8 +226,13 @@ public final class LinuxHostDiscovery implements HostDiscovery {
 
     /** Required for observe() to see third-party traffic on a switched network. */
     private void setPromiscuous(boolean enable) throws DiscoveryException {
-        Libc.setPromiscuous(arena, state, arpSocket, binding.ifIndex(), enable);
-        Libc.setPromiscuous(arena, state, ndpSocket, binding.ifIndex(), enable);
+        // Its own scratch and errno capture: this runs on a caller thread while sends and
+        // reads are in flight, and the instance segment is open()/close()-only (§13.23-B).
+        try (Arena scratch = Arena.ofConfined()) {
+            MemorySegment errState = scratch.allocate(Libc.CAPTURE);
+            Libc.setPromiscuous(scratch, errState, arpSocket, binding.ifIndex(), enable);
+            Libc.setPromiscuous(scratch, errState, ndpSocket, binding.ifIndex(), enable);
+        }
         this.promiscuous = enable;
     }
 
@@ -228,13 +246,16 @@ public final class LinuxHostDiscovery implements HostDiscovery {
     @Override
     public DiscoveryCapabilities capabilities() {
         ICMPPing p = pinger;
+        // The layer-2 answers follow the READERS (§13.23-B): a family whose socket can no
+        // longer be read cannot resolve, and passive learning needs at least the ARP
+        // reader (the IPv4 learner only adds hints).
         return new DiscoveryCapabilities(
                 p != null && p.capabilities().icmpV4(),
                 p != null && p.capabilities().icmpV6(),
-                true,    // activeArp
-                true,    // activeNdp - AF_PACKET, per the section 12.1 decision
-                true,    // passiveObservation
-                true,    // rawEvidence
+                arpReaderFailure == null,    // activeArp
+                ndpReaderFailure == null,    // activeNdp - AF_PACKET, per the section 12.1 decision
+                arpReaderFailure == null,    // passiveObservation
+                arpReaderFailure == null,    // rawEvidence
                 p != null && p.capabilities().ttlAvailable(),
                 p != null && p.capabilities().offLinkIcmp(),
                 DiscoveryCapabilities.Backend.LINUX_NATIVE);
@@ -275,20 +296,28 @@ public final class LinuxHostDiscovery implements HostDiscovery {
                                                      boolean provoke) {
         Instant started = Instant.now();
 
+        // Our own address FIRST, before the cache: nothing on the segment will answer
+        // an ARP request for it, because the only host that owns it is the one asking.
+        // Without this the call burns the whole timeout and reports TIMEOUT for a MAC
+        // we have held since construction — and nothing another host claims about our
+        // address may ever answer for it (§13.23).
+        if (binding.isLocalAddress(target) && binding.supportsLayer2()) {
+            return CompletableFuture.completedFuture(ResolveResult.resolved(
+                    target, binding.hardwareAddress(), ResolveSource.LOCAL_INTERFACE,
+                    Duration.between(started, Instant.now())));
+        }
         Optional<IpMacCache.Entry> cached = cache.get(target);
         if (cached.isPresent() && cached.get().hasMac()) {
             return CompletableFuture.completedFuture(ResolveResult.resolved(
                     target, cached.get().mac(), ResolveSource.CACHE_HIT,
                     Duration.between(started, Instant.now())));
         }
-        // Our own address: nothing on the segment will answer an ARP request for it,
-        // because the only host that owns it is the one asking. Without this the call
-        // burns the whole timeout and reports TIMEOUT for a MAC we have held since
-        // construction.
-        if (binding.isLocalAddress(target) && binding.supportsLayer2()) {
-            return CompletableFuture.completedFuture(ResolveResult.resolved(
-                    target, binding.hardwareAddress(), ResolveSource.LOCAL_INTERFACE,
-                    Duration.between(started, Instant.now())));
+        // A dead reader cannot see a reply: say so now, with its cause, rather than
+        // soliciting and reporting TIMEOUT at full budget (§13.23-B, S14).
+        String dead = target instanceof Inet4Address ? arpReaderFailure : ndpReaderFailure;
+        if (dead != null) {
+            return CompletableFuture.completedFuture(ResolveResult.notResolved(
+                    target, ResolveOutcome.ERROR, Duration.between(started, Instant.now()), dead));
         }
         if (!binding.isOnLink(target)) {
             // Nothing off-link answers ARP or NDP; that is not a failure to report
@@ -297,7 +326,8 @@ public final class LinuxHostDiscovery implements HostDiscovery {
                     target, ResolveOutcome.UNSUPPORTED, Duration.between(started, Instant.now())));
         }
 
-        PendingResolve entry = pending.computeIfAbsent(target, k -> new PendingResolve(target));
+        PendingResolve entry = pending.computeIfAbsent(target,
+                                                       k -> new PendingResolve(target, dispatcher));
         CompletableFuture<ResolveResult> future = entry.await();
 
         if (entry.started.compareAndSet(false, true)) {
@@ -311,13 +341,13 @@ public final class LinuxHostDiscovery implements HostDiscovery {
                 provokeKernelResolution(target, Math.max(1, timeout.toMillis()));
             }
             solicit(target, 0);
-            scheduleRetries(target, timeout);
+            scheduleRetries(entry, target, timeout);
         }
         return future;
     }
 
     /** ARP 3 attempts 1s apart; NDP the same, which is RFC 4861's RETRANS_TIMER. */
-    private void scheduleRetries(InetAddress target, Duration timeout) {
+    private void scheduleRetries(PendingResolve entry, InetAddress target, Duration timeout) {
         long budget = Math.max(1, timeout.toMillis());
         for (int attempt = 1; attempt < SOLICIT_ATTEMPTS; attempt++) {
             long at = attempt * RETRANSMIT.toMillis();
@@ -326,23 +356,21 @@ public final class LinuxHostDiscovery implements HostDiscovery {
             }
             int retry = attempt;
             scheduler.schedule(() -> {
-                if (pending.containsKey(target)) {
+                // Identity, not key: a retry armed for THIS resolve never solicits for a
+                // later resolve of the same address.
+                if (pending.get(target) == entry) {
                     solicit(target, retry);
                 }
             }, at, TimeUnit.MILLISECONDS);
         }
         scheduler.schedule(() -> {
-            PendingResolve dropped = pending.remove(target);
-            if (dropped != null) {
-                // A send that the kernel rejected is an ERROR, not a TIMEOUT: nothing
-                // ever went out, so "nobody answered" would misreport the cause. The
-                // flag is per-resolve, so one transient failure cannot make every
-                // later timeout claim to be that error.
-                ResolveOutcome outcome = dropped.sendError == null
-                        ? ResolveOutcome.TIMEOUT
-                        : ResolveOutcome.ERROR;
-                dropped.completeAll(ResolveResult.notResolved(target, outcome,
-                        Duration.between(dropped.startedAt, Instant.now())));
+            // Claim THIS entry, so a late deadline cannot tear down a newer resolve. A
+            // send the kernel rejected is an ERROR carrying the errno, not a TIMEOUT:
+            // nothing ever went out, so "nobody answered" would misreport the cause. The
+            // text is per-resolve (PendingResolve.expire), so one transient failure
+            // cannot make every later timeout claim to be that error.
+            if (pending.remove(target, entry)) {
+                entry.completeAll(entry.expire(Instant.now()));
             }
         }, budget, TimeUnit.MILLISECONDS);
     }
@@ -366,7 +394,8 @@ public final class LinuxHostDiscovery implements HostDiscovery {
      * instead of on a polling interval.
      * <p>
      * <b>Scoped, because the cost is a packet on someone's network.</b> It fires only for
-     * IPv4, only when a pinger is wired, only when we do not already hold a hint, and
+     * IPv4, only when a pinger is wired (a cached MAC never reaches here: {@code resolve}
+     * already answered {@code CACHE_HIT} for it), and
      * only for callers that are not pinging anyway — {@code sweep()} opts out, since it
      * runs its own echo concurrently with the resolve and a second one would double the
      * probes on a mostly-dead range.
@@ -387,7 +416,9 @@ public final class LinuxHostDiscovery implements HostDiscovery {
      */
     private void provokeKernelResolution(InetAddress target, long budgetMillis) {
         ICMPPing p = pinger;
-        if (p == null || !(target instanceof Inet4Address) || unicastHint(target).isPresent()) {
+        // No hint check here: resolve() already returned CACHE_HIT for any target with
+        // a cached MAC, so by this point there is never a hint to consult (§13.21 S5).
+        if (p == null || !(target instanceof Inet4Address)) {
             return;
         }
         try {
@@ -406,13 +437,13 @@ public final class LinuxHostDiscovery implements HostDiscovery {
      * transmitted.
      */
     private void solicit(InetAddress target, int attempt) {
-        boolean sent = target instanceof Inet4Address
+        String refused = target instanceof Inet4Address
                 ? sendArp(target, attempt)
                 : sendNeighborSolicitation(target);
-        if (!sent) {
+        if (refused != null) {
             PendingResolve entry = pending.get(target);
             if (entry != null) {
-                entry.sendError = lastSendError;
+                entry.recordSendError(refused);
             }
         }
     }
@@ -436,16 +467,17 @@ public final class LinuxHostDiscovery implements HostDiscovery {
      * one-second per-host budget gets ONLY attempt 0, so covering both paths there is
      * what makes a swept host resolvable at all.
      * <p>
-     * A hint is only ever a hint. Resolution still requires a genuine reply on our own
-     * socket, so the reported {@link ResolveSource} remains {@code ACTIVE_ARP} and a
-     * wrong hint costs one wasted frame rather than a wrong answer.
+     * A hint is only ever a hint. Resolution still requires a genuine frame on our own
+     * socket, and a resolve reports {@code ACTIVE_ARP} only for a reply to our own
+     * request (§13.23) — so a wrong hint costs one wasted frame rather than a wrong
+     * answer.
      */
-    private boolean sendArp(InetAddress target, int attempt) {
+    /** @return null when at least one frame was handed to the kernel; otherwise why none was */
+    private String sendArp(InetAddress target, int attempt) {
         Optional<NicBinding.LocalAddress> source = binding.sourceFor(target);
         if (source.isEmpty()) {
-            lastSendError = "no local IPv4 address on " + binding.javaName()
+            return "no local IPv4 address on " + binding.javaName()
                     + " to use as the ARP sender address";
-            return false;
         }
         byte[] payload = ArpPacket.request(binding.hardwareAddress(),
                                            source.get().address().getAddress(),
@@ -453,13 +485,17 @@ public final class LinuxHostDiscovery implements HostDiscovery {
         Optional<MacAddress> hint = unicastHint(target);
         // Either frame reaching the wire is enough for the solicitation to count as
         // sent — the point of sending both is that they fail independently.
-        boolean sent = hint.isPresent()
-                && sendPacket(arpSocket, arpSendLock, Libc.ETH_P_ARP, hint.get().bytes(), payload);
+        String unicast = hint.isPresent()
+                ? sendPacket(arpSocket, arpSendLock, Libc.ETH_P_ARP, hint.get().bytes(), payload)
+                : null;
+        boolean accepted = hint.isPresent() && unicast == null;
+        String broadcast = null;
         if (hint.isEmpty() || attempt == 0) {
-            sent |= sendPacket(arpSocket, arpSendLock, Libc.ETH_P_ARP,
-                               MacAddress.BROADCAST.bytes(), payload);
+            broadcast = sendPacket(arpSocket, arpSendLock, Libc.ETH_P_ARP,
+                                   MacAddress.BROADCAST.bytes(), payload);
+            accepted |= broadcast == null;
         }
-        return sent;
+        return accepted ? null : (broadcast != null ? broadcast : unicast);
     }
 
     /**
@@ -497,12 +533,11 @@ public final class LinuxHostDiscovery implements HostDiscovery {
      * The hop limit MUST be 255 (RFC 4861 §7.1.1); the builder pins it so it
      * cannot be got wrong.
      */
-    private boolean sendNeighborSolicitation(InetAddress target) {
+    private String sendNeighborSolicitation(InetAddress target) {
         Optional<NicBinding.LocalAddress> source = binding.sourceFor(target);
         if (source.isEmpty()) {
-            lastSendError = "no local IPv6 address on " + binding.javaName()
+            return "no local IPv6 address on " + binding.javaName()
                     + " to source a Neighbor Solicitation from";
-            return false;
         }
         byte[] src = source.get().address().getAddress();
         byte[] targetRaw = target.getAddress();
@@ -523,39 +558,36 @@ public final class LinuxHostDiscovery implements HostDiscovery {
      * point. If global pacing is ever needed, a writer thread replaces the body
      * here and nothing else changes.
      */
-    /** @return true when the frame was handed to the kernel; false leaves errno reported. */
-    private boolean sendPacket(int fd, Object lock, int ethertype, byte[] destMac, byte[] payload) {
+    /**
+     * @return null when the frame was handed to the kernel; otherwise the errno name,
+     *         RETURNED rather than parked in a field — a backend-wide "last send error"
+     *         was written by whichever socket failed most recently, so a concurrent
+     *         resolve on the other socket could report a stranger's failure as its own
+     *         (§13.23-B). This module has no logger; the caller's result is the only
+     *         place a native error can surface.
+     */
+    private String sendPacket(int fd, Object lock, int ethertype, byte[] destMac, byte[] payload) {
         try (Arena scratch = Arena.ofConfined()) {
             MemorySegment buf = scratch.allocateFrom(JAVA_BYTE, payload);
             MemorySegment dest = scratch.allocate(Libc.SOCKADDR_LL);
             Libc.fillSockaddrLl(dest, binding.ifIndex(), ethertype, destMac);
+            // errno is captured PER SEND, in this confined scratch, never in a segment
+            // shared between the ARP and NDP locks (§13.23-B, S3).
+            MemorySegment errState = scratch.allocate(Libc.CAPTURE);
             long sent;
             int errno;
             synchronized (lock) {
-                sent = (long) Libc.Handles.SENDTO.invokeExact(state, fd, buf,
+                sent = (long) Libc.Handles.SENDTO.invokeExact(errState, fd, buf,
                         (long) payload.length, 0, dest, (int) Libc.SOCKADDR_LL.byteSize());
-                errno = sent < 0 ? Libc.errno(state) : 0;
+                errno = sent < 0 ? Libc.errno(errState) : 0;
             }
-            if (sent >= 0) {
-                return true;
-            }
-            lastSendError = "sendto(ethertype=0x" + Integer.toHexString(ethertype)
-                    + ") failed: " + Libc.errnoName(errno);
-            return false;
+            return sent >= 0 ? null
+                    : "sendto(ethertype=0x" + Integer.toHexString(ethertype) + ") failed: "
+                      + Libc.errnoName(errno);
         } catch (Throwable t) {
-            lastSendError = "sendto downcall failed: " + t;
-            return false;
+            return "sendto downcall failed: " + t;
         }
     }
-
-    /**
-     * The reason the last send failed, valid only immediately after a {@code false}
-     * from {@link #sendPacket}. Read into the owning {@link PendingResolve} straight
-     * away rather than consulted later: this module has no logger, so the caller's
-     * result is the only place a native error can surface, and a field that outlives
-     * one solicitation would make every subsequent timeout claim to be that error.
-     */
-    private volatile String lastSendError;
 
     @Override
     public Subscription observe(Consumer<ObservedNeighbor> onNeighbor) {
@@ -582,37 +614,26 @@ public final class LinuxHostDiscovery implements HostDiscovery {
                     + "; use discoverIpv6Segment for v6 segments"));
         }
         Instant started = Instant.now();
-        List<InetAddress> targets = range.hosts().toList();
+        // SweepTargets withholds the interface's own network/broadcast addresses AND the
+        // range's own edges when the range is off-link or wider than the interface's
+        // prefix (§13.23-C); the summary's total is the probeable count.
+        List<InetAddress> targets = SweepTargets.probeable(binding, range);
         AtomicInteger alive = new AtomicInteger();
         AtomicInteger macs = new AtomicInteger();
         AtomicInteger icmp = new AtomicInteger();
-        Semaphore window = new Semaphore(options.maxInFlight());
-        // maxInFlight bounds how many probes are OUTSTANDING; the rate limiter
-        // bounds how fast they leave. They are different constraints (spec 3.5).
-        io.xlogistx.nosneak.net.util.RateLimiter pacer =
-                io.xlogistx.nosneak.net.util.RateLimiter.perSecond(options.maxPacketsPerSecond());
         // Two ARP frames per host, not one: a hinted target gets both a unicast and a
         // broadcast solicitation on the first attempt (see sendArp). Reserving the
         // worst case keeps the emitted rate at or UNDER maxPacketsPerSecond, which is
         // the only direction a safety cap may err in.
         int packetsPerHost = (options.doMac() ? 2 : 0)
                 + (options.doIcmp() ? options.pingCount() : 0);
-
-        List<CompletableFuture<Void>> all = new ArrayList<>(targets.size());
-        for (InetAddress target : targets) {
-            all.add(CompletableFuture.completedFuture(null).thenComposeAsync(ignored -> {
-                try {
-                    window.acquire();
-                    io.xlogistx.nosneak.net.util.RateLimiter.acquire(pacer, packetsPerHost);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return CompletableFuture.completedFuture(null);
-                }
-                return sweepOne(target, options, onHost, alive, macs, icmp)
-                        .whenComplete((r, t) -> window.release());
-            }, dispatcher));
-        }
-        return CompletableFuture.allOf(all.toArray(CompletableFuture[]::new))
+        // Admission is event-driven (SweepDriver, §13.22): the window and the pacer are
+        // honoured without ever parking a pool thread, because the per-host timeouts
+        // run on that same pool.
+        RateController pacer = SweepDriver.pacer(options.maxPacketsPerSecond(), packetsPerHost);
+        return SweepDriver.run(targets.iterator(), options.maxInFlight(), pacer, scheduler,
+                               dispatcher,
+                               target -> sweepOne(target, options, onHost, alive, macs, icmp))
                 .thenApply(ignored -> new SweepSummary(targets.size(), alive.get(), macs.get(),
                         icmp.get(), Duration.between(started, Instant.now())));
     }
@@ -620,11 +641,8 @@ public final class LinuxHostDiscovery implements HostDiscovery {
     private CompletableFuture<Void> sweepOne(InetAddress target, SweepOptions options,
                                              Consumer<HostRecord> onHost, AtomicInteger alive,
                                              AtomicInteger macs, AtomicInteger icmp) {
-        // NEVER probe the local network or directed broadcast: an echo to a
-        // directed broadcast is answered by every host at once.
-        if (binding.isNetworkOrBroadcast(target)) {
-            return CompletableFuture.completedFuture(null);
-        }
+        // Network and directed-broadcast addresses were already withheld by
+        // SweepTargets.probeable in sweep(); every target here may be probed.
         // BOTH probes start NOW. They used to be sequenced — resolve, then ping — and
         // that quietly defeated passive learning for the hosts that need it most. The
         // echo REPLY carries the target's MAC in its Ethernet header, and onIpv4 turns
@@ -646,27 +664,19 @@ public final class LinuxHostDiscovery implements HostDiscovery {
                 ? p.ping(target, options.pingCount(), options.perHostTimeout())
                 : CompletableFuture.completedFuture(PingResult.of(target, List.of(), null));
 
-        return mac.thenAcceptBoth(pinged, (resolved, result) -> {
-            boolean haveMac = resolved.resolved();
-            if (!haveMac && !result.reachable()) {
-                return;
-            }
-            alive.incrementAndGet();
-            if (haveMac) {
-                macs.incrementAndGet();
-            }
-            if (result.reachable()) {
-                icmp.incrementAndGet();
-            }
-            int ttl = result.probes().stream().filter(PingProbe::hasTtl)
-                            .mapToInt(PingProbe::ttlOrHopLimit).findFirst()
-                            .orElse(PingProbe.TTL_UNAVAILABLE);
-            HostRecord record = new HostRecord(target, resolved.mac(), result.reachable(),
-                    result.reachable() ? Optional.of(result.avgRtt()) : Optional.empty(),
-                    ttl, ttl > 0 ? TtlDistance.hopCount(ttl) : Optional.empty(),
-                    haveMac ? resolved.source() : null, Instant.now());
-            dispatcher.execute(() -> onHost.accept(record));
-        });
+        // HostRecord.fromProbes is the one record constructor every backend uses:
+        // icmpAlive from observedOnWire(), RTT only when measured() (§13.18, §13.23-C).
+        return mac.thenAcceptBoth(pinged, (resolved, result) ->
+            HostRecord.fromProbes(target, resolved, result, Instant.now()).ifPresent(record -> {
+                alive.incrementAndGet();
+                if (record.mac().isPresent()) {
+                    macs.incrementAndGet();
+                }
+                if (record.icmpAlive()) {
+                    icmp.incrementAndGet();
+                }
+                dispatcher.execute(() -> onHost.accept(record));
+            }));
     }
 
     /**
@@ -714,12 +724,15 @@ public final class LinuxHostDiscovery implements HostDiscovery {
 
     private void startReaders() {
         readers.add(startReader("nosneak-arp-" + binding.javaName(),
-                                () -> readLoop(arpSocket)));
+                                () -> readLoop(arpSocket, Reader.ARP)));
         readers.add(startReader("nosneak-ndp-" + binding.javaName(),
-                                () -> readLoop(ndpSocket)));
+                                () -> readLoop(ndpSocket, Reader.NDP)));
         readers.add(startReader("nosneak-ip-" + binding.javaName(),
-                                () -> readLoop(ipSocket)));
+                                () -> readLoop(ipSocket, Reader.IP)));
     }
+
+    /** Which socket a reader serves, so its death degrades the right capability. */
+    private enum Reader { ARP, NDP, IP }
 
     private Thread startReader(String name, Runnable body) {
         Thread t = new Thread(body, name);
@@ -728,7 +741,8 @@ public final class LinuxHostDiscovery implements HostDiscovery {
         return t;
     }
 
-    private void readLoop(int fd) {
+    private void readLoop(int fd, Reader role) {
+        RecvErrors guard = new RecvErrors();
         try (Arena local = Arena.ofConfined()) {
             MemorySegment localState = local.allocate(Libc.CAPTURE);
             MemorySegment buf = local.allocate(RECEIVE_BUFFER);
@@ -742,23 +756,38 @@ public final class LinuxHostDiscovery implements HostDiscovery {
                     n = (long) Libc.Handles.RECVFROM.invokeExact(localState, fd, buf,
                             (long) RECEIVE_BUFFER, 0, from, fromLen);
                 } catch (Throwable t) {
+                    failReader(role, "recvfrom downcall failed: " + t);
                     return;
                 }
                 if (n < 0) {
-                    // EAGAIN is the SO_RCVTIMEO tick that makes shutdown possible and
-                    // is expected several times a second. Anything else is a real
-                    // error, and spinning on it would burn a core silently, so back
-                    // off to the same cadence rather than retrying flat out.
-                    if (!Libc.isTimeout(Libc.errno(localState))) {
-                        try {
-                            Thread.sleep(Libc.RECV_TIMEOUT_USEC / 1000);
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
+                    // The errno decides (§4.4): EAGAIN/EINTR is the SO_RCVTIMEO tick that
+                    // makes shutdown possible and is expected several times a second.
+                    // EBADF/ENOTSOCK means the fd is gone. Anything else is a real error;
+                    // spinning on it would burn a core silently, so back off one tick ON
+                    // THIS DEDICATED THREAD — and after five in a row, stop pretending.
+                    int errno = Libc.errno(localState);
+                    switch (guard.next(Libc.isTimeout(errno), Libc.isDeadDescriptor(errno))) {
+                        case TICK -> {
+                        }
+                        case BACKOFF -> {
+                            try {
+                                Thread.sleep(Libc.RECV_TIMEOUT_USEC / 1000);
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                                return;
+                            }
+                        }
+                        case FATAL -> {
+                            if (running) {
+                                failReader(role, "recvfrom(" + role + " socket): "
+                                                 + Libc.errnoName(errno));
+                            }
                             return;
                         }
                     }
                     continue;
                 }
+                guard.success();
                 // The ethertype is NOT in the buffer - the kernel stripped the
                 // Ethernet header. It is here, in the sockaddr recvfrom filled in.
                 int ethertype = Libc.ntohs(from.get(JAVA_SHORT, Libc.SLL_PROTOCOL));
@@ -781,7 +810,7 @@ public final class LinuxHostDiscovery implements HostDiscovery {
                     if (ethertype == Libc.ETH_P_ARP) {
                         onArp(payload, frameSource);
                     } else if (ethertype == Libc.ETH_P_IPV6) {
-                        onIpv6(payload);
+                        onIpv6(payload, frameSource);
                     } else if (ethertype == Libc.ETH_P_IP) {
                         onIpv4(payload, frameSource);
                     }
@@ -794,26 +823,32 @@ public final class LinuxHostDiscovery implements HostDiscovery {
 
     private void onArp(byte[] payload, MacAddress frameSource) {
         ArpPacket.ArpView arp = ArpPacket.parse(payload, 0, payload.length).orElse(null);
-        if (arp == null || arp.sha().isZero()) {
+        if (arp == null) {
             return;
         }
         InetAddress sender = address(arp.spa());
-        if (sender == null) {
+        MacAddress mac = arp.sha();
+        // The same guard as every other learner (§13.23): rejects a null or 0.0.0.0
+        // sender (RFC 5227 probes), a zero or multicast SHA, our own address or MAC,
+        // and an off-link sender whose frame carries the router's MAC.
+        if (!PassiveLearning.learnable(binding, sender, mac)) {
             return;
         }
+        // ONE provenance for both the cache and the completion: ACTIVE_ARP only for a
+        // reply to our own solicitation; a request or gratuitous announcement may
+        // still satisfy a pending resolve (§4.2) but is reported as what it was.
+        ResolveSource source = PassiveLearning.arpProvenance(arp, pending.containsKey(sender));
+        cache.observe(sender, mac, source);
         // The payload SHA is authoritative, but a mismatch against the frame's own
         // source address is spoofing evidence worth surfacing through the cache's
-        // conflict counter.
-        MacAddress mac = arp.sha();
-        cache.observe(sender, mac, arp.isReply() ? ResolveSource.ACTIVE_ARP : ResolveSource.PASSIVE);
-        if (frameSource != null && !frameSource.equals(mac)) {
+        // conflict counter — under the same guard, so our own MAC never counts.
+        if (frameSource != null && !frameSource.equals(mac)
+                && PassiveLearning.learnable(binding, sender, frameSource)) {
             cache.observe(sender, frameSource, ResolveSource.PASSIVE);
         }
-        completeResolve(sender, mac, ResolveSource.ACTIVE_ARP);
-
-        ObservationKind kind = arp.isGratuitous() ? ObservationKind.GRATUITOUS_ARP
-                : arp.isReply() ? ObservationKind.ARP_REPLY : ObservationKind.ARP_REQUEST;
-        notifyObservers(new ObservedNeighbor(sender, mac, kind, Instant.now()));
+        completeResolve(sender, mac, source);
+        notifyObservers(new ObservedNeighbor(sender, mac, PassiveLearning.arpKind(arp),
+                                             Instant.now()));
     }
 
     /**
@@ -836,27 +871,42 @@ public final class LinuxHostDiscovery implements HostDiscovery {
      * single-digit milliseconds.
      */
     private void onIpv4(byte[] payload, MacAddress frameSource) {
-        if (frameSource == null || frameSource.isZero() || frameSource.isMulticast()) {
-            return;
-        }
         Ipv4Header.View ip = Ipv4Header.parse(payload, 0, payload.length).orElse(null);
         if (ip == null) {
             return;
         }
-        InetAddress source = address(ip.src4());
-        if (source == null || source.isAnyLocalAddress() || !binding.isOnLink(source)
-                || binding.isLocalAddress(source)) {
+        learnSender(address(ip.src4()), frameSource);
+    }
+
+    /**
+     * Records "this IP is at this MAC, seen by us" — family-agnostic — and, when a
+     * resolve is already waiting on that host, fires the unicast solicitation now
+     * rather than at the next retransmission. The guard is {@link PassiveLearning}'s,
+     * shared by every backend (§13.23).
+     */
+    private void learnSender(InetAddress source, MacAddress frameSource) {
+        if (!PassiveLearning.learnable(binding, source, frameSource)) {
             return;
         }
         cache.observe(source, frameSource, ResolveSource.PASSIVE);
-        if (pending.containsKey(source)) {
+        if (source instanceof Inet4Address && pending.containsKey(source)) {
             sendArp(source, 1);
         }
     }
 
-    private void onIpv6(byte[] payload) {
+    private void onIpv6(byte[] payload, MacAddress frameSource) {
         Ipv6Header.View ip = Ipv6Header.parse(payload, 0, payload.length).orElse(null);
-        if (ip == null || ip.nextHeader() != Ipv6Header.NEXT_HEADER_ICMPV6) {
+        if (ip == null) {
+            return;
+        }
+        // BEFORE the next-header test and BEFORE the hop-255 gate: ANY IPv6 frame names
+        // its sender's MAC in sll_addr — an mDNS announcement, an echo reply at hop limit
+        // 64, a TCP segment. The hop-255 rule is RFC 4861's rule for ND MESSAGES and does
+        // not apply to a frame-header claim; the on-link guard is the defence here, as it
+        // is for IPv4 (§13.13, §13.23). This is what lets a host that answers ff02::1
+        // without ever soliciting us appear in discoverIpv6Segment.
+        learnSender(address(ip.src16()), frameSource);
+        if (ip.nextHeader() != Ipv6Header.NEXT_HEADER_ICMPV6) {
             return;
         }
         int off = Ipv6Header.LENGTH;
@@ -865,32 +915,29 @@ public final class LinuxHostDiscovery implements HostDiscovery {
             return;
         }
         // RFC 4861 7.1.1: NS and NA whose hop limit is not 255 have crossed a
-        // router and MUST be discarded. This is the on-link attack defence.
+        // router and MUST be discarded. Proves the SENDER is on-link — not that the
+        // address it advertises is, which is what the guard below checks.
         if (!Ipv6Header.isValidNeighborDiscovery(ip)) {
             return;
         }
 
         Icmp6.parseAdvertisement(payload, off, len).ifPresent(na -> {
-            if (na.targetMac() == null) {
-                return;
-            }
             InetAddress target = address(na.targetIp16());
-            if (target == null) {
+            if (!PassiveLearning.learnable(binding, target, na.targetMac())) {
                 return;
             }
-            cache.observe(target, na.targetMac(), ResolveSource.ACTIVE_NDP);
-            completeResolve(target, na.targetMac(), ResolveSource.ACTIVE_NDP);
+            ResolveSource source = PassiveLearning.ndpProvenance(na, pending.containsKey(target));
+            cache.observe(target, na.targetMac(), source);
+            completeResolve(target, na.targetMac(), source);
             notifyObservers(new ObservedNeighbor(target, na.targetMac(),
                                                  ObservationKind.NDP_NA, Instant.now()));
         });
 
         Icmp6.parseSolicitation(payload, off, len).ifPresent(ns -> {
-            if (ns.sourceMac() == null) {
-                return;
-            }
             InetAddress source = address(ip.src16());
-            if (source == null || source.isAnyLocalAddress()) {
-                return;   // duplicate address detection uses the unspecified source
+            // The guard also rejects the unspecified source duplicate address detection uses.
+            if (!PassiveLearning.learnable(binding, source, ns.sourceMac())) {
+                return;
             }
             cache.observe(source, ns.sourceMac(), ResolveSource.PASSIVE);
             notifyObservers(new ObservedNeighbor(source, ns.sourceMac(),
@@ -937,9 +984,7 @@ public final class LinuxHostDiscovery implements HostDiscovery {
         Libc.closeQuietly(state, ndpSocket);
         Libc.closeQuietly(state, ipSocket);
 
-        pending.values().forEach(p -> p.completeAll(
-                ResolveResult.notResolved(p.target, ResolveOutcome.ERROR, Duration.ZERO)));
-        pending.clear();
+        failPending("closed");
         observers.clear();
         try {
             arena.close();
@@ -950,6 +995,39 @@ public final class LinuxHostDiscovery implements HostDiscovery {
         // dispatcher likewise.
     }
 
+    /**
+     * A reader is dead: record why so {@code resolve()} and {@code capabilities()} report
+     * it from now on, and fail the resolves that depended on it. The IPv4 learner's death
+     * only removes hints, so nothing pending is failed for it.
+     */
+    private void failReader(Reader role, String why) {
+        switch (role) {
+            case ARP -> {
+                arpReaderFailure = why;
+                failPending(why, true);
+            }
+            case NDP -> {
+                ndpReaderFailure = why;
+                failPending(why, false);
+            }
+            case IP -> ipReaderFailure = why;
+        }
+    }
+
+    private void failPending(String why) {
+        failPending(why, true);
+        failPending(why, false);
+    }
+
+    /** Claims each entry with {@code remove(key, value)} before failing it (§13.23-B, S13). */
+    private void failPending(String why, boolean v4) {
+        pending.forEach((target, entry) -> {
+            if ((target instanceof Inet4Address) == v4 && pending.remove(target, entry)) {
+                entry.completeAll(entry.abort(why));
+            }
+        });
+    }
+
     private static InetAddress address(byte[] raw) {
         try {
             return InetAddress.getByAddress(raw);
@@ -958,42 +1036,4 @@ public final class LinuxHostDiscovery implements HostDiscovery {
         }
     }
 
-    /**
-     * One in-flight solicitation, and every caller waiting on it.
-     * <p>
-     * The waiters share ONE {@link CompletableFuture} rather than each holding their
-     * own. With a per-caller list there is a window between the reader thread's
-     * {@code completeAll} — which completes the futures it can see and then clears
-     * the list — and a concurrent {@code resolve()} that has already taken this entry
-     * and is about to add its future to it. That late future would be completed by
-     * nobody: the timeout task removes by key and finds the entry already gone, so it
-     * never fires. In {@code sweep()} such a future feeds {@code allOf}, which would
-     * then never complete and hang the whole sweep rather than fail it.
-     * <p>
-     * One shared future closes the window, because {@code complete} is idempotent and
-     * a caller arriving after completion simply observes the finished result.
-     */
-    private static final class PendingResolve {
-        final InetAddress target;
-        final Instant startedAt = Instant.now();
-        final AtomicBoolean started = new AtomicBoolean();
-
-        /** Set when a solicitation for THIS target could not be transmitted at all. */
-        volatile String sendError;
-
-        private final CompletableFuture<ResolveResult> result = new CompletableFuture<>();
-
-        PendingResolve(InetAddress target) {
-            this.target = target;
-        }
-
-        /** A copy, so a caller cannot complete the shared future out from under the rest. */
-        CompletableFuture<ResolveResult> await() {
-            return result.copy();
-        }
-
-        void completeAll(ResolveResult outcome) {
-            result.complete(outcome);
-        }
-    }
 }

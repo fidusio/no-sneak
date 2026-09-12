@@ -33,6 +33,55 @@ public class ProbeResultTest {
     }
 
     @Test
+    public void revocationDateAndReasonAreSerialized() throws Exception {
+        ProbeResult r = ProbeResult.builder("h", 443, "tcp")
+                .revocation("REVOKED", "ocsp", "2023-11-14T22:13:20Z", "KEY_COMPROMISE").build();
+        assertEquals("2023-11-14T22:13:20Z", r.getRevocationDate());
+        assertEquals("KEY_COMPROMISE", r.getRevocationReason());
+        String json = GSONUtil.toJSONGenericMap(r.toNVGenericMap(), true, true, false);
+        assertTrue(json.contains("\"revocation-method\": \"ocsp\"") || json.contains("\"revocation-method\":\"ocsp\""), json);
+        assertTrue(json.contains("revocation-date"), json);
+        assertTrue(json.contains("KEY_COMPROMISE"), json);
+        // The two-argument form still works and leaves the extras absent.
+        ProbeResult plain = ProbeResult.builder("h", 443, "tcp").revocation("GOOD", "stapled").build();
+        assertNull(plain.getRevocationDate());
+        assertNull(plain.getRevocationReason());
+    }
+
+    @Test
+    public void cipherDetailsKeepTheFlatListInStepAndSerializeForwardSecrecyAsAString() throws Exception {
+        ProbeResult r = ProbeResult.builder("h", 443, "tcp")
+                .addCipherSuite("TLS_RSA_WITH_AES_128_CBC_SHA", "TLSv1.2", "ACCEPTABLE", "RSA", false)
+                .addCipherSuite("TLS_AES_256_GCM_SHA384", "TLSv1.3", "STRONG", "ECDHE/DHE", true)
+                .addCipherSuite("TLS_AES_256_GCM_SHA384", "TLSv1.3", "STRONG", "ECDHE/DHE", true) // dedupe
+                .serverCipherPreference("TLS_AES_256_GCM_SHA384", "server")
+                .build();
+        assertEquals(2, r.getSupportedCipherSuites().size());
+        assertEquals(2, r.getSupportedCipherSuiteDetails().size());
+        assertEquals("TLS_AES_256_GCM_SHA384", r.getServerCipherPreference());
+        assertEquals("server", r.getServerCipherPreferenceMode());
+        NVGenericMap m = r.toNVGenericMap();
+        String json = GSONUtil.toJSONGenericMap(m, true, true, false);
+        // A false forward-secrecy must be visible: it is the whole point of recording static RSA.
+        assertTrue(json.contains("\"forward-secrecy\": \"NO\"") || json.contains("\"forward-secrecy\":\"NO\""), json);
+        assertTrue(json.contains("server-cipher-preference"), json);
+    }
+
+    @Test
+    public void supportedGroupsAndPreferenceAreSerialized() throws Exception {
+        ProbeResult r = ProbeResult.builder("h", 443, "tcp")
+                .addSupportedGroup("X25519MLKEM768").addSupportedGroup("x25519").addSupportedGroup("x25519")
+                .serverGroupPreference("X25519MLKEM768")
+                .build();
+        assertEquals(2, r.getSupportedGroups().size());
+        assertEquals("X25519MLKEM768", r.getServerGroupPreference());
+        String json = GSONUtil.toJSONGenericMap(r.toNVGenericMap(), true, true, false);
+        assertTrue(json.contains("supported-groups"), json);
+        assertTrue(json.contains("server-group-preference"), json);
+        assertNotNull(ProbeResult.builder("h", 1, "tcp").build().getSupportedGroups(), "never null");
+    }
+
+    @Test
     public void notesAreMergedNotOverwritten() {
         ProbeResult r = ProbeResult.builder("h", 1, "tcp")
                 .note("first").note("second").note(null).note("").build();

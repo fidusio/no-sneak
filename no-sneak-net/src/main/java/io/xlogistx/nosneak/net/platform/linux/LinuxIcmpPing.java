@@ -9,6 +9,8 @@ import io.xlogistx.nosneak.net.common.PingError;
 import io.xlogistx.nosneak.net.common.PingProbe;
 import io.xlogistx.nosneak.net.common.PingResult;
 import io.xlogistx.nosneak.net.util.Identifiers;
+import io.xlogistx.nosneak.net.util.PendingCall;
+import io.xlogistx.nosneak.net.util.RecvErrors;
 
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
@@ -68,7 +70,11 @@ public final class LinuxIcmpPing implements ICMPPing {
     private final Identifiers.SequenceAllocator v4Sequences = Identifiers.newSequenceAllocator();
     private final Identifiers.SequenceAllocator v6Sequences = Identifiers.newSequenceAllocator();
 
-    private final ConcurrentHashMap<Long, PendingProbe> inFlight = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, PendingCall.Probe> inFlight = new ConcurrentHashMap<>();
+
+    /** Why a family's reader died, or null while it lives (§13.23-B). */
+    private volatile String v4ReaderFailure;
+    private volatile String v6ReaderFailure;
     private final ScheduledExecutorService scheduler;
     private final ExecutorService dispatcher;
 
@@ -127,8 +133,8 @@ public final class LinuxIcmpPing implements ICMPPing {
     @Override
     public DiscoveryCapabilities capabilities() {
         return new DiscoveryCapabilities(
-                true,    // icmpV4
-                true,    // icmpV6
+                v4ReaderFailure == null,    // icmpV4 - false once its reader has died (§13.23-B)
+                v6ReaderFailure == null,    // icmpV6
                 false,   // activeArp  - L2 belongs to LinuxHostDiscovery
                 false,   // activeNdp
                 false,   // passiveObservation
@@ -144,7 +150,7 @@ public final class LinuxIcmpPing implements ICMPPing {
             throw new IllegalArgumentException("count must be >= 1, got " + count);
         }
         if (closed.get()) {
-            return CompletableFuture.completedFuture(allFailed(target, count, PingError.IO));
+            return CompletableFuture.completedFuture(allFailed(target, count, PingError.IO, "closed"));
         }
         boolean v4 = target instanceof Inet4Address;
         if (!v4 && isUnscopedLinkLocal(target)) {
@@ -153,50 +159,81 @@ public final class LinuxIcmpPing implements ICMPPing {
             return CompletableFuture.completedFuture(
                     allFailed(target, count, PingError.NETWORK_UNREACHABLE));
         }
+        // A dead reader cannot see the reply: fail now with its cause rather than send
+        // and report TIMEOUT at full budget (§13.23-B, S14).
+        String dead = v4 ? v4ReaderFailure : v6ReaderFailure;
+        if (dead != null) {
+            return CompletableFuture.completedFuture(allFailed(target, count, PingError.IO, dead));
+        }
 
-        PendingCall call = new PendingCall(target, count);
+        PendingCall call = new PendingCall(target, count, dispatcher);
         // PIPELINED: every probe goes out immediately with a distinct sequence, so
         // worst-case wall time is one timeout rather than count of them.
-        for (int i = 0; i < count; i++) {
-            int identifier = v4 ? v4Identifier : v6Identifier;
-            int seq = (v4 ? v4Sequences : v6Sequences).next();
-            long key = Identifiers.correlationKey(identifier, seq);
-            PendingProbe probe = new PendingProbe(call, seq, System.nanoTime());
-            inFlight.put(key, probe);
+        try {
+            for (int i = 0; i < count; i++) {
+                int identifier = v4 ? v4Identifier : v6Identifier;
+                int seq = (v4 ? v4Sequences : v6Sequences).next();
+                long key = Identifiers.correlationKey(identifier, seq);
+                PendingCall.Probe probe = call.newProbe(seq, System.nanoTime());
+                inFlight.put(key, probe);
 
-            PingError sendError = v4 ? sendV4(target, identifier, seq) : sendV6(target, seq);
-            if (sendError != null) {
-                inFlight.remove(key);
-                call.settle(PingProbe.failed(seq, sendError));
-                continue;
-            }
-            probe.expiry = scheduler.schedule(() -> {
-                if (inFlight.remove(key) != null) {
-                    call.settle(PingProbe.failed(seq, PingError.TIMEOUT));
+                SendFailure failed = v4 ? sendV4(target, identifier, seq) : sendV6(target, seq);
+                if (failed != null) {
+                    inFlight.remove(key, probe);
+                    call.setDetail(failed.detail());
+                    probe.fail(failed.error());
+                    continue;
                 }
-            }, Math.max(1, timeout.toMillis()), TimeUnit.MILLISECONDS);
+                probe.expiry = scheduler.schedule(() -> {
+                    // Claim THIS probe (remove(key, value)): a sequence that wrapped onto a
+                    // newer probe must not be timed out by the older one's deadline.
+                    if (inFlight.remove(key, probe)) {
+                        probe.fail(PingError.TIMEOUT);
+                    }
+                }, Math.max(1, timeout.toMillis()), TimeUnit.MILLISECONDS);
+            }
+        } catch (RuntimeException e) {
+            // A probe registered but never sent (or never given a deadline) would leave
+            // the call incomplete forever (§13.23-E). Drop its map entry so a wrapped
+            // sequence cannot find it, then close every open slot with the cause.
+            inFlight.values().removeIf(p -> p.call == call && !p.isSettled());
+            call.failRemaining(PingError.IO, "ping aborted before every probe was sent: " + e);
         }
         return call.future;
     }
 
+    /** A {@code sendto} that failed: the §4.7 mapping plus the errno name for the caller. */
+    private record SendFailure(PingError error, String detail) {
+        static SendFailure of(int errno, boolean v4) {
+            return new SendFailure(Libc.toPingError(errno),
+                                   "sendto(" + (v4 ? "ICMP" : "ICMPv6") + ") failed: "
+                                   + Libc.errnoName(errno));
+        }
+    }
+
     /** @return null on success, or the mapped errno */
-    private PingError sendV4(InetAddress target, int identifier, int seq) {
+    /** @return null when the kernel accepted the datagram */
+    private SendFailure sendV4(InetAddress target, int identifier, int seq) {
         byte[] echo = Icmp4Echo.request(identifier, seq, timestampPayload());
         try (Arena scratch = Arena.ofConfined()) {
             MemorySegment buf = scratch.allocateFrom(JAVA_BYTE, echo);
             MemorySegment dest = scratch.allocate(Libc.SOCKADDR_IN);
             Libc.fillSockaddrIn(dest, target.getAddress());
+            // errno is captured PER SEND, in this confined scratch, never in a segment
+            // shared with the other family's lock (§13.23-B, S3).
+            MemorySegment errState = scratch.allocate(Libc.CAPTURE);
             synchronized (v4SendLock) {
-                long sent = (long) Libc.Handles.SENDTO.invokeExact(state, v4Socket, buf,
+                long sent = (long) Libc.Handles.SENDTO.invokeExact(errState, v4Socket, buf,
                         (long) echo.length, 0, dest, (int) Libc.SOCKADDR_IN.byteSize());
-                return sent < 0 ? Libc.toPingError(Libc.errno(state)) : null;
+                return sent < 0 ? SendFailure.of(Libc.errno(errState), true) : null;
             }
         } catch (Throwable t) {
-            return PingError.IO;
+            return new SendFailure(PingError.IO, "sendto downcall failed: " + t);
         }
     }
 
-    private PingError sendV6(InetAddress target, int seq) {
+    /** @return null when the kernel accepted the datagram */
+    private SendFailure sendV6(InetAddress target, int seq) {
         // Checksum LEFT ZERO on purpose: RFC 3542 requires the kernel to compute
         // it for IPPROTO_ICMPV6, and computing it here as well is wasted work.
         byte[] echo = Icmp6.echoRequestUnchecksummed(v6Identifier, seq, timestampPayload());
@@ -205,13 +242,14 @@ public final class LinuxIcmpPing implements ICMPPing {
             MemorySegment buf = scratch.allocateFrom(JAVA_BYTE, echo);
             MemorySegment dest = scratch.allocate(Libc.SOCKADDR_IN6);
             Libc.fillSockaddrIn6(dest, target.getAddress(), scope);
+            MemorySegment errState = scratch.allocate(Libc.CAPTURE);
             synchronized (v6SendLock) {
-                long sent = (long) Libc.Handles.SENDTO.invokeExact(state, v6Socket, buf,
+                long sent = (long) Libc.Handles.SENDTO.invokeExact(errState, v6Socket, buf,
                         (long) echo.length, 0, dest, (int) Libc.SOCKADDR_IN6.byteSize());
-                return sent < 0 ? Libc.toPingError(Libc.errno(state)) : null;
+                return sent < 0 ? SendFailure.of(Libc.errno(errState), false) : null;
             }
         } catch (Throwable t) {
-            return PingError.IO;
+            return new SendFailure(PingError.IO, "sendto downcall failed: " + t);
         }
     }
 
@@ -235,6 +273,7 @@ public final class LinuxIcmpPing implements ICMPPing {
      * notices {@code running} went false — closing the fd would NOT wake it.
      */
     private void readLoop(int fd, boolean v4) {
+        RecvErrors guard = new RecvErrors();
         try (Arena local = Arena.ofConfined()) {
             MemorySegment localState = local.allocate(Libc.CAPTURE);
             MemorySegment buf = local.allocate(RECEIVE_BUFFER);
@@ -244,11 +283,36 @@ public final class LinuxIcmpPing implements ICMPPing {
                     n = (long) Libc.Handles.RECVFROM.invokeExact(localState, fd, buf,
                             (long) RECEIVE_BUFFER, 0, MemorySegment.NULL, MemorySegment.NULL);
                 } catch (Throwable t) {
+                    failReader(v4, "recvfrom downcall failed: " + t);
                     return;
                 }
                 if (n < 0) {
-                    continue;   // EAGAIN tick, or a transient error: re-check running
+                    // The errno decides (§4.4): EAGAIN/EINTR is the SO_RCVTIMEO tick;
+                    // EBADF/ENOTSOCK means the fd is gone; anything else backs off one
+                    // tick ON THIS DEDICATED THREAD and is fatal after five in a row.
+                    int errno = Libc.errno(localState);
+                    switch (guard.next(Libc.isTimeout(errno), Libc.isDeadDescriptor(errno))) {
+                        case TICK -> {
+                        }
+                        case BACKOFF -> {
+                            try {
+                                Thread.sleep(Libc.RECV_TIMEOUT_USEC / 1000);
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                                return;
+                            }
+                        }
+                        case FATAL -> {
+                            if (running) {
+                                failReader(v4, "recvfrom(" + (v4 ? "ICMP" : "ICMPv6") + "): "
+                                               + Libc.errnoName(errno));
+                            }
+                            return;
+                        }
+                    }
+                    continue;
                 }
+                guard.success();
                 byte[] packet = buf.asSlice(0, n).toArray(JAVA_BYTE);
                 try {
                     if (v4) {
@@ -292,17 +356,14 @@ public final class LinuxIcmpPing implements ICMPPing {
     }
 
     private void complete(int identifier, int seq, int ttl, byte[] raw) {
-        PendingProbe probe = inFlight.remove(Identifiers.correlationKey(identifier, seq));
+        PendingCall.Probe probe = inFlight.remove(Identifiers.correlationKey(identifier, seq));
         if (probe == null) {
             return;   // already timed out, or never ours
-        }
-        if (probe.expiry != null) {
-            probe.expiry.cancel(false);
         }
         Duration rtt = Duration.ofNanos(System.nanoTime() - probe.sentAtNanos);
         // neighborResolutionPending stays FALSE: on Linux the kernel owns the
         // neighbor table and we cannot see it, so we never know (§4.6).
-        probe.call.settle(new PingProbe(seq, true, rtt, ttl, raw, false, false, Optional.empty()));
+        probe.settle(new PingProbe(seq, true, rtt, ttl, raw, false, false, Optional.empty()));
     }
 
     @Override
@@ -323,13 +384,7 @@ public final class LinuxIcmpPing implements ICMPPing {
 
         // Pending futures complete NORMALLY with an error result, never
         // exceptionally - that would contradict the ping contract.
-        inFlight.forEach((key, probe) -> {
-            if (probe.expiry != null) {
-                probe.expiry.cancel(false);
-            }
-            probe.call.settle(PingProbe.failed(probe.sequence, PingError.IO));
-        });
-        inFlight.clear();
+        failPending("closed");
         try {
             arena.close();
         } catch (IllegalStateException e) {
@@ -356,50 +411,46 @@ public final class LinuxIcmpPing implements ICMPPing {
     }
 
     private static PingResult allFailed(InetAddress target, int count, PingError error) {
+        return allFailed(target, count, error, null);
+    }
+
+    private static PingResult allFailed(InetAddress target, int count, PingError error,
+                                        String detail) {
         List<PingProbe> probes = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
             probes.add(PingProbe.failed(i, error));
         }
-        return PingResult.of(target, probes, error);
+        return PingResult.of(target, probes, error, detail);
     }
 
-    private static final class PendingProbe {
-        final PendingCall call;
-        final int sequence;
-        final long sentAtNanos;
-        volatile ScheduledFuture<?> expiry;
-
-        PendingProbe(PendingCall call, int sequence, long sentAtNanos) {
-            this.call = call;
-            this.sequence = sequence;
-            this.sentAtNanos = sentAtNanos;
+    /**
+     * One family's reader is dead: record why, so {@code ping()} and {@code capabilities()}
+     * report it honestly from now on, and fail every probe of that family still waiting.
+     * The other family keeps working — its socket and its thread are its own.
+     */
+    private void failReader(boolean v4, String why) {
+        if (v4) {
+            v4ReaderFailure = why;
+        } else {
+            v6ReaderFailure = why;
         }
+        int identifier = v4 ? v4Identifier : v6Identifier;
+        inFlight.forEach((key, probe) -> {
+            // The identifier is the high half of the key (Identifiers.correlationKey).
+            if ((int) (key >>> 16) == (identifier & 0xFFFF) && inFlight.remove(key, probe)) {
+                probe.call.setDetail(why);
+                probe.fail(PingError.IO);
+            }
+        });
     }
 
-    /** Collects one ping() call's probes and completes when all have settled. */
-    private static final class PendingCall {
-        final CompletableFuture<PingResult> future = new CompletableFuture<>();
-        final InetAddress target;
-        final int expected;
-        final List<PingProbe> settled = new ArrayList<>();
-
-        PendingCall(InetAddress target, int expected) {
-            this.target = target;
-            this.expected = expected;
-        }
-
-        void settle(PingProbe probe) {
-            List<PingProbe> finished = null;
-            synchronized (settled) {
-                settled.add(probe);
-                if (settled.size() >= expected) {
-                    finished = new ArrayList<>(settled);
-                }
+    /** Claims each probe with {@code remove(key, value)} before failing it (§13.23-B, S13). */
+    private void failPending(String why) {
+        inFlight.forEach((key, probe) -> {
+            if (inFlight.remove(key, probe)) {
+                probe.call.setDetail(why);
+                probe.fail(PingError.IO);
             }
-            if (finished != null) {
-                finished.sort(Comparator.comparingInt(PingProbe::sequence));
-                future.complete(PingResult.of(target, finished, null));
-            }
-        }
+        });
     }
 }

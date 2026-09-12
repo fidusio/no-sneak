@@ -161,6 +161,32 @@ public class NMapScannerTest {
         assertEquals("https", new ScanReport.PortReport(443, PortState.OPEN).serviceName());
     }
 
+    /**
+     * The probe stage visits every potentially-open TCP port but only a UDP port that answered:
+     * an open|filtered UDP port is one nobody spoke to, and probing it costs a timeout per probe
+     * for no evidence.
+     */
+    @Test
+    public void udpPortsAreProbedOnlyWhenTheyAnswered() {
+        ScanReport.PortReport tcpOpen = new ScanReport.PortReport(22, PortState.OPEN);
+        ScanReport.PortReport tcpOpenFiltered = new ScanReport.PortReport(23, PortState.OPEN_FILTERED);
+        ScanReport.PortReport tcpClosed = new ScanReport.PortReport(24, PortState.CLOSED);
+        ScanReport.PortReport udpOpen = new ScanReport.PortReport(53, PortState.OPEN);
+        udpOpen.protocol = "udp";
+        ScanReport.PortReport udpSilent = new ScanReport.PortReport(123, PortState.OPEN_FILTERED);
+        udpSilent.protocol = "udp";
+        ScanReport.PortReport udpClosed = new ScanReport.PortReport(161, PortState.CLOSED);
+        udpClosed.protocol = "udp";
+
+        assertTrue(NMapScanner.probeable(tcpOpen));
+        assertTrue(NMapScanner.probeable(tcpOpenFiltered));
+        assertFalse(NMapScanner.probeable(tcpClosed));
+        assertTrue(NMapScanner.probeable(udpOpen));
+        assertFalse(NMapScanner.probeable(udpSilent));
+        assertFalse(NMapScanner.probeable(udpClosed));
+        assertEquals("domain", udpOpen.serviceName(), "the well-known name is looked up per protocol");
+    }
+
     private static void assertArrayEquals(int[] expected, int[] actual) {
         org.junit.jupiter.api.Assertions.assertArrayEquals(expected, actual,
                 "expected " + Arrays.toString(expected) + " but was " + Arrays.toString(actual));

@@ -205,6 +205,206 @@ public class GradeTest {
         assertEquals("B", g.letter(), "static-RSA key exchange has no forward secrecy");
     }
 
+    /** 3DES is weak (B); RC4, NULL and anonymous suites are insecure and cost a further step (C). */
+    @Test
+    public void observedTripleDesIsWeakAndRc4IsInsecure() {
+        Grade weak = Grade.of(healthy().addCipherSuite("TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA").build());
+        assertEquals("B", weak.letter(), "3DES is a weak suite");
+
+        Grade rc4 = Grade.of(healthy().addCipherSuite("TLS_RSA_WITH_RC4_128_SHA").build());
+        assertEquals("C", rc4.letter(), "RC4 needs no downgrade to exploit");
+        assertTrue(rc4.advisories().stream().anyMatch(a -> a.contains("insecure cipher suite")));
+
+        Grade anon = Grade.of(healthy().addCipherSuite("TLS_DH_anon_WITH_AES_128_GCM_SHA256").build());
+        assertEquals("C", anon.letter(), "anonymous key exchange is insecure");
+        Grade nul = Grade.of(healthy().addCipherSuite("TLS_RSA_WITH_NULL_SHA256").build());
+        assertEquals("C", nul.letter(), "NULL encryption is insecure");
+    }
+
+    /** The structured suite record does not change the letter; the flat name list drives the rule. */
+    @Test
+    public void structuredCipherDetailsDoNotAlterTheLetter() {
+        Grade g = Grade.of(healthy()
+                .addCipherSuite("TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384", "TLSv1.2", "STRONG", "ECDHE", true)
+                .build());
+        assertEquals("A", g.letter());
+    }
+
+    // ==================== CBC: forward-secret vs static-RSA (P24) ====================
+
+    /**
+     * SSL Labs keeps A for ECDHE + AES-CBC: the defect is MAC-then-encrypt, not the key
+     * exchange, so it is worth telling the operator but not worth a letter. Before this rule the
+     * widened enumeration sweep dropped every ECDHE-CBC server from A to B.
+     */
+    @Test
+    public void forwardSecretCbcIsAnAdvisoryNotACap() {
+        Grade g = Grade.of(healthy()
+                .addCipherSuite("TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384", "TLSv1.2", "ACCEPTABLE", "ECDHE", true)
+                .addCipherSuite("TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA", "TLSv1.2", "ACCEPTABLE", "ECDHE", true)
+                .build());
+        assertEquals("A", g.letter(), "forward-secret CBC must not cap the letter");
+        assertEquals(1, g.advisories().size(), "expected one CBC advisory, got " + g.advisories());
+        String adv = g.advisories().get(0);
+        assertTrue(adv.startsWith("CBC suites accepted: "), adv);
+        assertTrue(adv.contains("TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384"), adv);
+        assertTrue(adv.contains("TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA"), adv);
+        assertTrue(adv.contains("prefer AEAD"), adv);
+    }
+
+    /** Static-RSA CBC is capped at B exactly once — the missing forward secrecy is the defect. */
+    @Test
+    public void staticRsaCbcCapsAtBWithoutACbcAdvisory() {
+        Grade g = Grade.of(healthy()
+                .addCipherSuite("TLS_RSA_WITH_AES_128_CBC_SHA", "TLSv1.2", "WEAK", "RSA", false)
+                .build());
+        assertEquals("B", g.letter());
+        assertFalse(g.advisories().stream().anyMatch(a -> a.startsWith("CBC suites accepted")),
+                "a static-RSA CBC suite is already capped; it must not also be advised as CBC");
+    }
+
+    @Test
+    public void insecureSuiteCapsAtC() {
+        Grade g = Grade.of(healthy()
+                .addCipherSuite("TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA", "TLSv1.2", "ACCEPTABLE", "ECDHE", true)
+                .addCipherSuite("TLS_RSA_EXPORT_WITH_RC4_40_MD5", "TLSv1.0", "INSECURE", "RSA", false)
+                .build());
+        assertEquals("C", g.letter(), "an insecure suite outranks the weak and CBC tiers");
+        assertTrue(g.advisories().stream().anyMatch(a -> a.contains("insecure cipher suite")));
+    }
+
+    @Test
+    public void aeadOnlyServerKeepsItsLetter() {
+        Grade g = Grade.of(healthy()
+                .addCipherSuite("TLS_AES_128_GCM_SHA256", "TLSv1.3", "STRONG", "ECDHE", true)
+                .addCipherSuite("TLS_CHACHA20_POLY1305_SHA256", "TLSv1.3", "STRONG", "ECDHE", true)
+                .addCipherSuite("TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384", "TLSv1.2", "STRONG", "ECDHE", true)
+                .build());
+        assertEquals("A", g.letter());
+        assertTrue(g.advisories().isEmpty(), "AEAD-only: nothing to advise, got " + g.advisories());
+    }
+
+    /** An older or hand-built result carries only names; forward secrecy is inferred from them. */
+    @Test
+    public void flatListFallbackStillClassifies() {
+        Grade fsCbc = Grade.of(healthy().addCipherSuite("TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384").build());
+        assertEquals("A", fsCbc.letter(), "ECDHE in the name means forward secrecy");
+        assertTrue(fsCbc.advisories().stream().anyMatch(a -> a.startsWith("CBC suites accepted")));
+
+        Grade dheCbc = Grade.of(healthy().addCipherSuite("TLS_DHE_RSA_WITH_AES_128_CBC_SHA256").build());
+        assertEquals("A", dheCbc.letter(), "DHE in the name means forward secrecy");
+
+        Grade staticEcdh = Grade.of(healthy().addCipherSuite("TLS_ECDH_RSA_WITH_AES_128_GCM_SHA256").build());
+        assertEquals("B", staticEcdh.letter(), "static ECDH (no E) has no forward secrecy");
+
+        Grade tls13 = Grade.of(healthy().addCipherSuite("TLS_AES_256_GCM_SHA384").build());
+        assertEquals("A", tls13.letter(), "TLS 1.3 suites are always ephemeral");
+    }
+
+    /**
+     * Mirrors the live xlogistx.io:443 result of 2026-09-11: TLS 1.3 only, three TLS 1.3 suites
+     * plus seven ECDHE_ECDSA suites of which four are CBC, PQC hybrid, TRUSTED, eight groups.
+     * SSL Labs grades this A; so do we, with one CBC advisory.
+     */
+    @Test
+    public void liveXlogistxShapeGradesA() {
+        ProbeResult r = ProbeResult.builder("xlogistx.io", 443, "tcp")
+                .service("https")
+                .tlsState(ProbeResult.TlsState.DIRECT_TLS)
+                .pqcStatus(ProbeResult.PqcStatus.PQC)
+                .tlsVersion("TLSv1.3")
+                .certValidity("VALID")
+                .certChainTrust("TRUSTED", "ok")
+                .certChainTimeValid(true)
+                .certHostname(true, null)
+                .revocation("GOOD", "crl")
+                .addProtocolVersion("TLSv1.3")
+                .addCipherSuite("TLS_AES_256_GCM_SHA384", "TLSv1.3", "STRONG", "ECDHE", true)
+                .addCipherSuite("TLS_AES_128_GCM_SHA256", "TLSv1.3", "STRONG", "ECDHE", true)
+                .addCipherSuite("TLS_CHACHA20_POLY1305_SHA256", "TLSv1.3", "STRONG", "ECDHE", true)
+                .addCipherSuite("TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384", "TLSv1.2", "STRONG", "ECDHE", true)
+                .addCipherSuite("TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256", "TLSv1.2", "STRONG", "ECDHE", true)
+                .addCipherSuite("TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256", "TLSv1.2", "STRONG", "ECDHE", true)
+                .addCipherSuite("TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384", "TLSv1.2", "ACCEPTABLE", "ECDHE", true)
+                .addCipherSuite("TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256", "TLSv1.2", "ACCEPTABLE", "ECDHE", true)
+                .addCipherSuite("TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA", "TLSv1.2", "ACCEPTABLE", "ECDHE", true)
+                .addCipherSuite("TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA", "TLSv1.2", "ACCEPTABLE", "ECDHE", true)
+                .addSupportedGroup("X25519MLKEM768").addSupportedGroup("x25519").addSupportedGroup("x448")
+                .addSupportedGroup("secp256r1").addSupportedGroup("secp384r1").addSupportedGroup("secp521r1")
+                .addSupportedGroup("ffdhe2048").addSupportedGroup("ffdhe3072")
+                .complete(true)
+                .build();
+        Grade g = Grade.of(r);
+        assertEquals("A", g.letter());
+        assertEquals(Grade.Pqc.PQC_READY, g.pqc());
+        assertEquals(Grade.TrustVerdict.TRUSTED, g.verdict());
+        assertEquals(1, g.advisories().size(), g.advisories().toString());
+        assertTrue(g.advisories().get(0).startsWith("CBC suites accepted"));
+    }
+
+    /**
+     * Mirrors the live google.com:443 result of 2026-09-11: TLS 1.0 through 1.3, static-RSA
+     * suites and 3DES observed. TLS 1.0 alone is C; the weak suites cannot make it worse.
+     */
+    @Test
+    public void liveGoogleShapeGradesC() {
+        ProbeResult r = ProbeResult.builder("google.com", 443, "tcp")
+                .service("https")
+                .tlsState(ProbeResult.TlsState.DIRECT_TLS)
+                .pqcStatus(ProbeResult.PqcStatus.PQC)
+                .tlsVersion("TLSv1.3")
+                .certValidity("VALID")
+                .certChainTrust("TRUSTED", "ok")
+                .certChainTimeValid(true)
+                .certHostname(true, null)
+                .revocation("GOOD", "crl")
+                .addProtocolVersion("TLSv1.3").addProtocolVersion("TLSv1.2")
+                .addProtocolVersion("TLSv1.1").addProtocolVersion("TLSv1.0")
+                .addCipherSuite("TLS_AES_256_GCM_SHA384", "TLSv1.3", "STRONG", "ECDHE", true)
+                .addCipherSuite("TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256", "TLSv1.2", "STRONG", "ECDHE", true)
+                .addCipherSuite("TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA", "TLSv1.2", "ACCEPTABLE", "ECDHE", true)
+                .addCipherSuite("TLS_RSA_WITH_AES_128_GCM_SHA256", "TLSv1.2", "WEAK", "RSA", false)
+                .addCipherSuite("TLS_RSA_WITH_AES_128_CBC_SHA", "TLSv1.2", "WEAK", "RSA", false)
+                .addCipherSuite("TLS_RSA_WITH_3DES_EDE_CBC_SHA", "TLSv1.2", "WEAK", "RSA", false)
+                .addSupportedGroup("X25519MLKEM768").addSupportedGroup("x25519").addSupportedGroup("secp256r1")
+                .complete(true)
+                .build();
+        Grade g = Grade.of(r);
+        assertEquals("C", g.letter());
+        assertEquals(Grade.TrustVerdict.TRUSTED, g.verdict());
+        assertTrue(g.advisories().stream().anyMatch(a -> a.startsWith("CBC suites accepted")
+                        && a.contains("TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA")
+                        && !a.contains("TLS_RSA_WITH_AES_128_CBC_SHA")),
+                "only the forward-secret CBC suite is advised; static-RSA ones are capped instead: " + g.advisories());
+    }
+
+    // ==================== Named groups ====================
+
+    @Test
+    public void acceptingAHybridGroupRaisesNoAdvisory() {
+        Grade g = Grade.of(healthy().addSupportedGroup("X25519MLKEM768").addSupportedGroup("x25519").build());
+        assertEquals("A", g.letter());
+        assertTrue(g.advisories().isEmpty(), "a PQC-capable server needs no group advisory");
+    }
+
+    @Test
+    public void acceptingOnlyClassicalGroupsIsReportOnly() {
+        Grade g = Grade.of(healthy()
+                .pqcStatus(ProbeResult.PqcStatus.CLASSICAL)
+                .addSupportedGroup("x25519").addSupportedGroup("secp256r1")
+                .build());
+        assertEquals("A", g.letter(), "named groups never move the letter");
+        assertTrue(g.advisories().stream().anyMatch(a -> a.contains("no post-quantum key-exchange group")),
+                "expected the group advisory, got " + g.advisories());
+    }
+
+    @Test
+    public void noGroupEnumerationMeansNoGroupAdvisory() {
+        Grade g = Grade.of(healthy().pqcStatus(ProbeResult.PqcStatus.CLASSICAL).build());
+        assertFalse(g.advisories().stream().anyMatch(a -> a.contains("key-exchange group")),
+                "without enumeration evidence there is nothing to advise on");
+    }
+
     /**
      * A shallow probe records the negotiated version but never runs the enumeration sweep, so
      * there is no evidence that weak versions are disabled. It must not be handed an A.

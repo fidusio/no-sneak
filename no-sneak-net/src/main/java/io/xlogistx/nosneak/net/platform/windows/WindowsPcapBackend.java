@@ -2,9 +2,16 @@ package io.xlogistx.nosneak.net.platform.windows;
 
 import io.xlogistx.nosneak.net.codecs.*;
 import io.xlogistx.nosneak.net.common.*;
+import io.xlogistx.nosneak.net.pcap.InjectionProbe;
 import io.xlogistx.nosneak.net.pcap.PcapHandle;
 import io.xlogistx.nosneak.net.util.Identifiers;
 import io.xlogistx.nosneak.net.util.IpMacCache;
+import io.xlogistx.nosneak.net.util.PendingCall;
+import io.xlogistx.nosneak.net.util.PendingResolve;
+import io.xlogistx.nosneak.net.util.PassiveLearning;
+import io.xlogistx.nosneak.net.util.SweepDriver;
+import io.xlogistx.nosneak.net.util.SweepTargets;
+import org.zoxweb.shared.util.RateController;
 
 import java.net.Inet4Address;
 import java.net.Inet6Address;
@@ -34,26 +41,6 @@ import java.util.function.Consumer;
  */
 public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
 
-    /**
-     * Broader than it looks necessary, and simpler than what it replaced.
-     * <p>
-     * {@code "arp or icmp or icmp6"} captured exactly what this backend answers with
-     * and nothing it could LEARN from — so a host that ignores broadcast ARP had no
-     * way of telling us where it lived, and needed Windows' neighbour table to be
-     * findable at all (§13.16). Since {@code icmp} is a subset of {@code ip} and
-     * {@code icmp6} of {@code ip6}, widening to every IP frame is one clause shorter
-     * AND gives {@link #learnSender} something to work with: every frame names its
-     * sender's MAC in the Ethernet header, whatever it carries.
-     * <p>
-     * This is the Linux {@code ETH_P_IP} learner's coverage (§13.13), reached through
-     * the one handle this backend already owns rather than a second socket.
-     * <p>
-     * The cost is capture volume, and the risk that matters is not CPU but DROPS: a
-     * full pcap buffer loses frames, and a lost ARP reply is a resolve that times out.
-     * Non-promiscuous capture bounds this — we see broadcast, multicast, and traffic
-     * addressed to us, not the whole segment.
-     */
-    private static final String BPF_FILTER = "arp or ip or ip6";
     private static final Duration ARP_RETRANSMIT = Duration.ofSeconds(1);
     private static final int ARP_ATTEMPTS = 3;
 
@@ -68,11 +55,19 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
 
     private final ConcurrentHashMap<InetAddress, PendingResolve> pendingResolves =
             new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<Long, PendingProbe> pendingProbes = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, PendingCall.Probe> pendingProbes = new ConcurrentHashMap<>();
     private final CopyOnWriteArrayList<Consumer<ObservedNeighbor>> observers =
             new CopyOnWriteArrayList<>();
 
-    private final boolean canInject;
+    /** Why the driver refused the open()-time injection probe, or null when it injects. */
+    private final String injectionFailure;
+
+    /** Injection is a driver property: one accepted probe at open() answers it for both families. */
+    private boolean canInject() {
+        return injectionFailure == null && readerFailure == null;
+    }
+    /** Why the reader thread died, or null while it lives (§13.23-B). */
+    private volatile String readerFailure;
     private final AtomicBoolean closed = new AtomicBoolean();
     private volatile boolean running = true;
     private volatile Thread reader;
@@ -82,13 +77,13 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
 
     private WindowsPcapBackend(NicBinding binding, PcapHandle handle, IpMacCache cache,
                                ScheduledExecutorService scheduler, ExecutorService dispatcher,
-                               boolean canInject) {
+                               String injectionFailure) {
         this.binding = binding;
         this.handle = handle;
         this.cache = cache;
         this.scheduler = scheduler;
         this.dispatcher = dispatcher;
-        this.canInject = canInject;
+        this.injectionFailure = injectionFailure;
     }
 
     /**
@@ -103,39 +98,45 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
                                           ExecutorService dispatcher,
                                           boolean promiscuous) throws DiscoveryException {
         PcapHandle handle = PcapHandle.open(binding.backendDeviceName(), promiscuous);
+        // Every construction stage is guarded, not just the filter: a RuntimeException
+        // from the injection probe or the reader start used to leak the pcap_t and its
+        // shared arena (§13.7's leak, at a different line — §13.23-B, M8).
+        WindowsPcapBackend backend = null;
         try {
-            handle.setFilter(BPF_FILTER);
-        } catch (DiscoveryException e) {
-            handle.close();
+            handle.setFilter(PcapHandle.DISCOVERY_FILTER);
+            // Probe injection once (§8.6): pcap_sendpacket is driver-dependent and
+            // commonly fails on wireless adapters, which capture fine but cannot send.
+            // A failure marks the binding capture-only rather than failing the open.
+            String injectionFailure = probeInjection(binding, handle);
+            backend = new WindowsPcapBackend(binding, handle, IpMacCache.withDefaults(256),
+                                             scheduler, dispatcher, injectionFailure);
+            backend.startReader();
+            return backend;
+        } catch (DiscoveryException | RuntimeException e) {
+            if (backend != null) {
+                backend.close();
+            } else {
+                handle.close();
+            }
             throw e;
         }
-
-        // Probe injection once (§8.6): pcap_sendpacket is driver-dependent and
-        // commonly fails on wireless adapters, which capture fine but cannot send.
-        // A failure marks the binding capture-only rather than failing the open.
-        boolean canInject = binding.supportsLayer2() && probeInjection(binding, handle);
-
-        WindowsPcapBackend backend =
-                new WindowsPcapBackend(binding, handle, IpMacCache.withDefaults(256),
-                                       scheduler, dispatcher, canInject);
-        backend.startReader();
-        return backend;
     }
 
     /**
-     * Sends a broadcast ARP request for our OWN address — the same thing duplicate
-     * address detection does, so it is unremarkable on the wire — purely to learn
-     * whether the driver accepts injected frames.
+     * Injects one frame for our OWN address — an ARP request when the binding has IPv4,
+     * a Neighbor Solicitation when it has only IPv6 ({@link InjectionProbe}) — purely to
+     * learn whether the driver accepts injected frames.
+     *
+     * @return null when the driver accepted it; otherwise why not, which {@code resolve()}
+     *         reports as the detail behind {@code UNSUPPORTED}
      */
-    private static boolean probeInjection(NicBinding binding, PcapHandle handle) {
-        Optional<NicBinding.LocalAddress> self = binding.ipv4().stream().findFirst();
-        if (self.isEmpty()) {
-            return false;
+    private static String probeInjection(NicBinding binding, PcapHandle handle) {
+        byte[] frame = InjectionProbe.frameFor(binding);
+        if (frame == null) {
+            return "no hardware address or no IP address on " + binding.javaName()
+                    + " to originate an injection probe from";
         }
-        byte[] own = self.get().address().getAddress();
-        byte[] arp = ArpPacket.request(binding.hardwareAddress(), own, own);
-        return handle.send(EthernetFrame.build(MacAddress.BROADCAST, binding.hardwareAddress(),
-                                               EthernetFrame.ETHERTYPE_ARP, arp));
+        return handle.trySend(frame);
     }
 
     /**
@@ -155,18 +156,38 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
 
     @Override
     public DiscoveryCapabilities capabilities() {
-        boolean l2 = canInject && binding.supportsLayer2();
+        return capabilitiesOf(injectionFailure == null, readerFailure == null, binding,
+                              Iphlpapi.isAvailable());
+    }
+
+    /**
+     * PURE, so it can be pinned without a handle ({@code WindowsCapabilitiesTest}).
+     * <p>
+     * Injection is a driver property; the family is an address property (§13.23-B, M7):
+     * {@code activeArp}/{@code icmpV4} need injection AND an IPv4 address, {@code activeNdp}/
+     * {@code icmpV6} injection AND an IPv6 address. Everything the reader serves reports
+     * false once the reader has died — the one way this record changes after publication.
+     *
+     * @param canInject         the open()-time probe was accepted
+     * @param readerAlive       the capture thread is still running
+     * @param iphlpapiAvailable {@code GetBestRoute2} is bound, so off-link targets route
+     */
+    static DiscoveryCapabilities capabilitiesOf(boolean canInject, boolean readerAlive,
+                                                NicBinding binding, boolean iphlpapiAvailable) {
+        boolean l2 = readerAlive && canInject && binding.supportsLayer2();
+        boolean v4 = l2 && !binding.ipv4().isEmpty();
+        boolean v6 = l2 && !binding.ipv6().isEmpty();
         return new DiscoveryCapabilities(
-                l2,      // icmpV4  - crafted over pcap, so it needs injection
-                l2,      // icmpV6
-                l2,      // activeArp
-                l2,      // activeNdp
-                true,    // passiveObservation - capture works even when injection does not
-                true,    // rawEvidence - pcap gives whole frames
-                true,    // ttlAvailable - the IPv4 header is right there
+                v4,      // icmpV4  - crafted over pcap, so it needs injection and a v4 source
+                v6,      // icmpV6
+                v4,      // activeArp
+                v6,      // activeNdp
+                readerAlive,   // passiveObservation - NON-promiscuous capture, even without injection
+                readerAlive,   // rawEvidence - whole frames reach completeProbe
+                readerAlive,   // ttlAvailable - the IPv4 header is right there
                 // Off-link needs the gateway's MAC, hence its IP, hence iphlpapi.
                 // With GetBestRoute2 bound this backend routes; without it, on-link only.
-                l2 && Iphlpapi.isAvailable(),
+                l2 && iphlpapiAvailable,
                 DiscoveryCapabilities.Backend.WINDOWS_PCAP);
     }
 
@@ -185,23 +206,34 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
     public CompletableFuture<ResolveResult> resolve(InetAddress target, Duration timeout) {
         Instant started = Instant.now();
 
+        // Our own address FIRST, before the cache: no host on the segment answers an ARP
+        // request for it, since the only owner is the one asking — and nothing another
+        // host says about our address (a spoofer, or our own captured probe before
+        // §13.23) may ever answer for it.
+        if (binding.isLocalAddress(target) && binding.supportsLayer2()) {
+            return CompletableFuture.completedFuture(ResolveResult.resolved(
+                    target, binding.hardwareAddress(), ResolveSource.LOCAL_INTERFACE,
+                    Duration.between(started, Instant.now())));
+        }
         Optional<IpMacCache.Entry> cached = cache.get(target);
         if (cached.isPresent() && cached.get().hasMac()) {
             return CompletableFuture.completedFuture(ResolveResult.resolved(
                     target, cached.get().mac(), ResolveSource.CACHE_HIT,
                     Duration.between(started, Instant.now())));
         }
-        // Our own address: no host on the segment answers an ARP request for it, since
-        // the only owner is the one asking. Without this the call burns the whole
-        // timeout for a MAC held since construction.
-        if (binding.isLocalAddress(target) && binding.supportsLayer2()) {
-            return CompletableFuture.completedFuture(ResolveResult.resolved(
-                    target, binding.hardwareAddress(), ResolveSource.LOCAL_INTERFACE,
-                    Duration.between(started, Instant.now())));
-        }
-        if (!capabilities().activeArp()) {
+        // A dead reader cannot see a reply: say so now, with its cause, rather than
+        // injecting and reporting TIMEOUT at full budget (§13.23-B, S14).
+        String dead = readerFailure;
+        if (dead != null) {
             return CompletableFuture.completedFuture(ResolveResult.notResolved(
-                    target, ResolveOutcome.UNSUPPORTED, Duration.between(started, Instant.now())));
+                    target, ResolveOutcome.ERROR, Duration.between(started, Instant.now()), dead));
+        }
+        boolean v4 = target instanceof Inet4Address;
+        if (v4 ? !capabilities().activeArp() : !capabilities().activeNdp()) {
+            // Refused injection carries the driver's words; a missing family does not.
+            return CompletableFuture.completedFuture(ResolveResult.notResolved(
+                    target, ResolveOutcome.UNSUPPORTED, Duration.between(started, Instant.now()),
+                    injectionFailure));
         }
         if (!binding.isOnLink(target)) {
             // Nothing off-link can answer ARP, and we cannot route to it either.
@@ -212,7 +244,7 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
         // Deduplicate: a second caller joins the first caller's future rather than
         // emitting a second solicitation (spec section 9.2).
         PendingResolve pending = pendingResolves.computeIfAbsent(target,
-                k -> new PendingResolve(target, started));
+                k -> new PendingResolve(target, started, dispatcher));
         CompletableFuture<ResolveResult> future = pending.await();
 
         if (pending.started.compareAndSet(false, true)) {
@@ -246,30 +278,60 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
      * measured failing.
      */
     private void solicit(InetAddress target, int attempt) {
-        if (target instanceof Inet4Address) {
-            byte[] arp = ArpPacket.request(binding.hardwareAddress(),
-                    binding.sourceFor(target).orElseThrow().address().getAddress(),
-                    target.getAddress());
-            Optional<MacAddress> hint = unicastHint(target);
-            hint.ifPresent(mac -> handle.send(
-                    EthernetFrame.build(mac, binding.hardwareAddress(),
-                                        EthernetFrame.ETHERTYPE_ARP, arp)));
-            if (hint.isEmpty() || attempt == 0) {
-                handle.send(EthernetFrame.build(MacAddress.BROADCAST, binding.hardwareAddress(),
-                                                EthernetFrame.ETHERTYPE_ARP, arp));
+        String refused = target instanceof Inet4Address
+                ? sendArp(target, attempt)
+                : sendNeighborSolicitation(target);
+        if (refused != null) {
+            // Per resolve, never per backend: the entry that owns this solicitation is the
+            // only one entitled to report its failure (§13.23-B).
+            PendingResolve entry = pendingResolves.get(target);
+            if (entry != null) {
+                entry.recordSendError(refused);
             }
-        } else {
-            byte[] src = binding.sourceFor(target).orElseThrow().address().getAddress();
-            byte[] ns = Icmp6.neighborSolicitation(src, target.getAddress(),
-                                                   binding.hardwareAddress());
-            byte[] dst = Icmp6.solicitedNodeMulticast(target.getAddress());
-            // Hop limit 255 is mandatory here (RFC 4861 7.1.1) - the builder pins it.
-            byte[] ip = Ipv6Header.forNeighborDiscovery(src, dst, ns.length);
-            byte[] payload = concat(ip, ns);
-            handle.send(EthernetFrame.build(Icmp6.solicitedNodeMac(target.getAddress()),
-                                            binding.hardwareAddress(),
-                                            EthernetFrame.ETHERTYPE_IPV6, payload));
         }
+    }
+
+    /** @return null when at least one frame was accepted; otherwise why none was */
+    private String sendArp(InetAddress target, int attempt) {
+        Optional<NicBinding.LocalAddress> source = binding.sourceFor(target);
+        if (source.isEmpty()) {
+            return "no local IPv4 address on " + binding.javaName()
+                    + " to use as the ARP sender address";
+        }
+        byte[] arp = ArpPacket.request(binding.hardwareAddress(),
+                                       source.get().address().getAddress(), target.getAddress());
+        Optional<MacAddress> hint = unicastHint(target);
+        // Either frame reaching the wire is enough for the solicitation to count as
+        // sent — the point of sending both is that they fail independently.
+        String unicast = hint.map(mac -> handle.trySend(EthernetFrame.build(
+                mac, binding.hardwareAddress(), EthernetFrame.ETHERTYPE_ARP, arp))).orElse(null);
+        boolean accepted = hint.isPresent() && unicast == null;
+        String broadcast = null;
+        if (hint.isEmpty() || attempt == 0) {
+            broadcast = handle.trySend(EthernetFrame.build(MacAddress.BROADCAST,
+                    binding.hardwareAddress(), EthernetFrame.ETHERTYPE_ARP, arp));
+            accepted |= broadcast == null;
+        }
+        return accepted ? null : (broadcast != null ? broadcast : unicast);
+    }
+
+    /** @return null when the frame was accepted; otherwise why not */
+    private String sendNeighborSolicitation(InetAddress target) {
+        Optional<NicBinding.LocalAddress> source = binding.sourceFor(target);
+        if (source.isEmpty()) {
+            return "no local IPv6 address on " + binding.javaName()
+                    + " to source a Neighbor Solicitation from";
+        }
+        byte[] src = source.get().address().getAddress();
+        byte[] ns = Icmp6.neighborSolicitation(src, target.getAddress(),
+                                               binding.hardwareAddress());
+        byte[] dst = Icmp6.solicitedNodeMulticast(target.getAddress());
+        // Hop limit 255 is mandatory here (RFC 4861 7.1.1) - the builder pins it.
+        byte[] ip = Ipv6Header.forNeighborDiscovery(src, dst, ns.length);
+        byte[] payload = concat(ip, ns);
+        return handle.trySend(EthernetFrame.build(Icmp6.solicitedNodeMac(target.getAddress()),
+                                                  binding.hardwareAddress(),
+                                                  EthernetFrame.ETHERTYPE_IPV6, payload));
     }
 
     /**
@@ -283,12 +345,12 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
      * entries carry none and are skipped, which also stops this reading back the
      * placeholder {@code resolve()} just wrote via {@code markIncomplete}.
      * <p>
-     * WINDOWS' NEIGHBOUR TABLE SECOND, and only because this backend has nothing
-     * better. Linux learns MACs off ordinary IPv4 traffic on a dedicated socket
-     * (§13.13) and so deleted its kernel-table reader; the single pcap handle here
-     * filters {@code "arp or icmp or icmp6"} and learns nothing from general traffic,
-     * so for a host that has never ARPed within earshot the cache is empty and
-     * {@code GetIpNetEntry2} is the difference between resolving and timing out.
+     * WINDOWS' NEIGHBOUR TABLE SECOND. The cache has learned from every IP frame the
+     * capture sees since §13.17 (the Linux {@code ETH_P_IP} learner's coverage, through
+     * {@link PcapHandle#DISCOVERY_FILTER}), so this fallback now covers only a QUIET
+     * host — one Windows has talked to but that has said nothing within earshot of
+     * this handle. For that host {@code GetIpNetEntry2} is still the difference between
+     * resolving and timing out.
      * <p>
      * The fallback is NOT written back into the cache: the cache means "seen on the
      * wire by us", and Windows' belief is not that. It only addresses the frame — the
@@ -322,16 +384,18 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
             }
             int retry = attempt;   // the loop variable is not effectively final
             scheduler.schedule(() -> {
-                if (pendingResolves.containsKey(target)) {
+                // Identity, not key: a retry armed for THIS resolve must never solicit
+                // on behalf of a later resolve of the same address.
+                if (pendingResolves.get(target) == pending) {
                     solicit(target, retry);
                 }
             }, at, TimeUnit.MILLISECONDS);
         }
         scheduler.schedule(() -> {
-            PendingResolve dropped = pendingResolves.remove(target);
-            if (dropped != null) {
-                dropped.completeAll(ResolveResult.notResolved(target, ResolveOutcome.TIMEOUT,
-                        Duration.between(dropped.startedAt, Instant.now())));
+            // Claim THIS entry (remove(key, value)), so a deadline that fires late cannot
+            // tear down a newer resolve for the same target (§13.23-B).
+            if (pendingResolves.remove(target, pending)) {
+                pending.completeAll(pending.expire(Instant.now()));
             }
         }, budgetMs, TimeUnit.MILLISECONDS);
     }
@@ -350,7 +414,10 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
                     "Range " + range + " holds " + range.hostCount() + " addresses, above maxHosts "
                     + options.maxHosts() + "; use discoverIpv6Segment for v6 segments"));
         }
-        List<InetAddress> targets = range.hosts().toList();
+        // SweepTargets withholds the interface's own network/broadcast addresses AND the
+        // range's own edges when the range is off-link or wider than the interface's
+        // prefix (§13.23-C); the summary's total is the probeable count.
+        List<InetAddress> targets = SweepTargets.probeable(binding, range);
         return sweepTargets(targets, options, onHost);
     }
 
@@ -379,33 +446,14 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
         AtomicInteger alive = new AtomicInteger();
         AtomicInteger macs = new AtomicInteger();
         AtomicInteger icmp = new AtomicInteger();
-        java.util.concurrent.Semaphore window =
-                new java.util.concurrent.Semaphore(options.maxInFlight());
-        // maxInFlight bounds how many probes are OUTSTANDING; the rate limiter
-        // bounds how fast they leave. They are different constraints (spec 3.5).
-        io.xlogistx.nosneak.net.util.RateLimiter pacer =
-                io.xlogistx.nosneak.net.util.RateLimiter.perSecond(options.maxPacketsPerSecond());
         int packetsPerHost = 1 + (options.doIcmp() ? options.pingCount() : 0);
-
-        List<CompletableFuture<Void>> all = new ArrayList<>(targets.size());
-        for (InetAddress target : targets) {
-            CompletableFuture<Void> one = CompletableFuture
-                    .completedFuture(null)
-                    .thenComposeAsync(ignored -> {
-                        try {
-                            window.acquire();
-                            io.xlogistx.nosneak.net.util.RateLimiter.acquire(
-                                    pacer, packetsPerHost);
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                            return CompletableFuture.completedFuture(null);
-                        }
-                        return sweepOne(target, options, onHost, alive, macs, icmp)
-                                .whenComplete((r, t) -> window.release());
-                    }, dispatcher);
-            all.add(one);
-        }
-        return CompletableFuture.allOf(all.toArray(CompletableFuture[]::new))
+        // Admission is event-driven (SweepDriver, §13.22): the window and the pacer are
+        // honoured without ever parking a pool thread, because the per-host timeouts
+        // run on that same pool.
+        RateController pacer = SweepDriver.pacer(options.maxPacketsPerSecond(), packetsPerHost);
+        return SweepDriver.run(targets.iterator(), options.maxInFlight(), pacer, scheduler,
+                               dispatcher,
+                               target -> sweepOne(target, options, onHost, alive, macs, icmp))
                 .thenApply(ignored -> new SweepSummary(targets.size(), alive.get(), macs.get(),
                         icmp.get(), Duration.between(started, Instant.now())));
     }
@@ -413,12 +461,8 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
     private CompletableFuture<Void> sweepOne(InetAddress target, SweepOptions options,
                                              Consumer<HostRecord> onHost, AtomicInteger alive,
                                              AtomicInteger macs, AtomicInteger icmp) {
-        // NEVER probe the local network or directed-broadcast address: an echo to
-        // a directed broadcast is answered by every host at once, which is
-        // amplification and reads as an attack on a security appliance.
-        if (binding.isNetworkOrBroadcast(target)) {
-            return CompletableFuture.completedFuture(null);
-        }
+        // Network and directed-broadcast addresses were already withheld by
+        // SweepTargets.probeable in sweep(); every target here may be probed.
         CompletableFuture<ResolveResult> mac = options.doMac()
                 ? resolve(target, options.perHostTimeout())
                 : CompletableFuture.completedFuture(
@@ -434,33 +478,19 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
                     : CompletableFuture.completedFuture(
                             PingResult.of(target, List.of(), null));
 
-            return pinged.thenAccept(result -> {
-                // observedOnWire, not reachable: our own address answers from local
-                // configuration without a packet, so it is alive but did not answer
-                // ICMP, and it has no RTT to report. Publishing avgRtt() there would
-                // print 0.000 ms, which reads as a real measurement.
-                boolean answeredIcmp = result.observedOnWire();
-                boolean up = haveMac || answeredIcmp;
-                if (!up) {
-                    return;
-                }
-                alive.incrementAndGet();
-                if (haveMac) {
-                    macs.incrementAndGet();
-                }
-                if (answeredIcmp) {
-                    icmp.incrementAndGet();
-                }
-                int ttl = result.probes().stream().filter(PingProbe::hasTtl)
-                                .mapToInt(PingProbe::ttlOrHopLimit).findFirst()
-                                .orElse(PingProbe.TTL_UNAVAILABLE);
-                HostRecord record = new HostRecord(
-                        target, resolved.mac(), answeredIcmp,
-                        result.measured() ? Optional.of(result.avgRtt()) : Optional.empty(),
-                        ttl, ttl > 0 ? TtlDistance.hopCount(ttl) : Optional.empty(),
-                        haveMac ? resolved.source() : null, Instant.now());
-                dispatcher.execute(() -> onHost.accept(record));
-            });
+            // HostRecord.fromProbes is the one record constructor every backend uses:
+            // icmpAlive from observedOnWire(), RTT only when measured() (§13.18, §13.23-C).
+            return pinged.thenAccept(result ->
+                HostRecord.fromProbes(target, resolved, result, Instant.now()).ifPresent(record -> {
+                    alive.incrementAndGet();
+                    if (record.mac().isPresent()) {
+                        macs.incrementAndGet();
+                    }
+                    if (record.icmpAlive()) {
+                        icmp.incrementAndGet();
+                    }
+                    dispatcher.execute(() -> onHost.accept(record));
+                }));
         });
     }
 
@@ -498,18 +528,30 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
         if (route.via() != this) {
             return route.via().ping(target, count, timeout);
         }
-        if (!capabilities().icmpV4()) {
-            return CompletableFuture.completedFuture(failedPing(target, count, PingError.IO));
+        String dead = readerFailure;
+        if (dead != null) {
+            return CompletableFuture.completedFuture(failedPing(target, count, PingError.IO, dead));
+        }
+        boolean v4 = target instanceof Inet4Address;
+        if (v4 ? !capabilities().icmpV4() : !capabilities().icmpV6()) {
+            return CompletableFuture.completedFuture(
+                    failedPing(target, count, PingError.IO, injectionFailure));
         }
 
         // Resolve the L2 NEXT HOP, which is the target itself when on-link and the
         // gateway when not. The IP header still carries the real destination.
         return resolve(route.l2Target(), timeout).thenCompose(resolved -> {
             if (!resolved.resolved()) {
-                return CompletableFuture.completedFuture(failedPing(target, count,
-                        ResolveOutcome.TIMEOUT == resolved.outcome()
-                                ? PingError.HOST_UNREACHABLE
-                                : PingError.NETWORK_UNREACHABLE));
+                // TIMEOUT: the wire was asked and nobody answered. ERROR: nothing could be
+                // asked (injection refused, reader dead) — an IO failure carrying the text.
+                // Anything else is a routing/capability refusal.
+                PingError error = switch (resolved.outcome()) {
+                    case TIMEOUT -> PingError.HOST_UNREACHABLE;
+                    case ERROR -> PingError.IO;
+                    default -> PingError.NETWORK_UNREACHABLE;
+                };
+                return CompletableFuture.completedFuture(
+                        failedPing(target, count, error, resolved.detail().orElse(null)));
             }
             return emitProbes(target, resolved.mac().orElseThrow(), count, timeout);
         });
@@ -592,11 +634,11 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
      * or a gateway that is itself not on-link for any injectable interface.
      */
     private Route routeFor(InetAddress target) {
-        if (binding.isOnLink(target) && canInject) {
+        if (binding.isOnLink(target) && canInject()) {
             return new Route(this, target);
         }
         for (WindowsPcapBackend peer : pingPeers) {
-            if (peer.canInject && peer.binding.isOnLink(target)) {
+            if (peer.canInject() && peer.binding.isOnLink(target)) {
                 return new Route(peer, target);
             }
         }
@@ -604,11 +646,11 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
         if (gateway == null) {
             return null;
         }
-        if (binding.isOnLink(gateway) && canInject) {
+        if (binding.isOnLink(gateway) && canInject()) {
             return new Route(this, gateway);
         }
         for (WindowsPcapBackend peer : pingPeers) {
-            if (peer.canInject && peer.binding.isOnLink(gateway)) {
+            if (peer.canInject() && peer.binding.isOnLink(gateway)) {
                 return new Route(peer, gateway);
             }
         }
@@ -617,12 +659,12 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
 
     private CompletableFuture<PingResult> emitProbes(InetAddress target, MacAddress destMac,
                                                      int count, Duration timeout) {
-        PendingCall call = new PendingCall(target, count);
+        PendingCall call = new PendingCall(target, count, dispatcher);
         boolean v4 = target instanceof Inet4Address;
-        // sourceFor(target) is empty for an OFF-LINK target - it has no address in
-        // our subnet - so fall back to this interface's own address of that family.
+        // sourceFor prefers the address whose prefix contains the target, then the
+        // family's first routable address, so it is non-empty for an OFF-LINK target
+        // too; it is empty only when this interface has no address of that family.
         byte[] src = binding.sourceFor(target)
-                .or(() -> (v4 ? binding.ipv4() : binding.ipv6()).stream().findFirst())
                 .orElseThrow(() -> new IllegalStateException(
                         "Interface " + binding.javaName() + " has no "
                         + (v4 ? "IPv4" : "IPv6") + " address to send from"))
@@ -630,26 +672,35 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
 
         // Probes are PIPELINED: all count requests go out immediately with
         // distinct sequence numbers, so worst-case wall time is one timeout.
-        for (int i = 0; i < count; i++) {
-            int seq = sequences.next();
-            long key = Identifiers.correlationKey(identifier, seq);
-            PendingProbe probe = new PendingProbe(call, seq, System.nanoTime());
-            pendingProbes.put(key, probe);
+        try {
+            for (int i = 0; i < count; i++) {
+                int seq = sequences.next();
+                long key = Identifiers.correlationKey(identifier, seq);
+                PendingCall.Probe probe = call.newProbe(seq, System.nanoTime());
+                pendingProbes.put(key, probe);
 
-            byte[] frame = v4
-                    ? buildIcmpV4Frame(src, target.getAddress(), destMac, seq)
-                    : buildIcmpV6Frame(src, target.getAddress(), destMac, seq);
-            if (!handle.send(frame)) {
-                pendingProbes.remove(key);
-                call.settle(PingProbe.failed(seq, PingError.IO));
-                continue;
-            }
-            ScheduledFuture<?> expiry = scheduler.schedule(() -> {
-                if (pendingProbes.remove(key) != null) {
-                    call.settle(PingProbe.failed(seq, PingError.TIMEOUT));
+                byte[] frame = v4
+                        ? buildIcmpV4Frame(src, target.getAddress(), destMac, seq)
+                        : buildIcmpV6Frame(src, target.getAddress(), destMac, seq);
+                String refused = handle.trySend(frame);
+                if (refused != null) {
+                    pendingProbes.remove(key, probe);
+                    call.setDetail(refused);
+                    probe.fail(PingError.IO);
+                    continue;
                 }
-            }, Math.max(1, timeout.toMillis()), TimeUnit.MILLISECONDS);
-            probe.expiry = expiry;
+                probe.expiry = scheduler.schedule(() -> {
+                    if (pendingProbes.remove(key, probe)) {
+                        probe.fail(PingError.TIMEOUT);
+                    }
+                }, Math.max(1, timeout.toMillis()), TimeUnit.MILLISECONDS);
+            }
+        } catch (RuntimeException e) {
+            // A probe registered but never sent (or never given a deadline) would leave
+            // the call incomplete forever (§13.23-E). Drop its map entry so a wrapped
+            // sequence cannot find it, then close every open slot with the cause.
+            pendingProbes.values().removeIf(p -> p.call == call && !p.isSettled());
+            call.failRemaining(PingError.IO, "ping aborted before every probe was sent: " + e);
         }
         return call.future;
     }
@@ -681,11 +732,15 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
     }
 
     private PingResult failedPing(InetAddress target, int count, PingError error) {
+        return failedPing(target, count, error, null);
+    }
+
+    private PingResult failedPing(InetAddress target, int count, PingError error, String detail) {
         List<PingProbe> probes = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
             probes.add(PingProbe.failed(i, error));
         }
-        return PingResult.of(target, probes, error);
+        return PingResult.of(target, probes, error, detail);
     }
 
     // ---- capture ----
@@ -706,7 +761,12 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
                 frame = handle.nextPacket();
             } catch (DiscoveryException e) {
                 if (running && !handle.isClosed()) {
-                    running = false;
+                    // Any DiscoveryException from nextPacket is fatal by construction
+                    // (PCAP_ERROR: the adapter went away, or the driver gave up). A
+                    // reader that dies silently leaves every caller to time out at full
+                    // budget; instead fail what is pending and degrade capabilities.
+                    failReader("pcap_next_ex on " + binding.backendDeviceName() + ": "
+                               + e.getMessage());
                 }
                 return;
             }
@@ -727,6 +787,12 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
         if (eth == null) {
             return;
         }
+        // Our own injected frames come back on the capture (the injection probe at
+        // open(), every solicitation, every echo). Nothing in them is a peer, and
+        // completeProbe only ever needs REPLIES, which carry the peer's MAC.
+        if (binding.hardwareAddress() != null && binding.hardwareAddress().equals(eth.src())) {
+            return;
+        }
         if (eth.isArp()) {
             onArp(eth, frame);
         } else if (eth.isIpv4()) {
@@ -739,20 +805,24 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
     private void onArp(EthernetFrame.View eth, byte[] frame) {
         ArpPacket.ArpView arp =
                 ArpPacket.parse(frame, eth.payloadOffset(), eth.payloadLength()).orElse(null);
-        if (arp == null || arp.sha().isZero()) {
+        if (arp == null) {
             return;
         }
         InetAddress sender = address(arp.spa());
-        if (sender == null) {
+        // The same guard as every other learner (§13.23): rejects a null or 0.0.0.0
+        // sender (RFC 5227 probes), a zero or multicast SHA, our own address or MAC,
+        // and an off-link sender whose frame carries the router's MAC.
+        if (!PassiveLearning.learnable(binding, sender, arp.sha())) {
             return;
         }
-        ResolveSource source = arp.isReply() ? ResolveSource.ACTIVE_ARP : ResolveSource.PASSIVE;
+        // ONE provenance for both the cache and the completion: ACTIVE_ARP only for a
+        // reply to our own solicitation; a request or gratuitous announcement may
+        // still satisfy a pending resolve (§4.2) but is reported as what it was.
+        ResolveSource source = PassiveLearning.arpProvenance(arp, pendingResolves.containsKey(sender));
         cache.observe(sender, arp.sha(), source);
-        completeResolve(sender, arp.sha(), ResolveSource.ACTIVE_ARP);
-
-        ObservationKind kind = arp.isGratuitous() ? ObservationKind.GRATUITOUS_ARP
-                : arp.isReply() ? ObservationKind.ARP_REPLY : ObservationKind.ARP_REQUEST;
-        notifyObservers(new ObservedNeighbor(sender, arp.sha(), kind, Instant.now()));
+        completeResolve(sender, arp.sha(), source);
+        notifyObservers(new ObservedNeighbor(sender, arp.sha(), PassiveLearning.arpKind(arp),
+                                             Instant.now()));
     }
 
     private void onIpv4(byte[] frame, EthernetFrame.View eth) {
@@ -785,7 +855,16 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
     private void onIpv6(byte[] frame, EthernetFrame.View eth) {
         Ipv6Header.View ip =
                 Ipv6Header.parse(frame, eth.payloadOffset(), eth.payloadLength()).orElse(null);
-        if (ip == null || ip.nextHeader() != Ipv6Header.NEXT_HEADER_ICMPV6) {
+        if (ip == null) {
+            return;
+        }
+        // BEFORE the next-header test and BEFORE the hop-255 gate: ANY IPv6 frame names
+        // its sender's MAC in the Ethernet header — an mDNS announcement, an echo reply
+        // at hop limit 64, a TCP segment. The hop-255 rule is RFC 4861's rule for ND
+        // MESSAGES and does not apply to a frame-header claim; the on-link guard is the
+        // defence here, as it is for IPv4 (§13.13, §13.23).
+        learnSender(address(ip.src16()), eth.src());
+        if (ip.nextHeader() != Ipv6Header.NEXT_HEADER_ICMPV6) {
             return;
         }
         int off = eth.payloadOffset() + Ipv6Header.LENGTH;
@@ -793,19 +872,20 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
         if (len <= 0) {
             return;
         }
+        // RFC 4861 7.1.1: an NS/NA whose hop limit is not 255 has crossed a router and
+        // must be discarded, whatever it claims. Proves the SENDER is on-link — not that
+        // the address it advertises is, which is what the guard below checks.
+        boolean nd = Ipv6Header.isValidNeighborDiscovery(ip);
 
         Icmp6.parseAdvertisement(frame, off, len).ifPresent(na -> {
-            // RFC 4861 7.1.1: an NA whose hop limit is not 255 has crossed a
-            // router and must be discarded, whatever it claims.
-            if (!Ipv6Header.isValidNeighborDiscovery(ip) || na.targetMac() == null) {
-                return;
-            }
             InetAddress target = address(na.targetIp16());
-            if (target == null) {
+            if (!nd || !PassiveLearning.learnable(binding, target, na.targetMac())) {
                 return;
             }
-            cache.observe(target, na.targetMac(), ResolveSource.ACTIVE_NDP);
-            completeResolve(target, na.targetMac(), ResolveSource.ACTIVE_NDP);
+            ResolveSource source =
+                    PassiveLearning.ndpProvenance(na, pendingResolves.containsKey(target));
+            cache.observe(target, na.targetMac(), source);
+            completeResolve(target, na.targetMac(), source);
             notifyObservers(new ObservedNeighbor(target, na.targetMac(),
                                                  ObservationKind.NDP_NA, Instant.now()));
         });
@@ -813,13 +893,11 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
         // A neighbour solicitation carries the sender's own link-layer address, and
         // NS is multicast so it reaches this port without promiscuous mode. Linux has
         // always learned from these; not doing so was the IPv6 half of the §13.16 gap.
+        // The guard also rejects the unspecified source duplicate address detection uses.
         Icmp6.parseSolicitation(frame, off, len).ifPresent(ns -> {
-            if (!Ipv6Header.isValidNeighborDiscovery(ip) || ns.sourceMac() == null) {
-                return;
-            }
             InetAddress source = address(ip.src16());
-            if (source == null || source.isAnyLocalAddress()) {
-                return;   // duplicate address detection solicits from the unspecified address
+            if (!nd || !PassiveLearning.learnable(binding, source, ns.sourceMac())) {
+                return;
             }
             cache.observe(source, ns.sourceMac(), ResolveSource.PASSIVE);
             notifyObservers(new ObservedNeighbor(source, ns.sourceMac(),
@@ -844,41 +922,16 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
      * is Windows' belief rather than something we saw.
      */
     private void learnSender(InetAddress source, MacAddress frameSource) {
-        if (!learnable(binding, source, frameSource)) {
+        // The guard lives in util.PassiveLearning, shared by every backend and every
+        // learner (§13.23); its rules are what keep a passive sighting from becoming
+        // a WRONG answer rather than a missing one.
+        if (!PassiveLearning.learnable(binding, source, frameSource)) {
             return;
         }
         cache.observe(source, frameSource, ResolveSource.PASSIVE);
         if (pendingResolves.containsKey(source)) {
             solicit(source, 1);   // attempt >= 1: unicast only, we now have a hint
         }
-    }
-
-    /**
-     * Whether a frame's sender may be cached as a neighbour.
-     * <p>
-     * The guards are what keep passive learning from producing a WRONG entry, which
-     * matters more here than a missed one: {@code resolve()} serves the cache, so a
-     * bad entry is reported as a {@code CACHE_HIT} rather than merely wasting a frame.
-     * <ul>
-     *   <li>A multicast source MAC is invalid in a sent frame; it also covers
-     *       broadcast, whose first-octet bit is the same one.</li>
-     *   <li>An OFF-LINK source is the decisive one: its frames arrive bearing the
-     *       ROUTER's MAC, so caching that would claim a remote host lives at the
-     *       gateway's address. ARP is link-local by definition — only on-link
-     *       senders own the MAC that carried them.</li>
-     *   <li>Our own address never belongs to a neighbour, and 0.0.0.0 belongs to
-     *       nobody (DHCP discover).</li>
-     * </ul>
-     */
-    static boolean learnable(NicBinding binding, InetAddress source, MacAddress frameSource) {
-        return frameSource != null
-               && !frameSource.isZero()
-               && !frameSource.isMulticast()
-               && source != null
-               && !source.isAnyLocalAddress()
-               && !source.isMulticastAddress()
-               && binding.isOnLink(source)
-               && !binding.isLocalAddress(source);
     }
 
     private void completeResolve(InetAddress target, MacAddress mac, ResolveSource source) {
@@ -890,15 +943,12 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
     }
 
     private void completeProbe(int id, int seq, int ttl, byte[] frame) {
-        PendingProbe probe = pendingProbes.remove(Identifiers.correlationKey(id, seq));
+        PendingCall.Probe probe = pendingProbes.remove(Identifiers.correlationKey(id, seq));
         if (probe == null) {
             return;
         }
-        if (probe.expiry != null) {
-            probe.expiry.cancel(false);
-        }
         Duration rtt = Duration.ofNanos(System.nanoTime() - probe.sentAtNanos);
-        probe.call.settle(new PingProbe(seq, true, rtt, ttl, frame, false, false, Optional.empty()));
+        probe.settle(new PingProbe(seq, true, rtt, ttl, frame, false, false, Optional.empty()));
     }
 
     private void notifyObservers(ObservedNeighbor neighbor) {
@@ -941,16 +991,7 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
 
         // Pending futures complete NORMALLY with an error result, never
         // exceptionally - that would contradict the ping contract.
-        pendingResolves.values().forEach(p -> p.completeAll(
-                ResolveResult.notResolved(p.target, ResolveOutcome.ERROR, Duration.ZERO)));
-        pendingResolves.clear();
-        pendingProbes.forEach((key, probe) -> {
-            if (probe.expiry != null) {
-                probe.expiry.cancel(false);
-            }
-            probe.call.settle(PingProbe.failed(probe.sequence, PingError.IO));
-        });
-        pendingProbes.clear();
+        failPending("closed");
         observers.clear();
         // The scheduler and dispatcher are BORROWED - never shut them down here.
     }
@@ -973,78 +1014,32 @@ public final class WindowsPcapBackend implements HostDiscovery, ICMPPing {
     }
 
     /**
-     * Waiters on one in-flight solicitation, so a duplicate resolve joins rather than
-     * re-sends.
-     * <p>
-     * They share ONE {@link CompletableFuture}. A per-caller list leaves a window
-     * between the reader thread's {@code completeAll} — which completes the futures it
-     * can see, then clears the list — and a concurrent {@code resolve()} that has
-     * already taken this entry and is about to add its own future to it. That late
-     * future is completed by nobody, because the timeout task removes by key and finds
-     * the entry gone. In {@code sweep()} it feeds {@code allOf}, so the sweep hangs
-     * instead of failing. One shared future closes the window: {@code complete} is
-     * idempotent, and a caller arriving after completion observes the finished result.
+     * Fails every outstanding resolve and probe with {@code why}, claiming each entry
+     * with {@code remove(key, value)} first so a timeout task firing concurrently cannot
+     * settle the same probe twice (§13.23-B). Used by {@code close()} and by a reader
+     * that dies.
      */
-    private static final class PendingResolve {
-        final InetAddress target;
-        final Instant startedAt;
-        final AtomicBoolean started = new AtomicBoolean();
-        private final CompletableFuture<ResolveResult> result = new CompletableFuture<>();
-
-        PendingResolve(InetAddress target, Instant startedAt) {
-            this.target = target;
-            this.startedAt = startedAt;
-        }
-
-        /** A copy, so a caller cannot complete the shared future for everyone else. */
-        CompletableFuture<ResolveResult> await() {
-            return result.copy();
-        }
-
-        void completeAll(ResolveResult outcome) {
-            result.complete(outcome);
-        }
+    /**
+     * The reader is dead: record why, stop, and fail everything that was waiting on it.
+     * Runs on the dying reader thread — the same thread that completes futures today.
+     */
+    private void failReader(String why) {
+        readerFailure = why;
+        running = false;
+        failPending(why);
     }
 
-    private static final class PendingProbe {
-        final PendingCall call;
-        final int sequence;
-        final long sentAtNanos;
-        volatile ScheduledFuture<?> expiry;
-
-        PendingProbe(PendingCall call, int sequence, long sentAtNanos) {
-            this.call = call;
-            this.sequence = sequence;
-            this.sentAtNanos = sentAtNanos;
-        }
-    }
-
-    /** Collects the probes of one ping() call and completes when all have settled. */
-    private static final class PendingCall {
-        final CompletableFuture<PingResult> future = new CompletableFuture<>();
-        final InetAddress target;
-        final int expected;
-        final List<PingProbe> settled = java.util.Collections.synchronizedList(new ArrayList<>());
-
-        PendingCall(InetAddress target, int expected) {
-            this.target = target;
-            this.expected = expected;
-        }
-
-        void settle(PingProbe probe) {
-            boolean done;
-            synchronized (settled) {
-                settled.add(probe);
-                done = settled.size() >= expected;
+    private void failPending(String why) {
+        pendingResolves.forEach((target, pending) -> {
+            if (pendingResolves.remove(target, pending)) {
+                pending.completeAll(pending.abort(why));
             }
-            if (done) {
-                List<PingProbe> ordered;
-                synchronized (settled) {
-                    ordered = new ArrayList<>(settled);
-                }
-                ordered.sort(java.util.Comparator.comparingInt(PingProbe::sequence));
-                future.complete(PingResult.of(target, ordered, null));
+        });
+        pendingProbes.forEach((key, probe) -> {
+            if (pendingProbes.remove(key, probe)) {
+                probe.call.setDetail(why);
+                probe.fail(PingError.IO);
             }
-        }
+        });
     }
 }

@@ -7,14 +7,25 @@ package io.xlogistx.nosneak.net.common;
  * the ICMP fields report whether a pinger is wired in.
  * <p>
  * Constant for the lifetime of the object — {@link HostDiscoveryFactory}
- * finishes all wiring before publishing, so this never changes under a caller.
+ * finishes all wiring before publishing, so this never changes under a caller —
+ * with ONE exception (§13.23-B): a backend whose reader thread has died reports the
+ * capabilities that thread served as {@code false} from then on, and every operation
+ * that would have needed it fails at once with the reader's cause of death rather than
+ * timing out at full budget.
  * <p>
- * The point of this record is honest degradation: macOS genuinely cannot observe
- * passively and cannot report a TTL, and the API must say so rather than
- * silently returning empty results.
+ * The point of this record is honest degradation: macOS genuinely cannot report a TTL
+ * or raw evidence from its {@link HostDiscovery} half, and the API must say so rather
+ * than silently returning empty results.
  *
- * @param passiveObservation Linux yes, Windows yes via promiscuous mode, macOS NO
- * @param rawEvidence        full received packet bytes are available
+ * @param passiveObservation all three: Linux via AF_PACKET (promiscuous on the first
+ *                           {@code observe()}), Windows and macOS via NON-promiscuous
+ *                           pcap capture (broadcast, multicast and traffic addressed to
+ *                           us). Neither pcap backend upgrades to promiscuous at runtime:
+ *                           promiscuity is fixed at activation, and {@code observe()}
+ *                           only adds a subscriber
+ * @param rawEvidence        full received packet bytes are available — Linux IPv4 and
+ *                           Windows yes; macOS NO ({@code PingProbe.rawReply} is the only
+ *                           delivery path and the datagram ICMP socket fills it empty)
  * @param ttlAvailable       Linux IPv4 and Windows yes, otherwise NO. Exists so the
  *                           fingerprinting layer can distinguish "this host is far away"
  *                           from "this backend cannot tell you"

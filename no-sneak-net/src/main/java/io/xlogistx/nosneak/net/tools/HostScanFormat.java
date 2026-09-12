@@ -9,8 +9,10 @@ import io.xlogistx.nosneak.net.common.PingProbe;
 import io.xlogistx.nosneak.net.common.PingResult;
 import io.xlogistx.nosneak.net.common.ResolveResult;
 import io.xlogistx.nosneak.net.common.SweepSummary;
+import io.xlogistx.nosneak.net.util.IpMacCache;
 
 import java.time.Duration;
+import java.time.Instant;
 
 /**
  * Renders discovery results as text.
@@ -84,7 +86,8 @@ public final class HostScanFormat {
                                     millis(r.minRtt()), millis(r.avgRtt()),
                                     millis(r.maxRtt()), millis(r.stdDevRtt())));
         }
-        r.error().ifPresent(e -> sb.append(String.format("%nerror: %s", e)));
+        r.error().ifPresent(e -> sb.append(String.format("%nerror: %s%s", e,
+                r.detail().map(d -> " - " + d).orElse(""))));
         return sb.toString();
     }
 
@@ -114,7 +117,8 @@ public final class HostScanFormat {
                              r.target().getHostAddress(),
                              r.mac().map(Object::toString).orElse("-"),
                              r.outcome(),
-                             r.elapsed().toMillis() + " ms via " + r.source());
+                             r.elapsed().toMillis() + " ms via " + r.source()
+                                     + r.detail().map(d -> " - " + d).orElse(""));
     }
 
     /** One swept host: address, MAC, what proved it alive, and the RTT if any. */
@@ -129,6 +133,39 @@ public final class HostScanFormat {
     public static String neighbor(ObservedNeighbor n) {
         return String.format("  %-39s %-19s %s",
                              n.ip().getHostAddress(), n.mac(), n.kind());
+    }
+
+    /** Column header matching {@link #cacheEntry(IpMacCache.Entry, Instant)}. */
+    public static String cacheHeader() {
+        return String.format("  %-39s %-19s %-10s %-14s %9s %9s %s",
+                             "IP", "MAC", "STATE", "SOURCE", "FIRST", "LAST", "CONFLICTS");
+    }
+
+    /**
+     * One cached neighbour: what passive learning knows, including entries the frame-header
+     * learner recorded without ever announcing an event. Ages are relative to {@code now}.
+     */
+    public static String cacheEntry(IpMacCache.Entry e, Instant now) {
+        return String.format("  %-39s %-19s %-10s %-14s %9s %9s %d",
+                             e.ip().getHostAddress(),
+                             e.hasMac() ? e.mac().toString() : "-",
+                             e.state(),
+                             e.provenance() == null ? "-" : e.provenance(),
+                             age(e.firstSeen(), now),
+                             age(e.lastSeen(), now),
+                             e.conflictCount());
+    }
+
+    /** The two counts {@code observe} reports, which measure different things (§13.23-E). */
+    public static String observeSummary(int observations, int cached) {
+        return String.format("%d observation(s), %d neighbour(s) in cache", observations, cached);
+    }
+
+    private static String age(Instant then, Instant now) {
+        if (then == null) {
+            return "-";
+        }
+        return String.format("%.1fs ago", Duration.between(then, now).toMillis() / 1000.0);
     }
 
     public static String sweep(SweepSummary s) {

@@ -146,10 +146,24 @@ public record NicBinding(
         }
     }
 
-    /** The first local address in the same family as {@code target}, or empty. */
+    /**
+     * The local address to originate traffic to {@code target} from, or empty when
+     * this interface has no address of that family.
+     * <p>
+     * Preference, in order: the address whose prefix CONTAINS the target (on a NIC
+     * carrying two subnets, ARP for {@code 192.168.56.5} must go out as
+     * {@code 192.168.56.1}, not as the first address listed — §13.23-C); else the
+     * family's first non-link-local address (an off-link target reached through a
+     * gateway must not be sourced from {@code fe80::} or {@code 169.254.}); else the
+     * family's first address. So this is non-empty for an off-link target whenever
+     * the family has any address at all.
+     */
     public Optional<LocalAddress> sourceFor(InetAddress target) {
         List<LocalAddress> candidates = familyOf(target);
-        return candidates.isEmpty() ? Optional.empty() : Optional.of(candidates.get(0));
+        return candidates.stream().filter(a -> a.onLink(target)).findFirst()
+                .or(() -> candidates.stream()
+                        .filter(a -> !a.address().isLinkLocalAddress()).findFirst())
+                .or(() -> candidates.stream().findFirst());
     }
 
     /** True when any local address of the matching family has {@code target} on-link. */

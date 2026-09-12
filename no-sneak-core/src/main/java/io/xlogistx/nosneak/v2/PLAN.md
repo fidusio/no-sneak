@@ -287,9 +287,10 @@
 > multi-format render on example.com. **Decisions:** raw scans → reject (real ones via a JDK-25
 > Panama-FFM native layer later); OS detect → open-port heuristic; ARP/remote-MAC → deferred to the
 > same FFM layer (no JDK API exposes a remote MAC — layer-2/ARP; won't ship the `arp`-command
-> shell-out). **Remaining (see PROBE-CONFIG.md deferrals):** UDP scan `-sU`, timing templates
-> `-T0..T5`, `T:`/`U:`/`--top-ports` port specs, `-sS` raw-scan rejection wiring, `-O` heuristic,
-> and the FFM native layer (SYN scans + OS fingerprint + ARP/MAC).
+> shell-out). **Remaining (see PROBE-CONFIG.md deferrals):** UDP scan `-sU` and an `-O`-style
+> heuristic under its own flag. Timing templates, `T:`/`U:`/`--top-ports`/`--open` port specs and
+> raw-scan rejection shipped on 2026-09-11. The FFM raw-socket layer is out of scope by design
+> (repo-root `CLAUDE.md`, *Operating scope*); ARP/MAC shipped separately in `no-sneak-net`.
 >
 > Verified: pending scheduler tasks drop to 0 right after delivery (example.com:80: was pending 8s,
 > now `pendingSchedTasks=0` at +8ms; `isBusy` false at ~578ms) — so the REST `Checker` no longer
@@ -338,7 +339,8 @@
 > Verified: DNS-over-UDP identified on 8.8.8.8 / 1.1.1.1 / 9.9.9.9:53.
 >
 > **Phase 8 core done:** NIO-native TCP-connect port scanner (`v2/nmap`: `PortScanCallback`,
-> `PortScanner`, `NMap`) — concurrent connect scan via `Fanout`, then the probe engine
+> `NMapScanner`, `NMap` — there is no `PortScanner` class; the staged scanner is `NMapScanner`)
+> — concurrent connect scan gated by `RateLimiter`/`ParallelJoin`, then the probe engine
 > identifies service+version on each OPEN port (the nmap→probe seam). Verified: scanme.nmap.org
 > → 22 ssh OpenSSH_6.6.1p1, 80 http Apache/2.4.7; github.com → 22/80/443. **Deferred (polish):**
 > output formatters (JSON/XML/CSV/grepable), host discovery, top-ports/`--open`/UDP-scan flags,
@@ -480,7 +482,7 @@ src/main/resources/probes/   (all 17 JSON copied verbatim; + parallel/full-scan 
 | **5** ✅ | **Parallel** fan-out + join (`Fanout`+`ParallelJoin`) on native StateMachine pool-executor dispatch | new | **DONE** — 6 children on 6 distinct threads concurrently (barrier-gated), join exactly-once |
 | **6** ✅ | Scanner analysis as actions: `CertChain`(opsec), `Revocation`(stapled OCSP), `VersionEnum` + `CipherEnum` (parallel via Fanout, `v2/analysis`) | scanners copied | **DONE** — https-scan on cloudflare:443 → full fact set (pqc, cert-chain-trust, revocation, versions, ciphers); enumeration discriminates. Active OCSP+CRL deferred to Phase 9 (HTTP stack) |
 | **7** ✅ | UDP: `ProbeUDPCallback` + udp connect/send/expect, `--udp` CLI, `dns.json` | new (uses zoxweb UDP) | **DONE** — DNS-over-UDP on 8.8.8.8 / 1.1.1.1 / 9.9.9.9:53; QUIC/DTLS-ready seam |
-| **8** ◑ | **nmap** core: NIO TCP-connect scanner (`PortScanCallback`/`PortScanner`/`NMap`) + port-scan → ProbeEngine seam. Deferred: output formatters, discovery, top-ports/UDP-scan flags | new (dead v1 nmap dropped) | **DONE** — scanme.nmap.org → 22 ssh OpenSSH_6.6.1p1, 80 http Apache/2.4.7; github 22/80/443 |
+| **8** ◑ | **nmap** core: NIO TCP-connect scanner (`PortScanCallback`/`NMapScanner`/`NMap`) + port-scan → ProbeEngine seam. Since shipped: output formatters, discovery, `--top-ports`/`T:`/`U:`/`--open`/`-T0..T5`, raw-scan rejection. Deferred: UDP scan | new (dead v1 nmap dropped) | **DONE** — scanme.nmap.org → 22 ssh OpenSSH_6.6.1p1, 80 http Apache/2.4.7; github 22/80/443 |
 | **9** ◑ | **services + tools**: `service/Checker` (REST on v2 engine, bounded wait), `tools/*` (C2 NPE fixed) | services+tools copied | **DONE** — compile-clean, DMTool usage verified. Active OCSP deferred (needs HTTP-server context) |
 | **10** ✅ | Grading layer (`v2/grade/Grade`) + full-scan definition + **parity gate** | new | **DONE** — v1≡v2 service/version/tls/pqc across 6 services; v2 adds cert-chain/revocation/enum/grade. **v2 ≥ v1** |
 

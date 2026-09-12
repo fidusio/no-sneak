@@ -1,15 +1,21 @@
 package io.xlogistx.nosneak.v2.nmap.output;
 
 import io.xlogistx.nosneak.v2.grade.Grade;
-import io.xlogistx.nosneak.v2.nmap.PortState;
 import io.xlogistx.nosneak.v2.nmap.ScanReport;
 import io.xlogistx.nosneak.v2.nmap.ScanReport.HostReport;
 import io.xlogistx.nosneak.v2.nmap.ScanReport.PortReport;
+import io.xlogistx.nosneak.v2.nmap.ScanReport.RenderSelection;
 import io.xlogistx.nosneak.v2.result.ProbeResult;
 
-import java.util.List;
-
-/** nmap-style human-readable console output. */
+/**
+ * nmap-style human-readable console output.
+ * <p>
+ * Every listed port carries its {@code reason} (why the scanner decided the state — {@code
+ * connected}, {@code conn-refused}, {@code reset}, {@code no-route}, {@code timeout}, {@code
+ * error:<Class>}) and, when measured, the connect round-trip time. Which ports are listed and
+ * which are collapsed into "Not shown" is {@link HostReport#portsToRender}'s decision, shared by
+ * every formatter, so {@code --open} means the same thing in all of them.
+ */
 public final class NormalFormatter implements OutputFormatter {
 
     @Override
@@ -36,18 +42,18 @@ public final class NormalFormatter implements OutputFormatter {
             sb.append('\n');
             if (h.mac != null) sb.append("  MAC Address: ").append(h.mac).append('\n');
 
-            List<PortReport> open = h.openPorts();
-            int closed = h.countState(PortState.CLOSED);
-            int filtered = h.countState(PortState.FILTERED);
-            if (closed + filtered > 0) {
-                sb.append("  Not shown: ").append(closed).append(" closed, ")
-                  .append(filtered).append(" filtered\n");
+            RenderSelection sel = h.portsToRender(r.config);
+            String notShown = sel.notShown();
+            if (notShown != null) {
+                sb.append("  Not shown: ").append(notShown).append('\n');
             }
-            if (!open.isEmpty()) {
-                sb.append(String.format("  %-10s %-9s %s%n", "PORT", "STATE", "SERVICE / VERSION / TLS"));
-                for (PortReport p : open) {
-                    sb.append(String.format("  %-10s %-9s %s%n",
-                            p.port + "/" + p.protocol, p.state.label(), service(p)));
+            if (!sel.shown.isEmpty()) {
+                sb.append(String.format("  %-10s %-9s %-14s %-8s %s%n",
+                        "PORT", "STATE", "REASON", "RTT", "SERVICE / VERSION / TLS"));
+                for (PortReport p : sel.shown) {
+                    sb.append(String.format("  %-10s %-9s %-14s %-8s %s%n",
+                            p.port + "/" + p.protocol, p.state.label(),
+                            p.reason == null ? "" : p.reason, rtt(p), service(p)));
                 }
             }
             if (h.osGuess != null) {
@@ -61,6 +67,11 @@ public final class NormalFormatter implements OutputFormatter {
         }
         sb.append('\n').append(summary(r)).append('\n');
         return sb.toString();
+    }
+
+    /** {@code "25 ms"}, or empty when the port never connected (a connect scan measures nothing else). */
+    static String rtt(PortReport p) {
+        return p.rttMs >= 0 ? p.rttMs + " ms" : "";
     }
 
     /** Closing stats line: what was scanned, what answered, and how long it took. */

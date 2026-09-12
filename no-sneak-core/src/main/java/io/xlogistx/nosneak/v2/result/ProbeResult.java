@@ -116,8 +116,15 @@ public class ProbeResult {
     private final List<CertInfo> certChain;
     private final List<String> supportedProtocolVersions;
     private final List<String> supportedCipherSuites;
+    private final List<CipherSuiteInfo> supportedCipherSuiteDetails;
+    private final String serverCipherPreference;
+    private final String serverCipherPreferenceMode;
+    private final List<String> supportedGroups;
+    private final String serverGroupPreference;
     private final String revocationStatus;
     private final String revocationMethod;
+    private final String revocationDate;
+    private final String revocationReason;
 
     private ProbeResult(Builder b) {
         this.host = b.host;
@@ -155,8 +162,15 @@ public class ProbeResult {
         this.certChain = b.certChain;
         this.supportedProtocolVersions = b.supportedProtocolVersions;
         this.supportedCipherSuites = b.supportedCipherSuites;
+        this.supportedCipherSuiteDetails = b.supportedCipherSuiteDetails;
+        this.serverCipherPreference = b.serverCipherPreference;
+        this.serverCipherPreferenceMode = b.serverCipherPreferenceMode;
+        this.supportedGroups = b.supportedGroups;
+        this.serverGroupPreference = b.serverGroupPreference;
         this.revocationStatus = b.revocationStatus;
         this.revocationMethod = b.revocationMethod;
+        this.revocationDate = b.revocationDate;
+        this.revocationReason = b.revocationReason;
     }
 
     public String getHost() { return host; }
@@ -222,6 +236,30 @@ public class ProbeResult {
     /** Certificate revocation status (GOOD / REVOKED / UNKNOWN / …), or {@code null}. */
     public String getRevocationStatus() { return revocationStatus; }
 
+    /** How revocation was established: {@code stapled}, {@code ocsp}, {@code crl}, {@code none}, or {@code <method>-unreachable}. */
+    public String getRevocationMethod() { return revocationMethod; }
+
+    /** ISO-8601 revocation instant when the status is REVOKED and the responder/CRL gave one. */
+    public String getRevocationDate() { return revocationDate; }
+
+    /** RFC 5280 CRLReason name when the status is REVOKED (UNSPECIFIED when none was given). */
+    public String getRevocationReason() { return revocationReason; }
+
+    /** Accepted suites with their version, strength, key exchange and forward secrecy; empty when not enumerated. */
+    public List<CipherSuiteInfo> getSupportedCipherSuiteDetails() { return supportedCipherSuiteDetails; }
+
+    /** The suite the server picked when offered every accepted suite at once, or {@code null}. */
+    public String getServerCipherPreference() { return serverCipherPreference; }
+
+    /** {@code server} when the pick did not change with the client's order, {@code client} when it did, {@code only-one-accepted} when there was nothing to compare. */
+    public String getServerCipherPreferenceMode() { return serverCipherPreferenceMode; }
+
+    /** TLS 1.3 named groups the server completed a handshake on (best first), or an empty list. */
+    public List<String> getSupportedGroups() { return supportedGroups; }
+
+    /** The group the server chose when the main handshake offered them all, or {@code null}. */
+    public String getServerGroupPreference() { return serverGroupPreference; }
+
     /** Render as an {@link NVGenericMap} for the record layer / JSON. */
     public NVGenericMap toNVGenericMap() {
         NVGenericMap nvgm = new NVGenericMap("ProbeResult");
@@ -249,6 +287,8 @@ public class ProbeResult {
         if (certHostnameMessage != null) nvgm.add("cert-hostname-message", certHostnameMessage);
         if (revocationStatus != null) nvgm.add("revocation-status", revocationStatus);
         if (revocationMethod != null) nvgm.add("revocation-method", revocationMethod);
+        if (revocationDate != null) nvgm.add("revocation-date", revocationDate);
+        if (revocationReason != null) nvgm.add("revocation-reason", revocationReason);
         if (supportedProtocolVersions != null && !supportedProtocolVersions.isEmpty()) {
             nvgm.add(new org.zoxweb.shared.util.NVStringList("supported-protocol-versions",
                     supportedProtocolVersions));
@@ -257,6 +297,26 @@ public class ProbeResult {
             nvgm.add(new org.zoxweb.shared.util.NVStringList("supported-cipher-suites",
                     supportedCipherSuites));
         }
+        if (supportedCipherSuiteDetails != null && !supportedCipherSuiteDetails.isEmpty()) {
+            NVGenericMapList suites = new NVGenericMapList("supported-cipher-suite-details");
+            for (CipherSuiteInfo s : supportedCipherSuiteDetails) {
+                NVGenericMap sm = new NVGenericMap();
+                sm.add("name", s.name);
+                if (s.version != null) sm.add("version", s.version);
+                if (s.strength != null) sm.add("strength", s.strength);
+                if (s.keyExchange != null) sm.add("key-exchange", s.keyExchange);
+                // String, not NVBoolean: a `false` boolean vanishes from the JSON (see above).
+                sm.add("forward-secrecy", s.forwardSecrecy ? "YES" : "NO");
+                suites.add(sm);
+            }
+            nvgm.add(suites);
+        }
+        if (serverCipherPreference != null) nvgm.add("server-cipher-preference", serverCipherPreference);
+        if (serverCipherPreferenceMode != null) nvgm.add("server-cipher-preference-mode", serverCipherPreferenceMode);
+        if (supportedGroups != null && !supportedGroups.isEmpty()) {
+            nvgm.add(new org.zoxweb.shared.util.NVStringList("supported-groups", supportedGroups));
+        }
+        if (serverGroupPreference != null) nvgm.add("server-group-preference", serverGroupPreference);
         nvgm.add("tls-state", tlsState.name());
         nvgm.add("pqc-status", pqcStatus.name());
         if (tlsVersion != null) nvgm.add("tls-version", tlsVersion);
@@ -318,6 +378,32 @@ public class ProbeResult {
                 + " complete=" + complete + (note != null ? " note=" + note : "") + "}";
     }
 
+    /** One server-accepted cipher suite, as observed by {@code enumerate-ciphers}. Facts only. */
+    public static final class CipherSuiteInfo {
+        public final String name;
+        /** The protocol version it was accepted at ({@code TLSv1.3} / {@code TLSv1.2}). */
+        public final String version;
+        /** {@code STRONG} / {@code ACCEPTABLE} / {@code WEAK} / {@code INSECURE} / {@code UNKNOWN} (opsec's classification). */
+        public final String strength;
+        /** {@code ECDHE} / {@code DHE} / {@code RSA} / … from the suite name; {@code ECDHE/DHE} for TLS 1.3. */
+        public final String keyExchange;
+        public final boolean forwardSecrecy;
+
+        public CipherSuiteInfo(String name, String version, String strength, String keyExchange,
+                               boolean forwardSecrecy) {
+            this.name = name;
+            this.version = version;
+            this.strength = strength;
+            this.keyExchange = keyExchange;
+            this.forwardSecrecy = forwardSecrecy;
+        }
+
+        @Override
+        public String toString() {
+            return name + "[" + version + " " + strength + " " + keyExchange + (forwardSecrecy ? " FS" : "") + "]";
+        }
+    }
+
     public static Builder builder(String host, int port, String transport) {
         return new Builder(host, port, transport);
     }
@@ -362,8 +448,15 @@ public class ProbeResult {
         private final List<CertInfo> certChain = new ArrayList<>();
         private final List<String> supportedProtocolVersions = new ArrayList<>();
         private final List<String> supportedCipherSuites = new ArrayList<>();
+        private final List<CipherSuiteInfo> supportedCipherSuiteDetails = new ArrayList<>();
+        private String serverCipherPreference;
+        private String serverCipherPreferenceMode;
+        private final List<String> supportedGroups = new ArrayList<>();
+        private String serverGroupPreference;
         private String revocationStatus;
         private String revocationMethod;
+        private String revocationDate;
+        private String revocationReason;
 
         private Builder(String host, int port, String transport) {
             this.host = host;
@@ -468,9 +561,55 @@ public class ProbeResult {
             return this;
         }
 
+        /**
+         * Add a server-accepted cipher suite with its observed version and opsec's strength
+         * classification. Keeps the flat name list in step (deduped, insertion order).
+         */
+        public Builder addCipherSuite(String name, String version, String strength, String keyExchange,
+                                      boolean forwardSecrecy) {
+            if (name == null || name.isEmpty()) {
+                return this;
+            }
+            addCipherSuite(name);
+            for (CipherSuiteInfo existing : supportedCipherSuiteDetails) {
+                if (existing.name.equals(name) && java.util.Objects.equals(existing.version, version)) {
+                    return this;
+                }
+            }
+            supportedCipherSuiteDetails.add(new CipherSuiteInfo(name, version, strength, keyExchange, forwardSecrecy));
+            return this;
+        }
+
+        /** The suite the server picked when offered every accepted suite, and whether its order or ours decided it. */
+        public Builder serverCipherPreference(String suite, String mode) {
+            this.serverCipherPreference = suite;
+            this.serverCipherPreferenceMode = mode;
+            return this;
+        }
+
+        /** Add a TLS 1.3 named group the server completed a handshake on (deduped, insertion order). */
+        public Builder addSupportedGroup(String group) {
+            if (group != null && !group.isEmpty() && !supportedGroups.contains(group)) {
+                supportedGroups.add(group);
+            }
+            return this;
+        }
+
+        public Builder serverGroupPreference(String group) {
+            this.serverGroupPreference = group;
+            return this;
+        }
+
         public Builder revocation(String status, String method) {
+            return revocation(status, method, null, null);
+        }
+
+        /** Revocation status with the date and reason a responder or CRL supplied (both nullable). */
+        public Builder revocation(String status, String method, String date, String reason) {
             this.revocationStatus = status;
             this.revocationMethod = method;
+            this.revocationDate = date;
+            this.revocationReason = reason;
             return this;
         }
 

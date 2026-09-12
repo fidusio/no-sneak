@@ -33,7 +33,7 @@ public final class ProbeDefinitionLoader {
             "connect", "send", "expect", "reconnect", "starttls",
             "tls-connect", "tls-handshake", "pqc-check", "tls-facts",
             "cert-chain-validate", "revocation-check",
-            "enumerate-versions", "enumerate-ciphers",
+            "enumerate-versions", "enumerate-ciphers", "enumerate-groups",
             "record", "done", "fail"));
 
     /** Actions that terminate the state machine (no outgoing transitions required). */

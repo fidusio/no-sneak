@@ -13,7 +13,8 @@
     "certchain":  { "action": "cert-chain-validate", "on": { "done": "revocation" } },
     "revocation": { "action": "revocation-check", "on": { "done": "versions" } },
     "versions":   { "action": "enumerate-versions", "on": { "done": "ciphers" } },
-    "ciphers":    { "action": "enumerate-ciphers", "on": { "done": "record" } },
+    "ciphers":    { "action": "enumerate-ciphers", "on": { "done": "groups" } },
+    "groups":     { "action": "enumerate-groups", "on": { "done": "record" } },
     "record":     { "action": "record", "note": "https-scan", "on": { "done": "done" } },
     "done":      { "action": "done" },
     "fail":      { "action": "fail" }

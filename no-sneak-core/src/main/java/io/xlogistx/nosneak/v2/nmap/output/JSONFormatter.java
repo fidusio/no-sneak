@@ -1,12 +1,21 @@
 package io.xlogistx.nosneak.v2.nmap.output;
 
-import io.xlogistx.nosneak.v2.grade.Grade;
 import io.xlogistx.nosneak.v2.nmap.ScanReport;
-import io.xlogistx.nosneak.v2.nmap.ScanReport.HostReport;
-import io.xlogistx.nosneak.v2.nmap.ScanReport.PortReport;
-import io.xlogistx.nosneak.v2.result.ProbeResult;
+import org.zoxweb.server.util.GSONUtil;
 
-/** JSON output (self-contained writer with proper string escaping). */
+import java.io.IOException;
+import java.io.UncheckedIOException;
+
+/**
+ * JSON output: the report's {@link ScanReport#toNVGenericMap()} rendered by the house
+ * serialiser, the same way {@code ProbeResult} and the REST endpoint render theirs.
+ * <p>
+ * This used to be a hand-written writer with its own string escaper (a straight port of v1's).
+ * Two JSON serialisers in one module meant two places for escaping bugs and two shapes to keep
+ * in sync; now the shape is declared once, on the report, and Gson does the escaping. Absent
+ * facts are absent, not {@code null}: an unmeasured RTT has no {@code rttMs} key, a host with
+ * no MAC has no {@code mac} key.
+ */
 public final class JSONFormatter implements OutputFormatter {
 
     @Override
@@ -16,75 +25,14 @@ public final class JSONFormatter implements OutputFormatter {
 
     @Override
     public String render(ScanReport r) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("{\n");
-        sb.append("  \"scanner\": \"XNMap\",\n");
-        sb.append("  \"startTimeMs\": ").append(r.startTimeMs).append(",\n");
-        sb.append("  \"durationMs\": ").append(r.durationMs()).append(",\n");
-        sb.append("  \"targets\": ").append(r.hosts.size()).append(",\n");
-        sb.append("  \"up\": ").append(r.hostsUp()).append(",\n");
-        sb.append("  \"hosts\": [\n");
-        for (int i = 0; i < r.hosts.size(); i++) {
-            HostReport h = r.hosts.get(i);
-            sb.append("    {\n");
-            kv(sb, "host", h.host, true);
-            kv(sb, "ip", h.ip, true);
-            kv(sb, "hostname", h.hostname, true);
-            sb.append("      \"up\": ").append(h.up).append(",\n");
-            kv(sb, "reason", h.reason, true);
-            kv(sb, "mac", h.mac, true);
-            kv(sb, "osGuess", h.osGuess, true);
-            sb.append("      \"ports\": [");
-            java.util.List<PortReport> open = h.openPorts();
-            for (int k = 0; k < open.size(); k++) {
-                PortReport p = open.get(k);
-                sb.append(k == 0 ? "\n" : ",\n").append("        {");
-                sb.append("\"port\": ").append(p.port);
-                sb.append(", \"protocol\": ").append(str(p.protocol));
-                sb.append(", \"state\": ").append(str(p.state.label()));
-                sb.append(", \"service\": ").append(str(p.serviceName()));
-                ProbeResult pr = p.probe;
-                if (pr != null && pr.isComplete()) {
-                    if (pr.getServiceVersion() != null) sb.append(", \"version\": ").append(str(pr.getServiceVersion()));
-                    if (pr.getTlsState() != ProbeResult.TlsState.NONE) {
-                        sb.append(", \"tls\": ").append(str(pr.getTlsState().name()));
-                        sb.append(", \"pqc\": ").append(str(String.valueOf(pr.getPqcStatus())));
-                        if (pr.getCertValidity() != null) sb.append(", \"certValidity\": ").append(str(pr.getCertValidity()));
-                        if (pr.getCertChainTrust() != null) sb.append(", \"certChainTrust\": ").append(str(pr.getCertChainTrust()));
-                        sb.append(", \"grade\": ").append(str(Grade.of(pr).toString()));
-                    }
-                } else if (p.banner != null && !p.banner.isEmpty()) {
-                    sb.append(", \"banner\": ").append(str(p.banner));
-                }
-                sb.append("}");
-            }
-            sb.append(open.isEmpty() ? "]\n" : "\n      ]\n");
-            sb.append(i + 1 < r.hosts.size() ? "    },\n" : "    }\n");
+        try {
+            // printNull=true: with it off, Gson also drops default-valued primitives, and a
+            // `cancelled: false` or `up: false` that vanishes is the tri-state trap this repo
+            // already met once (see the NVBoolean note in the memory and ProbeResult). The map
+            // never holds a null, so nothing else changes.
+            return GSONUtil.toJSONGenericMap(r.toNVGenericMap(), true, true, false);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
         }
-        sb.append("  ]\n}\n");
-        return sb.toString();
-    }
-
-    private static void kv(StringBuilder sb, String key, String val, boolean comma) {
-        sb.append("      \"").append(key).append("\": ").append(str(val)).append(comma ? ",\n" : "\n");
-    }
-
-    private static String str(String s) {
-        if (s == null) return "null";
-        StringBuilder b = new StringBuilder("\"");
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            switch (c) {
-                case '"':  b.append("\\\""); break;
-                case '\\': b.append("\\\\"); break;
-                case '\n': b.append("\\n"); break;
-                case '\r': b.append("\\r"); break;
-                case '\t': b.append("\\t"); break;
-                default:
-                    if (c < 0x20) b.append(String.format("\\u%04x", (int) c));
-                    else b.append(c);
-            }
-        }
-        return b.append('"').toString();
     }
 }

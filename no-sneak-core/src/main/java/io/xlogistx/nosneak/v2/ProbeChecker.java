@@ -3,7 +3,9 @@ package io.xlogistx.nosneak.v2;
 import io.xlogistx.nosneak.v2.model.ProbeDefinition;
 import io.xlogistx.nosneak.v2.model.ProbeDefinitionLoader;
 import io.xlogistx.nosneak.v2.result.ProbeResult;
+import io.xlogistx.nosneak.v2.runtime.ConnectionGate;
 import io.xlogistx.nosneak.v2.runtime.Fanout;
+import io.xlogistx.nosneak.v2.runtime.GatedProbeTransport;
 import io.xlogistx.nosneak.v2.runtime.ParallelJoin;
 import io.xlogistx.nosneak.v2.runtime.ProbeContext;
 import org.zoxweb.server.logging.LogWrapper;
@@ -20,6 +22,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
@@ -39,14 +42,111 @@ public class ProbeChecker {
 
     public static final LogWrapper log = new LogWrapper(ProbeChecker.class).setEnabled(false);
 
-    private final NIOSocket nioSocket;
+    /**
+     * How a candidate becomes a live {@link ProbeContext}. Production binds the injected
+     * {@link NIOSocket}; {@code ProbeCheckerTest} binds a scripted transport so the election can
+     * be driven without a wire.
+     */
+    interface ContextFactory {
+        ProbeContext create(IPAddress target, ProbeDefinition definition, int timeoutSec,
+                            Consumer<ProbeResult> callback);
+
+        /**
+         * Starts {@code ctx}. A factory that paces its contexts through a gate admits the start
+         * here, so an unadmitted candidate stays unstarted (no timers) until a slot frees.
+         */
+        default void start(ProbeContext ctx) {
+            ctx.start();
+        }
+
+        /**
+         * The sweep cancelled {@code ctx}. A cancelled context delivers nothing, so a factory
+         * that paces its contexts through a gate uses this to take their slots back.
+         */
+        default void cancelled(ProbeContext ctx) {
+        }
+    }
+
+    /** A factory whose every candidate and child socket is counted by a {@link GatedProbeTransport.Registry}. */
+    static ContextFactory gated(GatedProbeTransport.Registry registry, NIOSocket nioSocket) {
+        return new ContextFactory() {
+            @Override
+            public ProbeContext create(IPAddress target, ProbeDefinition definition, int timeoutSec,
+                                       Consumer<ProbeResult> callback) {
+                return registry.create(nioSocket, target, definition, timeoutSec, callback);
+            }
+
+            @Override
+            public void start(ProbeContext ctx) {
+                registry.start(ctx);
+            }
+
+            @Override
+            public void cancelled(ProbeContext ctx) {
+                registry.cancelled(ctx);
+            }
+        };
+    }
+
+    /** Null-tolerant: a checker built without a socket can still be inspected (catalog tests). */
+    private static Executor executorOf(NIOSocket nioSocket) {
+        return nioSocket == null ? null : nioSocket.getExecutor();
+    }
+
+    private final Executor executor;
+    private final ContextFactory contexts;
     private final List<ProbeDefinition> probes; // sorted by descending priority
     private int timeoutSec = 10;
     private boolean matchPorts = true;
 
+    /** A sweep that can be stopped before it delivers on its own. */
+    private interface Sweep {
+        void cancel();
+    }
+
+    /** Sweeps started and not yet delivered — what {@link #cancelAll()} tears down. */
+    private final java.util.Set<Sweep> live = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * Stops every sweep in flight: each cancels its candidate contexts (their slots return to the
+     * gate) and delivers exactly once — the match-first sweep with a {@code cancelled}
+     * none-identified result, the match-all sweep with whatever had completed — so a caller's
+     * barrier still drains. A sweep that already delivered is untouched. Idempotent.
+     */
+    public void cancelAll() {
+        for (Sweep s : live) {
+            s.cancel();
+        }
+    }
+
+    /** @return sweeps started and not yet delivered */
+    public int inFlightSweeps() {
+        return live.size();
+    }
+
     public ProbeChecker(NIOSocket nioSocket, List<ProbeDefinition> probes) {
-        this.nioSocket = nioSocket;
+        this(probes, executorOf(nioSocket),
+             (target, def, to, cb) -> new ProbeContext(nioSocket, target, def, to, cb));
+    }
+
+    /**
+     * A checker whose every socket — each candidate's connection and every version/cipher
+     * enumeration child — is admitted through {@code gate}, so a scan's in-flight cap bounds
+     * the probe stage too (PENDING-ISSUES P4). The election is unchanged: candidates still all
+     * launch, but a launch the gate cannot admit yet simply waits for a slot instead of opening.
+     *
+     * @param gate the scan's rate limiter; {@code null} means unpaced, as the two-arg constructor
+     */
+    public ProbeChecker(NIOSocket nioSocket, List<ProbeDefinition> probes, ConnectionGate gate) {
+        this(probes, executorOf(nioSocket),
+             gated(new GatedProbeTransport.Registry(gate), nioSocket));
+    }
+
+    /** The seam constructor: the fan-out executor and the context factory, injected. */
+    ProbeChecker(List<ProbeDefinition> probes, Executor executor, ContextFactory contexts) {
         this.probes = probes;
+        this.executor = executor;
+        this.contexts = contexts;
     }
 
     /** A checker over the bundled probe definitions. */
@@ -106,7 +206,7 @@ public class ProbeChecker {
     }
 
     /** Two-tier candidate ordering (declared-port matches first, then non-portScoped fallback). */
-    private List<ProbeDefinition> orderedCandidates(int port, String transport) {
+    List<ProbeDefinition> orderedCandidates(int port, String transport) {
         List<ProbeDefinition> tier1 = new ArrayList<>();
         List<ProbeDefinition> tier2 = new ArrayList<>();
         for (ProbeDefinition def : probes) {
@@ -134,7 +234,7 @@ public class ProbeChecker {
      * still-in-flight or complete turns out to be complete — no higher-priority candidate can then
      * overtake it. If every candidate resolves incomplete, none-identified is delivered.
      */
-    private final class FirstSweep {
+    private final class FirstSweep implements Sweep {
         private final String host;
         private final int port;
         private final String transport;
@@ -145,6 +245,34 @@ public class ProbeChecker {
         private final ProbeContext[] ctxs;
         private final AtomicBoolean delivered = new AtomicBoolean(false);
         private final Object lock = new Object();
+
+        /**
+         * Stop this sweep: every candidate is cancelled (lowest priority first, as in
+         * {@link #onResolve}) and a {@code cancelled} none-identified result is delivered once.
+         * No-op after delivery.
+         */
+        @Override
+        public void cancel() {
+            List<ProbeContext> toCancel;
+            synchronized (lock) {
+                if (delivered.get()) {
+                    return;
+                }
+                delivered.set(true);
+                toCancel = new ArrayList<>();
+                for (int k = ctxs.length - 1; k >= 0; k--) {
+                    if (ctxs[k] != null) {
+                        toCancel.add(ctxs[k]);
+                    }
+                }
+            }
+            live.remove(this);
+            for (ProbeContext c : toCancel) {
+                c.cancel();
+                contexts.cancelled(c);
+            }
+            callback.accept(cancelled(host, port, transport, candidates));
+        }
 
         FirstSweep(String host, int port, String transport, List<ProbeDefinition> candidates,
                    CallableConsumer<ProbeResult> callback) {
@@ -160,6 +288,7 @@ public class ProbeChecker {
         }
 
         void start() {
+            live.add(this);
             int n = candidates.size();
             // Construct every context up front (cheap, no I/O) so the ctxs[] array is fully
             // populated before any async resolution can run the election — that lets the election
@@ -171,7 +300,7 @@ public class ProbeChecker {
                 final int idx = i;
                 ProbeContext ctx = null;
                 try {
-                    ctx = new ProbeContext(nioSocket, new IPAddress(host, port),
+                    ctx = contexts.create(new IPAddress(host, port),
                             candidates.get(i), timeoutSec, r -> onResolve(idx, r));
                 } catch (Exception e) {
                     if (log.isEnabled()) log.getLogger().info("probe launch error: " + e.getMessage());
@@ -179,12 +308,12 @@ public class ProbeChecker {
                 ctxs[i] = ctx;
                 if (ctx != null) {
                     final ProbeContext c = ctx;
-                    starts.add(c::start);
+                    starts.add(() -> contexts.start(c));   // a gated factory admits the start
                 } else {
                     starts.add(() -> onResolve(idx, null)); // launch failure = incomplete resolution
                 }
             }
-            Fanout.dispatch(starts, nioSocket.getExecutor());
+            Fanout.dispatch(starts, executor);
         }
 
         private void onResolve(int i, ProbeResult r) {
@@ -207,16 +336,23 @@ public class ProbeChecker {
                 none = winnerIdx < 0; // every candidate resolved incomplete
                 delivered.set(true);
                 toCancel = new ArrayList<>();
-                for (int k = 0; k < ctxs.length; k++) {
+                // Lowest priority first. A gated candidate whose launch is still queued is always
+                // a later index than the ones holding slots; cancelling it first marks its launch
+                // dead before an earlier loser's cancellation hands a slot back and the gate would
+                // otherwise run that queued launch in the gap (ProbePacingTest).
+                for (int k = ctxs.length - 1; k >= 0; k--) {
                     if (k != winnerIdx && ctxs[k] != null) {
                         toCancel.add(ctxs[k]);
                     }
                 }
             }
-            // Cancel losers OUTSIDE the lock to avoid a lock/monitor ordering hazard with their
-            // own synchronized deliver()/cancel().
+            // Cancel losers OUTSIDE the lock. This callback itself already runs outside the
+            // winner's monitor (ProbeContext parks the result and delivers after releasing it),
+            // so no context monitor is held here at all.
+            live.remove(this);
             for (ProbeContext c : toCancel) {
                 c.cancel();
+                contexts.cancelled(c);   // a cancelled context delivers nothing: its slots come back here
             }
             callback.accept(none ? noneIdentified(host, port, transport, candidates) : results[winnerIdx]);
         }
@@ -226,14 +362,55 @@ public class ProbeChecker {
      * Concurrent match-all sweep: launch every candidate at once and, once all have resolved,
      * return every completed result in priority order (or none-identified if there were none).
      */
-    private final class AllSweep {
+    private final class AllSweep implements Sweep {
         private final String host;
         private final int port;
         private final String transport;
         private final List<ProbeDefinition> candidates;
         private final CallableConsumer<List<ProbeResult>> callback;
         private final ProbeResult[] results;
+        private final ProbeContext[] ctxs;
+        private final AtomicBoolean delivered = new AtomicBoolean(false);
         private final Object lock = new Object();
+
+        /** Stop this sweep and deliver what had completed so far (or {@code cancelled}), once. */
+        @Override
+        public void cancel() {
+            if (!delivered.compareAndSet(false, true)) {
+                return;
+            }
+            live.remove(this);
+            List<ProbeContext> toCancel = new ArrayList<>();
+            synchronized (lock) {
+                for (int k = ctxs.length - 1; k >= 0; k--) {
+                    if (ctxs[k] != null) {
+                        toCancel.add(ctxs[k]);
+                    }
+                }
+            }
+            // A cancelled context delivers nothing, so the barrier below would never fire:
+            // deliver here instead, with the completions already in hand.
+            for (ProbeContext c : toCancel) {
+                c.cancel();
+                contexts.cancelled(c);
+            }
+            List<ProbeResult> found = completed();
+            callback.accept(found.isEmpty()
+                    ? Collections.singletonList(cancelled(host, port, transport, candidates))
+                    : found);
+        }
+
+        private List<ProbeResult> completed() {
+            List<ProbeResult> found = new ArrayList<>();
+            synchronized (lock) {
+                for (ProbeResult pr : results) {
+                    if (pr != null && pr.isComplete()) {
+                        found.add(pr);
+                    }
+                }
+            }
+            return found;
+        }
 
         AllSweep(String host, int port, String transport, List<ProbeDefinition> candidates,
                  CallableConsumer<List<ProbeResult>> callback) {
@@ -243,9 +420,11 @@ public class ProbeChecker {
             this.candidates = candidates;
             this.callback = callback;
             this.results = new ProbeResult[candidates.size()];
+            this.ctxs = new ProbeContext[candidates.size()];
         }
 
         void start() {
+            live.add(this);
             // One concurrent child per candidate on the native StateMachine parallel dispatch;
             // the ParallelJoin barrier fires deliverAll() once every child has resolved.
             List<Consumer<ParallelJoin>> children = new ArrayList<>(candidates.size());
@@ -253,36 +432,53 @@ public class ProbeChecker {
                 final int idx = i;
                 children.add(join -> {
                     try {
-                        ProbeContext ctx = new ProbeContext(nioSocket, new IPAddress(host, port),
+                        ProbeContext ctx = contexts.create(new IPAddress(host, port),
                                 candidates.get(idx), timeoutSec, r -> {
                             synchronized (lock) {
                                 results[idx] = r;
                             }
                             join.childDone();
                         });
-                        ctx.start();
+                        synchronized (lock) {
+                            ctxs[idx] = ctx;
+                        }
+                        if (delivered.get()) {
+                            // cancelled between create and start: never launch it
+                            ctx.cancel();
+                            contexts.cancelled(ctx);
+                            join.childDone();
+                            return;
+                        }
+                        contexts.start(ctx);
                     } catch (Exception e) {
                         if (log.isEnabled()) log.getLogger().info("probe launch error: " + e.getMessage());
                         join.childDone();
                     }
                 });
             }
-            Fanout.run(children, this::deliverAll, nioSocket.getExecutor());
+            Fanout.run(children, this::deliverAll, executor);
         }
 
         private void deliverAll() {
-            List<ProbeResult> found = new ArrayList<>();
-            synchronized (lock) {
-                for (ProbeResult pr : results) {
-                    if (pr != null && pr.isComplete()) {
-                        found.add(pr);
-                    }
-                }
+            if (!delivered.compareAndSet(false, true)) {
+                return;   // cancelled: cancel() already delivered
             }
+            live.remove(this);
+            List<ProbeResult> found = completed();
             callback.accept(found.isEmpty()
                     ? Collections.singletonList(noneIdentified(host, port, transport, candidates))
                     : found);
         }
+    }
+
+    /** Delivered when a sweep was stopped before any probe could identify the port. */
+    private ProbeResult cancelled(String host, int port, String transport, List<ProbeDefinition> tried) {
+        return ProbeResult.builder(host, port, transport)
+                .service(wellKnownService(port))
+                .complete(false)
+                .fact("probes-tried", String.valueOf(tried.size()))
+                .note("cancelled")
+                .build();
     }
 
     /** Blocking convenience for CLI/tests: match-first. */

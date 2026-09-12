@@ -7,7 +7,7 @@ named subpackage:
 | Package | Contents | Exported |
 |---|---|---|
 | `…net.common` | the public API — both interfaces, every record, enum, and value type | yes |
-| `…net.util` | `IpMacCache` — stateful, non-API helper types | yes |
+| `…net.util` | `IpMacCache`, `SweepDriver`, `SweepTargets`, `PassiveLearning`, `PendingResolve`, `PendingCall`, `RecvErrors` — stateful, non-API helper types | yes |
 | `…net.codecs` | shared codecs: ARP, ICMPv4/v6 echo, NS/NA, IPv6 header, checksums (§5) | yes |
 | `…net.platform.linux` | libc via FFM (§6) | **no** |
 | `…net.platform.darwin` | libc via FFM (§7) | **no** |
@@ -23,7 +23,9 @@ not reappear in code, module descriptors, or launch flags.
 > touched a wire, per platform, with the numbers. All three backends are now live-verified (Linux
 > §13.9/§13.12/§13.13, Windows §13.7/§13.16/§13.17/§13.18, macOS §13.20). **§13.21 is the open-items
 > list, split per platform**, and is the right entry point for picking up work or handing it to
-> whoever owns a given machine. Sections §7 and §2.1 predate the macOS redesign — read §13.14 and
+> whoever owns a given machine. **§13.22** records the one defect found by code review rather than
+> by a wire — sweep admission parked the pool its own timeouts ran on — and the threading rule it
+> left behind. Sections §7 and §2.1 predate the macOS redesign — read §13.14 and
 > §13.20 before trusting them.
 
 > **Wire discipline — non-negotiable, and several of these are already load-bearing in the code.**
@@ -363,8 +365,10 @@ public interface HostDiscovery extends Closeable {
      * never reach this port absent a mirror/SPAN configuration. Seeing any
      * third-party traffic at all requires promiscuous mode (§6.6, §8.4).
      *
-     * On backends without passive support (macOS), registration succeeds but
-     * never fires; check capabilities().passiveObservation() first.
+     * On a backend whose capabilities().passiveObservation() is false, registration
+     * succeeds but never fires — check it first. Every shipped backend reports true
+     * (Linux AF_PACKET; Windows and macOS pcap capture, §13.17/§13.20), so today that
+     * is only the case after a reader thread has died (§13.23-B).
      *
      * Returns a handle; close it to unsubscribe.
      */
@@ -503,7 +507,8 @@ public enum ResolveSource {
     ACTIVE_ARP,     // we sent an ARP request and got a reply
     ACTIVE_NDP,     // we sent an NS and got an NA
     PASSIVE,        // observed on the segment, unsolicited
-    KERNEL_TABLE,   // read out of the OS neighbor table (macOS backend)
+    KERNEL_TABLE,   // read out of the OS neighbor table — produced by NO backend since
+                    // §13.14 retired the sysctl design; kept so persisted provenance decodes
     CACHE_HIT,      // served from IpMacCache without touching the wire
     LOCAL_INTERFACE // the target IS one of the binding's own addresses (§13.12)
 }
@@ -692,7 +697,11 @@ public record NicBinding(
         public boolean onLink(InetAddress target) { ...}
     }
 
-    /** First binding-local address in the same family as target, or empty. */
+    /**
+     * The local address to originate traffic to target from: the address whose
+     * prefix CONTAINS the target, else the family's first non-link-local address,
+     * else the family's first. Empty only when the family has no address (§13.23-C).
+     */
     public java.util.Optional<LocalAddress> sourceFor(InetAddress target) { ...}
 
     /** True when any local address of the matching family has target on-link. */
@@ -727,15 +736,21 @@ package io.xlogistx.nosneak.net.common;
  * a pinger is wired in (§3.2).
  *
  * Constant for the lifetime of the object — the factory finishes all wiring
- * before publishing, so this never changes under a caller.
+ * before publishing, so this never changes under a caller — with one exception:
+ * a backend whose reader thread has died reports the affected capabilities false
+ * from then on (§13.23-B), which is honest degradation, not wiring.
  */
 public record DiscoveryCapabilities(
         boolean icmpV4,
         boolean icmpV6,
         boolean activeArp,
         boolean activeNdp,
-        boolean passiveObservation,   // Linux: yes. Windows: yes (promisc). macOS: NO.
-        boolean rawEvidence,          // full received packet bytes available
+        boolean passiveObservation,   // all three: Linux AF_PACKET (promisc on first observe());
+                                      // Windows and macOS NON-promiscuous pcap capture, never
+                                      // upgraded at runtime (§13.23-B)
+        boolean rawEvidence,          // full received packet bytes available — Linux IPv4 and
+                                      // Windows yes; macOS NO (the datagram ICMP socket fills
+                                      // PingProbe.rawReply empty and nothing else carries bytes)
         boolean ttlAvailable,         // Linux IPv4 + Windows: yes. Otherwise NO.
         boolean offLinkIcmp,          // Windows v1: false. Linux/macOS: true.
         Backend backend) {
@@ -866,7 +881,7 @@ public final class DiscoveryException extends Exception {
 ### 4.1 Lifecycle
 
 - A `HostDiscovery` binds one interface and starts its reader threads. An `ICMPPing` binds no interface (except on Windows, §8.6) and starts its own. Either may fail with `DiscoveryException` (missing privilege, pcap not loadable, interface down, no hardware address for an L2 request).
-- `close()` signals reader threads, closes native FDs / pcap handles, closes arenas, and **completes pending futures normally** with a result carrying `PingError.IO` / `ResolveOutcome.ERROR`. Do not complete exceptionally — that contradicts the "never throws for an unreachable host" contract in §3.1.
+- `close()` signals reader threads, closes native FDs / pcap handles, closes arenas, and **completes pending futures normally** with a result carrying `PingError.IO` / `ResolveOutcome.ERROR`. Do not complete exceptionally — that contradicts the "never throws for an unreachable host" contract in §3.1. **Claim each entry with `remove(key, entry)` before settling it** — a timeout task that fires during `close()` must not settle the same probe twice, and a deadline that fires late must not tear down a newer resolve for the same address. `util.PendingCall.Probe.settle` is CAS-guarded so a second settlement is a no-op whichever thread arrives second (§13.23-B).
 - **`HostDiscovery.close()` must NOT close its `icmpPing()`.** The pinger is borrowed and shared across every NIC; closing it from one backend would kill ICMP for all the others. Only `Discovery.close()` (§3.8) owns it. On Windows the two are the same object, so `close()` there tears down both roles at once and must be idempotent.
 - **Arenas:** use `Arena.ofShared()` for instance-lifetime native allocations. `Arena.ofConfined()` is single-thread-owned; reader threads touching segments allocated by the constructor thread would throw `WrongThreadException`. Per-send confined arenas are fine, because a send allocates, fills, and closes its arena on the one thread performing that send — the segment never crosses a thread boundary, whatever §12.7 settles on for send serialization.
 
@@ -910,6 +925,8 @@ A `ScheduledExecutorService` arms per-probe timeouts. On fire: remove the in-fli
 
 > Because the pools are shared with the whole application, a sweep with a large `maxInFlight` competes with everything else running on them. If sweep latency ever needs isolating from the rest of no-sneak, pass dedicated executors at the factory rather than reintroducing private pools here.
 
+**Never park a borrowed pool thread.** No lock wait, semaphore, sleep or blocking `get()` on a dispatcher or scheduler thread — the scheduler delivers every due timer onto that same pool, so a parked worker is a timeout that cannot fire (§13.22). Anything that must wait for a slot or a send time waits as *state*: `util.SweepDriver` admits the next host from a completion callback or a scheduler tick, never from a thread that is holding on.
+
 ### 4.4 Threading model (replaces the NIO selector for this subsystem)
 
 - One **reader thread per receive source**, and the split in §2.0 decides who owns each:
@@ -932,6 +949,8 @@ A `ScheduledExecutorService` arms per-probe timeouts. On fire: remove the in-fli
 3. Re-check a `volatile boolean running` on every tick.
 
 For the Windows pcap loop, pass a positive `to_ms` to `pcap_open_live` (never 0, which means wait forever) and treat a `pcap_next_ex` return of 0 as the same tick.
+
+**Read the errno before treating a `-1` as a tick** (§13.23-B, `util.RecvErrors`): `EAGAIN`/`EWOULDBLOCK`/`EINTR` is the tick; `EBADF`/`ENOTSOCK` means the descriptor is gone and is fatal at once; anything else backs off one tick *on the dedicated reader thread* and is fatal after five in a row. A `DiscoveryException` from `pcap_next_ex` is fatal by construction. **A fatal read is not silent:** the reader fails every pending resolve and probe with its cause of death (`ResolveOutcome.ERROR` / `PingError.IO` plus the text), records it, and `capabilities()` reports the families that reader served as `false` for the rest of the object's life; later `resolve()`/`ping()` calls fail immediately with the same text instead of timing out at full budget.
 
 `struct timeval` for `SO_RCVTIMEO`:
 
@@ -975,7 +994,7 @@ Two consequences the implementation must handle:
 | Platform | Can it know? | Why |
 |----------|--------------|-----|
 | Linux | **no** | The kernel owns the neighbor table and resolves on its own; the pinger never sees it, and this module deliberately does not read `/proc/net/arp` or `AF_NETLINK`. Our own `AF_PACKET` ARP is a separate conversation the kernel ignores (point 1 above). Expect the flag to be permanently `false`. |
-| macOS | **yes** | §7.3 reads the kernel's own table via `sysctl`, so a miss immediately before the send is exactly this condition. |
+| macOS | **no** | Same as Linux since §13.14: layer 2 runs over pcap, bypassing the kernel table entirely, and the ICMP pinger routes through a kernel it never asks. The flag is permanently false. (The §7.3 `sysctl` path that could answer this was retired, not measured.) |
 | Windows | **yes** | The backend does its own ARP and owns the `IpMacCache`, so it knows precisely whether the destination MAC was cached or had to be solicited (§8.6). |
 
 > Do not fake it on Linux by consulting `IpMacCache` — that cache reflects **our** ARP, not the kernel's neighbor table, and the two are independent. A false positive here silently drops a valid probe from the RTT statistics.
@@ -993,6 +1012,18 @@ Capture `errno` with `Linker.Option.captureCallState("errno")` and read it on ev
 | `EACCES`, `EPERM` | `PERMISSION` |
 | `ENETDOWN`, `ENXIO` | `INTERFACE_DOWN` |
 | anything else | `IO` |
+
+On the **receive** side (`recvfrom` returning `-1`):
+
+| errno | reader verdict |
+|-------|----------------|
+| `EAGAIN`/`EWOULDBLOCK`, `EINTR` | the `SO_RCVTIMEO` tick — re-check `running`, read again |
+| `EBADF`, `ENOTSOCK` | the descriptor is gone — fatal at once |
+| anything else | back off one tick on the reader thread; fatal after five in a row |
+
+**Capture errno per send, never per instance.** The `captureCallState` segment must live in the confined scratch arena of the send that uses it; one instance-wide segment read under two different send locks lets a concurrent IPv4 and IPv6 send cross-contaminate the errno each reports (§13.23-B, S3).
+
+**The text travels with the result.** This module has no logger. `ResolveResult.detail` and `PingResult.detail` carry the native explanation behind a non-RESOLVED outcome or a call-level `PingError` — the errno name from `sendto`, pcap's `pcap_geterr` text for a refused injection, the reader's cause of death — and are the only place it can reach a caller. A send failure is recorded on the `PendingResolve` it belongs to (first failure wins), so a deadline reports `ERROR` with that text rather than a `TIMEOUT` for a frame that never left the host; a backend-wide "last error" field was the shape that let one resolve report a stranger's failure.
 
 ---
 
@@ -1358,18 +1389,15 @@ Two-pass call: invoke with `oldp = NULL` to size the buffer, allocate from a con
 >
 > Before writing this backend, emit `sizeof(struct rt_msghdr)`, `offsetof` for `rtm_msglen`/`rtm_addrs`/`rtm_flags`, `sizeof(struct sockaddr_dl)`, and the `ROUNDUP` constant from a short C probe on **both** Intel and Apple Silicon, using the existing `NativeBindingFactory` GCC-assisted strategy. Cross-check the parsed output against `arp -a` before building anything on top of it. Expect the two architectures to agree; confirm it rather than assuming it.
 
-### 7.4 Active resolution is indirect
+### 7.4 Active resolution is indirect — **RETIRED (§13.14)**
 
-There is no solicitation to send. Instead, provoke the kernel into resolving, then read the table:
-
-1. Check `IpMacCache`.
-2. On miss, read the kernel neighbor table. If present, return with `ResolveSource.KERNEL_TABLE`.
-3. Still missing: emit traffic to the target — the ICMP echo from `ping()` is sufficient, or a UDP datagram to a closed port.
-4. Poll the neighbor table on a short interval (~100 ms) until the entry appears or the caller's `timeout` expires.
-
-A useful property falls out of this and should be documented in the javadoc: **a host that is alive but ICMP-filtered still resolves**, because the kernel must ARP before it can transmit anything. So on macOS `resolve()` can succeed where `ping()` fails — a different failure mode from Linux and Windows, and worth surfacing to the fingerprinting layer.
-
-What this backend gives up, all of which must be reported honestly through `capabilities()`: gratuitous and spoofed-source ARP visibility, passive learning, `ObservedNeighbor` entirely, and solicitation timing (you learn *that* it resolved, not the RTT of the solicitation, so `ResolveResult.elapsed` measures the poll loop, not the wire).
+> This section described resolution by provoking the kernel and polling its neighbour table via
+> `sysctl`. That design was replaced before it was ever measured: macOS layer 2 now runs over
+> libpcap through `DarwinPcapBackend`, which sends real ARP/NS frames and watches the wire like
+> Linux and Windows do, with passive learning and `ObservedNeighbor` intact. The only remnant of
+> the old idea is `provokeReply` — an echo sent to elicit a reply *frame* the capture will see,
+> not a table poll — and the "alive but ICMP-filtered still resolves" property no longer applies.
+> The `SYSCTL` handle and route constants were removed in §13.23-C.
 
 ### 7.5 ICMP path (macOS) — this is the `ICMPPing` implementation
 
@@ -1462,7 +1490,7 @@ Every send is a **complete Ethernet frame**:
 
 Injection bypasses OS routing entirely, so an off-link destination needs the default gateway's MAC, hence its IP. That is what §8.7's `iphlpapi` binding supplies. When it is unavailable, `offLinkIcmp` reports false and off-link targets complete with `PingError.NETWORK_UNREACHABLE` — the old v1 behaviour, now a fallback rather than the rule.
 
-**Capture setup:** `pcap_open_live(dev, 65536, promisc, 200, errbuf)`. Pass `promisc = 1` only when an `observe()` subscription exists — promiscuous mode raises capture volume substantially and is detectable on the segment. BPF filter: `arp or icmp or icmp6`. Note that this filter does **not** match 802.1Q-tagged frames; prefix with `vlan` if the dev network is tagged, and remember that a tag shifts every subsequent offset by 4 bytes in the parser.
+**Capture setup:** `pcap_open_live(dev, 65536, promisc, 200, errbuf)`. Pass `promisc = 1` only when an `observe()` subscription exists — promiscuous mode raises capture volume substantially and is detectable on the segment. BPF filter: `PcapHandle.DISCOVERY_FILTER` = `arp or ip or ip6`, one constant for every pcap backend — the narrower `arp or icmp or icmp6` captured nothing passive learning could use (§13.17, §13.23). Note that this filter does **not** match 802.1Q-tagged frames; prefix with `vlan` if the dev network is tagged, and remember that a tag shifts every subsequent offset by 4 bytes in the parser.
 
 ### 8.5 `pcap_pkthdr` layout — Windows only  **[REFERENCE]**
 
@@ -1511,6 +1539,8 @@ The reason is physical, not stylistic. pcap injects at L2 and bypasses routing, 
 
 **Per-binding send capability must be probed, not assumed.** `pcap_sendpacket` is driver-dependent and commonly fails on wireless adapters — capture works, injection does not. Probe each supplied binding once at construction, mark the failures capture-only, exclude them from step 1, and report the reduced set through `capabilities()`. **Do not fail construction** because one NIC of several cannot inject.
 
+**Injection is a driver property; the family is an address property** (§13.23-B, M7). One accepted probe frame answers "can this driver inject" for both families, so the probe is built from whichever family the binding has — a broadcast ARP request for our own address when there is IPv4, a Neighbor Solicitation *from* our own address *for* our own address (not DAD-shaped) when there is only IPv6 (`pcap.InjectionProbe`). `activeArp`/`icmpV4` then gate on injection AND an IPv4 address, `activeNdp`/`icmpV6` on injection AND an IPv6 address. The refusal text, when the driver refuses, is what `resolve()` reports as the `detail` behind `UNSUPPORTED`.
+
 > The bare `ICMPPing` from `HostDiscoveryFactory.openIcmpOnly()` does not exist on Windows and throws `DiscoveryException` (§3.8). Every other platform gets a real one.
 
 ### 8.7 Off-link routing via `iphlpapi`  **[IMPLEMENT]**
@@ -1543,7 +1573,7 @@ GetBestRoute2(NULL, 0, NULL, &destination, 0, &row, &bestSource);   // iphlpapi.
 Two details that are easy to get wrong:
 
 - **The Ethernet destination and the IP destination differ.** The frame is addressed to the gateway's MAC while the IPv4 header still carries the real target. Resolving the *target's* MAC for an off-link host is meaningless — nothing beyond the segment answers ARP.
-- **`sourceFor(target)` is empty for an off-link target**, since it has no address in our subnet. The source falls back to the interface's own address of the right family; without that, the send throws.
+- **`sourceFor(target)` is non-empty for an off-link target** — it prefers the address whose prefix contains the target, then the family's first routable address (§13.23-C; the earlier "empty for off-link, fall back in the caller" reading was wrong and its fallback was dead code). It is empty only when the interface has no address of that family, and then the send throws.
 
 `offLinkIcmp` now reports `l2 && Iphlpapi.isAvailable()`, so a machine where the DLL cannot be loaded degrades to the old on-link-only behaviour and says so, rather than failing obscurely.
 
@@ -1682,8 +1712,8 @@ Without it: warnings on JDK 25, hard failure in a future release. This is a **JV
 ## 11. Testing & validation plan  **[IMPLEMENT]**
 
 The appliance (Linux/aarch64) **was** the gate, and it has been passed (§13.6) — Linux is verified on
-x86-64 and aarch64, Windows on live hardware. The only gate still standing is the macOS §7.3 ABI
-probe.
+x86-64 and aarch64, Windows on live hardware, and macOS on Apple Silicon (§13.20) — the §7.3 ABI
+gate was retired rather than passed (§13.14). The sole unproven claim left is Linux IPv6/NDP (L1).
 
 1. **Codec unit tests (host-independent, run everywhere).** Build/parse round-trips for ARP, ICMPv4, ICMPv6 echo, NS/NA. Known-good RFC 1071 checksum vectors and an ICMPv6 pseudo-header vector. Solicited-node multicast and `33:33:ff:*` MAC derivation vectors. Gratuitous-ARP classification (SPA == TPA). NS/NA hop-limit-255 validation, both accept and reject cases. `TtlDistance.hopCount` boundary cases (64/128/255, and observed values just below each).
 2. **Layout tests — three targets, not six.** Every layout is selected on `os.name` only (§2.3), so the matrix collapses. Assert: Linux `sockaddr_in`=16, `sockaddr_in6`=28, `sockaddr_ll`=20, `timeval`=16, `packet_mreq`=16; macOS `sockaddr_in`=16 with `sin_family` at offset **1**, `sockaddr_in6`=28, `timeval`=16; Windows `pcap_pkthdr`=16 with `caplen` at offset **8**, `bpf_program`=16.
@@ -1753,7 +1783,7 @@ probe.
 6. ~~**Linux `ICMPPing`** — raw ICMP/ICMPv6 (§6.5), process-wide identifier allocation (§4.2), `SO_RCVTIMEO` shutdown (§4.4).~~ — **DONE and VERIFIED on live Linux hardware, x86-64 and aarch64.** IPv4 echo returns real RTT and TTL; hop counts derive correctly. See §13.9 and §13.12.
 7. ~~**Linux `HostDiscovery`** — `AF_PACKET` ARP (§6.4, bound to ifindex) → NDP → passive observe.~~ — **DONE and VERIFIED on live Linux hardware, x86-64 and aarch64.** A `/24` sweep resolves every live host. The first run exposed four defects, one of them a property of real segments rather than of the code — see §13.12. IPv6/NDP is still unexercised: this segment has no v6 neighbours.
 8. ~~`HostDiscoveryFactory`: the §3.8 wiring order, set-once injection, capability reporting, the `os.arch` precondition, and `Discovery.close()` ownership.~~ — **DONE and verified on live hardware** (Windows path; Linux/macOS raise a clear "not built yet" error naming the step). See §13.8.
-9. ~~`sweep()` fan-out with bounded in-flight window and pps pacing, **including the no-pinger degraded path**; `discoverIpv6Segment()`.~~ — **DONE** in both backends; Windows verified live (a /27 finds 11 hosts in ~1 s). **`maxPacketsPerSecond` was validated but NOT enforced until a doc audit caught it** — the API accepted a rate cap and silently ignored it, which is worse than not offering one. Now enforced by `util.RateLimiter`; see §13.11.
+9. ~~`sweep()` fan-out with bounded in-flight window and pps pacing, **including the no-pinger degraded path**; `discoverIpv6Segment()`.~~ — **DONE** in both backends; Windows verified live (a /27 finds 11 hosts in ~1 s). **`maxPacketsPerSecond` was validated but NOT enforced until a doc audit caught it** — the API accepted a rate cap and silently ignored it, which is worse than not offering one. Enforced first by a private `util.RateLimiter` (§13.11), since replaced by `util.SweepDriver` over zoxweb's `RateController` because the limiter's *sleeping* callers could wedge the shared pool (§13.22).
 10. Shutdown tests (§11.6) — verify before declaring the Linux backend done.
 11. **Ship v1 (Linux).**
 12. ~~macOS backend.~~ — **BOTH HALVES WRITTEN, NEITHER RUN ON A MAC.** ICMP (§7.5) is `DarwinIcmpPing`, unprivileged, and `openIcmpOnly()` works. L2 is `DarwinPcapBackend` over libpcap — the §7.3 neighbour-table gate was **retired rather than passed**, because libpcap wraps the variadic `ioctl` that §2.2 was avoiding and seeing the wire removes any need to parse `rt_msghdr`. Costs root (`/dev/bpf*` is 0600). See §13.14, and §13.10.1 for the ICMP fixes still owed a Mac.
@@ -1790,7 +1820,7 @@ Small conveniences the spec's sketches implied but did not spell out. All are pu
 | `CidrRange.contains(...)` | the sweep needs a range test; `hosts()` cannot answer it for a `/64` |
 | `NicBinding.supportsLayer2()` | the null-hardware-address check from §3.6, named once |
 | `DiscoveryCapabilities.anyIcmp()` / `.anyLayer2()` | readability at call sites that only care whether a family works at all |
-| `SweepOptions` compact-constructor validation | rejects `maxInFlight < 1`, `pingCount < 1`, non-positive `perHostTimeout` at construction rather than mid-sweep |
+| `SweepOptions` compact-constructor validation | rejects `maxInFlight < 1`, `pingCount < 1`, non-positive `perHostTimeout` at construction rather than mid-sweep — pinned by `SweepOptionsTest` (§13.23-C; this row claimed a test that did not exist until then) |
 | `HostDiscoveryFactory.requireSupportedArch()` | the §2.3 `os.arch` precondition, callable before any backend exists |
 | `Discovery.forName` returns `Optional<HostDiscovery>` | §3.8 sketched a bare return; an absent interface is an ordinary outcome, not an error |
 
@@ -1878,7 +1908,7 @@ layout in this document is identical on x86-64 and aarch64 is therefore **measur
 architectures** rather than argued from LP64 alone, and the `os.name`-only selection rule it licenses
 is safe to keep relying on.
 
-That closes the last Linux gate. The one remaining gate in the module is the macOS §7.3 ABI probe.
+That closes the last Linux gate. (The macOS §7.3 ABI probe that was the one remaining gate at the time was later retired unmeasured — §13.14 — and macOS was brought up over pcap instead, §13.20.)
 
 ### 13.7 Step 13 — the Windows backend, and what running it taught us
 
@@ -2031,14 +2061,18 @@ how fast they leave.** They are different constraints. 256 outstanding probes th
 millisecond still emit a quarter of a million packets a second — precisely the "churns switch CAM
 tables and trips customer IDS" outcome §3.5 calls not-optional-polish.
 
-`util.RateLimiter` is a leaky bucket, deliberately **without burst capacity** — a burst allowance is
-exactly what trips the IDS this exists to avoid. It computes the wake time under its lock but sleeps
-outside it, so callers queue in arrival order without one sleeping thread holding the monitor. Both
-sweeps acquire `1 + pingCount` permits per host before starting it.
+The pacer is a leaky bucket, deliberately **without burst capacity** — a burst allowance is exactly
+what trips the IDS this exists to avoid. It was first a private `util.RateLimiter` whose callers
+*slept* until their send time; §13.22 replaced that with zoxweb's `RateController` (TIME mode) driven
+through `util.SweepDriver`, which asks `nextWait()` for the delay and hands it to the scheduler
+instead of a thread. The rate is set in **hosts** per second — `maxPacketsPerSecond` divided by the
+worst-case frames one host costs (`2 + pingCount` on Linux and macOS, `1 + pingCount` on Windows) —
+so one reservation per host keeps the emitted rate at or under the cap.
 
-The test that matters is `rateIsSharedAcrossThreads`: eight threads on one limiter must emit at the
-configured rate **in aggregate**. A per-thread limiter would multiply the cap by the sweep's own
-concurrency, which is the failure mode the whole mechanism exists to prevent.
+The test that matters is `SweepDriverTest.honoursTheAggregateRate`: one pacer shared by every host
+of a sweep must emit at the configured rate **in aggregate**, however many pool threads happen to be
+admitting. A per-thread limiter would multiply the cap by the sweep's own concurrency, which is the
+failure mode the whole mechanism exists to prevent.
 
 > Worth generalising: an option that is parsed, validated, and then ignored is worse than an absent
 > one, because the caller has been told it works. If a `SweepOptions` field is added, add the
@@ -2433,7 +2467,7 @@ Two things the run showed that the code alone would not have:
 
 **OPEN — which thread runs a caller's continuation.** No `*Async` overload in this module omits its
 executor, so nothing reaches `ForkJoinPool.commonPool()`. But the backends complete their futures
-**inline on the reader thread** (`PendingCall.settle`, `PendingResolve.completeAll`), and
+**inline on the reader thread** (`PendingCall.settle`, `PendingResolve.completeAll` — *no longer: since §13.23-D both complete on the injected dispatcher*), and
 `HostScanner` composes with the no-executor `thenCompose`/`thenApply` forms, so an embedder's plain
 `thenAccept` runs on a reader thread and stalls reception for that NIC while it runs. A fix that
 hopped every returned future onto the dispatcher was written and **reverted at the maintainer's
@@ -2470,10 +2504,14 @@ pcap path cannot reach it.
 
 #### The measurement
 
-`io.xlogistx.nosneak.net.spike.WindowsArpSpike <targetIp> <hintMac>` sends three broadcast ARP
-requests, then three unicast requests to the hint MAC, and counts replies. It shares nothing with
-`WindowsPcapBackend` beyond the codecs and the pcap handle — a spike that reuses the code under
-suspicion cannot exonerate it. Two runs of the target, one control, same segment:
+A throwaway `WindowsArpSpike <targetIp> <hintMac>` (deleted on 2026-09-12 — the measurement below
+is its whole legacy, and the unicast-on-hint fix it justified has shipped on all three platforms)
+sent three broadcast ARP requests, then three unicast requests to the hint MAC, and counted
+replies. It shared nothing with `WindowsPcapBackend` beyond the codecs and the pcap handle — a
+spike that reuses the code under suspicion cannot exonerate it. To repeat the experiment, the same
+six frames are `ArpPacket.request` + `EthernetFrame.build` over `PcapHandle.trySend`, with a reader
+on the same handle counting `ArpPacket.parse(...).isReply()` frames from the target. Two runs of
+the target, one control, same segment:
 
 ```
 10.0.0.108   BROADCAST x3 -> 0 replies    UNICAST x3 -> 3 replies   (run 1: 10/1012/2009 ms)
@@ -2677,8 +2715,11 @@ The formatter had been taught the difference and the sweep had not, which is the
 this mistake: a predicate meaning "this host is up" was doing duty for "this host answered ICMP",
 and those stopped being the same thing the moment a local answer existed. Two predicates on
 `PingResult` now name them separately — **`observedOnWire()`** (a reply actually arrived) and
-**`measured()`** (a clock actually ran) — and all three backends use `measured()` before publishing
-an RTT. `10.0.0.61` is back to `arp` with no RTT, and the ICMP tally counts wire replies only.
+**`measured()`** (a clock actually ran). Windows used both from this change; Linux and macOS kept
+`reachable()` for the alive flag, the ICMP tally *and* the RTT until §13.23-C hoisted the record
+construction into one shared `HostRecord.fromProbes` — this sentence originally claimed "all
+three backends", which was the §13.19 prose-decay failure in miniature. `10.0.0.61` is back to
+`arp` with no RTT, and the ICMP tally counts wire replies only.
 
 > Worth generalising: adding a state to a value type means auditing every consumer that switches on
 > the states next to it, not only the one you were looking at. `reachable()` had exactly one meaning
@@ -2827,14 +2868,14 @@ Nothing here is a regression from §13.20; the numbers in that section stand.
 
 | # | Item | Evidence | Why it matters | How to verify the fix |
 |---|---|---|---|---|
-| M1 | **BPF filter is missing `ip6`**, so general IPv6 traffic is never captured. `icmp` is also redundant (a subset of `ip`), so the expression is simultaneously longer and narrower than Windows'. | `DarwinPcapBackend:111` = `"arp or icmp or icmp6 or ip"`; `WindowsPcapBackend:56` = `"arp or ip or ip6"` | §13.17 measured this exact gap on Windows: two identical 60 s listens gave **2 neighbours vs 9**, and two of the nine never appeared in a `/24` sweep at all (randomised-MAC phones found only by their announcements). §13.20's two Wi-Fi hosts that answered ICMP with **no MAC** are that same population, and Apple devices announce over IPv6 multicast constantly — so this is the most likely single improvement to macOS MAC coverage. | `observe 60` twice on the same segment within the hour, before and after. Report both counts. **If the number does not move, revert it** — that is what §13.17 did, and the measurement is the deliverable, not the change. |
-| M2 | **Passive-learning guard is inlined and untested**, and is **missing `!source.isMulticastAddress()`**. | Inline at `DarwinPcapBackend:619-623`; Windows has it extracted as `learnable(...)` at `WindowsPcapBackend:873-882`, pinned by `PassiveLearningTest` | §13.17: a passive entry is served back as a `CACHE_HIT`, so a wrong one is a wrong **answer**, not a wasted frame. The decisive guard is **on-link**, because an off-link sender's frames arrive bearing the *router's* MAC. | Extract to one shared static (e.g. `common/PassiveLearning`) used by Windows *and* Darwin, re-point `PassiveLearningTest` at it, add Darwin cases (`fe80::` sender, `169.254/16` sender, the mDNS group address). **Runs on Windows** — no Mac needed for the test, only for M1's measurement. |
-| M3 | **A failed injection is indistinguishable from a silent host.** `handle.send(...)` returns a boolean that is discarded. | `DarwinPcapBackend:373`, `:376`, `:408` discard it (`probeInjection:194` does use it). `PcapHandle.lastError()` exists and is never called by this backend | §13.20 proved injection works on that Mac's Wi-Fi, so this is not urgent — but §13.12's rule stands: *a failure that cannot be distinguished from a different failure is not honestly reported, however accurate the enum is.* Linux fixed this with `lastSendError` + `PendingResolve.sendError`; macOS reproduces the original defect. | On a host that refuses injection (or with injection deliberately broken), `resolve` must report `ResolveOutcome.ERROR` carrying pcap's text, not a bare `TIMEOUT` at the caller's budget. |
-| M4 | **Two capability literals that cannot degrade.** `rawEvidence = true` has **no delivery path** — nothing in `ObservedNeighbor` carries bytes, and `PingProbe.rawReply` is filled with `new byte[0]` by `DarwinIcmpPing`, which honestly reports `rawEvidence == false`. `passiveObservation = true` is weaker than Linux's, because `observe()` can never enable promiscuous mode: the handle opens `promiscuous=false` and `pcap_create`/`pcap_set_promisc`/`pcap_activate` are not bound. | `DarwinPcapBackend` capability block (`:209-210`); `LinuxHostDiscovery:561-573` upgrades on first subscription | Same class as §13.10.1's literal `true` for both ICMP families, in a file whose own javadoc argues literals cannot degrade. The two objects currently contradict each other about `rawEvidence`. | Either wire the capability or report it honestly. Pin it with a pure `capabilitiesOf(canInject, binding, pingerCaps)` unit test — **runs on Windows**. |
-| M5 | **`open()`'s failure message always blames privilege.** Every `DiscoveryException` from `PcapHandle.open` is wrapped in the `/dev/bpf* is mode 0600 … requires root` explanation. | `DarwinPcapBackend:161` | Much less severe since §13.20 filtered tunnels out earlier, but a device-not-up or datalink failure still reads as a privilege problem — and §13.20 records that this exact framing caused a wrong diagnosis once already ("you are root and the message says you need root"). | Prepend the root explanation only when the cause plausibly is privilege ("Permission denied" / "Operation not permitted"); otherwise lead with pcap's own text and the device name. |
-| M6 | **ARP resolve completes on a request or gratuitous ARP, not only a reply**, yet labels the provenance `ACTIVE_ARP`. | `DarwinPcapBackend:592` runs before the `isReply()` classification at `:594-595` | §4.2 explicitly accepts gratuitous satisfaction, so the completion is fine — the **label** is what is dishonest, and `ResolveSource` exists precisely to carry provenance accurately. | A gratuitous ARP satisfying a pending resolve should not report `ACTIVE_ARP`. |
-| M7 | **An IPv6-only interface can never do NDP.** `canInject` gates both `activeArp` and `activeNdp`, and `probeInjection` returns false when the binding has no IPv4 — but NDP needs no IPv4. | `DarwinPcapBackend:179-181`, `:203-207` | Same logic exists on Windows, so it is parity rather than a Darwin regression — but it silently disables a capability the platform has. | Probe injection per family, or gate `activeNdp` on something that is not an IPv4 ARP probe. |
-| M8 | **Handle leak on an unusual failure path.** `open` guards `setFilter` with `handle.close()` but `probeInjection` and `startReader` are unguarded, so a `RuntimeException` from either leaks the open `pcap_t` and its shared arena. | `DarwinPcapBackend:156-167` | Unlikely (both are null-guarded), but the arena is exactly what §13.7 found leaking on Windows. | Wrap the remaining construction stages in the same guard. |
+| M1 | **Code applied via S2 (§13.23-A); the measurement is still open.** ~~BPF filter is missing `ip6`~~, so general IPv6 traffic is never captured. `icmp` is also redundant (a subset of `ip`), so the expression is simultaneously longer and narrower than Windows'. | `DarwinPcapBackend:111` = `"arp or icmp or icmp6 or ip"`; `WindowsPcapBackend:56` = `"arp or ip or ip6"` | §13.17 measured this exact gap on Windows: two identical 60 s listens gave **2 neighbours vs 9**, and two of the nine never appeared in a `/24` sweep at all (randomised-MAC phones found only by their announcements). §13.20's two Wi-Fi hosts that answered ICMP with **no MAC** are that same population, and Apple devices announce over IPv6 multicast constantly — so this is the most likely single improvement to macOS MAC coverage. | `observe 60` twice on the same segment within the hour, before and after. Report both counts. **If the number does not move, revert it** — that is what §13.17 did, and the measurement is the deliverable, not the change. |
+| M2 | **FIXED (§13.23-A)** — `util.PassiveLearning.learnable` is the one guard for every backend and every learner (IPv4, IPv6, ARP, NS, NA); `PassiveLearningTest` moved to `util` with the multicast, `::`, own-MAC, v6 on-link and provenance cases. ~~Passive-learning guard is inlined and untested, and is missing `!source.isMulticastAddress()`.~~ | was inline at `DarwinPcapBackend:619-623`; Windows had it as `learnable(...)` at `WindowsPcapBackend:873-882` | §13.17: a passive entry is served back as a `CACHE_HIT`, so a wrong one is a wrong **answer**, not a wasted frame. The decisive guard is **on-link**, because an off-link sender's frames arrive bearing the *router's* MAC. | Extract to one shared static (e.g. `common/PassiveLearning`) used by Windows *and* Darwin, re-point `PassiveLearningTest` at it, add Darwin cases (`fe80::` sender, `169.254/16` sender, the mDNS group address). **Runs on Windows** — no Mac needed for the test, only for M1's measurement. |
+| M3 | **FIXED (§13.23-B)** — **A failed injection is indistinguishable from a silent host.** `handle.send(...)` returns a boolean that is discarded. | `DarwinPcapBackend:373`, `:376`, `:408` discard it (`probeInjection:194` does use it). `PcapHandle.lastError()` exists and is never called by this backend | §13.20 proved injection works on that Mac's Wi-Fi, so this is not urgent — but §13.12's rule stands: *a failure that cannot be distinguished from a different failure is not honestly reported, however accurate the enum is.* Linux fixed this with `lastSendError` + `PendingResolve.sendError`; macOS reproduces the original defect. | On a host that refuses injection (or with injection deliberately broken), `resolve` must report `ResolveOutcome.ERROR` carrying pcap's text, not a bare `TIMEOUT` at the caller's budget. |
+| M4 | **FIXED (§13.23-B)** — **Two capability literals that cannot degrade.** `rawEvidence = true` has **no delivery path** — nothing in `ObservedNeighbor` carries bytes, and `PingProbe.rawReply` is filled with `new byte[0]` by `DarwinIcmpPing`, which honestly reports `rawEvidence == false`. `passiveObservation = true` is weaker than Linux's, because `observe()` can never enable promiscuous mode: the handle opens `promiscuous=false` and `pcap_create`/`pcap_set_promisc`/`pcap_activate` are not bound. | `DarwinPcapBackend` capability block (`:209-210`); `LinuxHostDiscovery:561-573` upgrades on first subscription | Same class as §13.10.1's literal `true` for both ICMP families, in a file whose own javadoc argues literals cannot degrade. The two objects currently contradict each other about `rawEvidence`. | Either wire the capability or report it honestly. Pin it with a pure `capabilitiesOf(canInject, binding, pingerCaps)` unit test — **runs on Windows**. |
+| M5 | **FIXED (§13.23-B)** — **`open()`'s failure message always blames privilege.** Every `DiscoveryException` from `PcapHandle.open` is wrapped in the `/dev/bpf* is mode 0600 … requires root` explanation. | `DarwinPcapBackend:161` | Much less severe since §13.20 filtered tunnels out earlier, but a device-not-up or datalink failure still reads as a privilege problem — and §13.20 records that this exact framing caused a wrong diagnosis once already ("you are root and the message says you need root"). | Prepend the root explanation only when the cause plausibly is privilege ("Permission denied" / "Operation not permitted"); otherwise lead with pcap's own text and the device name. |
+| M6 | **FIXED (§13.23-A), all three backends** — provenance is computed once by `PassiveLearning.arpProvenance` / `ndpProvenance` and used for both the cache and the completion. ~~ARP resolve completes on a request or gratuitous ARP, not only a reply, yet labels the provenance `ACTIVE_ARP`.~~ | was `DarwinPcapBackend:592` before the `isReply()` classification at `:594-595`, and the same shape on Windows and Linux (S9) | §4.2 explicitly accepts gratuitous satisfaction, so the completion is fine — the **label** is what is dishonest, and `ResolveSource` exists precisely to carry provenance accurately. | A gratuitous ARP satisfying a pending resolve should not report `ACTIVE_ARP`. |
+| M7 | **FIXED (§13.23-B)** — **An IPv6-only interface can never do NDP.** `canInject` gates both `activeArp` and `activeNdp`, and `probeInjection` returns false when the binding has no IPv4 — but NDP needs no IPv4. | `DarwinPcapBackend:179-181`, `:203-207` | Same logic exists on Windows, so it is parity rather than a Darwin regression — but it silently disables a capability the platform has. | Probe injection per family, or gate `activeNdp` on something that is not an IPv4 ARP probe. |
+| M8 | **FIXED (§13.23-B)** — **Handle leak on an unusual failure path.** `open` guards `setFilter` with `handle.close()` but `probeInjection` and `startReader` are unguarded, so a `RuntimeException` from either leaks the open `pcap_t` and its shared arena. | `DarwinPcapBackend:156-167` | Unlikely (both are null-guarded), but the arena is exactly what §13.7 found leaking on Windows. | Wrap the remaining construction stages in the same guard. |
 | M9 | **Not yet exercised on macOS:** an IPv6 neighbour that answers multicast, and the arena-shutdown race under sustained capture. | §13.20 | `discoverIpv6Segment` returning empty in ~3 ms is *correct* on that segment (`ff02::1%<ifIndex>` gets `EHOSTUNREACH`, and macOS's own `ping6 -I en0 ff02::1` fails identically), so this needs a different segment, not a fix. | A segment with a responsive v6 neighbour; and a long `observe` or repeated sweeps to keep readers alive across a `close()`. |
 
 #### Linux — needs the appliance
@@ -2842,24 +2883,38 @@ Nothing here is a regression from §13.20; the numbers in that section stand.
 | # | Item | Evidence | Why it matters |
 |---|---|---|---|
 | L1 | **IPv6/NDP has still never been on a wire.** | §13.9, and §13.20 confirms the Mac segment had no responsive v6 neighbour either | This is now **the module's only remaining unproven claim**. It needs a segment with a v6 neighbour that answers, on any platform — whoever finds one first closes it for everybody. |
-| L2 | **`sweepOne` uses `reachable()`/`avgRtt()` where §13.18 says `measured()`.** | `LinuxHostDiscovery:651-665` (and `DarwinPcapBackend:471-491`) | §13.18 claims *"all three backends use `measured()` before publishing an RTT"* — **that is false; only Windows does.** Harmless today because only Windows manufactures `PingProbe.localInterface` probes, but it is the shape that fabricated `icmp 0.000 ms`, and the doc sentence is the §13.19 prose-decay failure. Fix both backends and correct the sentence. |
-| L3 | **Passive-learning guard inlined**, same as macOS M2. | `LinuxHostDiscovery:848` | Folded into M2 if that becomes one shared static. |
+| L2 | **FIXED — closed by S10 (§13.23-C): `HostRecord.fromProbes` is the one record constructor.** **`sweepOne` uses `reachable()`/`avgRtt()` where §13.18 says `measured()`.** | `LinuxHostDiscovery:651-665` (and `DarwinPcapBackend:471-491`) | §13.18 claims *"all three backends use `measured()` before publishing an RTT"* — **that is false; only Windows does.** Harmless today because only Windows manufactures `PingProbe.localInterface` probes, but it is the shape that fabricated `icmp 0.000 ms`, and the doc sentence is the §13.19 prose-decay failure. Fix both backends and correct the sentence. |
+| L3 | **FIXED (§13.23-A)** — folded into M2's shared static. ~~Passive-learning guard inlined, same as macOS M2.~~ | was `LinuxHostDiscovery:848` | — |
 
-#### Windows — verified, nothing platform-specific outstanding
+#### Windows — verified live; M3, M7 and M8 were here too, and are fixed with macOS
 
-§13.7, §13.15, §13.16, §13.17 and §13.18 cover it. It is affected only by the shared items below and
-by M2/L2 if those become shared statics.
+§13.7, §13.15, §13.16, §13.17 and §13.18 cover it. The 2026-09-11 review (S9) found that M3, M7 and
+M8 were verbatim in `WindowsPcapBackend` too — they were filed under macOS only because that was the
+file being read. M6 was likewise in all three and was fixed everywhere in §13.23-A; M3, M7 and M8
+were fixed once for every backend in §13.23-B, from this box. Windows-specific and still to
+measure: the adapter-disabled-mid-sweep check in §13.23-B.
 
 #### Shared / any platform — can be done on the Windows dev box
 
 | # | Item | Evidence | Why it matters |
 |---|---|---|---|
-| S1 | **`PcapPlatform.current()` maps `"Darwin"` to Windows.** `os.contains("win")` is tested first, and **`"darwin".contains("win")` is true**, so the `darwin` clause is unreachable. Meanwhile `HostDiscoveryFactory.Platform.current()` tests mac/darwin first and would select the macOS backend — **the two dispatchers disagree**. | `PcapPlatform.current()`; `HostDiscoveryFactory.Platform.current()` | Latent, because real macOS JVMs report `Mac OS X` — which is why §13.20 did not hit it. But the author clearly intended `"Darwin"` to work, and the failure mode is telling a Mac user to install Npcap. **Fix:** extract `forOsName(String)` on both and add one test walking `{"Mac OS X", "Darwin", "Windows 11", "Linux"}` asserting **the two agree** for every string. The cross-check is worth more than either assertion alone. |
-| S2 | **One BPF filter constant, not two.** M1 exists because the two backends each hold their own string and drifted. | `DarwinPcapBackend:111`, `WindowsPcapBackend:56` | Hoist to one shared constant in the `pcap` package with §13.17's rationale attached, so this cannot happen a third time. |
-| S3 | **Shared errno capture segment across two send locks.** One `CAPTURE` segment is used under both `v4SendLock` and `v6SendLock`, so a concurrent v4+v6 send can cross-contaminate the errno read. | `DarwinIcmpPing:61`, used at `:235-239` and `:252-256`; `LinuxHostDiscovery.sendPacket` has the same pattern | Module-wide, not macOS-specific. It corrupts exactly the diagnostic §13.12 went to a packet capture to obtain. |
-| S4 | **Spec text still describing the replaced macOS design.** §7's header and capability line (now annotated), §2.1's binding and raw-evidence rows (now corrected), plus still-stale: **§3.7** `passiveObservation // macOS: NO.`; **§3.2** `observe()` "on backends without passive support (macOS) … never fires"; **§4.6** table and point 1 (macOS knows `neighborResolutionPending` "via `sysctl`" — that path is gone and the flag is permanently false); **§7.4** entirely; **§3.4** `ResolveSource.KERNEL_TABLE // (macOS backend)`, now produced by no backend; **§11** and **§13.6** closings ("the only gate still standing is the macOS §7.3 ABI probe"); `DarwinLibc`'s class javadoc, which still argues for the neighbour-table approach; and `HostDiscoveryFactory.Platform.notYetBuilt`, unreferenced with a stale message. | — | §13.19's lesson, verbatim: *"a capability claim written as prose degrades even worse than one written as a literal … when a doc string names a platform, it is an assertion about that platform and needs the same evidence as a test."* |
-| S5 | **Dead surface.** `DarwinLibc.Handles.SYSCTL` and the five route constants (`AF_LINK`, `CTL_NET`, `PF_ROUTE`, `NET_RT_FLAGS`, `RTF_LLINFO`) have no caller in `src/main` — only `DarwinLayoutTest` asserts them. `provokeReply`'s hint check is unreachable (`resolve` already returned `CACHE_HIT` for any target with a cached MAC). | `DarwinLibc:42,48-51,126-128`; `DarwinPcapBackend:303` | Leftovers of the retired §7.3/§7.4 design. Harmless, but they imply a code path that no longer exists. |
-| S6 | **The §13.15 open design question stays open.** Backends complete futures **inline on the reader thread**; a fix that hopped them onto the dispatcher was written and **reverted at the maintainer's request**. | §13.15 | macOS makes the shape slightly worse than either verified platform: a Darwin sweep's `thenAcceptBoth` (`DarwinPcapBackend:471`) has two inputs completing on *different* reader threads — the per-NIC pcap reader and the JVM-wide ICMP reader — so one blocking continuation can stall either that NIC's capture or ICMP for the whole JVM. Worth knowing while diagnosing a hang; **not to be changed as part of this work**, because it changes which thread every measurement is taken on and would make new timings incomparable with §13.12/§13.16/§13.20. |
+| S1 | **FIXED (§13.23-C): `forOsName` on both, `PlatformSelectionTest`.** **`PcapPlatform.current()` maps `"Darwin"` to Windows.** `os.contains("win")` is tested first, and **`"darwin".contains("win")` is true**, so the `darwin` clause is unreachable. Meanwhile `HostDiscoveryFactory.Platform.current()` tests mac/darwin first and would select the macOS backend — **the two dispatchers disagree**. | `PcapPlatform.current()`; `HostDiscoveryFactory.Platform.current()` | Latent, because real macOS JVMs report `Mac OS X` — which is why §13.20 did not hit it. But the author clearly intended `"Darwin"` to work, and the failure mode is telling a Mac user to install Npcap. **Fix:** extract `forOsName(String)` on both and add one test walking `{"Mac OS X", "Darwin", "Windows 11", "Linux"}` asserting **the two agree** for every string. The cross-check is worth more than either assertion alone. |
+| S2 | **FIXED (§13.23-A)** — `PcapHandle.DISCOVERY_FILTER` with §13.17's rationale, used by both pcap backends, pinned by `PcapLayoutTest.discoveryFilterCoversBothFamiliesAndIsNotNarrowedToIcmp`. ~~One BPF filter constant, not two.~~ | were `DarwinPcapBackend:111`, `WindowsPcapBackend:56` | — |
+| S3 | **FIXED (§13.23-B)** — **Shared errno capture segment across two send locks.** One `CAPTURE` segment is used under both `v4SendLock` and `v6SendLock`, so a concurrent v4+v6 send can cross-contaminate the errno read. | `DarwinIcmpPing:61`, used at `:235-239` and `:252-256`; `LinuxHostDiscovery.sendPacket` has the same pattern | Module-wide, not macOS-specific. It corrupts exactly the diagnostic §13.12 went to a packet capture to obtain. |
+| S4 | **FIXED (§13.23-C): every listed passage corrected; §7.4 retired in place.** **Spec text still describing the replaced macOS design.** §7's header and capability line (now annotated), §2.1's binding and raw-evidence rows (now corrected), plus still-stale: **§3.7** `passiveObservation // macOS: NO.`; **§3.2** `observe()` "on backends without passive support (macOS) … never fires"; **§4.6** table and point 1 (macOS knows `neighborResolutionPending` "via `sysctl`" — that path is gone and the flag is permanently false); **§7.4** entirely; **§3.4** `ResolveSource.KERNEL_TABLE // (macOS backend)`, now produced by no backend; **§11** and **§13.6** closings ("the only gate still standing is the macOS §7.3 ABI probe"); `DarwinLibc`'s class javadoc, which still argues for the neighbour-table approach; and `HostDiscoveryFactory.Platform.notYetBuilt`, unreferenced with a stale message. | — | §13.19's lesson, verbatim: *"a capability claim written as prose degrades even worse than one written as a literal … when a doc string names a platform, it is an assertion about that platform and needs the same evidence as a test."* |
+| S5 | **FIXED (§13.23-C): removed, including the Linux twin of the unreachable hint check.** **Dead surface.** `DarwinLibc.Handles.SYSCTL` and the five route constants (`AF_LINK`, `CTL_NET`, `PF_ROUTE`, `NET_RT_FLAGS`, `RTF_LLINFO`) have no caller in `src/main` — only `DarwinLayoutTest` asserts them. `provokeReply`'s hint check is unreachable (`resolve` already returned `CACHE_HIT` for any target with a cached MAC). | `DarwinLibc:42,48-51,126-128`; `DarwinPcapBackend:303` | Leftovers of the retired §7.3/§7.4 design. Harmless, but they imply a code path that no longer exists. |
+| S6 | **FIXED (§13.23-D) — completions moved off the reader threads.** ~~Backends complete futures inline on the reader thread; a fix that hopped them onto the dispatcher was written and reverted at the maintainer's request.~~ Re-examined 2026-09-11: the RTT is computed and recorded on the reader *before* the future is completed, so hopping only the completion onto the dispatcher moves no measurement. The maintainer approved; `PendingResolve.completeAll` and `PendingCall`'s aggregate now complete on the injected dispatcher, and a reader never runs a continuation. Pinned by `CompletionThreadTest.aSlowContinuationDoesNotHoldTheReaderUp`. | §13.15, §13.23-D | The Darwin `thenAcceptBoth` with two different reader-thread inputs is no longer a hazard: both inputs now complete on the pool. |
+| S7 | **FIXED — sweep admission parked the pool its own timeouts ran on.** All three `sweep()` fan-outs blocked dispatcher threads on a `Semaphore` and a sleeping rate limiter; with ≥ `maxInFlight` silent hosts no timeout could run and the shared pool wedged JVM-wide. Never observed because every §13 sweep was ≤ /24. | §13.22 | Replaced by `util.SweepDriver` + zoxweb `RateController`; pinned by `SweepDriverTest.doesNotWedgeABoundedPool`. Also bounds the dispatcher queue by the window, which removes the reader-thread `dispatcher.execute` back-pressure path at 1500 queued tasks. |
+| S8 | **FIXED (§13.23-A)** — every `onArp` goes through `PassiveLearning.learnable`, Windows `dispatch` skips frames from our own MAC, and `resolve()` answers `LOCAL_INTERFACE` before consulting the cache. ~~`onArp` learns from a `0.0.0.0` sender on all three backends.~~ Only `sha().isZero()` and a null address are rejected; RFC 5227 probes (every DHCP client on join, conflict detection continually) become cache entries, a second prober bumps `conflictCount` on the `0.0.0.0` entry — the field the fingerprinting layer reads as spoofing evidence — and subscribers receive a `0.0.0.0` neighbour. Windows additionally captures its own `probeInjection` gratuitous ARP at `open()` and announces itself. | `WindowsPcapBackend.onArp`, `LinuxHostDiscovery.onArp`, `DarwinPcapBackend.onArp` (2026-09-11 review) | `onIpv4` already filters `isAnyLocalAddress()`; the ARP path needs the same guard, and belongs in the shared passive-learning static M2 asks for. Unit-testable on Windows. |
+| S9 | **FIXED (§13.23-B)** — **M3, M7, M8 are not macOS-only.** M3 (discarded `handle.send` boolean), M7 (`activeNdp` gated on an IPv4 probe) and M8 (unguarded `probeInjection`/`startReader` in `open()`) are verbatim in `WindowsPcapBackend`. M6 was too, and is now fixed in all three (§13.23-A). "Windows — nothing platform-specific outstanding" above was therefore wrong and is reworded. | same review | Fix the remaining three once, in all backends, from the Windows box (package B). |
+| S10 | **FIXED (§13.23-C): `HostRecord.fromProbes`, `HostRecordTest`.** **L2 is understated.** Darwin and Linux `sweepOne` use `reachable()` for the *alive* flag and the ICMP tally as well as for the RTT; Windows uses `observedOnWire()` (which `PingResult` documents as the one to use for `icmpAlive`) and `measured()`. | `LinuxHostDiscovery.sweepOne`, `DarwinPcapBackend.sweepOne` | Harmless until a non-Windows backend manufactures a `localInterface` probe; still the §13.18 shape. |
+| S11 | **FIXED (§13.23-C): containing prefix → routable → first; five `NicBindingTest` cases.** **`NicBinding.sourceFor` ignores on-link-ness.** Returns the first address of the target's family, not the one whose prefix contains the target, so a NIC with two subnets ARPs and pings the second with the first's source. The `.or(...)` off-link fallback that follows it in the Windows send path is dead code. Untested. | `NicBinding.sourceFor`; `WindowsPcapBackend` send sites | Pick the address whose prefix contains the target, then fall back to the family's first. Pin with a two-subnet `NicBindingTest` case. |
+| S12 | **FIXED (§13.23-C): `util.SweepTargets`, `SweepTargetsTest`; a /24 now reads `254 probed`.** **Off-link sweeps still echo the range's own network and broadcast addresses.** `isNetworkOrBroadcast` checks the *interface's* prefix only; `sweep 10.1.0.0/24` from `10.0.0.0/24` routes echoes to `10.1.0.0` and `10.1.0.255` through the gateway — the amplification the wire-discipline block forbids, gated only by the router's directed-broadcast setting. | `sweepOne` on all three backends; `CidrRange.hosts()` | Also skip the range's first/last address when the range is off-link or wider than the interface's prefix. Do this before running §13.22's /22 measurement. |
+| S13 | **FIXED (§13.23-B)** — **`close()` can settle an in-flight ICMP probe twice.** All three pingers iterate `inFlight` and settle `IO` without claiming entries, racing the timeout task's `remove(key) != null`; `PendingCall.settle` counts entries, so a `count = 3` result can complete as `[A, A, B]`. Same one-arg `pendingResolves.remove(target)` in the resolve-timeout tasks could tear down a later `PendingResolve` for the same address (reachable only after `cache().clear()`). | `LinuxIcmpPing`, `DarwinIcmpPing`, `WindowsPcapBackend.close()` and the timeout lambdas | Claim with `remove(key, entry)` before settling. |
+| S14 | **FIXED (§13.23-B)** — **A dead reader is silent.** A `DiscoveryException` from `pcap_next_ex` or a persistent non-`EAGAIN` `recvfrom` error ends the loop with `running = false` and nothing else: capabilities still advertise everything, pending resolves are not failed, and later calls report `TIMEOUT` at full budget. The ICMP readers also spin at 100 % on a sticky error because they treat every `-1` as a tick. | `DarwinPcapBackend.readLoop`, `WindowsPcapBackend` reader, `LinuxIcmpPing`/`DarwinIcmpPing.readLoop` | Fail pending work with the error text and degrade `capabilities()`; check errno before treating `-1` as a tick. M3's family, at the reader. |
+| S15 | **FIXED in code (§13.23-A); the wire proof is L1.** All three `onIpv6` learn the sender from the Ethernet header before the ICMPv6 and hop-255 gates. ~~IPv6 passive learning discards the frame source it already has~~, so hosts that answer `ff02::1` without soliciting us are never recorded by `discoverIpv6Segment`; only hosts that sent an NS for *our* address during the window appear. The IPv6 twin of the §13.13 `ETH_P_IP` learner, missing on both platforms. Bears directly on L1. | `LinuxHostDiscovery.readLoop` → `onIpv6(payload)` without `frameSource`; `DarwinPcapBackend.onIpv6` ignores `eth.src()` | Pass the Ethernet source through and learn it under the M2 guard. |
+| S16 | **FIXED (§13.23-C moved it to `src/test`; deleted outright on 2026-09-12 at the maintainer's request — §13.16 keeps the measurement and how to repeat it).** **`spike/WindowsArpSpike` ships in the production jar.** A one-off `main()` diagnostic (six ARP injections, prints a verdict), referenced only from §13.16 and the README. | `src/main/java/…/spike/WindowsArpSpike.java` | Move to `src/test` or delete; §13.16 keeps the measurement. |
+| S17 | **FIXED (§13.23-C): `CidrRangeTest`, `SweepOptionsTest`, `SockaddrFillTest`, `DarwinSockaddrFillTest`, `Icmp6FilterTest`, `IdentifiersTest`; `PcapPlatform`/factory via `PlatformSelectionTest`. Still untested: `HostDiscoveryFactory` wiring, `PcapDevices`.** **Untested pure code worth pinning from the Windows box:** `CidrRange` (no unit test at all — host-bit masking, `/31`/`/32`, IPv6 iteration, the `BigInteger` sign-byte/leading-zero paths in `toAddress`), `SweepOptions` validation (§13.3 claims it is pinned; it is not), the `fillSockaddr*` helpers on both libcs, `Libc.setIcmp6Filter`, `Identifiers`, `PcapPlatform.current()` (S1), `HostDiscoveryFactory`, `PcapDevices`. | same review | — |
 
 #### What was predicted and did not happen
 
@@ -2873,6 +2928,534 @@ lookup assumption that held on one OS and not another.
 The generalisable version: **the per-platform code was in better shape than the code that chooses
 between platforms.** Two of the four items above (S1, S2) are the same failure waiting to happen
 again.
+
+---
+
+### 13.22 Sweep admission parked the pool it depended on — found by review, not by a wire
+
+Every §13 entry before this one was earned on a wire. This one was not: a 2026-09-11 code review of
+the three `sweep()` implementations found a deadlock that no measured sweep could have reached, and
+the arithmetic of *why* it could not is the reason it is recorded here rather than quietly fixed.
+
+#### The shape
+
+All three backends fanned a sweep out the same way: one dispatcher task per target, submitted up
+front, each task then **blocking** in `Semaphore.acquire()` for a `maxInFlight` slot and in
+`RateLimiter.acquire()` — a `Thread.sleep` — for its send time. The probe itself was already
+non-blocking: a pending-map entry completed by the reader thread on a reply or by a scheduled timer on
+timeout. Only the *admission* around it parked a thread.
+
+The trap is §4.3's own design: the executors are zoxweb's process-wide pools, and
+`TaskSchedulerProcessor.run()` delivers every due timer by `taskProcessor.queueTask(...)` — onto the
+**same** pool the dispatcher runs on, FIFO behind whatever is already queued. So the per-host
+timeouts that release permits were queued behind the sweep tasks that were waiting for permits.
+
+#### The arithmetic — why every measurement passed
+
+Defaults: `maxInFlight = 256`, pool of `max(4 × cores, 16)` workers, queue of 1500.
+
+1. `sweep()` submits every target at once. Nothing throttles submission.
+2. Workers pull the first 256 tasks. Each takes a permit, sends, returns in microseconds. All 256
+   permits are now held by outstanding probes.
+3. Workers pull the next N tasks (N = pool size). Each parks in `acquire()`. **Every worker is now
+   blocked.** The remaining targets sit in the queue.
+4. One second later the scheduler thread fires 256 timeout tasks — by queueing them **behind** the
+   remaining sweep tasks. No worker is free to run them.
+5. A real reply completes inline on the reader thread and releases one permit, which wakes one
+   worker, which sends one probe and then pulls the *next queued sweep task* rather than a timeout,
+   and parks again. Live hosts drain slowly; every silent host that is admitted holds its permit
+   forever. Once 256 silent hosts hold permits, nothing moves — and neither does any other timer
+   in the JVM, for no-sneak or for anything else sharing `TaskUtil`.
+6. Above 1500 queued tasks the `ThresholdQueue` also blocks the `sweep()` *caller* and, worse, the
+   reader threads inside `dispatcher.execute` — §4.3's "never block a reader" defeated by
+   `execute` itself.
+
+A /24 is 254 targets. That is **fewer than 256 permits**, so no task ever parked, and every sweep in
+§13.12, §13.13, §13.16, §13.18 and §13.20 ran on a range that could not exhibit the bug. Pool size is
+irrelevant to the outcome; it only sets how many silent hosts are needed. Sixty-four threads wedge on
+a /22 of mostly-silent addresses exactly as sixteen do.
+
+> Worth generalising, alongside §13.11's: **a bound that is enforced by parking a thread is enforced
+> by the thing you have least of.** The window and the rate cap are safety limits; they were being
+> paid for in the currency the timeouts needed.
+
+#### The fix — admission as state, not as a waiting thread
+
+`util.SweepDriver` is now the one fan-out, used verbatim by all three backends (the three copies had
+already begun to drift in their comments). It holds the target iterator and an in-flight count, and
+admits the next host from exactly two places: a probe's completion callback, and a scheduler tick.
+Neither waits for anything.
+
+- `maxInFlight` is a counter checked under the driver's monitor for a few instructions — never held
+  across a send, a callback or a scheduler call, so it cannot interact with the backends' send locks.
+- Pacing is zoxweb's `RateController` in TIME mode: `nextWait()` returns the delay and advances the
+  bucket, and the delay goes to `scheduler.schedule(...)` — the injected scheduler, which is
+  `TaskUtil.defaultTaskScheduler()` in production and a one-thread executor in the test. This is
+  literally what `TaskSchedulerProcessor.queue(RateController, Runnable)` does, expressed on the
+  `ScheduledExecutorService` contract the backends already take so nothing narrows.
+- The dispatcher queue depth is now bounded by the window rather than by the size of the range, which
+  is what closes point 6 as well.
+- The private `util.RateLimiter` and its test are deleted. The semantics that mattered — leaky bucket,
+  no burst credit, one rate shared by the whole sweep — are preserved; `RateController` computes
+  `nextTime = now + delay`, so a late caller gets "now", never a backlog of credit.
+
+#### The trade, stated plainly
+
+`RateController` paces in **whole milliseconds, rounded up**. The rate is therefore expressed per
+host (`maxPacketsPerSecond / packetsPerHost`, one reservation per host), and the effective emission
+is at or under the cap:
+
+| Backend | frames/host at `pingCount = 1` | hosts/s at 2000 pps | interval | effective |
+|---|---|---|---|---|
+| Windows | 2 | 1000 | 1 ms | 2000 pps — unchanged |
+| Linux, macOS | 3 | 667 → rounds to | 2 ms | 1500 pps |
+
+Under the cap is the only direction a safety limit may err in (§13.11). The cost is real and should
+show in the next Linux measurement: a /24's send phase grows from ~380 ms to ~510 ms, so the
+§13.13 `~1390 ms` sweeps should read closer to ~1500 ms. **If they read materially worse than that,
+something else moved** — record it rather than tune around it.
+
+#### Measured — Windows, same segment, back to back (2026-09-11)
+
+Old fan-out (stashed and rebuilt) versus `SweepDriver`, three `/24` sweeps each in one `hostscan`
+session, same wired interface, minutes apart:
+
+```
+before:  256 probed, 26 alive (26 by MAC, 24 by ICMP) in 1263 ms
+         256 probed, 26 alive (26 by MAC, 24 by ICMP) in 1257 ms
+         256 probed, 26 alive (26 by MAC, 24 by ICMP) in 1257 ms
+after :  256 probed, 26 alive (26 by MAC, 24 by ICMP) in 1367 ms   (first sweep of the session)
+         256 probed, 26 alive (26 by MAC, 24 by ICMP) in 1255 ms
+         256 probed, 26 alive (26 by MAC, 24 by ICMP) in 1255 ms
+```
+
+Identical counts, identical wall time once warm. The extra ~100 ms on the first sweep of the new
+session is within the run-to-run spread of first sweeps (§13.13 shows the same shape) and did not
+recur. This is the expected result: a `/24` is 230 silent hosts each paid for with one
+`perHostTimeout`, so admission was never on the critical path here — and on Windows the pacer is
+unchanged at 2000 pps. The Linux `+130 ms` prediction above is still a prediction.
+
+#### What pins it
+
+`SweepDriverTest`, pure, runs on the Windows dev box:
+
+- `doesNotWedgeABoundedPool` — the regression test. **One** thread serves as both scheduler and
+  dispatcher, the shape zoxweb's pools actually have. 300 silent hosts through a window of 8, each
+  answered only by a 5 ms timer. The old fan-out deadlocks on the first parked task; the driver
+  finishes in ~250 ms.
+- `neverExceedsMaxInFlight`, `honoursTheAggregateRate`, `pacerIsInHostsPerSecondAndRoundsUnderTheCap`
+  — the two limits and the rounding table above, as assertions rather than prose.
+- `aFailingProbeDoesNotStallTheSweep`, `synchronousCompletionsDoNotLoseAdmissions`,
+  `resultCompletesOnTheDispatcher`, `emptyTargetsCompleteImmediately` — the re-entrancy edges.
+
+#### Still to measure
+
+The true before/after is a range larger than the window with mostly silent hosts — a /22 on any
+platform. Before: hangs, and `hostscan` never returns to its prompt. After: completes in roughly
+`targets / (hosts/s) + perHostTimeout`. Nobody has run that yet, because a routed sweep of a range
+that is not the local prefix also echoes the range's own network and broadcast addresses (an open
+item from the same review), and that should be fixed before anyone sends 1024 echoes through a
+gateway to prove a point about threads.
+
+---
+
+### 13.23 Finishing the discovery layer — three work packages from the 2026-09-11 review
+
+§13.21 and §13.22 came from a code review rather than a wire. What follows is the work that closed
+the review's items, in three packages that each build, test and sweep green on their own: **A** —
+passive learning and provenance; **B** — honest failure at the send and the reader; **C** —
+addressing, sweep discipline, hygiene and the pure tests §13.21 S17 asked for. Each package records
+what it changed on the wire (A: nothing), what pins it, and what still needs a machine this box is
+not.
+
+#### A — Passive learning got one guard, and provenance got honest
+
+**The shape.** Three copies of one guard, one of them missing the multicast clause (M2, L3); the
+ARP path never had the guard at all, so an RFC 5227 probe from `0.0.0.0` became a neighbour, a
+second prober bumped that entry's conflict counter — the field the fingerprinting layer reads as
+spoofing evidence — and subscribers received a `0.0.0.0` neighbour (S8). Windows captured its own
+injection probe at `open()` and announced itself, and because `resolve()` consulted the cache before
+asking whether the target was our own address, `resolve(own)` answered `CACHE_HIT` from that
+sighting. Every backend labelled whatever completed a pending resolve `ACTIVE_ARP`, including a
+request or a gratuitous announcement (M6, and not macOS-only — S9). IPv6 threw away the Ethernet
+source it had already extracted, so a host that answered `ff02::1` with an ordinary hop-limit-64
+echo reply was never recorded (S15). And the two pcap backends each held their own BPF filter
+string and had drifted (M1, S2).
+
+**The fix.** One pure static, `util.PassiveLearning`, following `util.SweepDriver`'s precedent:
+
+- `learnable(binding, source, frameSource)` — the guard, for every learner (IPv4 frames, IPv6
+  frames, ARP, NS, NA) on every backend. Rejects a null/zero/multicast source MAC, **our own MAC**,
+  a null/any-local/multicast source address, an off-link sender (the decisive clause: its frames
+  carry the router's MAC), and our own address.
+- `arpProvenance(arp, solicited)` — `ACTIVE_ARP` only for a non-gratuitous reply while a resolve
+  for that sender is pending; everything else is `PASSIVE`, which its javadoc already defined as
+  "observed on the segment, unsolicited". §4.2's rule that any of them may complete a pending
+  resolve stands; the label now says how. `ndpProvenance` is the NA twin (Solicited flag +
+  pending → `ACTIVE_NDP`). No new enum constant — `ObservationKind.GRATUITOUS_ARP` already carries
+  the distinction to observers.
+- Every `onArp`: parse → guard → one provenance for both `cache.observe` and `completeResolve` →
+  notify. Every `onIpv6`: learn the sender from the Ethernet header (`sll_addr` on Linux) **before**
+  the ICMPv6 and hop-255 gates — the hop-255 rule is RFC 4861's rule for ND *messages* and does not
+  apply to a frame-header claim; the on-link guard is the defence, exactly as for IPv4 in §13.13 —
+  then gate the NA target and NS source through the same guard, because hop-255 proves the sender
+  is on-link, not the address it advertises.
+- `resolve()` on all three answers `LOCAL_INTERFACE` for our own address **before** the cache
+  lookup, so nothing another host claims about our address can ever answer for it. Windows
+  `dispatch` adopts Darwin's skip of frames whose source MAC is our own.
+- `PcapHandle.DISCOVERY_FILTER = "arp or ip or ip6"`, with §13.17's rationale, used by both pcap
+  backends. Darwin now captures `ip6` and drops the redundant `icmp`/`icmp6` clauses.
+
+**What changed on the wire: nothing.** Every item is receive-side. Darwin's filter widening changes
+what is *captured*, not sent. The unicast-NS re-solicit — the IPv6 twin of §13.13's unicast ARP
+hint — was designed and deliberately left out: it is a frame shape that has never been on a wire,
+and it belongs to whoever closes L1.
+
+**Visible behaviour changes.** `resolve(own)` reports `LOCAL_INTERFACE`, never `CACHE_HIT`. A
+request or gratuitous ARP that satisfies a resolve reports `PASSIVE`. Foreign-subnet ARP senders
+sharing our wire are no longer cached or reported to `observe()` — consistent, since `resolve()`
+already refuses them as off-link, and caching them only produced a `CACHE_HIT` for an address the
+backend otherwise declines. `discoverIpv6Segment` can now report hosts that never solicited us.
+
+**Live, Windows, same segment as §13.22 (2026-09-11):**
+
+```
+$ hostscan sweep 10.0.0.0/24 10.0.0.0/24
+256 probed, 25 alive (25 by MAC, 23 by ICMP) in 1370 ms
+256 probed, 26 alive (26 by MAC, 24 by ICMP) in 1256 ms      (the 25 is 10.0.0.173, a phone; §13.13 notes sweep counts are not a stable baseline)
+
+$ hostscan resolve 10.0.0.1 10.0.0.61
+10.0.0.1     42:25:47:35:03:ec   RESOLVED   13 ms via ACTIVE_ARP
+10.0.0.61    b0:7b:25:82:64:45   RESOLVED    1 ms via LOCAL_INTERFACE
+
+$ hostscan observe 60
+  10.0.0.1      42:25:47:35:03:ec   ARP_REQUEST
+  10.0.0.4      30:cd:a7:38:ff:c5   GRATUITOUS_ARP   (×2, plus ×2 ARP_REQUEST)
+  10.0.0.170    28:70:4e:c8:6b:d8   ARP_REQUEST
+6 observation(s)      — no 0.0.0.0 row, no row for our own MAC
+```
+
+Identical counts and timing to §13.22 once warm; `10.0.0.61` is the row that used to be able to
+read `CACHE_HIT`.
+
+**What pins it.** `util/PassiveLearningTest` (moved from `platform/windows`, 23 cases): the six
+original guards; RFC 5227 `0.0.0.0` and `::` senders; our own MAC; multicast groups in both
+families; `fe80::` learned only when the binding has a v6 address; on-prefix vs off-prefix global
+v6; own v6 addresses; `169.254/16` off-link for a routed binding (deliberate, documented in the
+test); the four ARP provenance cases and the two NA cases; `arpKind`.
+`PcapLayoutTest.discoveryFilterCoversBothFamiliesAndIsNotNarrowedToIcmp` pins the constant against
+exactly the drift M1 described. `HostScannerTest`, `SweepDriverTest`, `NicBindingTest` unchanged and
+green. The backends' private `onArp`/`onIpv6` bodies are not unit-testable without a handle — which
+is why the decision logic lives in the static and the backends are now thin enough that the wire
+check is the three commands above.
+
+**Still to measure.** M1's `observe 60` before/after on a Mac (the code half is applied; the
+measurement is the deliverable). L1: a v6 neighbour on any platform — expected to appear now via
+`PASSIVE` provenance even if it never answers an NS. The S9 trio (M3, M7, M8) is package B, below.
+
+#### B — Honest failure at the send and at the reader
+
+Package B (M3, M4, M5, M7, M8, S3, S9, S13, S14), 2026-09-11, all from the Windows box. Like A, none
+of this was found on a wire: every §13 run had a working driver and a living reader, which is
+precisely the population in which these defects are invisible.
+
+**The shape.** Four failures that could not be told apart from success or from each other:
+
+- `handle.send(...)` returned a boolean that both pcap backends discarded, so a driver that refused
+  every injection produced a `TIMEOUT` at the caller's full budget — the same enum a silent host
+  earns. Linux had fixed this with a backend-wide `lastSendError` field, which is the other half of
+  the defect: written by whichever socket failed most recently, it let a concurrent resolve on the
+  other socket report a stranger's failure as its own.
+- One `captureCallState` errno segment per instance, read under two different send locks
+  (`DarwinIcmpPing`, `LinuxIcmpPing`, `LinuxHostDiscovery.sendPacket`): a concurrent IPv4 and IPv6
+  send could cross-contaminate the errno each reported — the one diagnostic §13.12 went to a
+  packet capture to obtain.
+- `PendingCall.settle` counted *entries*, not probes. `close()` iterated the in-flight map without
+  claiming, so a timeout task firing during shutdown settled the same probe twice and a three-probe
+  call completed as `[A, A, B]` with C never reported. The resolve-timeout tasks removed by key, so a
+  late deadline could tear down a newer resolve for the same address.
+- A reader that died — `pcap_next_ex` error, `EBADF` from the fd-reuse race §4.4 warns about — set
+  `running = false` and nothing else: capabilities still advertised everything, pending work was
+  never failed, later calls timed out at full budget, and the two ICMP readers treated every `-1`
+  as the timeout tick, so a sticky error spun a dedicated thread at 100 % in silence.
+
+**The fix, in the order it was built.**
+
+- *B0 — a text channel.* `ResolveResult` and `PingResult` gained `Optional<String> detail`
+  (additive; `notResolved(target, outcome, elapsed, detail)` and `PingResult.of(target, probes,
+  err, detail)`). The module has no logger; this is the only place native text can reach a
+  caller. `hostscan` prints it after the outcome.
+- *B1 — one pending-state implementation.* `util.PendingResolve` (per-resolve `recordSendError`,
+  first failure wins; pure `expire(now)` → `ERROR` with the text if nothing went out, else
+  `TIMEOUT`; `abort(why)`) and `util.PendingCall` with a nested `Probe` whose `settle` is
+  CAS-guarded, replace six nested copies across the five backend classes. Every timeout and
+  `close()` path claims with `remove(key, entry)`; Darwin and Linux retry lambdas compare identity
+  (`pending.get(target) == entry`). Linux's `lastSendError` is gone: `sendPacket`, `sendArp` and
+  `sendNeighborSolicitation` return the errno text (null = accepted, "either frame accepted" kept).
+- *B2 — pcap says why.* `PcapHandle.trySend(frame)` returns pcap's text, read from `pcap_geterr`
+  inside the same monitor as the send (the old `send()` + `lastError()` pair released the lock in
+  between). Darwin and Windows send sites route the text into the owning `PendingResolve`;
+  Windows `ping()` maps an `ERROR` resolve to `PingError.IO` carrying it.
+- *B3 — errno per send.* Every `sendto` allocates its capture segment in the confined scratch
+  arena it already opens. `setPromiscuous` got its own scratch; the instance segment is
+  open()/close()-only. Structural: `grep "SENDTO.invokeExact(state"` over `platform/` is empty.
+- *B4 — dead readers speak.* `util.RecvErrors` is the one read-error policy (tick / back off one
+  tick on the dedicated thread / fatal at once for a dead fd, fatal after five transient errors in
+  a row); `Libc` and `DarwinLibc` gained `EINTR`, `EBADF`, `ENOTSOCK` and `isDeadDescriptor`. All
+  five reader loops route a fatal read through `failReader(why)`: record it, stop, fail everything
+  pending with the text. `resolve()` and `ping()` return `ERROR`/`IO` with that text immediately
+  afterwards, before any send; `capabilities()` reports the families that reader served as
+  `false` — the one documented exception to "constant for the lifetime of the object". Linux
+  keys the failure per socket (ARP, NDP, IP learner); the pingers per family.
+- *B5 — per-family injection, pure capabilities.* `pcap.InjectionProbe.frameFor(binding)` builds
+  the open()-time probe from whichever family exists: the familiar broadcast ARP for our own
+  address, or — on an IPv6-only interface — a Neighbor Solicitation *from* our own address *for*
+  our own address to its solicited-node group, deliberately not DAD-shaped so no node multicasts a
+  defending advertisement. `probeInjection` returns the refusal text, which `resolve()` reports as
+  the `detail` behind `UNSUPPORTED`. Both pcap backends compute `capabilities()` through a
+  package-private pure `capabilitiesOf(...)`: `activeArp`/`icmpV4` need injection AND IPv4,
+  `activeNdp`/`icmpV6` injection AND IPv6, everything the reader serves follows `readerAlive`, and
+  on macOS `rawEvidence` and `ttlAvailable` follow the pinger — which reports both `false`, so
+  the old literal `true` for `rawEvidence` promised bytes nothing ever carried. `HostDiscoveryFactory`
+  picks the Windows pinger by `anyIcmp()`. Promiscuous upgrade in `observe()` is still not wired;
+  the `DiscoveryCapabilities` javadoc now says "non-promiscuous capture" for both pcap backends.
+- *B6 — no leaked handle.* Both pcap `open()`s guard every construction stage in one `try`:
+  `backend.close()` if constructed, else `handle.close()`.
+- *B7 — blame privilege only for privilege.* `DarwinPcapBackend.openFailureMessage(device, text)`
+  prepends the `/dev/bpf* … requires root` explanation only for "Permission denied", "Operation
+  not permitted" or "cannot open BPF device"; otherwise it leads with pcap's text and the device.
+
+**The trade, stated plainly.** One extra confined allocation per send (a few bytes in an arena
+already being opened). One new frame on the wire: an IPv6-only interface now emits one NS at
+`open()` where it emitted nothing; dual-stack and IPv4-only interfaces are unchanged. `rawEvidence`
+on the macOS `HostDiscovery` now reads `false`, which it always was. `ResolveResult` and `PingResult`
+grew a component — `no-sneak-core`'s `NMapScanner` reads them through accessors and needed no change.
+
+**Measured — Windows, this box, after the change:**
+
+```
+sweep 10.0.0.0/24 ×2:  256 probed, 26 alive (26 by MAC, 25 by ICMP) in 1292 ms
+                       256 probed, 26 alive (26 by MAC, 25 by ICMP) in 1253 ms
+resolve:               10.0.0.1    42:25:47:35:03:ec  RESOLVED   11 ms via ACTIVE_ARP
+                       10.0.0.61   b0:7b:25:82:64:45  RESOLVED    0 ms via LOCAL_INTERFACE
+                       10.0.0.250  9e:2c:f5:78:c6:8e  RESOLVED  124 ms via ACTIVE_ARP
+ping 10.0.0.1 -c 3:    3 sent, 3 received, 0.0% loss; rtt min/avg/max/stddev = 17.523/20.061/22.164/1.920 ms
+```
+
+Same counts and wall time as §13.22 and §13.23-A (25 by ICMP rather than 24: `10.0.0.94` answered
+this time; it is the host that was ARP-only in the earlier runs).
+
+**What pins it** (all pure, all on this box): `ResolveResultTest`, `PingResultTest.detailSurvivesOf`,
+`PendingResolveTest` (expire with and without a send error, first error wins, `await()` is a copy,
+`completeAll` idempotent), `PendingCallTest.aProbeSettledTwiceCountsOnce` — the `[A, A, B]`
+regression — plus ordering, expiry cancellation and the detail channel, `RecvErrorsTest`,
+`InjectionProbeTest` (both frame shapes parsed back with the module's own codecs; link-local
+preferred as the NS source), `DarwinCapabilitiesTest` and `WindowsCapabilitiesTest` (per-family
+gating, dead reader, refused injection, no pinger, no hardware address, iphlpapi), and
+`DarwinOpenMessageTest`. Every earlier test class still green: `PassiveLearningTest` 23,
+`PcapLayoutTest` 11, `HostScannerTest` 9, `SweepDriverTest` 8, `NicBindingTest` 10, the three layout
+tests and `OwnAddressTest`.
+
+**Still to measure.** On Windows: disable the adapter in the middle of a `/24` sweep — every
+outstanding resolve must return `ERROR` carrying `pcap_next_ex`'s text within one read tick (10 ms),
+not `TIMEOUT` at the one-second budget, and a subsequent `resolve` must return immediately with the
+same text. On a Mac whose Wi-Fi adapter refuses injection: `resolve` must report `UNSUPPORTED` with
+the driver's refusal in `detail`. On any IPv6-only interface: the open()-time NS must be accepted
+by the driver and answered by nobody.
+
+#### C — Routed sweeps stop echoing range edges, and the review's shared-helper items
+
+The last package is the one that changes what leaves the wire — by **removing** packets, never
+adding any — plus the four places where three backends each held their own copy of a decision and
+had drifted, and the pure code the review found unpinned.
+
+**The rule (S12).** `NicBinding.isNetworkOrBroadcast` withholds the *interface's* network and
+directed-broadcast addresses, deliberately against the interface's real prefix so a `/29` swept
+inside a `/24` keeps its edges. That left the ranges the interface knows nothing about: a routed
+`sweep 10.1.0.0/24` from `10.0.0.61/24` echoed `10.1.0.0` and `10.1.0.255` through the gateway,
+gated only by the router's directed-broadcast setting. `util.SweepTargets.mustSkip` now also
+withholds the **range's** own first and last address unless one of the interface's IPv4 prefixes
+covers the whole range (then the interface's own rule already knows the real edges). IPv4 only,
+prefix ≤ 30; `/31`, `/32` (RFC 3021) and IPv6 (no broadcast) are never trimmed. Applied once, in
+each backend's `sweep()` where the target list is built; the three `sweepOne` checks are gone.
+
+| From `10.0.0.61/24`, sweeping | Stops being probed | Still probed |
+|---|---|---|
+| `10.1.0.0/24` (off-link) | `10.1.0.0`, `10.1.0.255` | everything else |
+| `10.0.0.0/23` (wider than the NIC) | `10.0.1.255` | `10.0.1.0` — the remote half's subnetting is unknowable |
+| `10.0.0.0/16` | `10.0.255.255` | `10.0.1.0`, `10.0.1.255`, … |
+| `10.0.0.0/25`, `10.0.0.8/29` (inside the NIC) | nothing new | `.127`, `.8`, `.15` |
+| any `/31`, `/32`; any IPv6 range | nothing | all |
+
+Two consequences stated plainly. `SweepSummary.total` is now the count actually probed, so a
+`/24` reads **`254 probed`** where §13.22 read 256 — the alive/MAC/ICMP numbers are unchanged and
+still compare. And on Windows this is future-proofing rather than a behaviour change: its
+`sweepOne` pings only with a resolved MAC and `resolve` refuses off-link targets, so a Windows
+routed sweep sent no echo at all; Linux and macOS did, and now do not.
+
+**Source selection (S11).** `NicBinding.sourceFor` returned the *first* address of the target's
+family. On a NIC carrying `10.0.0.61/24` and `192.168.56.1/24`, ARP and echo for `192.168.56.5`
+left as `10.0.0.61` — the reply came back through the router or not at all. It now prefers the
+address whose prefix contains the target, then the family's first non-link-local address (an
+off-link target must not be sourced from `fe80::` or `169.254.`), then the family's first. The
+Windows send site's comment claimed `sourceFor` was empty off-link and kept a fallback for it; the
+claim was false and the fallback dead, both removed.
+
+**One record constructor (S10, closes L2).** `HostRecord.fromProbes(target, resolved, pinged, now)`
+replaces three `sweepOne` tails. Windows already used `observedOnWire()` and `measured()`; Linux
+and macOS still used `reachable()` for the alive flag, the ICMP tally *and* the RTT — the exact
+shape §13.18 fixed on Windows and claimed for all three. Same thread shapes as before
+(`thenCompose` on Windows, `thenAcceptBoth` elsewhere; S6 unchanged).
+
+**Dispatchers agree (S1).** `PcapPlatform.current()` tested `contains("win")` before mac/darwin,
+and `"darwin".contains("win")` is true, so a JVM reporting `Darwin` was sent to Npcap by one
+dispatcher and to macOS by the other. Both now expose a pure `forOsName(String)` (mac/darwin →
+`"windows"`, the whole word → linux → throw naming the string) and `PlatformSelectionTest` walks
+`{"Mac OS X", "Darwin", "Windows 11", "Windows 10", "Linux"}` asserting the two agree.
+
+**Removed (S5, S16).** `DarwinLibc.Handles.SYSCTL` and the five route constants, `Platform.notYetBuilt`,
+and the `unicastHint(target).isPresent()` clause in `provokeReply` **and its Linux twin**
+`provokeKernelResolution` — unreachable on both, because `resolve()` has already answered
+`CACHE_HIT` for any cached MAC before either runs. `DarwinLibc`'s javadoc no longer argues for a
+neighbour-table design its class does not implement. `WindowsArpSpike` was moved to the test
+tree here and then deleted on 2026-09-12 (§13.16 keeps its measurement and how to repeat it), which
+also removed the last caller of the diagnostics-only `PcapHandle.lastError()`: the only way to
+read pcap's error text is now inside the same monitor as the send that produced it.
+
+**What pins it.** `SweepTargetsTest` (ten cases: the table above, `/31`/`/32`, IPv6, a second
+subnet on the same NIC, a v6-only binding, and the predicates against `probeable`), five new
+`NicBindingTest` cases for `sourceFor`, `HostRecordTest` (seven — the local-interface probe that
+fabricated `0.000 ms` is the first), `PlatformSelectionTest`, and the S17 set: `CidrRangeTest`
+(host-bit masking, malformed inputs incl. a hostname that must never resolve, `/31`/`/32`, lazy
+IPv6 iteration, the two `BigInteger.toByteArray` traps — `224.0.0.0/24` sign byte, `0.0.0.0/8`
+dropped zeros — non-octet `contains`, `lastAddress`), `SweepOptionsTest` (every rejection names its
+field; zero pps accepted as unlimited), `platform/linux/SockaddrFillTest` (the `11 00 08 06`
+prefix §13.6 captured live, `sll_halen = 6`, `sin6_scope_id` at 24, every pad byte zero from a
+`0xAA`-dirtied segment), `platform/darwin/DarwinSockaddrFillTest` (`sin_len` 16/28, family byte
+30 at offset 1), `Icmp6FilterTest` over the newly extracted pure `Libc.fillIcmp6Filter` (type 129
+→ word 4 == `0xFFFFFFFD`, exactly what `LinuxIcmpPing` installs), and `IdentifiersTest` (key
+packing/masking, `nextIdentifier` never zero across the 16-bit wrap, sequence wrap at 65536).
+Every earlier class still green.
+
+**Measured — Windows, this box, wired NIC (2026-09-11).**
+
+```
+sweep 10.0.0.0/24 ×2:   254 probed, 25 alive (25 by MAC, 23 by ICMP) in 1322 ms
+                        254 probed, 26 alive (26 by MAC, 24 by ICMP) in 1253 ms
+sweep 10.0.0.0/23:      509 probed, 25 alive (25 by MAC, 23 by ICMP) in 1283 ms
+```
+
+The `/23` line is the first live run of a range larger than the 256-address window on the
+§13.22 driver — the old fan-out would have parked every pool thread on it. `10.0.1.255` was never
+probed (509 = 512 − `10.0.0.0` − `10.0.0.255` − `10.0.1.255`); the off-link half resolved as
+`UNSUPPORTED` at once, which is why it cost no wall time. The 25-vs-26 alive is `10.0.0.173`, an
+intermittent phone that the old code showed the same way.
+
+**Still to measure.** A routed sweep on Linux or macOS, with a capture on the gateway side,
+confirming no echo to the range's `.0`/`.255`; and a two-subnet NIC on any platform confirming
+ARP for the second subnet now carries that subnet's source.
+
+#### D — Completions moved off the reader threads (S6 closed)
+
+**The shape.** Every receive source has one dedicated thread whose only job is to take packets
+off the wire. When a reply arrived, that thread also completed the `CompletableFuture` for the
+resolve or ping — and a `CompletableFuture` runs whatever was attached to it (`thenAccept`,
+`whenComplete`) on the thread that completes it. So a slow or blocking continuation attached by a
+caller of `HostDiscovery`/`ICMPPing` ran *on the reader*, which was then not reading: replies
+queued in the driver, some were dropped, and other hosts timed out with no network cause. On
+Windows one reader serves ARP, NDP and ICMP for the card; on Linux and macOS the ICMP reader is
+JVM-wide, so one slow callback stalled every ping in the process. `HostScanner` already hopped
+its own callbacks to the pool, so the scan pipeline and the app were never exposed; a direct
+embedder of the low-level interfaces was.
+
+**Why it stayed open.** §13.15 recorded a fix that was written and reverted, on the argument that
+it "changes which thread every measurement is taken on". Re-read on 2026-09-11: the RTT is
+computed from `Probe.sentAtNanos` and recorded on the reader *before* the future is completed. Only
+the completion moves; no number does. The maintainer approved the change on that basis.
+
+**The fix.** `util.PendingResolve` and `util.PendingCall` take the injected dispatcher as a
+`completer` and complete their futures with one `completer.execute(() -> future.complete(x))`.
+The reader hands off and returns to `recvfrom`/`pcap_next_ex` in microseconds. Exactly-once is
+kept by a CAS on `PendingResolve` (`completeAll` returns whether *this* call claimed it, which the
+timeout and close paths rely on) and by the existing per-probe CAS on `PendingCall`. The inline
+constructors remain for tests and for callers with no pool. Nothing waits: no latch, no
+semaphore, no sleep on any pool thread; the pool task is the completion itself.
+
+**What pins it.** `CompletionThreadTest`: a resolve and a ping continuation each observe the
+`completer` thread, never the reader; `aSlowContinuationDoesNotHoldTheReaderUp` attaches a 300 ms
+sleep to host A's result and asserts the reader completed A and B in under 100 ms and B's result
+was observable within 100 ms — the exact failure the inline shape produced; `completeAll` is
+claimed exactly once even before the completer has run; the inline constructors still complete
+on the caller.
+
+**Measured.** Three `/24` sweeps in one session immediately after the change, same wired
+interface as §13.23-C:
+
+```
+254 probed, 27 alive (27 by MAC, 24 by ICMP) in 1291 ms
+254 probed, 27 alive (27 by MAC, 24 by ICMP) in 1260 ms
+254 probed, 27 alive (27 by MAC, 24 by ICMP) in 1257 ms
+```
+
+Wall time is inside the run-to-run spread of every earlier measurement (§13.22: 1255–1367 ms).
+The 27th host is `10.0.0.74`, a device that joined the segment between runs, not an artefact of
+the change — it answers ICMP in both sweeps that saw it.
+
+#### E — Leftovers: a ping that always completes, and an `observe` that shows the cache
+
+Two small items the A–C packages surfaced but did not own.
+
+**A registered probe that was never sent (matrix N1).** `PendingCall` completes when
+`expected` probes have settled. Every `ping()` registers a probe, sends it, and either fails it
+on a refused send or arms its deadline — so on the paths that were measured every slot settles.
+The gap was the path that throws: a scheduler that refuses the deadline (`TaskSchedulerProcessor`
+throws once it is dead, which is exactly the state after `TaskUtil.close()`), or a frame builder
+that fails. The probe registered just before the throw had no deadline and no failure, so its
+slot stayed open, the call's future never completed, and its map entry leaked. Not observed;
+found by reading. Fix: `PendingCall.failRemaining(error, detail)` closes every open slot at once —
+registered-but-unsettled probes fail with the error, slots that were never registered are
+reported as `NEVER_SENT` (sequence −1, −2, …, because they never had one) — and each `ping()`
+wraps its send loop in a `try`/`catch (RuntimeException)` that drops the call's unsettled map
+entries and calls it. Idempotent; completion still goes through the completer (§13.23-D). Pinned by
+`PendingCallTest.aCallWhoseProbeWasNeverSentStillCompletes`,
+`completesExactlyWhenTheLastOfExpectedSettlesRegardlessOfOrder`,
+`failRemainingIsIdempotentAndNeverOvercounts`, `failRemainingCompletesOnTheCompleter`.
+
+**`observe` counted events, not neighbours (matrix N2).** `hostscan observe` reported "N
+observation(s)": the ARP/NDP events delivered to the subscriber. Since §13.13/§13.17 most of what
+passive learning knows never arrives as an event — the frame-header learner records the sender
+MAC of ordinary IPv4/IPv6 traffic straight into the cache — so the number a Mac before/after
+measurement (M1) has to compare with §13.17's "neighbours learned" was not printed anywhere.
+Now `observe [seconds] [--cache]` ends with
+`N observation(s), M neighbour(s) in cache` and, with `--cache`, one table per interface from
+`cache().snapshot()`: IP, MAC, state, provenance, first/last seen as ages, conflict count —
+rendered by `HostScanFormat.cacheEntry` so the Swing pane prints the same rows. Parsing lives in
+`HostScan.ObserveArgs` and is pinned by `HostScanArgsTest`; the renderer by
+`HostScannerTest.cacheRenderersShowWhatPassiveLearningKnows`.
+
+**Measured** (Windows, wired interface, `observe 20 --cache`, a fresh session so the cache holds
+only what the 20-second window taught it; a preceding sweep in the same session would add its
+hosts, but `execute_run_configuration` cannot pipe the shell):
+
+```
+observing for 20s (broadcast ARP, gratuitous ARP, NS/NA)
+  10.0.0.4      30:cd:a7:38:ff:c5   GRATUITOUS_ARP
+  10.0.0.4      30:cd:a7:38:ff:c5   ARP_REQUEST
+
+cache on ethernet_32769:
+  IP                                MAC                 STATE      SOURCE       FIRST      LAST CONFLICTS
+  10.0.0.1                          42:25:47:35:03:ec   REACHABLE  PASSIVE  19.6s ago   0.1s ago 0
+  10.0.0.234                        1a:aa:b4:c0:bc:f5   REACHABLE  PASSIVE  16.7s ago   0.9s ago 0
+  10.0.0.4                          30:cd:a7:38:ff:c5   REACHABLE  PASSIVE   9.4s ago   7.8s ago 0
+  fe80:0:0:0:18aa:b4ff:fec0:bcf5    1a:aa:b4:c0:bc:f5   REACHABLE  PASSIVE  16.7s ago   0.9s ago 0
+
+2 observation(s), 4 neighbour(s) in cache
+```
+
+Two events, four neighbours: the gateway and `.234` never sent an ARP/NDP event in the window
+and were learned from the Ethernet header of ordinary traffic — and `.234`'s link-local IPv6
+address is the first entry the §13.23-A IPv6 learner (S15) has produced on a wire. This is the
+number M1 has to compare, and it was not printable before.
 
 ---
 

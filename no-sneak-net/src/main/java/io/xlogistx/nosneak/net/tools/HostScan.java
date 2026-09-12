@@ -13,6 +13,7 @@ import io.xlogistx.nosneak.net.common.ResolveResult;
 import io.xlogistx.nosneak.net.common.Subscription;
 import io.xlogistx.nosneak.net.common.SweepOptions;
 import io.xlogistx.nosneak.net.common.SweepSummary;
+import io.xlogistx.nosneak.net.util.IpMacCache;
 import io.xlogistx.nosneak.net.util.NSNetUtil;
 import org.zoxweb.shared.util.SUS;
 
@@ -23,7 +24,9 @@ import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.net.InetAddress;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.CompletableFuture;
@@ -41,7 +44,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   hostscan resolve 10.0.0.1 10.0.0.2  ARP/NDP - the MAC, and where it came from
  *   hostscan ping    10.0.0.1 -c 4      ICMP echo, pipelined
  *   hostscan sweep   10.0.0.0/24        ARP + ICMP across a range
- *   hostscan observe 30                 passive neighbours for 30 seconds
+ *   hostscan observe 30 --cache         passive neighbours for 30 seconds, then the cache
  * </pre>
  * <p>
  * Every command takes one or more targets and runs them together: several pings
@@ -334,22 +337,74 @@ public final class HostScan {
         return 0;
     }
 
-    /** Passive neighbours for a while — nothing is transmitted. */
+    /**
+     * Passive neighbours for a while — nothing is transmitted.
+     * <p>
+     * Two numbers come out, and they measure different things (§13.23-E). The
+     * <em>observations</em> are ARP/NDP events delivered to the subscriber. The
+     * <em>cache</em> is everything passive learning put into the IP↔MAC cache during the
+     * window — which includes what the frame-header learner picked up from ordinary
+     * IPv4/IPv6 traffic and never announced as an event. §13.17's "neighbours learned" is
+     * the cache number, so that is what a before/after comparison (M1) has to read.
+     * {@code --cache} prints the entries themselves.
+     */
     private static void observe(HostScanner scanner, String[] argv, PrintStream out)
             throws InterruptedException {
-        int seconds = argv.length > 1 ? Integer.parseInt(argv[1]) : 30;
+        ObserveArgs args = ObserveArgs.parse(argv, 30);
         boolean supported = scanner.interfaces().stream()
                                    .anyMatch(h -> h.capabilities().passiveObservation());
         if (!supported) {
             out.println("No bound interface supports passive observation; "
                         + "this will register and never fire.");
         }
-        out.println("observing for " + seconds + "s (broadcast ARP, gratuitous ARP, NS/NA)");
+        out.println("observing for " + args.seconds() + "s (broadcast ARP, gratuitous ARP, NS/NA)");
         AtomicInteger seen = new AtomicInteger();
         try (Subscription sub = scanner.observe(n -> printNeighbor(n, seen, out))) {
-            TimeUnit.SECONDS.sleep(seconds);
+            TimeUnit.SECONDS.sleep(args.seconds());
         }
-        out.println("\n" + seen.get() + " observation(s)");
+        Instant now = Instant.now();
+        int cached = 0;
+        for (HostDiscovery h : scanner.interfaces()) {
+            List<IpMacCache.Entry> entries = new ArrayList<>(h.cache().snapshot());
+            cached += entries.size();
+            if (!args.cache() || entries.isEmpty()) {
+                continue;
+            }
+            entries.sort(Comparator.comparing((IpMacCache.Entry e) -> e.ip().getHostAddress()));
+            out.println("\ncache on " + h.binding().javaName() + ":");
+            out.println(HostScanFormat.cacheHeader());
+            for (IpMacCache.Entry e : entries) {
+                out.println(HostScanFormat.cacheEntry(e, now));
+            }
+        }
+        out.println("\n" + HostScanFormat.observeSummary(seen.get(), cached));
+    }
+
+    /**
+     * {@code observe [seconds] [--cache]}. Package-private so the parsing is pinned
+     * without a network, like {@link Args}.
+     */
+    record ObserveArgs(int seconds, boolean cache) {
+
+        static ObserveArgs parse(String[] argv, int defaultSeconds) {
+            int seconds = defaultSeconds;
+            boolean cache = false;
+            for (int i = 1; i < argv.length; i++) {
+                String arg = argv[i];
+                if (arg.equals("--cache") || arg.equals("-C")) {
+                    cache = true;
+                } else if (arg.matches("\\d+")) {
+                    seconds = Integer.parseInt(arg);
+                } else {
+                    throw new IllegalArgumentException(
+                            "observe takes [seconds] [--cache], not '" + arg + "'");
+                }
+            }
+            if (seconds < 1) {
+                throw new IllegalArgumentException("seconds must be >= 1, got " + seconds);
+            }
+            return new ObserveArgs(seconds, cache);
+        }
     }
 
     // -------------------------------------------------------------- plumbing
@@ -488,7 +543,8 @@ public final class HostScan {
                   hostscan ping    <ip> [ip...]   ICMP echo, pipelined, targets concurrent
                   hostscan sweep   <cidr> [...]   ARP + ICMP across a range, ranges in turn
                   hostscan segment <iface>        IPv6 neighbours on one segment
-                  hostscan observe [seconds]      passive neighbours, transmits nothing
+                  hostscan observe [seconds] [--cache]  passive neighbours, transmits nothing;
+                                                  --cache also lists what passive learning cached
                   hostscan reopen                 rebuild the session after a NIC change
 
                 Options

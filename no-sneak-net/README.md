@@ -35,7 +35,8 @@ no v6 neighbours on the test segment). Everywhere else, "done" means it moved pa
 
 **Broadcast ARP is not universally delivered, on either platform.** Wi-Fi access points buffer
 broadcast against the DTIM interval and commonly suppress it, so a station can be fully reachable by
-unicast while never answering a broadcast solicitation. Measured with `spike.WindowsArpSpike`: the
+unicast while never answering a broadcast solicitation. Measured on 2026-08 with a throwaway
+diagnostic (since deleted; `CLAUDE.md` §13.16 records the numbers and how to repeat them): the
 affected host answered 0 of 3 broadcast requests and 3 of 3 unicast requests, while the gateway
 answered 3 of 3 both ways on the same handle. Both backends now retry unicast against a MAC hint —
 Linux from its passive learner, Windows from `IpMacCache` and then Windows' own neighbour table via

@@ -56,7 +56,12 @@ public class ProvidersPanel extends JPanel {
     private AIProviderConfig editingConfig;
     private APIKey<String> editingKey;
 
-    private final List<String> reloadIssues = new ArrayList<>();
+    /**
+     * Bumped on every {@link #reloadProviders()}; a pass whose number is stale by the time its
+     * worker finishes applies nothing, so two overlapping reloads (startup, then a login that
+     * fires from the login worker) cannot interleave their results or each other's issues.
+     */
+    private int reloadGeneration;
 
     public JComponent buildProviderCardsPanel() {
         providerCards.add(buildProviderPanel(), "list");
@@ -278,9 +283,23 @@ public class ProvidersPanel extends JPanel {
                 });
     }
 
+    /** One reload pass's outcome: the providers it built and the problems it met, together. */
+    private record ReloadPass(int generation, List<AIProvider> built, List<String> issues) {}
+
+    /**
+     * Rebuilds the provider set from the stored configs. Safe to call from any thread — the
+     * login path fires it from the login worker — and safe to call while a previous pass is still
+     * blocked in a catalog refresh: each pass collects its own issue list and carries its own
+     * generation number, and only the newest pass is applied.
+     */
     public void reloadProviders() {
-        reloadIssues.clear();
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(this::reloadProviders);
+            return;
+        }
+        final int generation = ++reloadGeneration;
         BackgroundTask.run(this, null, () -> {
+            List<String> issues = new ArrayList<>();
             List<AIProviderConfig> configs = ctx.getAllProviderConfigs();
             if (configs.isEmpty()) configs = adoptEnabledKeys();
 
@@ -295,29 +314,32 @@ public class ProvidersPanel extends JPanel {
                 if (!cfg.isEnabled()) continue;
                 APIKey<String> key = keysByGUID.get(cfg.getKeyGUID());
                 if (key == null) {
-                    reloadIssues.add(cfg.getName() + ": its credential is no longer available");
+                    issues.add(cfg.getName() + ": its credential is no longer available");
                     continue;
                 }
                 AIAPIProvider p = AIAPIProvider.create(cfg, key);
                 if (p == null) {
-                    reloadIssues.add(cfg.getName() + ": unrecognized provider type '"
+                    issues.add(cfg.getName() + ": unrecognized provider type '"
                             + cfg.getProviderType() + "'");
                     continue;
                 }
                 try {
                     p.getModelCatalog().refresh();
                 } catch (Exception e) {
-                    reloadIssues.add(cfg.getName() + ": " + e.getMessage());
+                    issues.add(cfg.getName() + ": " + e.getMessage());
                 }
                 built.add(p);
             }
-            return built;
-        }, built -> {
+            return new ReloadPass(generation, built, issues);
+        }, pass -> {
+            if (pass.generation() != reloadGeneration) {
+                return; // a newer reload has started; its result is the one that counts
+            }
             ctx.clearProviders();
-            for (AIProvider p : built) ctx.getProviders().put(p.getID(), p);
+            for (AIProvider p : pass.built()) ctx.getProviders().put(p.getID(), p);
             refreshProviderViews();
-            if (!reloadIssues.isEmpty()) {
-                JOptionPane.showMessageDialog(this, String.join("\n", reloadIssues),
+            if (!pass.issues().isEmpty()) {
+                JOptionPane.showMessageDialog(this, String.join("\n", pass.issues()),
                         "Provider Error", JOptionPane.ERROR_MESSAGE);
             }
         });

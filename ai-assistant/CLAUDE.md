@@ -97,8 +97,12 @@ has chosen to use.
 >   is stored verbatim. There is no separate page form and no modal dialog any more: the viewer's
 >   own Save is the single persistence point. See §5 and §5.1. The editor also takes a
 >   `setValidator(Predicate<MDDocument>)` — `validateSkill` rejects a blank name **before**
->   `onSaveSkill` runs — and `onSaveSkill` snapshots the old field values so a failed store write
->   rolls the cached `AISkill` back and re-marks the editor dirty.
+>   `onSaveSkill` runs, but only when the selected type is a `SkillType`: a registered save target
+>   (the app's "probe") validates its own content, so the skill-worded name check no longer blocks
+>   it (finding 10) — and `onSaveSkill` snapshots the old field values so a failed store write
+>   rolls the cached `AISkill` back and re-marks the editor dirty. The editor itself now re-marks
+>   dirty when a commit handler *throws* (finding 8), so a target that refuses the document can
+>   never leave a rejected draft reading as saved.
 > - **An assistant reply can become a skill.** `AssistantUtil.chatBubble(...)` takes an optional
 >   `onSaveAsSkill` `Runnable`, rendered as a borderless "Save as skill" button beside the
 >   latency/token line (assistant bubbles only, never the user's). It routes to
@@ -343,10 +347,14 @@ has chosen to use.
 > - **A provider whose discovery failed still registers**, with an empty catalog — so sends
 >   against it fail, and `failSend` then removes the message (below). `reloadProviders` no longer
 >   swallows the reason: it collects a line per failure — a refresh exception, a `keyGUID` that no
->   longer resolves, an unrecognized provider type — into `reloadIssues` (cleared at entry, or it
->   accumulates across every login and every provider save) and shows them **once from the
->   done-callback**, on the EDT. Building the dialog inside the `Callable` would put Swing on the
->   worker thread and block discovery mid-loop behind a modal. `onSaveProviderConfig` still
+>   longer resolves, an unrecognized provider type — into a list **local to that pass** and shows
+>   them **once from the done-callback**, on the EDT. Building the dialog inside the `Callable`
+>   would put Swing on the worker thread and block discovery mid-loop behind a modal.
+>   `reloadProviders` hops to the EDT if called elsewhere (login fires it from the login worker)
+>   and stamps each pass with a generation number; a pass that finishes after a newer one started
+>   applies nothing, so overlapping reloads can no longer wipe each other's issues, show the wrong
+>   pass's dialog, or race a shared list into an exception that left the subject with zero
+>   providers (finding 7). `onSaveProviderConfig` still
 >   swallows its own refresh exception. §6's per-row "401, key rejected" chip is still design
 >   intent; dropping a provider on a failed refresh is deliberately *not* done, because a
 >   transient blip at login would unlink a working key until the next reload.
@@ -568,7 +576,10 @@ Data-access options: `Scan data`, `Scan data and host inventory`, `Findings only
 >
 > `onSaveSkill(MDDocument)` is the only persistence point, and it **dispatches first**: a selected
 > type that is not a `SkillType` routes to the registered handler with `(name, markdown)` and
-> returns before touching the skill store. Otherwise it rejects a blank name with a dialog,
+> returns before touching the skill store — after a confirmation when an existing skill is open
+> (its edits are not saved to the skill), and inside a `try`: a handler that throws has refused
+> the content, so the editor is re-marked dirty and the handler's message is shown under a
+> "Not a valid <target>" title. Otherwise it rejects a blank name with a dialog,
 > then writes name + description + type (`document.typeAs()`) + instructions onto
 > `selectedSkill` (or a fresh `AISkill` when creating) and saves off the EDT via
 > `BackgroundTask.runCatching(..., skillEditor.getSaveButton(), ...)`. Note the validator still
@@ -817,9 +828,12 @@ cleared on logout by `clearProviders()`.
   (`getProviders().lookup(chat.getProvider())`), where `wire` is a **second, throwaway**
   `AIRequest` carrying the flattened `Human:/Assistant:` transcript — the `AIRequest` stored on
   the `AIMessage` keeps the raw user text, so the transcript shows what was typed while the model
-  sees the whole conversation. `AssistantCallback` decodes the payload (`AssistantMDDecoder`),
-  persists via `saveChat`, and marshals UI updates (and the error-path message removal) to the
-  EDT. Both the synchronous throw (`asyncSend` itself failing) and the async error path undo the
+  sees the whole conversation. The chat is saved **once before dispatch** (so an unanswered turn
+  survives) and once more only when a capture-carrying send attaches its images; the former
+  unconditional save after dispatch is gone — it ran on a second worker with no ordering and, for
+  a chat with no GUID yet, could insert a duplicate row (finding 9). `AssistantCallback` decodes
+  the payload (`AssistantMDDecoder`), persists via `saveChat`, and marshals UI updates (and the
+  error-path message removal) to the EDT. Both the synchronous throw (`asyncSend` itself failing) and the async error path undo the
   optimistic message and restore the composer text. The compare fan-out (`AIRunner`) is still
   unbuilt. See the interface-shape gaps in `ai-model/CLAUDE.md` before extending it.
 

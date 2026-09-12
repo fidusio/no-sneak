@@ -26,6 +26,7 @@ public final class ActionRegistry {
         register(new RevocationAction());
         register(new EnumerateVersionsAction());
         register(new EnumerateCiphersAction());
+        register(new EnumerateGroupsAction());
         register(new RecordAction());
         register(new TerminalAction("done", true));
         register(new TerminalAction("fail", false));

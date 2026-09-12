@@ -1,13 +1,15 @@
 package io.xlogistx.nosneak.v2.runtime;
 
 import io.xlogistx.nosneak.v2.analysis.CipherProbeCallback;
+import io.xlogistx.nosneak.v2.analysis.GroupProbeCallback;
+import io.xlogistx.nosneak.v2.analysis.NetworkRevocationChecker;
 import io.xlogistx.nosneak.v2.analysis.RevocationChecker;
+import org.zoxweb.server.http.HTTPNIOSocket;
 import io.xlogistx.nosneak.v2.analysis.VersionProbeCallback;
 import io.xlogistx.nosneak.v2.model.PatternRule;
 import io.xlogistx.nosneak.v2.model.ProbeDefinition;
 import io.xlogistx.nosneak.v2.model.ProbeState;
 import io.xlogistx.nosneak.v2.result.ProbeResult;
-import io.xlogistx.nosneak.v2.tls.PQCConnectionHelper.PQCHandshakeState;
 import org.bouncycastle.tls.ProtocolVersion;
 import io.xlogistx.nosneak.v2.tls.PQCHandshakeStateMachine;
 import io.xlogistx.nosneak.v2.tls.PQCSessionConfig;
@@ -17,7 +19,6 @@ import io.xlogistx.opsec.OPSecUtil.RevocationResult;
 import org.bouncycastle.tls.Certificate;
 import org.bouncycastle.tls.CipherSuite;
 import org.bouncycastle.tls.crypto.TlsCertificate;
-import org.zoxweb.server.io.ByteBufferUtil;
 import org.zoxweb.server.logging.LogWrapper;
 import org.zoxweb.server.net.NIOSocket;
 import org.zoxweb.shared.io.SharedIOUtil;
@@ -52,13 +53,21 @@ import java.util.regex.Matcher;
  * {@link ProbeResult} builder, and the plaintext {@code expect} matcher, and it
  * bridges NIO events into engine transitions.
  * <p>
- * <b>Fully non-blocking.</b> Connections are opened on the shared {@link NIOSocket};
- * every asynchronous wait (connect / expect / overall) is bounded by a task on
- * the scheduler taken from that socket. All transitions run on the selector or
- * scheduler thread and are serialised through {@link #fire(String)} /
- * {@link #deliver(boolean, String)} (both synchronized). Each wait is guarded by a
- * single {@code armed} token plus an {@code armGen} epoch so an inbound event and
- * its timeout can never both resolve the same window. Terminal delivery is exactly-once.
+ * <b>Fully non-blocking.</b> Connections are opened through a {@link ProbeTransport} (the
+ * injected {@link NIOSocket} in production, a scripted stand-in under test); every
+ * asynchronous wait (connect / expect / overall) is bounded by a task on the injected
+ * scheduler. All transitions run on the selector or scheduler thread and are serialised
+ * through the context monitor. Each wait is guarded by a single {@code armed} token plus an
+ * {@code armGen} epoch so an inbound event and its timeout can never both resolve the same
+ * window. Terminal delivery is exactly-once.
+ * <p>
+ * <b>The user's callback never runs under the monitor.</b> Every entry point — an engine
+ * transition, an inbound byte, a timer, a cancel — takes the monitor through
+ * {@link #guarded(Runnable)}, which tracks re-entrancy depth; a terminal {@code deliver}
+ * only <em>parks</em> the built result, and the outermost frame hands it to the callback
+ * after the monitor is released. So a {@code FirstSweep} election, and the {@code cancel()}
+ * it issues to each losing context, never run while holding the winner's monitor
+ * (PENDING-ISSUES P10).
  */
 public class ProbeContext {
 
@@ -67,7 +76,7 @@ public class ProbeContext {
     /** How inbound bytes on the current channel are interpreted. */
     enum Mode { CONNECTING, EXPECT, TLS, IDLE, SECURE_CONNECTING, UDP }
 
-    private final NIOSocket nioSocket;
+    private final ProbeTransport transport;
     private final IPAddress target;
     private final ProbeDefinition definition;
     private final int timeoutSec;
@@ -76,6 +85,12 @@ public class ProbeContext {
     private final ScheduledExecutorService scheduler;
     /** Parallel dispatch for fan-out children; taken from the same {@link NIOSocket}. */
     private final Executor executor;
+    /**
+     * HTTP over the same {@link NIOSocket}, for the active OCSP/CRL fetch of
+     * {@code revocation-check}. Null on the test seam: a scripted probe then reports revocation
+     * as unknown/none rather than touching a network.
+     */
+    private final HTTPNIOSocket httpNio;
 
     private final ProbeEngine engine;
     private final ProbeResult.Builder result;
@@ -87,6 +102,10 @@ public class ProbeContext {
     private final AtomicLong armGen = new AtomicLong();
     private volatile ScheduledFuture<?> waitTimeout;
     private volatile ScheduledFuture<?> overallDeadline;
+    // Monitor re-entrancy depth and the result parked by deliver() until the outermost frame
+    // leaves the monitor. Both guarded by `this`.
+    private int depth;
+    private ProbeResult pendingDelivery;
 
     // Live connection state
     private volatile ProbeTCPCallback currentCallback;
@@ -116,14 +135,33 @@ public class ProbeContext {
 
     public ProbeContext(NIOSocket nioSocket, IPAddress target, ProbeDefinition definition,
                         int timeoutSec, Consumer<ProbeResult> userCallback) {
-        this.nioSocket = nioSocket;
         // Every wait this probe arms runs on the pools the NIOSocket was constructed with, rather
         // than the process-wide defaults, so an embedder that supplied its own executor and
         // scheduler gets the whole probe — connect, expect, handshake and overall deadlines — on
         // them. Taking them from the socket also makes it impossible to arm a timeout on one pool
         // while the I/O it guards runs on another.
-        this.scheduler = nioSocket.getScheduler();
-        this.executor = nioSocket.getExecutor();
+        this(new NioProbeTransport(nioSocket), nioSocket.getScheduler(), nioSocket.getExecutor(),
+             new HTTPNIOSocket(nioSocket), target, definition, timeoutSec, userCallback);
+    }
+
+    /**
+     * The seam constructor: a transport and the two executors, injected. Production goes
+     * through the {@link NIOSocket} constructor above; tests hand in a scripted transport and a
+     * manual scheduler so every branch of the state machine can be driven without a wire.
+     */
+    ProbeContext(ProbeTransport transport, ScheduledExecutorService scheduler, Executor executor,
+                 IPAddress target, ProbeDefinition definition, int timeoutSec,
+                 Consumer<ProbeResult> userCallback) {
+        this(transport, scheduler, executor, null, target, definition, timeoutSec, userCallback);
+    }
+
+    ProbeContext(ProbeTransport transport, ScheduledExecutorService scheduler, Executor executor,
+                 HTTPNIOSocket httpNio, IPAddress target, ProbeDefinition definition, int timeoutSec,
+                 Consumer<ProbeResult> userCallback) {
+        this.transport = transport;
+        this.scheduler = scheduler;
+        this.executor = executor;
+        this.httpNio = httpNio;
         this.target = target;
         this.definition = definition;
         this.timeoutSec = timeoutSec > 0 ? timeoutSec : 5;
@@ -139,10 +177,15 @@ public class ProbeContext {
 
     /** Arm the overall watchdog and enter the start state. */
     public void start() {
-        int overall = Math.max(timeoutSec * 4, 30);
-        overallDeadline = scheduler
-                .schedule(() -> deliver(false, "overall-timeout"), overall, TimeUnit.SECONDS);
-        engine.start();
+        guarded(() -> {
+            if (terminated.get()) {
+                return;
+            }
+            int overall = Math.max(timeoutSec * 4, 30);
+            overallDeadline = scheduler
+                    .schedule(() -> deliver(false, "overall-timeout"), overall, TimeUnit.SECONDS);
+            engine.start();
+        });
     }
 
     public boolean isTerminated() {
@@ -150,30 +193,31 @@ public class ProbeContext {
     }
 
     /** Advance the engine. Serialised; ignored once terminated. */
-    public synchronized void fire(String outcome) {
-        engine.fire(outcome);
+    public void fire(String outcome) {
+        guarded(() -> engine.fire(outcome));
     }
 
-    /** Deliver the {@link ProbeResult} exactly once and tear the context down. */
-    public synchronized void deliver(boolean complete, String terminalNote) {
-        if (!terminated.compareAndSet(false, true)) {
-            return;
-        }
-        cancelWaitTimeout();
-        cancelOverall();
-        result.addConnection(connectionIndex, currentPort, terminalNote);
-        result.complete(complete);
-        result.note(terminalNote);
-        result.durationMs(System.currentTimeMillis() - startTime);
-        closeCurrent();
-        engine.close();
-        ProbeResult r = result.build();
-        if (log.isEnabled()) log.getLogger().info("deliver " + r);
-        try {
-            userCallback.accept(r);
-        } catch (Exception e) {
-            if (log.isEnabled()) log.getLogger().info("userCallback error: " + e.getMessage());
-        }
+    /**
+     * Deliver the {@link ProbeResult} exactly once and tear the context down. The result is
+     * built and the context torn down under the monitor; the user's callback runs after the
+     * outermost frame has released it (see {@link #guarded(Runnable)}).
+     */
+    public void deliver(boolean complete, String terminalNote) {
+        guarded(() -> {
+            if (!terminated.compareAndSet(false, true)) {
+                return;
+            }
+            cancelWaitTimeout();
+            cancelOverall();
+            result.addConnection(connectionIndex, currentPort, terminalNote);
+            result.complete(complete);
+            result.note(terminalNote);
+            result.durationMs(System.currentTimeMillis() - startTime);
+            closeCurrent();
+            engine.close();
+            pendingDelivery = result.build();
+            if (log.isEnabled()) log.getLogger().info("deliver " + pendingDelivery);
+        });
     }
 
     /**
@@ -182,14 +226,46 @@ public class ProbeContext {
      * context that has already delivered (or been cancelled) is left untouched, so the winner's
      * result is never clobbered.
      */
-    public synchronized void cancel() {
-        if (!terminated.compareAndSet(false, true)) {
-            return;
+    public void cancel() {
+        guarded(() -> {
+            if (!terminated.compareAndSet(false, true)) {
+                return;
+            }
+            cancelWaitTimeout();
+            cancelOverall();
+            closeCurrent();
+            engine.close();
+        });
+    }
+
+    /**
+     * Run {@code body} under the monitor, then — only when this is the outermost frame — hand
+     * any result parked by {@link #deliver} to the user's callback <em>outside</em> the monitor.
+     * Re-entrant: an action that fires the next outcome synchronously nests one level deeper
+     * and the parked result waits for the outermost frame. Exactly-once holds because
+     * {@code terminated} is claimed under the monitor and the parked result is taken once.
+     */
+    private void guarded(Runnable body) {
+        ProbeResult toDeliver = null;
+        synchronized (this) {
+            depth++;
+            try {
+                body.run();
+            } finally {
+                depth--;
+            }
+            if (depth == 0 && pendingDelivery != null) {
+                toDeliver = pendingDelivery;
+                pendingDelivery = null;
+            }
         }
-        cancelWaitTimeout();
-        cancelOverall();
-        closeCurrent();
-        engine.close();
+        if (toDeliver != null) {
+            try {
+                userCallback.accept(toDeliver);
+            } catch (Exception e) {
+                if (log.isEnabled()) log.getLogger().info("userCallback error: " + e.getMessage());
+            }
+        }
     }
 
     // ==================== Async wait guard ====================
@@ -254,7 +330,7 @@ public class ProbeContext {
         ProbeTCPCallback cb = new ProbeTCPCallback(this, new IPAddress(target.getInetAddress(), port), connectionIndex);
         currentCallback = cb;
         try {
-            currentKey = nioSocket.addClientSocket(cb, timeoutSec);
+            currentKey = transport.open(cb, timeoutSec);
         } catch (Exception e) {
             if (log.isEnabled()) log.getLogger().info("connect error: " + e.getMessage());
             fireArmed("error");
@@ -286,7 +362,7 @@ public class ProbeContext {
                     this, new IPAddress(target.getInetAddress(), port), connectionIndex, false);
             currentSecureCallback = cb;
             currentCallback = null; // raw ingress identity checks now reject stray events
-            currentKey = nioSocket.addClientSocket(cb, timeoutSec);
+            currentKey = transport.open(cb, timeoutSec);
         } catch (Exception e) {
             if (log.isEnabled()) log.getLogger().info("secure connect error: " + e);
             fireArmed("error");
@@ -314,7 +390,7 @@ public class ProbeContext {
         try {
             ProbeUDPCallback cb = new ProbeUDPCallback(executor, this, port, connectionIndex);
             currentUDPCallback = cb;
-            currentKey = nioSocket.addDatagramSocket(new InetSocketAddress(0), cb); // ephemeral local bind
+            currentKey = transport.openDatagram(cb); // ephemeral local bind
             fireArmed("connected"); // ready immediately
         } catch (Exception e) {
             if (log.isEnabled()) log.getLogger().info("udp connect error: " + e);
@@ -354,7 +430,8 @@ public class ProbeContext {
         return writeBytes(expandTemplate(payload).getBytes(StandardCharsets.UTF_8));
     }
 
-    private byte[] resolveSendBytes(ProbeState state) {
+    /** Package-private so {@code SendBytesTest} can pin the codec prefixes and the templating. */
+    byte[] resolveSendBytes(ProbeState state) {
         String data = state.getData();
         if (data != null) {
             if (data.startsWith("hex:")) {
@@ -393,11 +470,11 @@ public class ProbeContext {
             return cb != null && cb.writeApp(data);
         }
         ProbeTCPCallback cb = currentCallback;
-        if (cb == null || cb.getChannel() == null || data == null) {
+        if (cb == null || data == null) {
             return false;
         }
         try {
-            ByteBufferUtil.write(cb.getChannel(), ByteBuffer.wrap(data), false);
+            transport.write(cb, data);
             return true;
         } catch (Exception e) {
             if (log.isEnabled()) log.getLogger().info("write error: " + e.getMessage());
@@ -434,10 +511,10 @@ public class ProbeContext {
             // SNI carries the target HOSTNAME (unresolved → no blocking DNS on the selector thread;
             // the channel is already connected).
             InetSocketAddress sni = InetSocketAddress.createUnresolved(hostname(), currentPort);
-            pqcConfig = new PQCSessionConfig(sni, classicalOnly);
-            pqcConfig.channel = currentCallback.getChannel();
-            pqcSM = new PQCHandshakeStateMachine(pqcConfig);
-            pqcSM.publish(PQCHandshakeState.START, this::onTlsTransition);
+            ProbeTransport.TlsSession session =
+                    transport.startTls(currentCallback, sni, classicalOnly, this::onTlsTransition);
+            pqcConfig = session.config;
+            pqcSM = session.machine;
         } catch (Exception e) {
             if (log.isEnabled()) log.getLogger().info("tls start error: " + e.getMessage());
             fireArmed("error");
@@ -683,7 +760,7 @@ public class ProbeContext {
                                 join.childDone();
                             });
                     probe.timeoutInSec(Math.max(timeoutSec, 5));
-                    nioSocket.addClientSocket(probe); // uses probe.timeoutInSec()
+                    transport.open(probe); // uses probe.timeoutInSec()
                 } catch (Exception e) {
                     join.childDone();
                 }
@@ -692,48 +769,79 @@ public class ProbeContext {
         Fanout.run(children, () -> onVersionsDone(results), executor);
     }
 
-    private synchronized void onVersionsDone(Map<String, Boolean> results) {
-        // Record best-first for a stable, readable order (weakest last).
-        for (String name : new String[]{"TLSv1.3", "TLSv1.2", "TLSv1.1", "TLSv1.0", "SSLv3"}) {
-            if (Boolean.TRUE.equals(results.get(name))) {
-                result.addProtocolVersion(name);
+    private void onVersionsDone(Map<String, Boolean> results) {
+        guarded(() -> {
+            // Record best-first for a stable, readable order (weakest last).
+            for (String name : new String[]{"TLSv1.3", "TLSv1.2", "TLSv1.1", "TLSv1.0", "SSLv3"}) {
+                if (Boolean.TRUE.equals(results.get(name))) {
+                    result.addProtocolVersion(name);
+                }
             }
-        }
-        fire("done");
+            engine.fire("done");
+        });
     }
 
-    private static final int[] TLS13_CIPHERS = {
-            CipherSuite.TLS_AES_256_GCM_SHA384,
-            CipherSuite.TLS_AES_128_GCM_SHA256,
-            CipherSuite.TLS_CHACHA20_POLY1305_SHA256
-    };
-    private static final int[] TLS12_CIPHERS = {
-            CipherSuite.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-            CipherSuite.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-            CipherSuite.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-            CipherSuite.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-            CipherSuite.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
-            CipherSuite.TLS_RSA_WITH_AES_256_GCM_SHA384,
-            CipherSuite.TLS_RSA_WITH_AES_128_GCM_SHA256,
-            CipherSuite.TLS_RSA_WITH_AES_256_CBC_SHA,
-            CipherSuite.TLS_RSA_WITH_AES_128_CBC_SHA
-    };
+    /**
+     * Upper bound on the child connections one enumeration step may open at once. A deep probe
+     * today costs at most 5 (versions) + 44 (ciphers) + 2 (cipher preference) + 10 (groups) = 61
+     * connections, each bounded by its own handshake timeout; candidate lists longer than this
+     * are truncated rather than allowed to grow silently.
+     */
+    public static final int MAX_ENUMERATION_CHILDREN = 64;
+
+    /** TLS 1.3 suites (5) — every one AEAD; opsec's list. */
+    private static final int[] TLS13_CIPHERS = OPSecUtil.ALL_TLS13_CIPHERS;
+
+    /**
+     * TLS 1.2 candidates: opsec's strong (9), weak (21) and insecure (9) sets, in that order, so
+     * a server's <em>whole</em> accepted surface is observed and the weak-suite grading rule has
+     * something to look at. Offering an old suite in a ClientHello is an ordinary handshake.
+     */
+    private static final int[] TLS12_CIPHERS = concat(OPSecUtil.ALL_TLS12_STRONG,
+                                                      OPSecUtil.ALL_TLS12_WEAK,
+                                                      OPSecUtil.ALL_TLS12_INSECURE);
+
+    private static int[] concat(int[]... parts) {
+        int n = 0;
+        for (int[] p : parts) n += p.length;
+        int[] out = new int[n];
+        int at = 0;
+        for (int[] p : parts) {
+            System.arraycopy(p, 0, out, at, p.length);
+            at += p.length;
+        }
+        return out;
+    }
+
+    private static int[] bounded(int[] candidates, int limit) {
+        return candidates.length <= limit ? candidates : java.util.Arrays.copyOf(candidates, limit);
+    }
+
+    private static boolean isTls13Suite(int cipher) {
+        for (int c : TLS13_CIPHERS) {
+            if (c == cipher) return true;
+        }
+        return false;
+    }
 
     /**
      * enumerate-ciphers: probe each candidate cipher suite <b>in parallel</b> (one connection
-     * offering a single cipher at its version) via {@link Fanout}, then record the accepted set
-     * and fire {@code done}.
+     * offering a single cipher at its version) via {@link Fanout}; record the accepted set with
+     * opsec's strength classification; then, when two or more suites were accepted at a version,
+     * two more handshakes offering the whole accepted list in our order and in reverse decide
+     * whether the server or the client picks ({@code server-cipher-preference}); then fire
+     * {@code done}.
      */
     public void enumerateCiphers() {
         final int port = currentPort > 0 ? currentPort : target.getPort();
         final Map<Integer, Boolean> accepted = new ConcurrentHashMap<>();
         List<Consumer<ParallelJoin>> children = new ArrayList<>();
-        cipherChildren(children, accepted, ProtocolVersion.TLSv13, TLS13_CIPHERS, port);
-        cipherChildren(children, accepted, ProtocolVersion.TLSv12, TLS12_CIPHERS, port);
-        final int[] ordered = new int[TLS13_CIPHERS.length + TLS12_CIPHERS.length];
-        System.arraycopy(TLS13_CIPHERS, 0, ordered, 0, TLS13_CIPHERS.length);
-        System.arraycopy(TLS12_CIPHERS, 0, ordered, TLS13_CIPHERS.length, TLS12_CIPHERS.length);
-        Fanout.run(children, () -> onCiphersDone(accepted, ordered), executor);
+        final int[] tls13 = bounded(TLS13_CIPHERS, MAX_ENUMERATION_CHILDREN);
+        final int[] tls12 = bounded(TLS12_CIPHERS, Math.max(0, MAX_ENUMERATION_CHILDREN - tls13.length));
+        cipherChildren(children, accepted, ProtocolVersion.TLSv13, tls13, port);
+        cipherChildren(children, accepted, ProtocolVersion.TLSv12, tls12, port);
+        final int[] ordered = concat(tls13, tls12);
+        Fanout.run(children, () -> onCiphersDone(accepted, ordered, port), executor);
     }
 
     private void cipherChildren(List<Consumer<ParallelJoin>> children, Map<Integer, Boolean> accepted,
@@ -752,7 +860,7 @@ public class ProbeContext {
                                 join.childDone();
                             });
                     probe.timeoutInSec(Math.max(timeoutSec, 5));
-                    nioSocket.addClientSocket(probe);
+                    transport.open(probe);
                 } catch (Exception e) {
                     join.childDone();
                 }
@@ -760,83 +868,264 @@ public class ProbeContext {
         }
     }
 
-    private synchronized void onCiphersDone(Map<Integer, Boolean> accepted, int[] ordered) {
-        for (int c : ordered) {
-            if (Boolean.TRUE.equals(accepted.get(c))) {
-                result.addCipherSuite(PQCTlsClient.getCipherSuiteName(c));
+    private void onCiphersDone(Map<Integer, Boolean> accepted, int[] ordered, int port) {
+        final List<Integer> accepted13 = new ArrayList<>();
+        final List<Integer> accepted12 = new ArrayList<>();
+        guarded(() -> {
+            OPSecUtil ops = OPSecUtil.singleton();
+            for (int c : ordered) {
+                if (!Boolean.TRUE.equals(accepted.get(c))) {
+                    continue;
+                }
+                boolean v13 = isTls13Suite(c);
+                (v13 ? accepted13 : accepted12).add(c);
+                String name = PQCTlsClient.getCipherSuiteName(c);
+                OPSecUtil.CipherComponents parts = ops.parseCipherSuite(name);
+                result.addCipherSuite(name, v13 ? "TLSv1.3" : "TLSv1.2",
+                        parts.strength != null ? parts.strength.name() : null,
+                        parts.keyExchange, parts.forwardSecrecy);
             }
+        });
+        // Preference is only meaningful where the server had a choice; TLS 1.2 first because
+        // that is where weak suites live, TLS 1.3 otherwise.
+        if (accepted12.size() >= 2) {
+            probeCipherPreference(accepted12, ProtocolVersion.TLSv12, port);
+        } else if (accepted13.size() >= 2) {
+            probeCipherPreference(accepted13, ProtocolVersion.TLSv13, port);
+        } else {
+            guarded(() -> {
+                List<Integer> only = accepted12.isEmpty() ? accepted13 : accepted12;
+                if (only.size() == 1) {
+                    result.serverCipherPreference(PQCTlsClient.getCipherSuiteName(only.get(0)),
+                            "only-one-accepted");
+                }
+                engine.fire("done");
+            });
         }
-        fire("done");
     }
 
     /**
-     * revocation-check: report the certificate's revocation status from the handshake-stapled
-     * OCSP response (RFC 6066) — instant, no network. When nothing was stapled the status is
-     * UNKNOWN/NOT_CHECKED. Requires a prior {@code tls-handshake}. Synchronous → fires {@code done}.
+     * Two handshakes offering every accepted suite at {@code ver}: in our order, then reversed.
+     * A server that returns the same suite both times enforces its own preference; one that
+     * follows the client's first choice does not. Two children, bounded like every other probe.
      */
-    public void checkRevocation() {
+    private void probeCipherPreference(List<Integer> acceptedSuites, ProtocolVersion ver, int port) {
+        final int[] forward = new int[acceptedSuites.size()];
+        final int[] reversed = new int[acceptedSuites.size()];
+        for (int i = 0; i < forward.length; i++) {
+            forward[i] = acceptedSuites.get(i);
+            reversed[forward.length - 1 - i] = acceptedSuites.get(i);
+        }
+        final Map<String, Integer> picks = new ConcurrentHashMap<>();
+        List<Consumer<ParallelJoin>> children = new ArrayList<>();
+        children.add(preferenceChild("forward", forward, ver, port, picks));
+        children.add(preferenceChild("reversed", reversed, ver, port, picks));
+        Fanout.run(children, () -> onPreferenceDone(picks, forward), executor);
+    }
+
+    private Consumer<ParallelJoin> preferenceChild(String label, int[] offer, ProtocolVersion ver, int port,
+                                                   Map<String, Integer> picks) {
+        return join -> {
+            try {
+                CipherProbeCallback probe = new CipherProbeCallback(
+                        scheduler, new IPAddress(target.getInetAddress(), port), hostname(), ver, offer,
+                        (v, cipherId) -> {
+                            picks.put(label, cipherId == null ? 0 : cipherId);
+                            join.childDone();
+                        });
+                probe.timeoutInSec(Math.max(timeoutSec, 5));
+                transport.open(probe);
+            } catch (Exception e) {
+                picks.put(label, 0);
+                join.childDone();
+            }
+        };
+    }
+
+    private void onPreferenceDone(Map<String, Integer> picks, int[] forward) {
+        guarded(() -> {
+            Integer f = picks.get("forward");
+            Integer r = picks.get("reversed");
+            if (f != null && f != 0 && r != null && r != 0) {
+                if (f.equals(r)) {
+                    result.serverCipherPreference(PQCTlsClient.getCipherSuiteName(f), "server");
+                } else {
+                    // The pick moved with our order: the server takes the client's first choice.
+                    result.serverCipherPreference(PQCTlsClient.getCipherSuiteName(f), "client");
+                }
+            }
+            engine.fire("done");
+        });
+    }
+
+    /**
+     * enumerate-groups: one TLS 1.3 handshake per candidate named group, each offering only
+     * that group, <b>in parallel</b> via {@link Fanout}; record the accepted set as
+     * {@code supported-groups} (hybrids first) and the group the main handshake negotiated when
+     * every group was offered as {@code server-group-preference}; then fire {@code done}.
+     * A TLS 1.2-only server accepts none of them — that is the honest answer, since named-group
+     * key shares are a TLS 1.3 mechanism.
+     */
+    public void enumerateGroups() {
+        final int port = currentPort > 0 ? currentPort : target.getPort();
+        final Map<Integer, Boolean> accepted = new ConcurrentHashMap<>();
+        final int[] candidates = bounded(GroupProbeCallback.CANDIDATE_GROUPS, MAX_ENUMERATION_CHILDREN);
+        List<Consumer<ParallelJoin>> children = new ArrayList<>();
+        for (int g : candidates) {
+            final int group = g;
+            children.add(join -> {
+                try {
+                    GroupProbeCallback probe = new GroupProbeCallback(
+                            scheduler, new IPAddress(target.getInetAddress(), port), hostname(), group,
+                            (namedGroup, ok) -> {
+                                if (ok) {
+                                    accepted.put(namedGroup, Boolean.TRUE);
+                                }
+                                join.childDone();
+                            });
+                    probe.timeoutInSec(Math.max(timeoutSec, 5));
+                    transport.open(probe);
+                } catch (Exception e) {
+                    join.childDone();
+                }
+            });
+        }
+        Fanout.run(children, () -> onGroupsDone(accepted, candidates), executor);
+    }
+
+    private void onGroupsDone(Map<Integer, Boolean> accepted, int[] candidates) {
+        guarded(() -> {
+            for (int g : candidates) {
+                if (Boolean.TRUE.equals(accepted.get(g))) {
+                    result.addSupportedGroup(GroupProbeCallback.groupName(g));
+                }
+            }
+            PQCSessionConfig cfg = pqcConfig;
+            if (cfg != null && cfg.tlsClient != null) {
+                String chosen = cfg.tlsClient.getNegotiatedKeyExchangeName();
+                if (chosen != null && !"UNKNOWN".equals(chosen)) {
+                    result.serverGroupPreference(chosen);
+                }
+            }
+            engine.fire("done");
+        });
+    }
+
+    /**
+     * revocation-check: the certificate's revocation status. A handshake-stapled OCSP response
+     * (RFC 6066) answers instantly with no network; when nothing was stapled, an OCSP request
+     * goes to the leaf's AIA responder and, failing a definitive answer, its CRL is fetched —
+     * both non-blocking on this probe's own {@code NIOSocket}, bounded by the state's
+     * {@code revocationTimeoutMs} (default {@value NetworkRevocationChecker#DEFAULT_TIMEOUT_MS} ms),
+     * soft-failing to UNKNOWN. Requires a prior {@code tls-handshake}. Asynchronous: fires
+     * {@code done} when the answer is in — or at once when there is nothing to check.
+     */
+    public void checkRevocation(ProbeState state) {
         PQCSessionConfig cfg = pqcConfig;
         if (cfg == null || cfg.tlsClient == null) {
+            fire("done");
             return;
         }
         try {
-            RevocationResult r = RevocationChecker.fromStaple(cfg.tlsClient.getStapledOCSPResponse());
-            if (r != null && r.getStatus() != null) {
-                result.revocation(r.getStatus().name(), r.getMethod());
+            RevocationResult stapled = RevocationChecker.fromStaple(cfg.tlsClient.getStapledOCSPResponse());
+            if (RevocationChecker.METHOD_STAPLED.equals(stapled.getMethod())) {
+                recordRevocation(stapled);
+                fire("done");
+                return;
             }
+            X509Certificate[] chain = x509Chain(cfg.tlsClient);
+            X509Certificate leaf = chain.length > 0 ? chain[0] : null;
+            X509Certificate issuer = chain.length > 1 ? chain[1] : null;
+            long budget = state != null && state.getRevocationTimeoutMs() != null
+                    ? state.getRevocationTimeoutMs() : NetworkRevocationChecker.DEFAULT_TIMEOUT_MS;
+            new NetworkRevocationChecker(httpNio, scheduler).check(leaf, issuer, budget, r -> guarded(() -> {
+                recordRevocation(r);
+                engine.fire("done");
+            }));
         } catch (Exception e) {
             if (log.isEnabled()) log.getLogger().info("revocation check skipped: " + e.getMessage());
+            fire("done");
+        }
+    }
+
+    private void recordRevocation(RevocationResult r) {
+        if (r == null || r.getStatus() == null) {
+            return;
+        }
+        String date = r.getRevocationDate() != null
+                ? java.time.Instant.ofEpochMilli(r.getRevocationDate()).toString() : null;
+        result.revocation(r.getStatus().name(), r.getMethod(), date, r.getRevocationReason());
+    }
+
+    /** The presented chain as JCA certificates, leaf first; empty when none was presented. */
+    private static X509Certificate[] x509Chain(PQCTlsClient client) {
+        try {
+            Certificate presented = client.getServerCertificate();
+            if (presented == null || presented.getLength() == 0) {
+                return new X509Certificate[0];
+            }
+            TlsCertificate[] list = presented.getCertificateList();
+            CertificateFactory cf = CertificateFactory.getInstance("X.509");
+            X509Certificate[] out = new X509Certificate[list.length];
+            for (int i = 0; i < list.length; i++) {
+                out[i] = (X509Certificate) cf.generateCertificate(new ByteArrayInputStream(list[i].getEncoded()));
+            }
+            return out;
+        } catch (Exception e) {
+            return new X509Certificate[0];
         }
     }
 
     // ==================== NIO event ingress (from ProbeTCPCallback) ====================
 
-    synchronized void onConnected(ProbeTCPCallback cb) {
-        if (cb != currentCallback) return;
-        fireArmed("connected");
+    void onConnected(ProbeTCPCallback cb) {
+        guarded(() -> {
+            if (cb != currentCallback) return;
+            fireArmed("connected");
+        });
     }
 
-    synchronized void onInbound(ProbeTCPCallback cb, byte[] bytes) {
-        if (cb != currentCallback || bytes == null || bytes.length == 0) return;
-        receivedData = true;
-        if (mode == Mode.TLS) {
-            PQCHandshakeStateMachine sm = pqcSM;
-            if (sm != null) {
-                sm.processIncomingData(ByteBuffer.wrap(bytes), this::onTlsTransition);
-                // A failed handshake closes the config without invoking the callback, so a
-                // stalled handshake would otherwise resolve only via the wait timeout.
-                PQCSessionConfig cfg = pqcConfig;
-                if (cfg != null && cfg.isClosed() && !cfg.handshakeComplete.get()) {
-                    fireArmed("error");
+    void onInbound(ProbeTCPCallback cb, byte[] bytes) {
+        guarded(() -> {
+            if (cb != currentCallback || bytes == null || bytes.length == 0) return;
+            receivedData = true;
+            if (mode == Mode.TLS) {
+                PQCHandshakeStateMachine sm = pqcSM;
+                if (sm != null) {
+                    sm.processIncomingData(ByteBuffer.wrap(bytes), this::onTlsTransition);
+                    // A failed handshake closes the config without invoking the callback, so a
+                    // stalled handshake would otherwise resolve only via the wait timeout.
+                    PQCSessionConfig cfg = pqcConfig;
+                    if (cfg != null && cfg.isClosed() && !cfg.handshakeComplete.get()) {
+                        fireArmed("error");
+                    }
                 }
+                return;
             }
-            return;
-        }
-        accumulator.write(bytes, 0, bytes.length);
-        if (mode == Mode.EXPECT) {
-            matchExpect();
-        }
+            accumulator.write(bytes, 0, bytes.length);
+            if (mode == Mode.EXPECT) {
+                matchExpect();
+            }
+        });
     }
 
-    synchronized void onException(ProbeTCPCallback cb, Throwable t) {
-        if (cb != currentCallback) return;
-        if (log.isEnabled()) log.getLogger().info("connection exception: " + t);
-        switch (mode) {
-            case EXPECT:
-                fireArmed(receivedData ? "nomatch" : "error");
-                break;
-            default:
-                fireArmed("error");
-        }
+    void onException(ProbeTCPCallback cb, Throwable t) {
+        guarded(() -> {
+            if (cb != currentCallback) return;
+            if (log.isEnabled()) log.getLogger().info("connection exception: " + t);
+            fireArmed(mode == Mode.EXPECT && receivedData ? "nomatch" : "error");
+        });
     }
 
     // ==================== Secure (JSSE) NIO ingress (from ProbeSecureCallback) ====================
 
     /** TLS handshake completed on the secure channel. */
-    synchronized void onSecureConnected(ProbeSecureCallback cb) {
-        if (cb != currentSecureCallback) return;
-        recordSecureTlsFacts(cb);
-        fireArmed("connected");
+    void onSecureConnected(ProbeSecureCallback cb) {
+        guarded(() -> {
+            if (cb != currentSecureCallback) return;
+            recordSecureTlsFacts(cb);
+            fireArmed("connected");
+        });
     }
 
     /**
@@ -864,47 +1153,45 @@ public class ProbeContext {
     }
 
     /** Decrypted application data — same accumulate + match path as plaintext. */
-    synchronized void onSecureInbound(ProbeSecureCallback cb, byte[] bytes) {
-        if (cb != currentSecureCallback || bytes == null || bytes.length == 0) return;
-        receivedData = true;
-        accumulator.write(bytes, 0, bytes.length);
-        if (mode == Mode.EXPECT) {
-            matchExpect();
-        }
+    void onSecureInbound(ProbeSecureCallback cb, byte[] bytes) {
+        guarded(() -> {
+            if (cb != currentSecureCallback || bytes == null || bytes.length == 0) return;
+            receivedData = true;
+            accumulator.write(bytes, 0, bytes.length);
+            if (mode == Mode.EXPECT) {
+                matchExpect();
+            }
+        });
     }
 
-    synchronized void onSecureException(ProbeSecureCallback cb, Throwable t) {
-        if (cb != currentSecureCallback) return;
-        if (log.isEnabled()) log.getLogger().info("secure connection exception: " + t);
-        switch (mode) {
-            case EXPECT:
-                fireArmed(receivedData ? "nomatch" : "error");
-                break;
-            default:
-                fireArmed("error");
-        }
+    void onSecureException(ProbeSecureCallback cb, Throwable t) {
+        guarded(() -> {
+            if (cb != currentSecureCallback) return;
+            if (log.isEnabled()) log.getLogger().info("secure connection exception: " + t);
+            fireArmed(mode == Mode.EXPECT && receivedData ? "nomatch" : "error");
+        });
     }
 
     // ==================== UDP ingress (from ProbeUDPCallback) ====================
 
     /** A response datagram — accumulate and run the {@code expect} matcher. */
-    synchronized void onUDPInbound(ProbeUDPCallback cb, byte[] bytes) {
-        if (cb != currentUDPCallback || bytes == null || bytes.length == 0) return;
-        receivedData = true;
-        accumulator.write(bytes, 0, bytes.length);
-        if (mode == Mode.EXPECT) {
-            matchExpect();
-        }
+    void onUDPInbound(ProbeUDPCallback cb, byte[] bytes) {
+        guarded(() -> {
+            if (cb != currentUDPCallback || bytes == null || bytes.length == 0) return;
+            receivedData = true;
+            accumulator.write(bytes, 0, bytes.length);
+            if (mode == Mode.EXPECT) {
+                matchExpect();
+            }
+        });
     }
 
-    synchronized void onUDPException(ProbeUDPCallback cb, Throwable t) {
-        if (cb != currentUDPCallback) return;
-        if (log.isEnabled()) log.getLogger().info("udp exception: " + t);
-        if (mode == Mode.EXPECT) {
-            fireArmed(receivedData ? "nomatch" : "error");
-        } else {
-            fireArmed("error");
-        }
+    void onUDPException(ProbeUDPCallback cb, Throwable t) {
+        guarded(() -> {
+            if (cb != currentUDPCallback) return;
+            if (log.isEnabled()) log.getLogger().info("udp exception: " + t);
+            fireArmed(mode == Mode.EXPECT && receivedData ? "nomatch" : "error");
+        });
     }
 
     private void matchExpect() {
@@ -997,7 +1284,27 @@ public class ProbeContext {
         SelectionKey key = currentKey;
         if (key != null) {
             currentKey = null;
-            nioSocket.abortClientSocket(key);
+            transport.abort(key);
         }
+    }
+
+    /** The current engine state id — a test probe into the traversal; null before start. */
+    String currentStateId() {
+        return engine.currentId();
+    }
+
+    /** The port of the current connection (0 before the first connect) — a test probe. */
+    int currentPort() {
+        return currentPort;
+    }
+
+    /** The definition this context runs — a test probe. */
+    String probeName() {
+        return definition.getName();
+    }
+
+    /** Whether a wait window is armed right now (a test probe). */
+    boolean isArmed() {
+        return armed.get();
     }
 }

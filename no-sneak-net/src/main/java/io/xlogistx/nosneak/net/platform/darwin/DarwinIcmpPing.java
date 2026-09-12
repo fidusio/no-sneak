@@ -9,6 +9,8 @@ import io.xlogistx.nosneak.net.common.PingError;
 import io.xlogistx.nosneak.net.common.PingProbe;
 import io.xlogistx.nosneak.net.common.PingResult;
 import io.xlogistx.nosneak.net.util.Identifiers;
+import io.xlogistx.nosneak.net.util.PendingCall;
+import io.xlogistx.nosneak.net.util.RecvErrors;
 
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
@@ -68,7 +70,9 @@ public final class DarwinIcmpPing implements ICMPPing {
     private final PingError v4Unavailable;
     private final PingError v6Unavailable;
 
-    private final DiscoveryCapabilities capabilities;
+    /** Why a family's reader died, or null while it lives (§13.23-B). */
+    private volatile String v4ReaderFailure;
+    private volatile String v6ReaderFailure;
 
     /**
      * ONE allocator for both families. The kernel rewrites the identifier, so the
@@ -76,7 +80,7 @@ public final class DarwinIcmpPing implements ICMPPing {
      */
     private final Identifiers.SequenceAllocator sequences = Identifiers.newSequenceAllocator();
 
-    private final ConcurrentHashMap<Integer, PendingProbe> inFlight = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Integer, PendingCall.Probe> inFlight = new ConcurrentHashMap<>();
     private final ScheduledExecutorService scheduler;
     private final ExecutorService dispatcher;
 
@@ -96,16 +100,6 @@ public final class DarwinIcmpPing implements ICMPPing {
         this.v6Unavailable = v6Unavailable;
         this.scheduler = scheduler;
         this.dispatcher = dispatcher;
-        this.capabilities = new DiscoveryCapabilities(
-                v4Socket >= 0,   // icmpV4 - what the kernel ACTUALLY gave us
-                v6Socket >= 0,   // icmpV6 - likewise; not a literal true
-                false,   // activeArp  - the neighbor table belongs to the HostDiscovery half
-                false,   // activeNdp
-                false,   // passiveObservation - Darwin cannot, at all
-                false,   // rawEvidence - the kernel strips the IP header
-                false,   // ttlAvailable - likewise; -1 must never read as a distance
-                true,    // offLinkIcmp - the kernel routes
-                DiscoveryCapabilities.Backend.MACOS_NATIVE);
     }
 
     /**
@@ -173,9 +167,25 @@ public final class DarwinIcmpPing implements ICMPPing {
         }
     }
 
+    /**
+     * Computed per call, never a literal: a family is available when the kernel gave us
+     * its socket AND its reader is still alive (§13.23-B). Everything else is false —
+     * the neighbour table belongs to the HostDiscovery half, passive observation to
+     * {@code DarwinPcapBackend} (§13.14), and the datagram socket strips the IP header so
+     * there is no raw evidence and no TTL (-1 must never read as a distance).
+     */
     @Override
     public DiscoveryCapabilities capabilities() {
-        return capabilities;
+        return new DiscoveryCapabilities(
+                v4Socket >= 0 && v4ReaderFailure == null,   // icmpV4
+                v6Socket >= 0 && v6ReaderFailure == null,   // icmpV6
+                false,   // activeArp
+                false,   // activeNdp
+                false,   // passiveObservation
+                false,   // rawEvidence
+                false,   // ttlAvailable
+                true,    // offLinkIcmp - the kernel routes
+                DiscoveryCapabilities.Backend.MACOS_NATIVE);
     }
 
     @Override
@@ -184,7 +194,7 @@ public final class DarwinIcmpPing implements ICMPPing {
             throw new IllegalArgumentException("count must be >= 1, got " + count);
         }
         if (closed.get()) {
-            return CompletableFuture.completedFuture(allFailed(target, count, PingError.IO));
+            return CompletableFuture.completedFuture(allFailed(target, count, PingError.IO, "closed"));
         }
         boolean v4 = target instanceof Inet4Address;
         // A family the kernel refused at open() is a reduced result, not a hang:
@@ -195,67 +205,99 @@ public final class DarwinIcmpPing implements ICMPPing {
         if (!v4 && v6Socket < 0) {
             return CompletableFuture.completedFuture(allFailed(target, count, v6Unavailable));
         }
+        // A dead reader cannot see the reply: fail now with its cause rather than send
+        // and report TIMEOUT at full budget (§13.23-B, S14).
+        String dead = v4 ? v4ReaderFailure : v6ReaderFailure;
+        if (dead != null) {
+            return CompletableFuture.completedFuture(allFailed(target, count, PingError.IO, dead));
+        }
         if (!v4 && target.isLinkLocalAddress()
                 && (!(target instanceof Inet6Address v6) || v6.getScopeId() == 0)) {
             return CompletableFuture.completedFuture(
                     allFailed(target, count, PingError.NETWORK_UNREACHABLE));
         }
 
-        PendingCall call = new PendingCall(target, count);
-        for (int i = 0; i < count; i++) {
-            int seq = sequences.next();
-            PendingProbe probe = new PendingProbe(call, seq, System.nanoTime());
-            inFlight.put(seq, probe);
+        PendingCall call = new PendingCall(target, count, dispatcher);
+        try {
+            for (int i = 0; i < count; i++) {
+                int seq = sequences.next();
+                PendingCall.Probe probe = call.newProbe(seq, System.nanoTime());
+                inFlight.put(seq, probe);
 
-            PingError sendError = v4 ? sendV4(target, seq) : sendV6(target, seq);
-            if (sendError != null) {
-                inFlight.remove(seq);
-                call.settle(PingProbe.failed(seq, sendError));
-                continue;
-            }
-            probe.expiry = scheduler.schedule(() -> {
-                if (inFlight.remove(seq) != null) {
-                    call.settle(PingProbe.failed(seq, PingError.TIMEOUT));
+                SendFailure failed = v4 ? sendV4(target, seq) : sendV6(target, seq);
+                if (failed != null) {
+                    inFlight.remove(seq, probe);
+                    call.setDetail(failed.detail());
+                    probe.fail(failed.error());
+                    continue;
                 }
-            }, Math.max(1, timeout.toMillis()), TimeUnit.MILLISECONDS);
+                probe.expiry = scheduler.schedule(() -> {
+                    // Claim THIS probe (remove(key, value)): a sequence that wrapped onto a
+                    // newer probe must not be timed out by the older one's deadline.
+                    if (inFlight.remove(seq, probe)) {
+                        probe.fail(PingError.TIMEOUT);
+                    }
+                }, Math.max(1, timeout.toMillis()), TimeUnit.MILLISECONDS);
+            }
+        } catch (RuntimeException e) {
+            // A probe registered but never sent (or never given a deadline) would leave
+            // the call incomplete forever (§13.23-E). Drop its map entry so a wrapped
+            // sequence cannot find it, then close every open slot with the cause.
+            inFlight.values().removeIf(p -> p.call == call && !p.isSettled());
+            call.failRemaining(PingError.IO, "ping aborted before every probe was sent: " + e);
         }
         return call.future;
+    }
+
+    /** A {@code sendto} that failed: the §4.7 mapping plus the errno name for the caller. */
+    private record SendFailure(PingError error, String detail) {
+        static SendFailure of(int errno, boolean v4) {
+            return new SendFailure(DarwinLibc.toPingError(errno),
+                                   "sendto(" + (v4 ? "ICMP" : "ICMPv6") + ") failed: "
+                                   + DarwinLibc.errnoName(errno));
+        }
     }
 
     /**
      * The identifier passed here is discarded by the kernel; it is written only so
      * the packet is well-formed. Never correlate on it (§4.2).
      */
-    private PingError sendV4(InetAddress target, int seq) {
+    /** @return null when the kernel accepted the datagram */
+    private SendFailure sendV4(InetAddress target, int seq) {
         byte[] echo = Icmp4Echo.request(0, seq, timestampPayload());
         try (Arena scratch = Arena.ofConfined()) {
             MemorySegment buf = scratch.allocateFrom(JAVA_BYTE, echo);
             MemorySegment dest = scratch.allocate(DarwinLibc.SOCKADDR_IN);
             DarwinLibc.fillSockaddrIn(dest, target.getAddress());
+            // errno is captured PER SEND, in this confined scratch, never in a segment
+            // shared with the other family's lock (§13.23-B, S3).
+            MemorySegment errState = scratch.allocate(DarwinLibc.CAPTURE);
             synchronized (v4SendLock) {
-                long sent = (long) DarwinLibc.Handles.SENDTO.invokeExact(state, v4Socket, buf,
+                long sent = (long) DarwinLibc.Handles.SENDTO.invokeExact(errState, v4Socket, buf,
                         (long) echo.length, 0, dest, (int) DarwinLibc.SOCKADDR_IN.byteSize());
-                return sent < 0 ? DarwinLibc.toPingError(DarwinLibc.errno(state)) : null;
+                return sent < 0 ? SendFailure.of(DarwinLibc.errno(errState), true) : null;
             }
         } catch (Throwable t) {
-            return PingError.IO;
+            return new SendFailure(PingError.IO, "sendto downcall failed: " + t);
         }
     }
 
-    private PingError sendV6(InetAddress target, int seq) {
+    /** @return null when the kernel accepted the datagram */
+    private SendFailure sendV6(InetAddress target, int seq) {
         byte[] echo = Icmp6.echoRequestUnchecksummed(0, seq, timestampPayload());
         int scope = target instanceof Inet6Address v6 ? v6.getScopeId() : 0;
         try (Arena scratch = Arena.ofConfined()) {
             MemorySegment buf = scratch.allocateFrom(JAVA_BYTE, echo);
             MemorySegment dest = scratch.allocate(DarwinLibc.SOCKADDR_IN6);
             DarwinLibc.fillSockaddrIn6(dest, target.getAddress(), scope);
+            MemorySegment errState = scratch.allocate(DarwinLibc.CAPTURE);
             synchronized (v6SendLock) {
-                long sent = (long) DarwinLibc.Handles.SENDTO.invokeExact(state, v6Socket, buf,
+                long sent = (long) DarwinLibc.Handles.SENDTO.invokeExact(errState, v6Socket, buf,
                         (long) echo.length, 0, dest, (int) DarwinLibc.SOCKADDR_IN6.byteSize());
-                return sent < 0 ? DarwinLibc.toPingError(DarwinLibc.errno(state)) : null;
+                return sent < 0 ? SendFailure.of(DarwinLibc.errno(errState), false) : null;
             }
         } catch (Throwable t) {
-            return PingError.IO;
+            return new SendFailure(PingError.IO, "sendto downcall failed: " + t);
         }
     }
 
@@ -277,6 +319,7 @@ public final class DarwinIcmpPing implements ICMPPing {
     }
 
     private void readLoop(int fd, boolean v4) {
+        RecvErrors guard = new RecvErrors();
         try (Arena local = Arena.ofConfined()) {
             MemorySegment localState = local.allocate(DarwinLibc.CAPTURE);
             MemorySegment buf = local.allocate(RECEIVE_BUFFER);
@@ -286,11 +329,36 @@ public final class DarwinIcmpPing implements ICMPPing {
                     n = (long) DarwinLibc.Handles.RECVFROM.invokeExact(localState, fd, buf,
                             (long) RECEIVE_BUFFER, 0, MemorySegment.NULL, MemorySegment.NULL);
                 } catch (Throwable t) {
+                    failReader(v4, "recvfrom downcall failed: " + t);
                     return;
                 }
                 if (n < 0) {
-                    continue;   // EAGAIN tick from SO_RCVTIMEO
+                    // The errno decides (§4.4): EAGAIN/EINTR is the SO_RCVTIMEO tick;
+                    // EBADF/ENOTSOCK means the fd is gone; anything else backs off one
+                    // tick ON THIS DEDICATED THREAD and is fatal after five in a row.
+                    int errno = DarwinLibc.errno(localState);
+                    switch (guard.next(DarwinLibc.isTimeout(errno), DarwinLibc.isDeadDescriptor(errno))) {
+                        case TICK -> {
+                        }
+                        case BACKOFF -> {
+                            try {
+                                Thread.sleep(DarwinLibc.RECV_TIMEOUT_USEC / 1000);
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                                return;
+                            }
+                        }
+                        case FATAL -> {
+                            if (running) {
+                                failReader(v4, "recvfrom(" + (v4 ? "ICMP" : "ICMPv6") + "): "
+                                               + DarwinLibc.errnoName(errno));
+                            }
+                            return;
+                        }
+                    }
+                    continue;
                 }
+                guard.success();
                 byte[] packet = buf.asSlice(0, n).toArray(JAVA_BYTE);
                 try {
                     if (v4) {
@@ -336,17 +404,14 @@ public final class DarwinIcmpPing implements ICMPPing {
 
     /** @return true when the sequence matched an outstanding probe */
     private boolean complete(int seq, byte[] raw) {
-        PendingProbe probe = inFlight.remove(seq);
+        PendingCall.Probe probe = inFlight.remove(seq);
         if (probe == null) {
             return false;
         }
-        if (probe.expiry != null) {
-            probe.expiry.cancel(false);
-        }
         Duration rtt = Duration.ofNanos(System.nanoTime() - probe.sentAtNanos);
         // rawEvidence is false here, so no bytes are retained; TTL is unavailable.
-        probe.call.settle(new PingProbe(seq, true, rtt, PingProbe.TTL_UNAVAILABLE,
-                                        new byte[0], false, false, Optional.empty()));
+        probe.settle(new PingProbe(seq, true, rtt, PingProbe.TTL_UNAVAILABLE,
+                                   new byte[0], false, false, Optional.empty()));
         return true;
     }
 
@@ -366,13 +431,7 @@ public final class DarwinIcmpPing implements ICMPPing {
         DarwinLibc.closeQuietly(state, v4Socket);
         DarwinLibc.closeQuietly(state, v6Socket);
 
-        inFlight.forEach((seq, probe) -> {
-            if (probe.expiry != null) {
-                probe.expiry.cancel(false);
-            }
-            probe.call.settle(PingProbe.failed(probe.sequence, PingError.IO));
-        });
-        inFlight.clear();
+        failPending("closed");
         try {
             arena.close();
         } catch (IllegalStateException e) {
@@ -392,49 +451,41 @@ public final class DarwinIcmpPing implements ICMPPing {
     }
 
     private static PingResult allFailed(InetAddress target, int count, PingError error) {
+        return allFailed(target, count, error, null);
+    }
+
+    private static PingResult allFailed(InetAddress target, int count, PingError error,
+                                        String detail) {
         List<PingProbe> probes = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
             probes.add(PingProbe.failed(i, error));
         }
-        return PingResult.of(target, probes, error);
+        return PingResult.of(target, probes, error, detail);
     }
 
-    private static final class PendingProbe {
-        final PendingCall call;
-        final int sequence;
-        final long sentAtNanos;
-        volatile ScheduledFuture<?> expiry;
-
-        PendingProbe(PendingCall call, int sequence, long sentAtNanos) {
-            this.call = call;
-            this.sequence = sequence;
-            this.sentAtNanos = sentAtNanos;
+    /**
+     * One family's reader is dead: record why, so {@code ping()} and {@code capabilities()}
+     * report it honestly from now on, and fail every probe still waiting on it. The other
+     * family keeps working — its socket and its thread are its own.
+     */
+    private void failReader(boolean v4, String why) {
+        if (v4) {
+            v4ReaderFailure = why;
+        } else {
+            v6ReaderFailure = why;
         }
+        // Sequences are shared across families, so the map cannot tell a v4 probe from a
+        // v6 one; failing all of them is the honest over-approximation, and they carry why.
+        failPending(why);
     }
 
-    private static final class PendingCall {
-        final CompletableFuture<PingResult> future = new CompletableFuture<>();
-        final InetAddress target;
-        final int expected;
-        final List<PingProbe> settled = new ArrayList<>();
-
-        PendingCall(InetAddress target, int expected) {
-            this.target = target;
-            this.expected = expected;
-        }
-
-        void settle(PingProbe probe) {
-            List<PingProbe> finished = null;
-            synchronized (settled) {
-                settled.add(probe);
-                if (settled.size() >= expected) {
-                    finished = new ArrayList<>(settled);
-                }
+    /** Claims each probe with {@code remove(key, value)} before failing it (§13.23-B, S13). */
+    private void failPending(String why) {
+        inFlight.forEach((seq, probe) -> {
+            if (inFlight.remove(seq, probe)) {
+                probe.call.setDetail(why);
+                probe.fail(PingError.IO);
             }
-            if (finished != null) {
-                finished.sort(Comparator.comparingInt(PingProbe::sequence));
-                future.complete(PingResult.of(target, finished, null));
-            }
-        }
+        });
     }
 }

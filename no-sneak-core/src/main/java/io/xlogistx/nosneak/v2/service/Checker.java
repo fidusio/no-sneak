@@ -29,6 +29,8 @@ import org.zoxweb.shared.task.CallableConsumerTask;
 import org.zoxweb.shared.util.NVGenericMap;
 import org.zoxweb.shared.util.ResourceManager;
 
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -93,6 +95,10 @@ public class Checker {
     /** @param detailed true = the single deep {@code https-scan} definition regardless of port. */
     public static NVGenericMap checkQDZDirect(String hostPort, boolean detailed) {
         IPAddress ip = target(hostPort);
+        TargetGuard.Rejection rejected = TargetGuard.check(ip.getInetAddress());
+        if (rejected != null) {
+            throw new APIException(rejected.message(), rejected.status().CODE);
+        }
         NIOSocket nio = null;
         try {
             nio = new NIOSocket(TaskUtil.defaultTaskProcessor(), TaskUtil.defaultTaskScheduler());
@@ -106,16 +112,95 @@ public class Checker {
         }
     }
 
-    /** Parse {@code host[:port]}, default port 443, and refuse private targets. */
+    /**
+     * Parse {@code host[:port]} and default the port to 443. The private-target refusal is NOT
+     * here any more: it needs the name resolved, which is blocking DNS work, so the REST path
+     * does it on the socket's executor ({@link TargetGuard}) and the direct path does it
+     * before opening a socket.
+     */
     private static IPAddress target(String hostPort) {
         IPAddress ip = IPAddress.parse(hostPort);
-        if (ip.isPrivateIP()) {
-            throw new APIException("No scanning private IPs: " + ip, HTTPStatusCode.UNAUTHORIZED.CODE);
-        }
         if (ip.getPort() == -1) {
             ip.setPort(URIScheme.HTTPS.getValue());
         }
         return ip;
+    }
+
+    /**
+     * Refuses targets inside the operator's own network. The previous guard string-matched the
+     * literal text against {@code 10.}, {@code 192.168.} and {@code 172.16-31.}, so
+     * {@code 127.0.0.1}, {@code 169.254.169.254}, {@code [::1]}, a ULA, and any host name that
+     * resolves inward all passed — and since the caller chooses the port, the endpoint was an
+     * unauthenticated prober of whatever sits behind it. This one resolves the name and
+     * classifies EVERY address it resolves to: one private address is enough to refuse, and a
+     * name that does not resolve is refused as well rather than handed to the probe engine to
+     * fail slowly.
+     * <p>
+     * Pure and DNS-free at the {@link #isPrivate(InetAddress)} level so the rules can be pinned
+     * with literals ({@code CheckerPrivateIpTest}); {@link #check(String)} is the one place that
+     * resolves.
+     */
+    public static final class TargetGuard {
+
+        /** Why a target was refused, and the status the refusal carries. */
+        public record Rejection(HTTPStatusCode status, String message) {}
+
+        private TargetGuard() {}
+
+        /**
+         * Loopback, unspecified, link-local (169.254/16, fe80::/10), site-local
+         * (10/8, 172.16/12, 192.168/16, fec0::/10), ULA (fc00::/7), shared address space
+         * (100.64/10), the 0/8 block, and multicast. Everything else is a public host.
+         */
+        public static boolean isPrivate(InetAddress a) {
+            if (a == null) {
+                return true;
+            }
+            if (a.isAnyLocalAddress() || a.isLoopbackAddress() || a.isLinkLocalAddress()
+                    || a.isSiteLocalAddress() || a.isMulticastAddress()) {
+                return true;
+            }
+            byte[] b = a.getAddress();
+            if (b.length == 16) {
+                return (b[0] & 0xFE) == 0xFC;                       // fc00::/7
+            }
+            if (b.length == 4) {
+                int first = b[0] & 0xFF;
+                if (first == 0) {
+                    return true;                                    // 0.0.0.0/8
+                }
+                return first == 100 && (b[1] & 0xC0) == 0x40;       // 100.64.0.0/10
+            }
+            return false;
+        }
+
+        /**
+         * Resolves {@code host} (a literal or a name) and refuses it if any address it resolves
+         * to is private, or if it does not resolve at all. BLOCKING: DNS. Call it off the
+         * request thread.
+         *
+         * @return null when the target may be scanned
+         */
+        public static Rejection check(String host) {
+            String h = host == null ? "" : host.trim();
+            if (h.isEmpty()) {
+                return new Rejection(HTTPStatusCode.BAD_REQUEST, "No target given");
+            }
+            InetAddress[] all;
+            try {
+                all = InetAddress.getAllByName(h);
+            } catch (UnknownHostException | SecurityException e) {
+                return new Rejection(HTTPStatusCode.BAD_REQUEST, "Cannot resolve target: " + h);
+            }
+            for (InetAddress a : all) {
+                if (isPrivate(a)) {
+                    return new Rejection(HTTPStatusCode.UNAUTHORIZED,
+                            "No scanning private or local targets: " + h + " resolves to "
+                                    + a.getHostAddress());
+                }
+            }
+            return null;
+        }
     }
 
     private static ProbeChecker checkerFor(NIOSocket nio, boolean detailed) {
@@ -177,11 +262,21 @@ public class Checker {
                         new NVGenericMap().build("error", "scan did not complete in time")),
                 RESPONSE_DEADLINE_SEC, TimeUnit.SECONDS);
 
-        checker.check(ip.getInetAddress(), ip.getPort(), "tcp",
-                new CallableConsumerTask<ProbeResult>()
-                        .setConsumer(r -> responder.write(HTTPStatusCode.OK, response(r)))
-                        .setExceptionCallback(t -> responder.write(HTTPStatusCode.INTERNAL_SERVER_ERROR,
-                                new NVGenericMap().build("error", "scan failed"))));
+        // Resolving the name is blocking DNS work and the private-target rule needs the resolved
+        // addresses, so both run on the socket's executor rather than on the request thread; the
+        // response — a refusal or the scan result — is written through the same Responder.
+        nio.getExecutor().execute(() -> {
+            TargetGuard.Rejection rejected = TargetGuard.check(ip.getInetAddress());
+            if (rejected != null) {
+                responder.write(rejected.status(), new NVGenericMap().build("error", rejected.message()));
+                return;
+            }
+            checker.check(ip.getInetAddress(), ip.getPort(), "tcp",
+                    new CallableConsumerTask<ProbeResult>()
+                            .setConsumer(r -> responder.write(HTTPStatusCode.OK, response(r)))
+                            .setExceptionCallback(t -> responder.write(HTTPStatusCode.INTERNAL_SERVER_ERROR,
+                                    new NVGenericMap().build("error", "scan failed"))));
+        });
 
         return Boolean.FALSE; // we own the response; the server must not write one
     }

@@ -47,4 +47,34 @@ public record HostRecord(
     public boolean alive() {
         return mac.isPresent() || icmpAlive;
     }
+
+    /**
+     * The one way a sweep turns its two probes into a record, shared by every backend
+     * (§13.23-C; it replaced three copies that disagreed).
+     * <p>
+     * {@code icmpAlive} is {@link PingResult#observedOnWire()}, NOT
+     * {@link PingResult#reachable()}: our own address answers from local configuration
+     * without a packet, so it is alive but did not answer ICMP. The RTT is published
+     * only when {@link PingResult#measured()} — a clock actually ran — otherwise the
+     * local answer would print {@code 0.000 ms} as if it were a measurement (§13.18).
+     *
+     * @return empty when neither probe found the host, so the caller reports nothing
+     */
+    public static Optional<HostRecord> fromProbes(InetAddress target, ResolveResult resolved,
+                                                  PingResult pinged, Instant observedAt) {
+        boolean haveMac = resolved.resolved();
+        boolean answeredIcmp = pinged.observedOnWire();
+        if (!haveMac && !answeredIcmp) {
+            return Optional.empty();
+        }
+        int ttl = pinged.probes().stream().filter(PingProbe::hasTtl)
+                        .mapToInt(PingProbe::ttlOrHopLimit).findFirst()
+                        .orElse(PingProbe.TTL_UNAVAILABLE);
+        return Optional.of(new HostRecord(
+                target, resolved.mac(), answeredIcmp,
+                pinged.measured() ? Optional.of(pinged.avgRtt()) : Optional.empty(),
+                ttl, ttl > 0 ? io.xlogistx.nosneak.net.codecs.TtlDistance.hopCount(ttl)
+                             : Optional.empty(),
+                haveMac ? resolved.source() : null, observedAt));
+    }
 }

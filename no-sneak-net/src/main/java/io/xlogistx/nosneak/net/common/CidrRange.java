@@ -64,6 +64,23 @@ public final class CidrRange {
         return prefixLength;
     }
 
+    /**
+     * The last address of the block, with all host bits set — for IPv4 with a prefix
+     * of {@code /30} or shorter this is the range's directed-broadcast address. For a
+     * {@code /32} or {@code /128} it equals {@link #networkAddress()}.
+     */
+    public InetAddress lastAddress() {
+        byte[] raw = networkAddress.getAddress();
+        for (int i = 0; i < raw.length; i++) {
+            int keep = prefixLength - i * 8;
+            if (keep >= 8) {
+                continue;
+            }
+            raw[i] = keep <= 0 ? (byte) 0xFF : (byte) (raw[i] | (0xFF >>> keep));
+        }
+        return toAddress(raw);
+    }
+
     public boolean isIpv6() {
         return networkAddress.getAddress().length == 16;
     }

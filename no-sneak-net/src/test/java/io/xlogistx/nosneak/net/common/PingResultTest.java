@@ -325,6 +325,18 @@ public class PingResultTest {
         assertTrue(r.measured());
     }
 
+    /** §4.7: the native text behind a call-level error rides on the result, and only there. */
+    @Test
+    public void detailSurvivesOf() {
+        PingResult r = PingResult.of(TARGET, List.of(lost(1)), PingError.IO, "sendto: ENETDOWN");
+        assertEquals(Optional.of(PingError.IO), r.error());
+        assertEquals(Optional.of("sendto: ENETDOWN"), r.detail());
+
+        PingResult plain = PingResult.of(TARGET, List.of(lost(1)), PingError.IO);
+        assertTrue(plain.detail().isEmpty());
+        assertTrue(PingResult.of(TARGET, List.of(ok(1, 1)), null).detail().isEmpty());
+    }
+
     /** Mixing the two — possible only if a backend changed mid-call — keeps real samples. */
     @Test
     public void aRealSampleStillWinsWhenMixedWithALocalProbe() {

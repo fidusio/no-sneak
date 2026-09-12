@@ -104,7 +104,7 @@ io.xlogistx.nosneak.v2
 ├── analysis/               TLSProbeCallback base · Cipher/VersionProbeCallback · RevocationChecker
 ├── grade/                  Grade — letter, PQC readiness, TrustVerdict, advisories
 ├── result/                 ProbeResult (+ CertInfo, ConnectionTrace)
-├── nmap/                   NMapScanner (staged) · NMap CLI · PortScanCallback · RateLimiter · output/
+├── nmap/                   NMapScanner (staged) · NMap CLI · PortScanCallback · ScanGate · output/
 ├── service/                Checker — REST /check-qdz/{domain}/{detailed}
 └── tools/                  DMTool · NoSneakUtil
 

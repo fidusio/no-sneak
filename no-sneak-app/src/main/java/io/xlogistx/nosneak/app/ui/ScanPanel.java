@@ -37,16 +37,28 @@ import java.util.regex.Pattern;
  * The {@code SCAN} screen — the front end for {@code no-sneak-core}'s v2 scanning engine. Five
  * cards behind three selectors: run a scan, browse stored results, and manage the probe library.
  * <p>
- * Two things here are less obvious than they look:
+ * Three things here are less obvious than they look:
  * <ul>
- *   <li><b>Ticked probes are merged into the command, not applied behind it.</b> The effective
- *       string (typed text plus {@code -sV --probes …}) is what runs, what is shown under the
- *       field, and what is stored with the report — so a saved report always reproduces the scan
- *       that made it. Ticking implies {@code -sV} because the probe stage is skipped otherwise.</li>
+ *   <li><b>Ticked probes are applied to the parsed {@link NMapConfig}, never spliced into the
+ *       command string.</b> A probe name is free text (an assistant-authored one is often
+ *       {@code "Redis TLS handshake"}), and {@code NMap.parseCommand} splits on whitespace — so a
+ *       name spliced into {@code --probes} used to turn its words into scan <i>targets</i>. The
+ *       typed command is the only thing parsed; ticks become {@code probeScan(true)},
+ *       {@code probe(name)} and {@code extraProbe(def)} on the result, and the muted line under
+ *       the field shows them as a list. The stored report keeps the typed command in
+ *       {@code command} and the probe names in {@code probes}, separately.</li>
+ *   <li><b>Ticks are keyed by identity, not by name.</b> A bundled probe is {@code b:<name>}; a
+ *       stored one is {@code s:<guid>}. A stored probe that happens to share a bundled name is a
+ *       different checkbox with its own state, and renaming a stored probe does not orphan its
+ *       tick.</li>
  *   <li><b>A probe's name always comes from its JSON</b>, never from the name field. The engine
  *       matches {@code --probes} on the name inside the definition, so a typed name that disagrees
- *       produces a probe you can tick but that resolves to "unknown probe".</li>
+ *       produces a probe you can tick but that resolves to "unknown probe". Saving a definition
+ *       whose name already exists in the library <i>updates</i> that row rather than adding a
+ *       second one, so a probe fixed twice in the assistant is still one probe.</li>
  * </ul>
+ * Everything the previous subject left on screen is cleared on every login and logout
+ * ({@link #resetPanel()}): a scan report is that subject's network topology.
  *
  * @see io.xlogistx.nosneak.v2.nmap.NMap#parseCommand(String)
  */
@@ -66,6 +78,11 @@ public class ScanPanel extends JPanel {
     private final JTextField commandText = new JTextField(30);
     private final JLabel effectiveLabel = new JLabel(" ");
     private final JTextArea resultText = new JTextArea();
+    private final JButton sendResultToChatButton = new JButton("Send to chat", new IconUtil.NextIcon(16));
+    /** Enabled only while a scan runs; stops it through the scanner's handle. */
+    private final JButton stopButton = new JButton("Stop", new IconUtil.StopIcon(16));
+    /** The scan in progress, or null. Set on the worker, read on the EDT by the Stop button. */
+    private volatile NMapScanner.ScanHandle running;
     private ReportContent selectedScan;
     private ProbeContent selectedProbe;
 
@@ -74,6 +91,7 @@ public class ScanPanel extends JPanel {
     private JTextField viewProbeTitleArea;
     private JTextArea viewProbeTextArea;
 
+    /** Tick keys — see {@link ProbeSelection#bundledKey} and {@link ProbeSelection#storedKey}. */
     private final Set<String> tickedProbes = new HashSet<>();
     private final JPanel probeSelector = new JPanel(new MigLayout("wrap 1, insets 8, gapy 2", "[grow]"));
     private List<ProbeDefinition> bundledProbes = List.of();
@@ -96,8 +114,13 @@ public class ScanPanel extends JPanel {
         rebuildProbeSelector();
 
         ctx.session().onAuthChange(e -> SwingUtilities.invokeLater(() -> {
-            reloadScanResults();
-            reloadProbes();
+            // Login or logout, the previous subject's data leaves the screen first. Only a
+            // signed-in subject then gets their own rows loaded back.
+            resetPanel();
+            if (Boolean.TRUE.equals(e.getNewValue())) {
+                reloadScanResults();
+                reloadProbes();
+            }
         }));
 
         JToggleButton scanButton = new JToggleButton("Scanner");
@@ -112,6 +135,34 @@ public class ScanPanel extends JPanel {
         add(PanelBuilder.buildDefaultSplitPanel(cardStack.view(), scanButton, resultButton, probeButton));
     }
 
+    /**
+     * Clears every field, list, selection and tick that could carry one subject's data to the
+     * next, and returns to the Scanner card. Called on every auth change; safe to call at any
+     * time from the EDT.
+     */
+    public void resetPanel() {
+        nameText.setText("");
+        commandText.setText("");
+        effectiveLabel.setText(" ");
+        resultText.setText("");
+        lastScanName = "";
+        sendResultToChatButton.setEnabled(false);
+        selectedScan = null;
+        selectedProbe = null;
+        if (viewScanTextArea != null) viewScanTextArea.setText("");
+        if (viewProbeTextArea != null) viewProbeTextArea.setText("");
+        if (viewProbeTitleArea != null) viewProbeTitleArea.setText("");
+        tickedProbes.clear();
+        // A scan the departing subject started must not keep probing on their behalf.
+        onStop();
+        scanResults = List.of();
+        probes = List.of();
+        if (resultList != null) resultList.refresh();
+        if (probeList != null) probeList.refresh();
+        rebuildProbeSelector();
+        cardStack.show("Scan");
+    }
+
     private JPanel buildScanPanel() {
         JPanel out = new JPanel(new BorderLayout(0, 8));
 
@@ -121,9 +172,13 @@ public class ScanPanel extends JPanel {
         help.addActionListener(e -> showUsage());
 
         JButton run = new JButton("Run", new IconUtil.RunIcon(16));
+        stopButton.setEnabled(false);
+        stopButton.setToolTipText("Stop the running scan; what completed so far is shown, nothing is saved");
+        stopButton.addActionListener(_ -> onStop());
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
         actions.add(help);
         actions.add(run);
+        actions.add(stopButton);
 
         effectiveLabel.setFont(effectiveLabel.getFont().deriveFont(effectiveLabel.getFont().getSize2D() - 2f));
         effectiveLabel.setForeground(UIManager.getColor("Label.disabledForeground"));
@@ -143,7 +198,6 @@ public class ScanPanel extends JPanel {
         resultText.setEditable(false);
 
         JPanel result = new JPanel(new BorderLayout());
-        JButton sendResultToChatButton = new JButton("Send to chat", new IconUtil.NextIcon(16));
         sendResultToChatButton.setEnabled(false);
         sendResultToChatButton.addActionListener(_ -> setSendToChat(resultText.getText(), lastScanName));
         result.add(sendResultToChatButton, BorderLayout.NORTH);
@@ -154,41 +208,81 @@ public class ScanPanel extends JPanel {
         out.add(top, BorderLayout.NORTH);
         out.add(split, BorderLayout.CENTER);
 
-        run.addActionListener(_ -> {
-            String typed = commandText.getText().trim();
-            String effective;
-            List<ProbeDefinition> selected;
-            NMapConfig cfg;
-            try {
-                selected = selectedDefinitions();
-                effective = effectiveCommand(typed, selected);
-                cfg = NMap.parseCommand(effective);
-                for (ProbeDefinition d : selected) {
-                    if (!bundledProbes.contains(d)) cfg.extraProbe(d);
-                }
-            } catch (IllegalArgumentException ex) {
-                JOptionPane.showMessageDialog(this, ex.getMessage() + "\n\n" + NMap.usageText(),
-                        "Invalid command", JOptionPane.ERROR_MESSAGE);
-                return;
-            }
-            effectiveLabel.setText(effective.equals(typed) ? " " : "effective: " + effective);
-            String scanName = reportName(cfg);
-            BackgroundTask.run(this, run, () -> scanNetwork(cfg), json -> {
-                resultText.setText(json);
-                resultText.setCaretPosition(0);
-                lastScanName = scanName;
-                sendResultToChatButton.setEnabled(true);
-                ReportContent r = new ReportContent();
-                r.setName(scanName);
-                r.setDescription(effective);
-                r.setContent(json);
-                r.getProperties().build("command", effective);
-                ctx.session().saveScanResult(r);
-                reloadScanResults();
-            });
-        });
+        run.addActionListener(_ -> onRun(run));
 
         return out;
+    }
+
+    /**
+     * What one press of Run produced. {@code json} is always the rendered report — partial when
+     * the scan was stopped; {@code stopped} is the message to show in that case (timeout or the
+     * Stop button), and null when the scan ran to completion.
+     */
+    private record ScanOutcome(String json, String stopped) {}
+
+    /** Stop button: cancel the scan in flight. Idempotent; the worker delivers the partial report. */
+    private void onStop() {
+        NMapScanner.ScanHandle h = running;
+        if (h != null) {
+            h.cancel();
+        }
+        stopButton.setEnabled(false);
+    }
+
+    private void onRun(JButton run) {
+        String typed = commandText.getText().trim();
+        NMapConfig cfg;
+        ProbeSelection.Selection selected;
+        try {
+            cfg = NMap.parseCommand(typed);
+            selected = ProbeSelection.select(bundledProbes, probes, tickedProbes);
+            ProbeSelection.applyTo(cfg, selected);
+        } catch (IllegalArgumentException ex) {
+            JOptionPane.showMessageDialog(this, ex.getMessage() + "\n\n" + NMap.usageText(),
+                    "Invalid command", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        String probeNames = ProbeSelection.describe(selected);
+        effectiveLabel.setText(probeNames.isEmpty() ? " " : "probes: " + probeNames);
+        String scanName = reportName(cfg);
+        String subjectAtStart = ctx.session().getSubjectGUID();
+
+        stopButton.setEnabled(true);
+        BackgroundTask.run(this, run, () -> runScan(cfg), outcome -> {
+            stopButton.setEnabled(false);
+            if (outcome.stopped() != null) {
+                // Stopped by the subject or by the wait budget: show what completed, save nothing.
+                resultText.setText(outcome.json() == null ? "" : outcome.json());
+                resultText.setCaretPosition(0);
+                sendResultToChatButton.setEnabled(false);
+                JOptionPane.showMessageDialog(this, outcome.stopped(), "Scan stopped",
+                        JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            // The scan belongs to whoever started it. If that subject is gone, so is the report.
+            if (!ctx.session().isAuthenticated()
+                    || !Objects.equals(subjectAtStart, ctx.session().getSubjectGUID())) {
+                JOptionPane.showMessageDialog(this,
+                        "The session that started this scan has ended; the report was not saved.",
+                        "Scan", JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+            String json = outcome.json();
+            resultText.setText(json);
+            resultText.setCaretPosition(0);
+            lastScanName = scanName;
+            sendResultToChatButton.setEnabled(true);
+            ReportContent r = new ReportContent();
+            r.setName(scanName);
+            r.setDescription(probeNames.isEmpty() ? typed : typed + "  ·  probes: " + probeNames);
+            r.setContent(json);
+            r.getProperties().build("command", typed);
+            if (!probeNames.isEmpty()) r.getProperties().build("probes", probeNames);
+            // Encrypting and inserting a report is store I/O: off the EDT, like every other
+            // Session call in this file, and a failure is a dialog rather than a frozen UI.
+            BackgroundTask.runCatching(this, null, () -> ctx.session().saveScanResult(r),
+                    this::reloadScanResults);
+        });
     }
 
     /**
@@ -202,39 +296,102 @@ public class ScanPanel extends JPanel {
         return typed.isEmpty() ? String.join(" ", cfg.targets) : typed;
     }
 
-    private List<ProbeDefinition> selectedDefinitions() {
-        List<ProbeDefinition> out = new ArrayList<>();
-        for (ProbeDefinition d : bundledProbes) {
-            if (tickedProbes.contains(d.getName())) out.add(d);
-        }
-        for (ProbeContent p : probes) {
-            if (p.getName() == null || !tickedProbes.contains(p.getName())) continue;
-            try {
-                out.add(ProbeDefinitionLoader.parse(p.getContent(), p.getName()));
-            } catch (IllegalArgumentException e) {
-                throw new IllegalArgumentException("Probe '" + p.getName() + "' is not valid: " + e.getMessage(), e);
+    /**
+     * The pure half of the scanner card: how ticks map onto an {@link NMapConfig}, how they are
+     * described, what a timeout says, and which stored row a saved definition replaces. Static
+     * and Swing-free so {@code ScanPanelTest} can pin every rule without a display.
+     */
+    static final class ProbeSelection {
+
+        /** What the ticks resolved to: bundled probes by name, stored probes as definitions. */
+        record Selection(List<String> bundledNames, List<ProbeDefinition> stored) {
+            boolean isEmpty() {
+                return bundledNames.isEmpty() && stored.isEmpty();
             }
         }
-        return out;
-    }
 
-    private String effectiveCommand(String typed, List<ProbeDefinition> selected) {
-        if (selected.isEmpty()) return typed;
-        if (selected.size() == bundledProbes.size() + countNamedProbes()) return typed + " -sV";
-        StringBuilder names = new StringBuilder();
-        for (ProbeDefinition d : selected) {
-            if (!names.isEmpty()) names.append(',');
-            names.append(d.getName());
-        }
-        return typed + " -sV --probes " + names;
-    }
+        private ProbeSelection() {}
 
-    private int countNamedProbes() {
-        int n = 0;
-        for (ProbeContent p : probes) {
-            if (p.getName() != null && !p.getName().isBlank()) n++;
+        static String bundledKey(String name) {
+            return "b:" + name;
         }
-        return n;
+
+        /** A stored row's identity; falls back to the name only for a row that was never saved. */
+        static String storedKey(ProbeContent p) {
+            String guid = p.getGUID();
+            return SUS.isNotEmpty(guid) ? "s:" + guid : "s:name:" + p.getName();
+        }
+
+        /**
+         * Resolves the ticked keys. A stored probe's JSON is parsed here so an invalid one is a
+         * clear message naming the probe, not an engine failure later.
+         *
+         * @throws IllegalArgumentException when a ticked stored probe is not a valid definition
+         */
+        static Selection select(List<ProbeDefinition> bundled, List<ProbeContent> stored,
+                                Set<String> ticks) {
+            List<String> names = new ArrayList<>();
+            for (ProbeDefinition d : bundled) {
+                if (ticks.contains(bundledKey(d.getName()))) names.add(d.getName());
+            }
+            List<ProbeDefinition> extras = new ArrayList<>();
+            for (ProbeContent p : stored) {
+                if (p.getName() == null || !ticks.contains(storedKey(p))) continue;
+                try {
+                    extras.add(ProbeDefinitionLoader.parse(p.getContent(), p.getName()));
+                } catch (IllegalArgumentException e) {
+                    throw new IllegalArgumentException(
+                            "Probe '" + p.getName() + "' is not valid: " + e.getMessage(), e);
+                }
+            }
+            return new Selection(names, extras);
+        }
+
+        /**
+         * Applies the selection to the parsed config. Ticking implies {@code -sV}: the probe
+         * stage returns early when {@code probeScan} is false, so ticked probes with no
+         * {@code -sV} would silently do nothing. Names never pass through the command string.
+         */
+        static void applyTo(NMapConfig cfg, Selection sel) {
+            if (sel.isEmpty()) return;
+            cfg.probeScan(true);
+            for (String name : sel.bundledNames()) cfg.probe(name);
+            for (ProbeDefinition d : sel.stored()) {
+                cfg.extraProbe(d);
+                cfg.probe(d.getName());
+            }
+        }
+
+        /** The ticked names as a comma-separated list, for display and for the report. */
+        static String describe(Selection sel) {
+            List<String> names = new ArrayList<>(sel.bundledNames());
+            for (ProbeDefinition d : sel.stored()) names.add(d.getName());
+            return String.join(", ", names);
+        }
+
+        /** What the subject reads when the wait budget runs out. The scan has been stopped. */
+        static String timeoutMessage(NMapConfig cfg, long budgetMs) {
+            long seconds = Math.max(1, (budgetMs + 999) / 1000);
+            return "Scan timed out after " + seconds + " s: " + String.join(" ", cfg.targets)
+                    + "\nThe scan was stopped; what completed is shown and nothing was saved."
+                    + " A narrower range, fewer ports, or -t with a longer per-connection timeout"
+                    + " gives it room.";
+        }
+
+        /** What the subject reads after pressing Stop. */
+        static String cancelledMessage(ScanReport report) {
+            return NMapScanner.progress(report).cancelledLine()
+                    + "\nWhat completed is shown; nothing was saved.";
+        }
+
+        /** The stored row a definition with this name would replace, or null when it is new. */
+        static ProbeContent existingByName(List<ProbeContent> stored, String name) {
+            if (name == null) return null;
+            for (ProbeContent p : stored) {
+                if (name.equals(p.getName()) && SUS.isNotEmpty(p.getGUID())) return p;
+            }
+            return null;
+        }
     }
 
     private JComponent buildProbeSelector() {
@@ -244,55 +401,56 @@ public class ScanPanel extends JPanel {
         return sp;
     }
 
+    /** One checkbox row: the label shown and the tick key behind it. */
+    private record ProbeRow(String key, String label, String tooltip) {}
+
     private void rebuildProbeSelector() {
         probeSelector.removeAll();
 
-        List<String> bundledNames = new ArrayList<>();
-        Map<String, String> tooltips = new HashMap<>();
+        List<ProbeRow> bundledRows = new ArrayList<>();
         for (ProbeDefinition d : bundledProbes) {
-            bundledNames.add(d.getName());
-            String tip = bundledTip(d);
-            if (tip != null) tooltips.put(d.getName(), tip);
+            bundledRows.add(new ProbeRow(ProbeSelection.bundledKey(d.getName()), d.getName(), bundledTip(d)));
         }
-        addProbeSection("Bundled probes", "", bundledNames, tooltips, "None loaded");
+        addProbeSection("Bundled probes", "", bundledRows, "None loaded");
 
-        List<String> myNames = new ArrayList<>();
+        List<ProbeRow> myRows = new ArrayList<>();
         for (ProbeContent p : probes) {
-            if (p.getName() != null && !p.getName().isBlank()) myNames.add(p.getName());
+            if (p.getName() != null && !p.getName().isBlank()) {
+                myRows.add(new ProbeRow(ProbeSelection.storedKey(p), p.getName(), null));
+            }
         }
-        addProbeSection("My probes", "gaptop 10", myNames, Map.of(), "No probes yet");
+        addProbeSection("My probes", "gaptop 10", myRows, "No probes yet");
 
         probeSelector.revalidate();
         probeSelector.repaint();
     }
 
-    private void addProbeSection(String title, String titleGap, List<String> names,
-                                 Map<String, String> tooltips, String emptyText) {
+    private void addProbeSection(String title, String titleGap, List<ProbeRow> rows, String emptyText) {
         probeSelector.add(sectionLabel(title), titleGap);
 
-        if (names.isEmpty()) {
+        if (rows.isEmpty()) {
             probeSelector.add(emptyLabel(emptyText));
             return;
         }
 
+        List<String> keys = rows.stream().map(ProbeRow::key).toList();
         List<JCheckBox> rowBoxes = new ArrayList<>();
-        JCheckBox allBox = new JCheckBox("All", tickedProbes.containsAll(names));
+        JCheckBox allBox = new JCheckBox("All", tickedProbes.containsAll(keys));
         allBox.setToolTipText("Select every probe in this group");
         allBox.addActionListener(_ -> {
             boolean on = allBox.isSelected();
             for (JCheckBox b : rowBoxes) b.setSelected(on);
-            if (on) tickedProbes.addAll(names);
-            else tickedProbes.removeAll(names);
+            if (on) tickedProbes.addAll(keys);
+            else tickedProbes.removeAll(keys);
         });
         probeSelector.add(allBox, "growx");
 
-        for (String name : names) {
-            JCheckBox box = new JCheckBox(name, tickedProbes.contains(name));
-            String tip = tooltips.get(name);
-            if (tip != null) box.setToolTipText(tip);
+        for (ProbeRow row : rows) {
+            JCheckBox box = new JCheckBox(row.label(), tickedProbes.contains(row.key()));
+            if (row.tooltip() != null) box.setToolTipText(row.tooltip());
             box.addActionListener(_ -> {
-                if (box.isSelected()) tickedProbes.add(name);
-                else tickedProbes.remove(name);
+                if (box.isSelected()) tickedProbes.add(row.key());
+                else tickedProbes.remove(row.key());
                 allBox.setSelected(!rowBoxes.isEmpty() && rowBoxes.stream().allMatch(AbstractButton::isSelected));
             });
             rowBoxes.add(box);
@@ -399,6 +557,12 @@ public class ScanPanel extends JPanel {
             return ctx.session().getAllProbes();
         }, loaded -> {
             probes = loaded;
+            // A tick for a row that no longer exists (deleted, or another subject's) is dropped
+            // here rather than kept forever in the set.
+            Set<String> live = new HashSet<>();
+            for (ProbeDefinition d : bundledProbes) live.add(ProbeSelection.bundledKey(d.getName()));
+            for (ProbeContent p : probes) live.add(ProbeSelection.storedKey(p));
+            tickedProbes.retainAll(live);
             probeList.refresh();
             rebuildProbeSelector();
         });
@@ -477,8 +641,13 @@ public class ScanPanel extends JPanel {
             JButton save = new JButton("Save", new IconUtil.SaveIcon(16));
             save.addActionListener(e -> {
                 if (selectedProbe == null) return;
-                ProbeContent p = selectedProbe;
-                if (!fillProbe(p, viewProbeTitleArea.getText().trim(), viewProbeTextArea.getText())) return;
+                ProbeContent p;
+                try {
+                    p = probeToSave(selectedProbe, viewProbeTitleArea.getText().trim(), viewProbeTextArea.getText());
+                } catch (IllegalArgumentException ex) {
+                    JOptionPane.showMessageDialog(this, ex.getMessage(), "Not a valid probe", JOptionPane.ERROR_MESSAGE);
+                    return;
+                }
                 // The name is the definition's, so show what actually got stored.
                 viewProbeTitleArea.setText(p.getName());
                 BackgroundTask.run(this, save, () -> ctx.session().saveProbe(p), saved -> {
@@ -500,38 +669,45 @@ public class ScanPanel extends JPanel {
      * Stores a probe authored elsewhere — the AI assistant's editor, today. The name comes from
      * the parsed definition, never the caller's: the engine matches {@code --probes} on the name
      * inside the JSON, so a typed one that disagrees would produce a probe that can't be selected.
+     * A definition whose name is already in the library updates that row.
+     *
+     * @throws IllegalArgumentException when the content is not a valid probe — the caller owns
+     *                                  the editor and shows the message there, so the draft stays
+     *                                  open and dirty rather than reading as saved
      */
     public void saveProbeFromEditor(String name, String content) {
-        ProbeContent p = new ProbeContent();
-        if (!fillProbe(p, name, content)) return;
+        ProbeContent p = probeToSave(new ProbeContent(), name, content);
+        boolean updated = SUS.isNotEmpty(p.getGUID());
         BackgroundTask.run(this, null, () -> ctx.session().saveProbe(p), saved -> {
             reloadProbes();
             ctx.nav().show(Navigator.Screen.SCAN);
             cardStack.show("Probe");
-            JOptionPane.showMessageDialog(this, "Saved probe \"" + p.getName() + "\".",
+            JOptionPane.showMessageDialog(this,
+                    (updated ? "Updated probe \"" : "Saved probe \"") + p.getName() + "\".",
                     "Probe", JOptionPane.INFORMATION_MESSAGE);
         });
     }
 
     /**
-     * Strips a markdown fence, validates, and writes the definition onto {@code target}. Both save
-     * paths go through here so they cannot diverge on fence handling or on where the name comes
-     * from — it is always the parsed definition's, since the engine matches {@code --probes} on the
-     * name inside the JSON and a typed one that disagrees yields a probe that can't be selected.
+     * Strips a markdown fence, validates, and returns the row to save: {@code target} itself when
+     * it is an existing row, otherwise the library row that already carries the definition's name
+     * (so a re-save updates instead of duplicating), otherwise {@code target} as a new row. Both
+     * save paths go through here so they cannot diverge on fence handling, on where the name
+     * comes from — always the parsed definition's — or on the dedupe rule.
      *
-     * @return false when the content is not a valid probe; the reason has already been shown
+     * @throws IllegalArgumentException when the content is not a valid probe, with the reason
      */
-    private boolean fillProbe(ProbeContent target, String name, String content) {
+    private ProbeContent probeToSave(ProbeContent target, String name, String content) {
         String json = fencedBlock(content);
-        try {
-            ProbeDefinition def = ProbeDefinitionLoader.parse(json, SUS.isEmpty(name) ? "probe" : name);
-            target.setName(def.getName());
-            target.setContent(json);
-            return true;
-        } catch (IllegalArgumentException e) {
-            JOptionPane.showMessageDialog(this, e.getMessage(), "Not a valid probe", JOptionPane.ERROR_MESSAGE);
-            return false;
+        ProbeDefinition def = ProbeDefinitionLoader.parse(json, SUS.isEmpty(name) ? "probe" : name);
+        ProbeContent row = target;
+        if (SUS.isEmpty(target.getGUID())) {
+            ProbeContent existing = ProbeSelection.existingByName(probes, def.getName());
+            if (existing != null) row = existing;
         }
+        row.setName(def.getName());
+        row.setContent(json);
+        return row;
     }
 
     private static String fencedBlock(String markdown) {
@@ -552,12 +728,46 @@ public class ScanPanel extends JPanel {
 
     public String scanNetwork(NMapConfig cfg)
             throws ExecutionException, InterruptedException, TimeoutException {
-        CompletableFuture<ScanReport> future = new CompletableFuture<>();
-        NMapScanner.scan(ctx.session().getNio(), cfg,
-                new CallableConsumerTask<ScanReport>().setConsumer(future::complete));
-        ScanReport report = future.get(NMap.maxWaitMs(cfg), TimeUnit.MILLISECONDS);
+        ScanOutcome outcome = runScan(cfg);
+        if (outcome.stopped() != null) {
+            throw new TimeoutException(outcome.stopped());
+        }
+        return outcome.json();
+    }
 
-        return OutputFormat.formatter(OutputFormat.JSON).render(report);
+    /**
+     * Runs one scan on the worker thread and always comes back with a rendered report. A wait
+     * budget that runs out or a press of Stop cancels the scan through its handle — nothing keeps
+     * running in the background — and the partial report is rendered with the reason.
+     */
+    private ScanOutcome runScan(NMapConfig cfg) throws ExecutionException, InterruptedException {
+        long budgetMs = NMap.maxWaitMs(cfg);
+        CompletableFuture<ScanReport> future = new CompletableFuture<>();
+        NMapScanner.ScanHandle handle = NMapScanner.scan(ctx.session().getNio(), cfg,
+                new CallableConsumerTask<ScanReport>().setConsumer(future::complete));
+        running = handle;
+        try {
+            ScanReport report;
+            String stopped = null;
+            try {
+                report = future.get(budgetMs, TimeUnit.MILLISECONDS);
+            } catch (TimeoutException e) {
+                handle.cancel();
+                stopped = ProbeSelection.timeoutMessage(cfg, budgetMs);
+                try {
+                    report = future.get(10, TimeUnit.SECONDS);
+                } catch (TimeoutException late) {
+                    return new ScanOutcome(null, stopped);
+                }
+            }
+            String json = OutputFormat.formatter(OutputFormat.JSON).render(report);
+            if (stopped == null && report.cancelled) {
+                stopped = ProbeSelection.cancelledMessage(report);
+            }
+            return new ScanOutcome(json, stopped);
+        } finally {
+            running = null;
+        }
     }
 
     public void setSendToChat(String content, String name) {

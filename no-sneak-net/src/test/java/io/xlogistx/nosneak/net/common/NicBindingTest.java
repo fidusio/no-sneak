@@ -26,6 +26,53 @@ public class NicBindingTest {
                               List.of(v4), List.of(), 1500);
     }
 
+    private static NicBinding bindingV6(NicBinding.LocalAddress... v6) {
+        return new NicBinding("eth0", "eth0", 1, MacAddress.parse("aa:bb:cc:dd:ee:ff"),
+                              List.of(), List.of(v6), 1500);
+    }
+
+    // ---- sourceFor (§13.21 S11): the containing prefix wins, then routable, then first
+
+    @Test
+    public void sourceForPrefersTheAddressWhosePrefixContainsTheTarget() {
+        NicBinding two = binding(local("10.0.0.61", 24), local("192.168.56.1", 24));
+        assertEquals(ip("192.168.56.1"), two.sourceFor(ip("192.168.56.5")).orElseThrow().address());
+        assertEquals(ip("10.0.0.61"), two.sourceFor(ip("10.0.0.108")).orElseThrow().address());
+    }
+
+    /** Non-empty for an off-link target — the Windows send path relied on the opposite. */
+    @Test
+    public void sourceForFallsBackToTheFamilysFirstForAnOffLinkTarget() {
+        NicBinding two = binding(local("10.0.0.61", 24), local("192.168.56.1", 24));
+        Optional<NicBinding.LocalAddress> src = two.sourceFor(ip("8.8.8.8"));
+        assertTrue(src.isPresent());
+        assertEquals(ip("10.0.0.61"), src.orElseThrow().address());
+    }
+
+    @Test
+    public void sourceForSkipsLinkLocalWhenFallingBack() {
+        NicBinding apipaFirst = binding(local("169.254.10.1", 16), local("10.0.0.61", 24));
+        assertEquals(ip("10.0.0.61"), apipaFirst.sourceFor(ip("8.8.8.8")).orElseThrow().address());
+        assertEquals(ip("169.254.10.1"),
+                     apipaFirst.sourceFor(ip("169.254.20.20")).orElseThrow().address(),
+                     "but a link-local TARGET is sourced from the link-local address");
+    }
+
+    @Test
+    public void sourceForIpv6PrefersLinkLocalForLinkLocalAndGlobalForGlobal() {
+        NicBinding v6 = bindingV6(local("fe80::1", 64), local("2001:db8::5", 64));
+        assertEquals(ip("fe80::1"), v6.sourceFor(ip("fe80::abcd")).orElseThrow().address());
+        assertEquals(ip("2001:db8::5"), v6.sourceFor(ip("2001:db8::9")).orElseThrow().address());
+        assertEquals(ip("2001:db8::5"), v6.sourceFor(ip("2001:db9::1")).orElseThrow().address(),
+                     "off-link v6 must not be sourced from fe80::");
+    }
+
+    @Test
+    public void sourceForIsEmptyWhenTheFamilyHasNoAddress() {
+        assertTrue(binding(local("10.0.0.61", 24)).sourceFor(ip("fe80::1")).isEmpty());
+        assertTrue(bindingV6(local("fe80::1", 64)).sourceFor(ip("10.0.0.1")).isEmpty());
+    }
+
     @Test
     public void broadcastAndNetworkForA24() {
         NicBinding.LocalAddress a = local("192.168.1.10", 24);

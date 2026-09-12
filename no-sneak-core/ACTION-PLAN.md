@@ -18,7 +18,7 @@ checklist against v2*, not a work queue against v1 — do not "fix" v1 code.
 | **A4–A6, A9–A10** (dead blocking enumerators, redundant capture, deprecated members) | **Moot** — not carried over. v2 enumerates via `analysis/{Cipher,Version}ProbeCallback` on NIO. |
 | **A7–A8** (blind cast, unpopulated key size) | **Moot / superseded**; v2 records `cert-public-key-size` from `OPSecUtil.analyzeCertificatePQC`. |
 | **A11** (no vulnerability scanning) | **Still open in v2** — the largest remaining gap. See *Pending Issues → item 1*, unchanged and still authoritative. |
-| **A12** (no server-side group enumeration) | **Partly open** — v2 enumerates versions and cipher suites; named-group enumeration is still missing. |
+| **A12** (no server-side group enumeration) | **Fixed 2026-09-11** — `enumerate-groups` (one single-group TLS 1.3 handshake per candidate) records `supported-groups` and `server-group-preference`; `enumerate-ciphers` now offers opsec's weak and insecure sets too and records per-suite strength plus `server-cipher-preference`. Live: xlogistx.io accepts 8 groups incl. X25519MLKEM768 (preferred); google.com verified the same day. |
 | **A13** (no header analysis / no grading) | **Half done** — grading shipped as `v2/grade/Grade` (letter + PQC readiness + trust verdict); HTTP security headers still missing. Two grading defects were fixed 2026-07-29: the weak-cipher rule flagged healthy `TLS_ECDHE_RSA_*` suites while missing static-RSA ones, and an unenumerated scan was scored `A`. |
 | **B1–B12** (nmap: fake raw engines, dead service/os packages, blocking sleeps, …) | **Moot** — v2's `nmap` is NIO-native and defers service detection to the probe engine. Raw scans are a deliberate deferral to a future Panama-FFM layer; remaining parity items are listed in the v2 `PROBE-CONFIG.md`. **Host discovery is no longer a gap (2026-07-29):** it runs on `no-sneak-net` — `HostScanner.sweep()` for on-link CIDRs, per-host `ping`/`resolve` otherwise — so a scan reports the remote **MAC**, which v1 never could. |
 | **C2** (latent NPE-return) | **Fixed in v2** — `v2/tools/NoSneakUtil` always builds the domain manager from the cached-or-new datastore. |
@@ -109,8 +109,10 @@ work can resume across sessions. Checkboxes track remediation.
 - [ ] **A11 — No vulnerability scanning at all** (POODLE/BEAST/Heartbleed/ROBOT/DROWN/
   SWEET32, renegotiation RFC 5746, downgrade/`TLS_FALLBACK_SCSV`, CRIME, session
   resumption). See "Pending Issues → item 1" checklist.
-- [ ] **A12 — No server-side cipher/named-group enumeration** — scanner only advertises
-  its own groups (`PQCTlsClient.java:98`), never enumerates the server's accepted set.
+- [x] **A12 — No server-side cipher/named-group enumeration** — ~~scanner only advertises
+  its own groups (`PQCTlsClient.java:98`), never enumerates the server's accepted set.~~
+  Fixed 2026-09-11 in v2: `enumerate-groups` + the widened `enumerate-ciphers` (see
+  `v2/PROBE-CONFIG.md`, action library).
 - [ ] **A13 — No HTTP security-header analysis and no grading engine.**
 
 ### B. nmap scanner (`nmap/`)
@@ -762,7 +764,11 @@ the framework-native `HTTPURLCallback` + `HTTPNIOSocket` for truly event-driven,
    - HSTS, CSP, X-Frame-Options, X-Content-Type-Options
    - Cookie security (Secure, HttpOnly, SameSite)
 
-3. **Grading Engine** - SSL Labs compatible A+ to F grading
+3. **Grading Engine** - SSL Labs compatible A+ to F grading. *Status 2026-09-11:* letter, PQC
+   readiness, trust verdict and advisories shipped as `v2/grade/Grade`; cipher tiers now follow
+   SSL Labs (insecure → C, no-forward-secrecy or 3DES → B, forward-secret CBC advisory only).
+   Still missing for full parity: A+ (HSTS etc.), the intolerance/renegotiation/SCSV inputs
+   from item 1, and key-size rules.
 
 ### Lower Priority
 4. **CNSA 2.0 Compliance Checking** - Timeline-based compliance rules

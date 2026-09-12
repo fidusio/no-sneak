@@ -49,8 +49,10 @@ decisions have to keep.
 Two properties this module owns, and every screen has to keep them: **the store is encrypted and
 opened with the subject's own credentials**, and **everything in it is scoped to the subject who
 created it** — scan reports, probes, chats, captures, keys. Logout must leave nothing of the
-previous subject on screen or in a panel field; the ScanPanel gap in `PENDING-ISSUES.md` finding 1
-is what that failure looks like. Scan reports are network topology: they leave the machine only
+previous subject on screen or in a panel field; `ScanPanel.resetPanel()` runs on *every* auth
+change for exactly this reason (the gap `PENDING-ISSUES.md` finding 1 described, closed
+2026-09-11), and a scan whose subject signed out before it finished is discarded, not shown to
+whoever signed in next. Scan reports are network topology: they leave the machine only
 when the subject attaches one to a chat themselves. Nothing here uploads, phones home, or syncs.
 
 ## Layout
@@ -297,24 +299,37 @@ selector (left) and the raw result text (right).
   **rejected**, not ignored: a caller holding a string has nowhere to write. Parsing happens on
   the EDT (it is instant and non-blocking) and a bad command shows a dialog with the message plus
   `NMap.usageText()`, rather than reaching `BackgroundTask`'s generic "Unexpected error".
-- **Ticked probes are merged into the command, not applied behind it.** `effectiveCommand(...)`
-  appends `-sV --probes a,b` (or bare `-sV` when everything is ticked) and the *effective* string
-  is what runs, what is shown in the muted `effective:` line under the field, and what is stored
-  with the report. Ticking implies `-sV` deliberately: `probeStage` returns early when
-  `probeScan` is false, so ticked probes with no `-sV` would silently do nothing.
-- Subject-authored probes additionally ride along as `NMapConfig.extraProbes` (parsed
-  `ProbeDefinition`s), which is what lets `buildChecker` resolve their names at all.
-- **The scan itself** is `scanNetwork(NMapConfig)` → `NMapScanner.scan` on `Session.getNio()`,
-  bounded by the shared `NMap.maxWaitMs(cfg)`, rendered as JSON. It runs through `BackgroundTask`
-  and **throws** rather than swallowing, so a failure is a dialog and no row is written.
+- **Ticked probes are applied to the parsed `NMapConfig`, never spliced into the command.**
+  `ScanPanel.ProbeSelection` (a pure, tested static) turns the ticks into `probeScan(true)`,
+  `probe(name)` for bundled probes and `extraProbe(def)` + `probe(name)` for stored ones. Only the
+  typed text is parsed, so a probe name with spaces or commas — ordinary for an assistant-authored
+  one — can no longer turn into scan *targets* (finding 3). The muted line under the field shows
+  `probes: a, b`; the report stores the typed command in `command` and the names in `probes`.
+  Ticking implies `-sV` deliberately: `probeStage` returns early when `probeScan` is false, so
+  ticked probes with no `-sV` would silently do nothing.
+- **The scan itself** is `runScan(NMapConfig)` → `NMapScanner.scan` on `Session.getNio()`, which
+  hands back a `ScanHandle`. The worker holds the handle in a `volatile running` field and always
+  comes back with a rendered report: on the wait budget (`NMap.maxWaitMs(cfg)`) it **cancels**
+  through the handle and renders the partial report, so nothing keeps running in the background
+  (finding 6, closed with matrix row P6). Run's worker returns a `ScanOutcome`: JSON, or a
+  `stopped` message (the timeout text, or the progress line after a Stop). The **Stop button**
+  (`IconUtil.StopIcon`, enabled only while a scan runs) calls `handle.cancel()`; a cancelled scan
+  renders what completed and saves nothing. The save of a finished report goes through
+  `BackgroundTask.runCatching` — encrypting and inserting a 50 KB report on the EDT froze the UI
+  (finding 2) — and is skipped, with a notice, if the subject who started the scan is no longer
+  the one signed in.
 
 **Probe selector.** A rebuilt-per-refresh panel of checkboxes in two sections — *Bundled probes*
 (the 18 classpath definitions, loaded once off the EDT and cached) and *My probes* (stored
-`ProbeContent` rows) — each with an "All" box and an empty state. **Ticks are keyed by probe
-name**, held in a plain `Set<String>` on the panel: not identity (the stored rows are fresh
-instances on every read) and not GUID (bundled definitions have none), and the name is exactly
-what `cfg.probe(name)` takes. The All box is placed after the empty-list early return, so
-`allMatch` over an empty list can never read as ticked.
+`ProbeContent` rows) — each with an "All" box and an empty state. **Ticks are keyed by
+identity**, held in a plain `Set<String>` on the panel: `b:<name>` for a bundled definition,
+`s:<guid>` for a stored row. A stored probe that shares a bundled name is therefore its own
+checkbox with its own state, and renaming a stored probe keeps its tick (finding 4). The set is
+pruned to live keys on every reload and cleared on every auth change. The All box is placed after
+the empty-list early return, so `allMatch` over an empty list can never read as ticked. One
+engine-side caveat remains: `NMapScanner.buildChecker` resolves `--probes` names against the
+merged catalog, so a stored probe named exactly like a bundled one runs *both* when either is
+ticked — that dedupe belongs to the scanner, not the panel.
 
 **Result List / View scan.** A `ListSection` over `Session.getAllScanResults()` — a **projected**
 read that omits `content` — with rows labelled by target and a sublabel of
@@ -324,11 +339,15 @@ list instance would attach empty content.
 
 **Probe Library / Edit probe.** A searchable `ListSection` over `Session.getAllProbes()` with
 add, edit and remove. Both save paths — the editor's Save and `saveProbeFromEditor` (the
-assistant's) — go through one `fillProbe(...)` helper that strips a markdown fence, runs
+assistant's) — go through one `probeToSave(...)` helper that strips a markdown fence, runs
 `ProbeDefinitionLoader.parse` (so `validate` rejects unknown actions, dangling transitions and
-unreachable terminals), and **takes the name from the parsed definition**. That last part is
-load-bearing: the engine matches `--probes` on the name *inside* the JSON, so a typed name that
-disagrees yields a probe you can tick but that resolves to `unknown probe '…' (ignored)`.
+unreachable terminals), **takes the name from the parsed definition**, and **updates the library
+row that already carries that name** instead of inserting a second one (finding 5: a probe fixed
+twice in the assistant used to be two rows that both ran). The name rule is load-bearing: the
+engine matches `--probes` on the name *inside* the JSON, so a typed name that disagrees yields a
+probe you can tick but that resolves to `unknown probe '…' (ignored)`. `saveProbeFromEditor`
+**throws** `IllegalArgumentException` on invalid content rather than showing a dialog of its own:
+the assistant's editor owns that draft, shows the message, and keeps it dirty (finding 8).
 
 > **Two-way assistant wiring.** Out: the scan panel, the result rows and the View card all call
 > `setSendToChat(content, name)` → the injected `BiConsumer` → `AssistantPanel.sendToChat`, then

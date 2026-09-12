@@ -16,6 +16,9 @@ import java.util.Optional;
  *
  * @param minRtt    {@link Duration#ZERO} when {@code received == 0}
  * @param stdDevRtt population standard deviation over the probes that replied
+ * @param detail    the native explanation behind a call-level {@link #error()} — the errno
+ *                  name from {@code sendto}, pcap's text, the reader's cause of death — or
+ *                  empty. The module has no logger; this is the only channel (§4.7)
  */
 public record PingResult(
         InetAddress target,
@@ -26,12 +29,16 @@ public record PingResult(
         Duration avgRtt,
         Duration maxRtt,
         Duration stdDevRtt,
-        Optional<PingError> error) {
+        Optional<PingError> error,
+        Optional<String> detail) {
 
     public PingResult {
         probes = List.copyOf(probes);
         if (error == null) {
             error = Optional.empty();
+        }
+        if (detail == null) {
+            detail = Optional.empty();
         }
     }
 
@@ -95,6 +102,15 @@ public record PingResult(
      * @param err    call-level error, or null when there was none
      */
     public static PingResult of(InetAddress target, List<PingProbe> probes, PingError err) {
+        return of(target, probes, err, null);
+    }
+
+    /**
+     * @param detail the native text behind {@code err}, or null
+     * @see #of(InetAddress, List, PingError)
+     */
+    public static PingResult of(InetAddress target, List<PingProbe> probes, PingError err,
+                                String detail) {
         Objects.requireNonNull(target, "target");
         Objects.requireNonNull(probes, "probes");
 
@@ -110,7 +126,7 @@ public record PingResult(
         if (samples.length == 0) {
             return new PingResult(target, sent, received, probes,
                                   Duration.ZERO, Duration.ZERO, Duration.ZERO, Duration.ZERO,
-                                  Optional.ofNullable(err));
+                                  Optional.ofNullable(err), Optional.ofNullable(detail));
         }
 
         long min = Long.MAX_VALUE;
@@ -137,7 +153,7 @@ public record PingResult(
                               Duration.ofNanos(Math.round(mean)),
                               Duration.ofNanos(max),
                               Duration.ofNanos(Math.round(stdDev)),
-                              Optional.ofNullable(err));
+                              Optional.ofNullable(err), Optional.ofNullable(detail));
     }
 
     /**

@@ -276,12 +276,25 @@ public enum PcapPlatform {
      *                            than failing later inside a downcall
      */
     public static PcapPlatform current() throws DiscoveryException {
-        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
-        if (os.contains("win")) {
-            return WINDOWS;
-        }
+        return forOsName(System.getProperty("os.name", ""));
+    }
+
+    /**
+     * The pure half of {@link #current()}, so the mapping can be pinned against
+     * {@code HostDiscoveryFactory}'s dispatcher ({@code PlatformSelectionTest}).
+     * <p>
+     * Order matters: mac/darwin is tested BEFORE windows, and windows is matched on
+     * the whole word — {@code "darwin".contains("win")} is true, and the original
+     * {@code contains("win")} test therefore sent a JVM reporting {@code Darwin} to
+     * the Npcap backend (§13.21 S1).
+     */
+    public static PcapPlatform forOsName(String osName) throws DiscoveryException {
+        String os = osName == null ? "" : osName.toLowerCase(Locale.ROOT);
         if (os.contains("mac") || os.contains("darwin")) {
             return DARWIN;
+        }
+        if (os.contains("windows")) {
+            return WINDOWS;
         }
         if (os.contains("linux")) {
             // Reachable only if something deliberately calls into this package on Linux.
@@ -289,7 +302,7 @@ public enum PcapPlatform {
             return LINUX;
         }
         throw new DiscoveryException(
-                "No pcap layout is defined for os.name='" + System.getProperty("os.name")
+                "No pcap layout is defined for os.name='" + osName
                 + "'. Supported: Windows (Npcap), macOS and Linux (libpcap).");
     }
 }

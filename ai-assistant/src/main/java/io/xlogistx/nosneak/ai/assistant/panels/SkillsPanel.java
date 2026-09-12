@@ -113,7 +113,15 @@ public class SkillsPanel extends JPanel {
         return (type == null) ? name : name + "  ·  " + type.getName();
     }
 
+    /**
+     * A skill needs a name. A registered save target does not: it validates its own content
+     * (a probe takes its name from the JSON, for instance) and reports its own failure, so a
+     * skill-worded refusal there would be both wrong and misleading.
+     */
     private boolean validateSkill(MDFileViewer.MDDocument document) {
+        if (!(document.getType() instanceof AISkill.SkillType)) {
+            return true;
+        }
         String name = document.getName() != null ? document.getName().trim() : "";
         if (name.isEmpty()) {
             JOptionPane.showMessageDialog(this, "Give the skill a name before saving.",
@@ -126,9 +134,32 @@ public class SkillsPanel extends JPanel {
     private void onSaveSkill(MDFileViewer.MDDocument document) {
         Object type = document.getType();
         if (!(type instanceof AISkill.SkillType)) {
-            BiConsumer<String, String> target = saveTargets.get(targetLabel(type));
+            String label = targetLabel(type);
+            BiConsumer<String, String> target = saveTargets.get(label);
             if (target != null) {
-                target.accept(document.getName().trim(), document.getMarkdown());
+                // Editing an existing skill and sending its text elsewhere leaves the skill
+                // unchanged. Say so before the edits go somewhere the subject did not expect.
+                if (selectedSkill != null) {
+                    int ok = JOptionPane.showConfirmDialog(this,
+                            "Save this text as a " + label + " instead of updating skill \""
+                                    + blankTo(selectedSkill.getName(), "Untitled skill")
+                                    + "\"?\nThe skill itself will not be changed.",
+                            "Save as " + label, JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE);
+                    if (ok != JOptionPane.OK_OPTION) {
+                        skillEditor.markDirty();
+                        return;
+                    }
+                }
+                try {
+                    target.accept(document.getName() != null ? document.getName().trim() : "",
+                                  document.getMarkdown());
+                } catch (RuntimeException refused) {
+                    // The target did not accept the content: the editor stays open, dirty,
+                    // with the text intact, and the reason is the target's own message.
+                    skillEditor.markDirty();
+                    JOptionPane.showMessageDialog(this, refused.getMessage(),
+                            "Not a valid " + label, JOptionPane.ERROR_MESSAGE);
+                }
                 return;
             }
         }

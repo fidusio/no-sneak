@@ -516,8 +516,17 @@ public class MDFileViewer extends JPanel {
         MDDocument document = getDocument();
         if (validator != null && !validator.test(document)) return;
         commit();
-        if (onSave != null) onSave.accept(committed);
-        if (onCommit != null) onCommit.accept(document);
+        try {
+            if (onSave != null) onSave.accept(committed);
+            if (onCommit != null) onCommit.accept(document);
+        } catch (RuntimeException refused) {
+            // The destination did not take the document, so the edits are not saved anywhere:
+            // the editor must read dirty again, or the next "start a skill from this response"
+            // would silently overwrite a rejected-but-unsaved draft. The host that threw is the
+            // one that explains why.
+            markDirty();
+            throw refused;
+        }
     }
 
     private void onCancel() {

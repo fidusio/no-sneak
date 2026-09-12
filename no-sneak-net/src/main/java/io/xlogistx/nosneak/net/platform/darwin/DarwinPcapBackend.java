@@ -5,7 +5,6 @@ import io.xlogistx.nosneak.net.codecs.EthernetFrame;
 import io.xlogistx.nosneak.net.codecs.Icmp6;
 import io.xlogistx.nosneak.net.codecs.Ipv4Header;
 import io.xlogistx.nosneak.net.codecs.Ipv6Header;
-import io.xlogistx.nosneak.net.codecs.TtlDistance;
 import io.xlogistx.nosneak.net.common.CidrRange;
 import io.xlogistx.nosneak.net.common.DiscoveryCapabilities;
 import io.xlogistx.nosneak.net.common.DiscoveryException;
@@ -24,9 +23,14 @@ import io.xlogistx.nosneak.net.common.ResolveSource;
 import io.xlogistx.nosneak.net.common.Subscription;
 import io.xlogistx.nosneak.net.common.SweepOptions;
 import io.xlogistx.nosneak.net.common.SweepSummary;
+import io.xlogistx.nosneak.net.pcap.InjectionProbe;
 import io.xlogistx.nosneak.net.pcap.PcapHandle;
 import io.xlogistx.nosneak.net.util.IpMacCache;
-import io.xlogistx.nosneak.net.util.RateLimiter;
+import io.xlogistx.nosneak.net.util.PendingResolve;
+import io.xlogistx.nosneak.net.util.PassiveLearning;
+import io.xlogistx.nosneak.net.util.SweepDriver;
+import io.xlogistx.nosneak.net.util.SweepTargets;
+import org.zoxweb.shared.util.RateController;
 
 import java.math.BigInteger;
 import java.net.Inet4Address;
@@ -42,7 +46,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -107,9 +110,6 @@ import java.util.function.Consumer;
  */
 public final class DarwinPcapBackend implements HostDiscovery {
 
-    /** Includes {@code ip} deliberately: passive IPv4 learning is what finds silent hosts. */
-    private static final String BPF_FILTER = "arp or icmp or icmp6 or ip";
-
     private static final Duration RETRANSMIT = Duration.ofSeconds(1);
     private static final int SOLICIT_ATTEMPTS = 3;
 
@@ -123,7 +123,10 @@ public final class DarwinPcapBackend implements HostDiscovery {
     private final CopyOnWriteArrayList<Consumer<ObservedNeighbor>> observers =
             new CopyOnWriteArrayList<>();
 
-    private final boolean canInject;
+    /** Why the driver refused the open()-time injection probe, or null when it injects. */
+    private final String injectionFailure;
+    /** Why the reader thread died, or null while it lives (§13.23-B). */
+    private volatile String readerFailure;
     private final AtomicBoolean closed = new AtomicBoolean();
     private volatile boolean running = true;
     private volatile Thread reader;
@@ -133,12 +136,12 @@ public final class DarwinPcapBackend implements HostDiscovery {
 
     private DarwinPcapBackend(NicBinding binding, PcapHandle handle,
                               ScheduledExecutorService scheduler, ExecutorService dispatcher,
-                              boolean canInject) {
+                              String injectionFailure) {
         this.binding = binding;
         this.handle = handle;
         this.scheduler = scheduler;
         this.dispatcher = dispatcher;
-        this.canInject = canInject;
+        this.injectionFailure = injectionFailure;
     }
 
     /**
@@ -157,42 +160,66 @@ public final class DarwinPcapBackend implements HostDiscovery {
             handle = PcapHandle.open(binding.backendDeviceName(), promiscuous);
         } catch (DiscoveryException e) {
             throw new DiscoveryException(
-                    "Could not open " + binding.backendDeviceName() + " for capture on macOS. "
-                    + "/dev/bpf* is mode 0600, so layer-2 discovery requires root — ICMP alone "
-                    + "does not, and remains available through openIcmpOnly(). Cause: "
-                    + e.getMessage(), e);
+                    openFailureMessage(binding.backendDeviceName(), e.getMessage()), e);
         }
+        // Every construction stage is guarded, not just the filter: a RuntimeException
+        // from the injection probe or the reader start used to leak the pcap_t and its
+        // shared arena (§13.23-B, M8).
+        DarwinPcapBackend backend = null;
         try {
-            handle.setFilter(BPF_FILTER);
-        } catch (DiscoveryException e) {
-            handle.close();
+            handle.setFilter(PcapHandle.DISCOVERY_FILTER);
+            String injectionFailure = probeInjection(binding, handle);
+            backend = new DarwinPcapBackend(binding, handle, scheduler, dispatcher,
+                                            injectionFailure);
+            backend.startReader();
+            return backend;
+        } catch (DiscoveryException | RuntimeException e) {
+            if (backend != null) {
+                backend.close();
+            } else {
+                handle.close();
+            }
             throw e;
         }
-
-        boolean canInject = binding.supportsLayer2() && probeInjection(binding, handle);
-
-        DarwinPcapBackend backend =
-                new DarwinPcapBackend(binding, handle, scheduler, dispatcher, canInject);
-        backend.startReader();
-        return backend;
     }
 
     /**
-     * Sends one broadcast ARP for our OWN address — what duplicate address detection
-     * does, so it is unremarkable on the wire — purely to learn whether the driver
-     * accepts injected frames. A failure marks the binding capture-only rather than
-     * failing the open, which is §8.6's rule and applies just as well to a Mac's Wi-Fi
-     * adapter as to a PC's.
+     * Blames privilege only when the cause plausibly is privilege (§13.23-B, M5). §13.20
+     * records a wrong diagnosis from the old always-root wording: "you are root and the
+     * message says you need root". A device that is down, or a datalink this backend
+     * cannot speak, now leads with pcap's own text and the device name.
      */
-    private static boolean probeInjection(NicBinding binding, PcapHandle handle) {
-        Optional<NicBinding.LocalAddress> self = binding.ipv4().stream().findFirst();
-        if (self.isEmpty()) {
-            return false;
+    static String openFailureMessage(String device, String pcapText) {
+        String text = pcapText == null ? "(no detail)" : pcapText;
+        String lead = "Could not open " + device + " for capture on macOS: " + text;
+        String lower = text.toLowerCase(java.util.Locale.ROOT);
+        boolean privilege = lower.contains("permission denied")
+                || lower.contains("operation not permitted")
+                || lower.contains("cannot open bpf device");
+        if (!privilege) {
+            return lead;
         }
-        byte[] own = self.get().address().getAddress();
-        byte[] arp = ArpPacket.request(binding.hardwareAddress(), own, own);
-        return handle.send(EthernetFrame.build(MacAddress.BROADCAST, binding.hardwareAddress(),
-                                               EthernetFrame.ETHERTYPE_ARP, arp));
+        return lead + ". /dev/bpf* is mode 0600, so layer-2 discovery requires root — ICMP "
+                + "alone does not, and remains available through openIcmpOnly().";
+    }
+
+    /**
+     * Injects one frame for our OWN address — an ARP request when the binding has IPv4,
+     * a Neighbor Solicitation when it has only IPv6 ({@link InjectionProbe}) — purely to
+     * learn whether the driver accepts injected frames. A refusal marks the binding
+     * capture-only rather than failing the open, which is §8.6's rule and applies just
+     * as well to a Mac's Wi-Fi adapter as to a PC's.
+     *
+     * @return null when the driver accepted it; otherwise why not, which {@code resolve()}
+     *         reports as the detail behind {@code UNSUPPORTED}
+     */
+    private static String probeInjection(NicBinding binding, PcapHandle handle) {
+        byte[] frame = InjectionProbe.frameFor(binding);
+        if (frame == null) {
+            return "no hardware address or no IP address on " + binding.javaName()
+                    + " to originate an injection probe from";
+        }
+        return handle.trySend(frame);
     }
 
     // ---- HostDiscovery ----
@@ -209,22 +236,37 @@ public final class DarwinPcapBackend implements HostDiscovery {
     @Override
     public DiscoveryCapabilities capabilities() {
         ICMPPing p = pinger;
-        boolean l2 = canInject && binding.supportsLayer2();
+        return capabilitiesOf(injectionFailure == null, readerFailure == null, binding,
+                              p == null ? null : p.capabilities());
+    }
+
+    /**
+     * PURE, so it can be pinned without a handle ({@code DarwinCapabilitiesTest}).
+     * <p>
+     * Injection is a driver property; the family is an address property (§13.23-B, M7).
+     * Everything that reaches a caller through the PINGER follows the pinger's record —
+     * including {@code rawEvidence}: {@code PingProbe.rawReply} is the only delivery path
+     * for bytes, and {@code DarwinIcmpPing} fills it empty, so the old literal {@code true}
+     * here promised evidence nothing ever carried (M4). {@code ttlAvailable} likewise: the
+     * datagram ICMP socket strips the IP header, so claiming it would advertise a
+     * distance the sweep then reports as -1. Passive observation is NON-promiscuous
+     * capture — broadcast, multicast, and traffic addressed to us — and reports false once
+     * the reader has died.
+     *
+     * @param pinger the attached pinger's capabilities, or null before one is attached
+     */
+    static DiscoveryCapabilities capabilitiesOf(boolean canInject, boolean readerAlive,
+                                                NicBinding binding, DiscoveryCapabilities pinger) {
+        boolean l2 = readerAlive && canInject && binding.supportsLayer2();
         return new DiscoveryCapabilities(
-                p != null && p.capabilities().icmpV4(),
-                p != null && p.capabilities().icmpV6(),
-                l2,      // activeArp
-                l2,      // activeNdp
-                true,    // passiveObservation - capture, which is what pcap is
-                true,    // rawEvidence - full frames, unlike the datagram ICMP socket
-                // ttlAvailable follows the PINGER, and is therefore false here. Windows
-                // can report true because its backend IS the pinger and reads TTL off
-                // the frames it captures; on macOS ICMP belongs to DarwinIcmpPing, whose
-                // datagram socket strips the IP header, so every PingProbe carries
-                // TTL_UNAVAILABLE no matter what this capture can see. Claiming true
-                // would advertise a distance the sweep then reports as -1.
-                p != null && p.capabilities().ttlAvailable(),
-                p != null && p.capabilities().offLinkIcmp(),
+                pinger != null && pinger.icmpV4(),
+                pinger != null && pinger.icmpV6(),
+                l2 && !binding.ipv4().isEmpty(),   // activeArp
+                l2 && !binding.ipv6().isEmpty(),   // activeNdp
+                readerAlive,                        // passiveObservation - non-promiscuous capture
+                pinger != null && pinger.rawEvidence(),
+                pinger != null && pinger.ttlAvailable(),
+                pinger != null && pinger.offLinkIcmp(),
                 DiscoveryCapabilities.Backend.MACOS_NATIVE);
     }
 
@@ -258,29 +300,41 @@ public final class DarwinPcapBackend implements HostDiscovery {
                                                      boolean provoke) {
         Instant started = Instant.now();
 
+        // Our own address FIRST, before the cache: nothing answers an ARP request for
+        // it, because the only host that owns it is the one asking — and nothing another
+        // host claims about our address may ever answer for it (§13.23).
+        if (binding.isLocalAddress(target) && binding.supportsLayer2()) {
+            return CompletableFuture.completedFuture(ResolveResult.resolved(
+                    target, binding.hardwareAddress(), ResolveSource.LOCAL_INTERFACE,
+                    Duration.between(started, Instant.now())));
+        }
         Optional<IpMacCache.Entry> cached = cache.get(target);
         if (cached.isPresent() && cached.get().hasMac()) {
             return CompletableFuture.completedFuture(ResolveResult.resolved(
                     target, cached.get().mac(), ResolveSource.CACHE_HIT,
                     Duration.between(started, Instant.now())));
         }
-        // Our own address: nothing answers an ARP request for it, because the only host
-        // that owns it is the one asking.
-        if (binding.isLocalAddress(target) && binding.supportsLayer2()) {
-            return CompletableFuture.completedFuture(ResolveResult.resolved(
-                    target, binding.hardwareAddress(), ResolveSource.LOCAL_INTERFACE,
-                    Duration.between(started, Instant.now())));
-        }
-        if (!capabilities().activeArp()) {
+        // A dead reader cannot see a reply: say so now, with its cause, rather than
+        // injecting and reporting TIMEOUT at full budget (§13.23-B, S14).
+        String dead = readerFailure;
+        if (dead != null) {
             return CompletableFuture.completedFuture(ResolveResult.notResolved(
-                    target, ResolveOutcome.UNSUPPORTED, Duration.between(started, Instant.now())));
+                    target, ResolveOutcome.ERROR, Duration.between(started, Instant.now()), dead));
+        }
+        boolean v4 = target instanceof Inet4Address;
+        if (v4 ? !capabilities().activeArp() : !capabilities().activeNdp()) {
+            // Refused injection carries the driver's words; a missing family does not.
+            return CompletableFuture.completedFuture(ResolveResult.notResolved(
+                    target, ResolveOutcome.UNSUPPORTED, Duration.between(started, Instant.now()),
+                    injectionFailure));
         }
         if (!binding.isOnLink(target)) {
             return CompletableFuture.completedFuture(ResolveResult.notResolved(
                     target, ResolveOutcome.UNSUPPORTED, Duration.between(started, Instant.now())));
         }
 
-        PendingResolve entry = pending.computeIfAbsent(target, k -> new PendingResolve(target));
+        PendingResolve entry = pending.computeIfAbsent(target,
+                                                       k -> new PendingResolve(target, dispatcher));
         CompletableFuture<ResolveResult> future = entry.await();
 
         if (entry.started.compareAndSet(false, true)) {
@@ -289,7 +343,7 @@ public final class DarwinPcapBackend implements HostDiscovery {
                 provokeReply(target, Math.max(1, timeout.toMillis()));
             }
             solicit(target, 0);
-            scheduleRetries(target, timeout);
+            scheduleRetries(entry, target, timeout);
         }
         return future;
     }
@@ -309,7 +363,9 @@ public final class DarwinPcapBackend implements HostDiscovery {
      */
     private void provokeReply(InetAddress target, long budgetMillis) {
         ICMPPing p = pinger;
-        if (p == null || !(target instanceof Inet4Address) || unicastHint(target).isPresent()) {
+        // No hint check here: resolve() already returned CACHE_HIT for any target with
+        // a cached MAC, so by this point there is never a hint to consult (§13.21 S5).
+        if (p == null || !(target instanceof Inet4Address)) {
             return;
         }
         try {
@@ -320,7 +376,7 @@ public final class DarwinPcapBackend implements HostDiscovery {
     }
 
     /** ARP 3 attempts 1s apart; NDP the same, which is RFC 4861's RETRANS_TIMER. */
-    private void scheduleRetries(InetAddress target, Duration timeout) {
+    private void scheduleRetries(PendingResolve entry, InetAddress target, Duration timeout) {
         long budget = Math.max(1, timeout.toMillis());
         for (int attempt = 1; attempt < SOLICIT_ATTEMPTS; attempt++) {
             long at = attempt * RETRANSMIT.toMillis();
@@ -329,25 +385,32 @@ public final class DarwinPcapBackend implements HostDiscovery {
             }
             int retry = attempt;
             scheduler.schedule(() -> {
-                if (pending.containsKey(target)) {
+                // Identity, not key: a retry armed for THIS resolve never solicits for a
+                // later resolve of the same address.
+                if (pending.get(target) == entry) {
                     solicit(target, retry);
                 }
             }, at, TimeUnit.MILLISECONDS);
         }
         scheduler.schedule(() -> {
-            PendingResolve dropped = pending.remove(target);
-            if (dropped != null) {
-                dropped.completeAll(ResolveResult.notResolved(target, ResolveOutcome.TIMEOUT,
-                        Duration.between(dropped.startedAt, Instant.now())));
+            // Claim THIS entry, so a late deadline cannot tear down a newer resolve.
+            if (pending.remove(target, entry)) {
+                entry.completeAll(entry.expire(Instant.now()));
             }
         }, budget, TimeUnit.MILLISECONDS);
     }
 
     private void solicit(InetAddress target, int attempt) {
-        if (target instanceof Inet4Address) {
-            sendArp(target, attempt);
-        } else {
-            sendNeighborSolicitation(target);
+        String refused = target instanceof Inet4Address
+                ? sendArp(target, attempt)
+                : sendNeighborSolicitation(target);
+        if (refused != null) {
+            // Per resolve, never per backend (§13.23-B): the deadline reports ERROR with
+            // this text instead of a TIMEOUT for a frame that never left the host.
+            PendingResolve entry = pending.get(target);
+            if (entry != null) {
+                entry.recordSendError(refused);
+            }
         }
     }
 
@@ -361,21 +424,28 @@ public final class DarwinPcapBackend implements HostDiscovery {
      * assembled here — unlike the Linux path, where {@code AF_PACKET}/{@code SOCK_DGRAM}
      * has the kernel prepend it.
      */
-    private void sendArp(InetAddress target, int attempt) {
+    /** @return null when at least one frame was accepted; otherwise why none was */
+    private String sendArp(InetAddress target, int attempt) {
         Optional<NicBinding.LocalAddress> source = binding.sourceFor(target);
         if (source.isEmpty()) {
-            return;
+            return "no local IPv4 address on " + binding.javaName()
+                    + " to use as the ARP sender address";
         }
         byte[] arp = ArpPacket.request(binding.hardwareAddress(),
                                        source.get().address().getAddress(),
                                        target.getAddress());
         Optional<MacAddress> hint = unicastHint(target);
-        hint.ifPresent(mac -> handle.send(EthernetFrame.build(
-                mac, binding.hardwareAddress(), EthernetFrame.ETHERTYPE_ARP, arp)));
+        // Either frame reaching the wire is enough — the two fail independently.
+        String unicast = hint.map(mac -> handle.trySend(EthernetFrame.build(
+                mac, binding.hardwareAddress(), EthernetFrame.ETHERTYPE_ARP, arp))).orElse(null);
+        boolean accepted = hint.isPresent() && unicast == null;
+        String broadcast = null;
         if (hint.isEmpty() || attempt == 0) {
-            handle.send(EthernetFrame.build(MacAddress.BROADCAST, binding.hardwareAddress(),
-                                            EthernetFrame.ETHERTYPE_ARP, arp));
+            broadcast = handle.trySend(EthernetFrame.build(MacAddress.BROADCAST,
+                    binding.hardwareAddress(), EthernetFrame.ETHERTYPE_ARP, arp));
+            accepted |= broadcast == null;
         }
+        return accepted ? null : (broadcast != null ? broadcast : unicast);
     }
 
     /**
@@ -391,11 +461,16 @@ public final class DarwinPcapBackend implements HostDiscovery {
                     .filter(mac -> !mac.isBroadcast() && !mac.isMulticast() && !mac.isZero());
     }
 
-    /** Hop limit 255 is mandatory (RFC 4861 §7.1.1); the builder pins it. */
-    private void sendNeighborSolicitation(InetAddress target) {
+    /**
+     * Hop limit 255 is mandatory (RFC 4861 §7.1.1); the builder pins it.
+     *
+     * @return null when the frame was accepted; otherwise why not
+     */
+    private String sendNeighborSolicitation(InetAddress target) {
         Optional<NicBinding.LocalAddress> source = binding.sourceFor(target);
         if (source.isEmpty()) {
-            return;
+            return "no local IPv6 address on " + binding.javaName()
+                    + " to source a Neighbor Solicitation from";
         }
         byte[] src = source.get().address().getAddress();
         byte[] raw = target.getAddress();
@@ -405,8 +480,9 @@ public final class DarwinPcapBackend implements HostDiscovery {
         byte[] payload = new byte[ip.length + ns.length];
         System.arraycopy(ip, 0, payload, 0, ip.length);
         System.arraycopy(ns, 0, payload, ip.length, ns.length);
-        handle.send(EthernetFrame.build(Icmp6.solicitedNodeMac(raw), binding.hardwareAddress(),
-                                        EthernetFrame.ETHERTYPE_IPV6, payload));
+        return handle.trySend(EthernetFrame.build(Icmp6.solicitedNodeMac(raw),
+                                                  binding.hardwareAddress(),
+                                                  EthernetFrame.ETHERTYPE_IPV6, payload));
     }
 
     @Override
@@ -425,33 +501,25 @@ public final class DarwinPcapBackend implements HostDiscovery {
                     + "; use discoverIpv6Segment for v6 segments"));
         }
         Instant started = Instant.now();
-        List<InetAddress> targets = range.hosts().toList();
+        // SweepTargets withholds the interface's own network/broadcast addresses AND the
+        // range's own edges when the range is off-link or wider than the interface's
+        // prefix (§13.23-C); the summary's total is the probeable count.
+        List<InetAddress> targets = SweepTargets.probeable(binding, range);
         AtomicInteger alive = new AtomicInteger();
         AtomicInteger macs = new AtomicInteger();
         AtomicInteger icmp = new AtomicInteger();
-        Semaphore window = new Semaphore(options.maxInFlight());
-        RateLimiter pacer = RateLimiter.perSecond(options.maxPacketsPerSecond());
         // Two ARP frames per host: a hinted target gets unicast AND broadcast on the
         // first attempt. Reserving the worst case keeps the emitted rate at or under the
         // cap, the only direction a safety limit may err in.
         int packetsPerHost = (options.doMac() ? 2 : 0)
                 + (options.doIcmp() ? options.pingCount() : 0);
-
-        List<CompletableFuture<Void>> all = new ArrayList<>(targets.size());
-        for (InetAddress target : targets) {
-            all.add(CompletableFuture.completedFuture(null).thenComposeAsync(ignored -> {
-                try {
-                    window.acquire();
-                    RateLimiter.acquire(pacer, packetsPerHost);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return CompletableFuture.completedFuture(null);
-                }
-                return sweepOne(target, options, onHost, alive, macs, icmp)
-                        .whenComplete((r, t) -> window.release());
-            }, dispatcher));
-        }
-        return CompletableFuture.allOf(all.toArray(CompletableFuture[]::new))
+        // Admission is event-driven (SweepDriver, §13.22): the window and the pacer are
+        // honoured without ever parking a pool thread, because the per-host timeouts
+        // run on that same pool.
+        RateController pacer = SweepDriver.pacer(options.maxPacketsPerSecond(), packetsPerHost);
+        return SweepDriver.run(targets.iterator(), options.maxInFlight(), pacer, scheduler,
+                               dispatcher,
+                               target -> sweepOne(target, options, onHost, alive, macs, icmp))
                 .thenApply(ignored -> new SweepSummary(targets.size(), alive.get(), macs.get(),
                         icmp.get(), Duration.between(started, Instant.now())));
     }
@@ -459,11 +527,8 @@ public final class DarwinPcapBackend implements HostDiscovery {
     private CompletableFuture<Void> sweepOne(InetAddress target, SweepOptions options,
                                              Consumer<HostRecord> onHost, AtomicInteger alive,
                                              AtomicInteger macs, AtomicInteger icmp) {
-        // NEVER probe the local network or directed broadcast: an echo to a directed
-        // broadcast is answered by every host at once.
-        if (binding.isNetworkOrBroadcast(target)) {
-            return CompletableFuture.completedFuture(null);
-        }
+        // Network and directed-broadcast addresses were already withheld by
+        // SweepTargets.probeable in sweep(); every target here may be probed.
         // BOTH probes start now, not resolve-then-ping. The echo REPLY carries the MAC,
         // and sequencing them means it always lands after the resolve has given up
         // (§13.13). Both are bounded by perHostTimeout, so this is also faster.
@@ -477,27 +542,19 @@ public final class DarwinPcapBackend implements HostDiscovery {
                 ? p.ping(target, options.pingCount(), options.perHostTimeout())
                 : CompletableFuture.completedFuture(PingResult.of(target, List.of(), null));
 
-        return mac.thenAcceptBoth(pinged, (resolved, result) -> {
-            boolean haveMac = resolved.resolved();
-            if (!haveMac && !result.reachable()) {
-                return;
-            }
-            alive.incrementAndGet();
-            if (haveMac) {
-                macs.incrementAndGet();
-            }
-            if (result.reachable()) {
-                icmp.incrementAndGet();
-            }
-            int ttl = result.probes().stream().filter(PingProbe::hasTtl)
-                            .mapToInt(PingProbe::ttlOrHopLimit).findFirst()
-                            .orElse(PingProbe.TTL_UNAVAILABLE);
-            HostRecord record = new HostRecord(target, resolved.mac(), result.reachable(),
-                    result.reachable() ? Optional.of(result.avgRtt()) : Optional.empty(),
-                    ttl, ttl > 0 ? TtlDistance.hopCount(ttl) : Optional.empty(),
-                    haveMac ? resolved.source() : null, Instant.now());
-            dispatcher.execute(() -> onHost.accept(record));
-        });
+        // HostRecord.fromProbes is the one record constructor every backend uses:
+        // icmpAlive from observedOnWire(), RTT only when measured() (§13.18, §13.23-C).
+        return mac.thenAcceptBoth(pinged, (resolved, result) ->
+            HostRecord.fromProbes(target, resolved, result, Instant.now()).ifPresent(record -> {
+                alive.incrementAndGet();
+                if (record.mac().isPresent()) {
+                    macs.incrementAndGet();
+                }
+                if (record.icmpAlive()) {
+                    icmp.incrementAndGet();
+                }
+                dispatcher.execute(() -> onHost.accept(record));
+            }));
     }
 
     @Override
@@ -552,7 +609,11 @@ public final class DarwinPcapBackend implements HostDiscovery {
                 frame = handle.nextPacket();
             } catch (DiscoveryException e) {
                 if (running && !handle.isClosed()) {
-                    running = false;
+                    // Any DiscoveryException from nextPacket is fatal by construction. A
+                    // reader that dies silently leaves every caller to time out at full
+                    // budget; fail what is pending and degrade capabilities instead.
+                    failReader("pcap_next_ex on " + binding.backendDeviceName() + ": "
+                               + e.getMessage());
                 }
                 return;
             }
@@ -589,20 +650,24 @@ public final class DarwinPcapBackend implements HostDiscovery {
     private void onArp(EthernetFrame.View eth, byte[] frame) {
         ArpPacket.ArpView arp =
                 ArpPacket.parse(frame, eth.payloadOffset(), eth.payloadLength()).orElse(null);
-        if (arp == null || arp.sha().isZero()) {
+        if (arp == null) {
             return;
         }
         InetAddress sender = address(arp.spa());
-        if (sender == null) {
+        // The same guard as every other learner (§13.23): rejects a null or 0.0.0.0
+        // sender (RFC 5227 probes), a zero or multicast SHA, our own address or MAC,
+        // and an off-link sender whose frame carries the router's MAC.
+        if (!PassiveLearning.learnable(binding, sender, arp.sha())) {
             return;
         }
-        cache.observe(sender, arp.sha(),
-                      arp.isReply() ? ResolveSource.ACTIVE_ARP : ResolveSource.PASSIVE);
-        completeResolve(sender, arp.sha(), ResolveSource.ACTIVE_ARP);
-
-        ObservationKind kind = arp.isGratuitous() ? ObservationKind.GRATUITOUS_ARP
-                : arp.isReply() ? ObservationKind.ARP_REPLY : ObservationKind.ARP_REQUEST;
-        notifyObservers(new ObservedNeighbor(sender, arp.sha(), kind, Instant.now()));
+        // ONE provenance for both the cache and the completion: ACTIVE_ARP only for a
+        // reply to our own solicitation; a request or gratuitous announcement may
+        // still satisfy a pending resolve (§4.2) but is reported as what it was.
+        ResolveSource source = PassiveLearning.arpProvenance(arp, pending.containsKey(sender));
+        cache.observe(sender, arp.sha(), source);
+        completeResolve(sender, arp.sha(), source);
+        notifyObservers(new ObservedNeighbor(sender, arp.sha(), PassiveLearning.arpKind(arp),
+                                             Instant.now()));
     }
 
     /**
@@ -616,61 +681,71 @@ public final class DarwinPcapBackend implements HostDiscovery {
      * real ARP reply, so {@code ResolveSource.ACTIVE_ARP} stays honest.
      */
     private void onIpv4(EthernetFrame.View eth, byte[] frame) {
-        MacAddress src = eth.src();
-        if (src == null || src.isZero() || src.isMulticast()) {
-            return;
-        }
         Ipv4Header.View ip =
                 Ipv4Header.parse(frame, eth.payloadOffset(), eth.payloadLength()).orElse(null);
         if (ip == null) {
             return;
         }
-        InetAddress sender = address(ip.src4());
-        if (sender == null || sender.isAnyLocalAddress() || !binding.isOnLink(sender)
-                || binding.isLocalAddress(sender)) {
+        learnSender(address(ip.src4()), eth.src());
+    }
+
+    /**
+     * Records "this IP is at this MAC, seen by us" — family-agnostic — and, when a
+     * resolve is already waiting on that host, fires the unicast solicitation now
+     * rather than at the next retransmission. The guard is {@link PassiveLearning}'s,
+     * shared by every backend (§13.23).
+     */
+    private void learnSender(InetAddress source, MacAddress frameSource) {
+        if (!PassiveLearning.learnable(binding, source, frameSource)) {
             return;
         }
-        cache.observe(sender, src, ResolveSource.PASSIVE);
-        if (pending.containsKey(sender)) {
-            sendArp(sender, 1);
+        cache.observe(source, frameSource, ResolveSource.PASSIVE);
+        if (source instanceof Inet4Address && pending.containsKey(source)) {
+            sendArp(source, 1);
         }
     }
 
     private void onIpv6(EthernetFrame.View eth, byte[] frame) {
         Ipv6Header.View ip =
                 Ipv6Header.parse(frame, eth.payloadOffset(), eth.payloadLength()).orElse(null);
-        if (ip == null || ip.nextHeader() != Ipv6Header.NEXT_HEADER_ICMPV6) {
+        if (ip == null) {
+            return;
+        }
+        // BEFORE the next-header test and BEFORE the hop-255 gate: ANY IPv6 frame names
+        // its sender's MAC in the Ethernet header — an mDNS announcement, an echo reply
+        // at hop limit 64, a TCP segment. The hop-255 rule is RFC 4861's rule for ND
+        // MESSAGES and does not apply to a frame-header claim; the on-link guard is the
+        // defence here, as it is for IPv4 (§13.13, §13.23).
+        learnSender(address(ip.src16()), eth.src());
+        if (ip.nextHeader() != Ipv6Header.NEXT_HEADER_ICMPV6) {
             return;
         }
         int off = eth.payloadOffset() + Ipv6Header.LENGTH;
         int len = Math.min(ip.payloadLength(), frame.length - off);
         if (len <= 0 || !Ipv6Header.isValidNeighborDiscovery(ip)) {
             // RFC 4861 7.1.1: NS/NA whose hop limit is not 255 crossed a router and are
-            // discarded. This is the on-link attack defence.
+            // discarded. Proves the SENDER is on-link — not that the address it
+            // advertises is, which is what the guard below checks.
             return;
         }
 
         Icmp6.parseAdvertisement(frame, off, len).ifPresent(na -> {
-            if (na.targetMac() == null) {
-                return;
-            }
             InetAddress target = address(na.targetIp16());
-            if (target == null) {
+            if (!PassiveLearning.learnable(binding, target, na.targetMac())) {
                 return;
             }
-            cache.observe(target, na.targetMac(), ResolveSource.ACTIVE_NDP);
-            completeResolve(target, na.targetMac(), ResolveSource.ACTIVE_NDP);
+            ResolveSource source = PassiveLearning.ndpProvenance(na, pending.containsKey(target));
+            cache.observe(target, na.targetMac(), source);
+            completeResolve(target, na.targetMac(), source);
             notifyObservers(new ObservedNeighbor(target, na.targetMac(),
                                                  ObservationKind.NDP_NA, Instant.now()));
         });
 
         Icmp6.parseSolicitation(frame, off, len).ifPresent(ns -> {
-            if (ns.sourceMac() == null) {
-                return;
-            }
             InetAddress source = address(ip.src16());
-            if (source == null || source.isAnyLocalAddress()) {
-                return;   // duplicate address detection uses the unspecified source
+            // The guard also rejects the unspecified source duplicate address detection uses.
+            if (!PassiveLearning.learnable(binding, source, ns.sourceMac())) {
+                return;
             }
             cache.observe(source, ns.sourceMac(), ResolveSource.PASSIVE);
             notifyObservers(new ObservedNeighbor(source, ns.sourceMac(),
@@ -724,11 +799,29 @@ public final class DarwinPcapBackend implements HostDiscovery {
         }
         handle.close();
 
-        pending.values().forEach(p -> p.completeAll(
-                ResolveResult.notResolved(p.target, ResolveOutcome.ERROR, Duration.ZERO)));
-        pending.clear();
+        failPending("closed");
         observers.clear();
         // The pinger is BORROWED - never closed here. Nor are the executors (§4.3).
+    }
+
+    /**
+     * Fails every outstanding resolve with {@code why}, claiming each entry with
+     * {@code remove(key, value)} so a deadline firing concurrently cannot complete it a
+     * second time (§13.23-B). Used by {@code close()} and by a reader that dies.
+     */
+    /** The reader is dead: record why, stop, fail everything waiting on it (§13.23-B). */
+    private void failReader(String why) {
+        readerFailure = why;
+        running = false;
+        failPending(why);
+    }
+
+    private void failPending(String why) {
+        pending.forEach((target, entry) -> {
+            if (pending.remove(target, entry)) {
+                entry.completeAll(entry.abort(why));
+            }
+        });
     }
 
     private static InetAddress address(byte[] raw) {
@@ -739,31 +832,4 @@ public final class DarwinPcapBackend implements HostDiscovery {
         }
     }
 
-    /**
-     * One in-flight solicitation and everyone waiting on it, sharing ONE future.
-     * <p>
-     * A per-caller list leaves a window between the reader's {@code completeAll} and a
-     * concurrent {@code resolve()} that has already taken this entry — that late future is
-     * completed by nobody, and in {@code sweep()} it would hang {@code allOf} forever
-     * rather than fail. {@code complete} is idempotent, so one shared future closes it.
-     */
-    private static final class PendingResolve {
-        final InetAddress target;
-        final Instant startedAt = Instant.now();
-        final AtomicBoolean started = new AtomicBoolean();
-        private final CompletableFuture<ResolveResult> result = new CompletableFuture<>();
-
-        PendingResolve(InetAddress target) {
-            this.target = target;
-        }
-
-        /** A copy, so a caller cannot complete the shared future for everyone else. */
-        CompletableFuture<ResolveResult> await() {
-            return result.copy();
-        }
-
-        void completeAll(ResolveResult outcome) {
-            result.complete(outcome);
-        }
-    }
 }

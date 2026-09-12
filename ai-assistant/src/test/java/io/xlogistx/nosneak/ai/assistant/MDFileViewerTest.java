@@ -117,6 +117,29 @@ public class MDFileViewerTest {
         assertEquals("", v.getMarkdown(), "a null skill content must load as an empty buffer");
     }
 
+    /**
+     * A save target that refuses the document (the app's probe handler, when the JSON is not a
+     * valid probe) throws; the editor must read dirty again, because nothing was persisted and
+     * "start a skill from this response" would otherwise overwrite the draft without asking.
+     */
+    @Test
+    public void aRefusingSaveTargetLeavesTheEditorDirty() {
+        MDFileViewer v = editorWithMeta();
+        v.setOnCommit(d -> {
+            throw new IllegalArgumentException("not a valid probe");
+        });
+
+        v.getEditor().setText("not json at all");
+        try {
+            v.getSaveButton().doClick();
+        } catch (IllegalArgumentException expected) {
+            // doClick runs the action inline on this thread; the host would show the message
+        }
+
+        assertTrue(v.isDirty(), "a refused save must not leave the editor reading clean");
+        assertEquals("not json at all", v.getMarkdown(), "the draft stays in the editor");
+    }
+
     @Test
     public void saveWithoutValidatorStillCommits() {
         MDFileViewer v = editorWithMeta();

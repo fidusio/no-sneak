@@ -28,6 +28,38 @@ public class HostScanArgsTest {
         return HostScan.Args.parse(argv, 1, Duration.ofMillis(1000), false);
     }
 
+    // ---------------------------------------------------------------- observe
+
+    @Test
+    public void observeDefaultsToThirtySecondsWithoutTheCache() {
+        HostScan.ObserveArgs a = HostScan.ObserveArgs.parse(new String[] {"observe"}, 30);
+        assertEquals(30, a.seconds());
+        assertTrue(!a.cache());
+    }
+
+    @Test
+    public void observeTakesSecondsAndTheCacheFlagInEitherOrder() {
+        HostScan.ObserveArgs a = HostScan.ObserveArgs.parse(new String[] {"observe", "20", "--cache"}, 30);
+        assertEquals(20, a.seconds());
+        assertTrue(a.cache());
+        HostScan.ObserveArgs b = HostScan.ObserveArgs.parse(new String[] {"observe", "-C", "5"}, 30);
+        assertEquals(5, b.seconds());
+        assertTrue(b.cache());
+        HostScan.ObserveArgs c = HostScan.ObserveArgs.parse(new String[] {"observe", "--cache"}, 30);
+        assertEquals(30, c.seconds());
+        assertTrue(c.cache());
+    }
+
+    @Test
+    public void observeRejectsWhatItDoesNotUnderstand() {
+        assertThrows(IllegalArgumentException.class,
+                     () -> HostScan.ObserveArgs.parse(new String[] {"observe", "eth0"}, 30));
+        assertThrows(IllegalArgumentException.class,
+                     () -> HostScan.ObserveArgs.parse(new String[] {"observe", "0"}, 30));
+        assertThrows(IllegalArgumentException.class,
+                     () -> HostScan.ObserveArgs.parse(new String[] {"observe", "--snapshot"}, 30));
+    }
+
     @Test
     public void singleTargetTakesTheDefaults() {
         HostScan.Args a = ping("ping", "10.0.0.1");

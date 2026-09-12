@@ -27,6 +27,7 @@ public class ProbeState {
     private String mode;             // tls-handshake: "pqc" (default) | "jsse"/"classical"
     private String note;             // record: free-form annotation merged into the result
     private Integer port;            // connect/reconnect/tls-connect: alternate port
+    private Integer revocationTimeoutMs; // revocation-check: bound on the active OCSP/CRL fetch (default 5000)
 
     public String getAction() {
         return action;
@@ -75,6 +76,11 @@ public class ProbeState {
 
     public Integer getPort() {
         return port;
+    }
+
+    /** Bound, in milliseconds, on the active OCSP/CRL fetch of {@code revocation-check}; null = default. */
+    public Integer getRevocationTimeoutMs() {
+        return revocationTimeoutMs;
     }
 
     @Override

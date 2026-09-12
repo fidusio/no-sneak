@@ -5,8 +5,18 @@ import io.xlogistx.nosneak.v2.nmap.ScanReport.HostReport;
 import io.xlogistx.nosneak.v2.nmap.ScanReport.PortReport;
 import io.xlogistx.nosneak.v2.result.ProbeResult;
 
-/** CSV — one row per (host, open port). */
+/**
+ * CSV — one row per (host, listed port).
+ * <p>
+ * The two newest columns, {@code reason} and {@code rttms}, are appended at the end so a
+ * consumer that reads by position keeps working; {@code rttms} is empty when the port never
+ * connected. Which ports are listed follows {@link HostReport#portsToRender}, the same rule as
+ * every other format; collapsed states have no row here (CSV has no summary line).
+ */
 public final class CSVFormatter implements OutputFormatter {
+
+    static final String HEADER =
+            "host,ip,hostname,mac,port,protocol,state,service,version,tls,pqc,grade,banner,reason,rttms";
 
     @Override
     public OutputFormat format() {
@@ -16,12 +26,12 @@ public final class CSVFormatter implements OutputFormatter {
     @Override
     public String render(ScanReport r) {
         StringBuilder sb = new StringBuilder();
-        sb.append("host,ip,hostname,mac,port,protocol,state,service,version,tls,pqc,grade,banner\n");
+        sb.append(HEADER).append('\n');
         for (HostReport h : r.hosts) {
             if (!h.up) {
                 continue;
             }
-            for (PortReport p : h.openPorts()) {
+            for (PortReport p : h.portsToRender(r.config).shown) {
                 ProbeResult pr = p.probe;
                 String version = pr != null ? nz(pr.getServiceVersion()) : "";
                 String tls = pr != null && pr.getTlsState() != ProbeResult.TlsState.NONE
@@ -32,7 +42,8 @@ public final class CSVFormatter implements OutputFormatter {
                         ? io.xlogistx.nosneak.v2.grade.Grade.of(pr).toString() : "";
                 row(sb, h.host, nz(h.ip), nz(h.hostname), nz(h.mac),
                         String.valueOf(p.port), p.protocol, p.state.label(), p.serviceName(),
-                        version, tls, pqc, grade, nz(p.banner));
+                        version, tls, pqc, grade, nz(p.banner),
+                        nz(p.reason), p.rttMs >= 0 ? String.valueOf(p.rttMs) : "");
             }
         }
         return sb.toString();

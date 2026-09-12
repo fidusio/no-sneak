@@ -14,9 +14,10 @@ import java.util.List;
  * to feed — it makes no network calls, only interprets recorded facts.
  * <p>
  * Grading (simplified): {@code T} for a chain-trust failure; {@code F} for a revoked cert or
- * SSLv3; {@code C}/{@code B} when deprecated TLS 1.0/1.1 are accepted; a weak-cipher
- * (static-RSA kx, anonymous kx, CBC, 3DES/DES, RC4, NULL/EXPORT) presence caps at {@code B};
- * otherwise {@code A}.
+ * SSLv3; {@code C}/{@code B} when deprecated TLS 1.0/1.1 are accepted; an insecure suite
+ * (RC4, NULL, EXPORT, single DES, anonymous kx) caps at {@code C}; a weak suite (static-RSA
+ * key exchange, i.e. no forward secrecy, or 3DES) caps at {@code B}; a forward-secret CBC
+ * suite is an advisory only; otherwise {@code A}. See {@link CipherPosture}.
  * <p>
  * A letter is only awarded on evidence. {@code A} requires that the protocol-version
  * enumeration actually ran ({@code enumerate-versions}); a shallow probe that merely
@@ -83,7 +84,10 @@ public final class Grade {
 
     @Override
     public String toString() {
-        return "grade=" + (letter != null ? letter : "N/A") + " pqc=" + pqc + " trust=" + verdict;
+        String base = "grade=" + (letter != null ? letter : "N/A") + " pqc=" + pqc + " trust=" + verdict;
+        // Advisories are part of the verdict a reader sees on the console: a letter that stays A
+        // because forward-secret CBC is only advisory must still say so (§P24).
+        return advisories.isEmpty() ? base : base + " advisories=" + advisories;
     }
 
     /** Render the derived verdict for an API response, alongside the recorded facts. */
@@ -131,7 +135,16 @@ public final class Grade {
         } else {
             letter = enumerated ? "A" : null;
         }
-        if (hasWeakCipher(r.getSupportedCipherSuites())) {
+        CipherPosture ciphers = CipherPosture.of(r);
+        if (ciphers.insecure) {
+            // RC4, NULL, EXPORT, single DES or anonymous key exchange: an attacker needs no
+            // downgrade to exploit these, so they cost more than a merely weak suite.
+            letter = letter == null ? "C" : worseOf(letter, "C");
+        } else if (ciphers.weak) {
+            // Static-RSA key exchange (no forward secrecy) or 3DES (SWEET32): capped at B, as
+            // SSL Labs does. A CBC suite that IS forward-secret is only an advisory — see
+            // advisoriesOf — because the defect there is the MAC-then-encrypt construction,
+            // not the key exchange, and SSL Labs keeps A for ECDHE + AES-CBC.
             letter = letter == null ? "B" : worseOf(letter, "B");
         }
         boolean anchored = "TRUSTED".equalsIgnoreCase(r.getCertChainTrust());
@@ -192,7 +205,113 @@ public final class Grade {
             out.add("Key exchange is PQC-hybrid but the certificate signature is classical "
                     + "- consider an ML-DSA certificate for full quantum resistance");
         }
+        List<String> groups = r.getSupportedGroups();
+        if (groups != null && !groups.isEmpty() && !acceptsPqcGroup(groups)) {
+            out.add("Server accepts no post-quantum key-exchange group (offered X25519MLKEM768, "
+                    + "SecP256r1MLKEM768, SecP384r1MLKEM1024; accepted " + String.join(", ", groups) + ")");
+        }
+        CipherPosture ciphers = CipherPosture.of(r);
+        if (ciphers.insecure) {
+            out.add("Server accepts an insecure cipher suite (RC4, NULL, EXPORT, DES or anonymous key exchange)");
+        }
+        if (!ciphers.forwardSecretCbc.isEmpty()) {
+            out.add("CBC suites accepted: " + String.join(", ", ciphers.forwardSecretCbc)
+                    + "; prefer AEAD (GCM/CHACHA20) suites");
+        }
         return out;
+    }
+
+    /**
+     * What the accepted cipher suites say about the posture, classified once per result.
+     * <p>
+     * Three tiers, in the order SSL Labs applies them: <b>insecure</b> (RC4, NULL, EXPORT,
+     * single DES, anonymous key exchange — cap C); <b>weak</b> (static-RSA key exchange, i.e.
+     * no forward secrecy, or 3DES — cap B); and <b>forward-secret CBC</b> (ECDHE/DHE with an
+     * AES-CBC or Camellia-CBC suite — advisory only, letter unchanged). The structured
+     * {@code supported-cipher-suite-details} decide forward secrecy when present; a result that
+     * carries only the flat name list (an older report, or a hand-built one) is classified from
+     * the suite name, where {@code TLS_RSA_WITH_*} / {@code SSL_RSA_WITH_*} is the static-RSA
+     * shape and every {@code *DHE*} suite is forward-secret.
+     */
+    static final class CipherPosture {
+        final boolean insecure;
+        final boolean weak;
+        final List<String> forwardSecretCbc;
+
+        private CipherPosture(boolean insecure, boolean weak, List<String> forwardSecretCbc) {
+            this.insecure = insecure;
+            this.weak = weak;
+            this.forwardSecretCbc = forwardSecretCbc;
+        }
+
+        static CipherPosture of(ProbeResult r) {
+            List<String> names = r.getSupportedCipherSuites();
+            if (names == null || names.isEmpty()) {
+                return new CipherPosture(false, false, Collections.emptyList());
+            }
+            java.util.Map<String, Boolean> fsByName = new java.util.HashMap<>();
+            List<ProbeResult.CipherSuiteInfo> details = r.getSupportedCipherSuiteDetails();
+            if (details != null) {
+                for (ProbeResult.CipherSuiteInfo d : details) {
+                    if (d != null && d.name != null) {
+                        fsByName.put(d.name.toUpperCase(), d.forwardSecrecy);
+                    }
+                }
+            }
+            boolean insecure = false;
+            boolean weak = false;
+            List<String> fsCbc = new ArrayList<>();
+            for (String c : names) {
+                if (c == null) continue;
+                String u = c.toUpperCase();
+                if (isInsecure(u)) {
+                    insecure = true;
+                    continue;
+                }
+                Boolean fs = fsByName.get(u);
+                boolean forwardSecret = fs != null ? fs : nameSaysForwardSecret(u);
+                boolean tripleDes = u.contains("3DES");
+                if (!forwardSecret || tripleDes) {
+                    weak = true;
+                } else if (u.contains("CBC")) {
+                    fsCbc.add(c);
+                }
+            }
+            return new CipherPosture(insecure, weak, Collections.unmodifiableList(fsCbc));
+        }
+
+        /** The suites no downgrade is needed to break. */
+        static boolean isInsecure(String u) {
+            boolean singleDes = u.contains("_DES_") && !u.contains("3DES");
+            return u.contains("RC4") || u.contains("NULL") || u.contains("EXPORT") || singleDes
+                    || u.contains("_ANON_");
+        }
+
+        /**
+         * Name-based forward-secrecy inference for results without structured details. TLS 1.3
+         * suites ({@code TLS_AES_*}, {@code TLS_CHACHA20_*}) are always ephemeral; every
+         * {@code ECDHE}/{@code DHE} suite is; {@code TLS_RSA_WITH_*}, {@code SSL_RSA_WITH_*},
+         * static {@code TLS_ECDH_*}/{@code TLS_DH_*} (no E) and PSK-only suites are not.
+         */
+        static boolean nameSaysForwardSecret(String u) {
+            if (u.startsWith("TLS_AES_") || u.startsWith("TLS_CHACHA20_")) {
+                return true;
+            }
+            if (u.contains("ECDHE") || u.contains("_DHE_")) {
+                return true;
+            }
+            return false;
+        }
+    }
+
+    /** True when any accepted named group is an ML-KEM hybrid. Report-only: the letter never moves on it. */
+    private static boolean acceptsPqcGroup(List<String> groups) {
+        for (String g : groups) {
+            if (g != null && g.toUpperCase().contains("MLKEM")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static Pqc pqcReadiness(ProbeResult r) {
@@ -207,29 +326,6 @@ public final class Grade {
 
     private static boolean contains(List<String> list, String v) {
         return list != null && list.contains(v);
-    }
-
-    /**
-     * True when any accepted suite is weak. The key-exchange test is deliberately anchored:
-     * {@code TLS_RSA_WITH_*} is static RSA (no forward secrecy), whereas
-     * {@code TLS_ECDHE_RSA_WITH_*} is a healthy ephemeral suite that merely authenticates with
-     * an RSA certificate. A substring test for {@code _RSA_WITH} flags both, which capped
-     * every modern ECDHE server at B while the genuinely weak suites went unnoticed.
-     */
-    private static boolean hasWeakCipher(List<String> ciphers) {
-        if (ciphers == null) return false;
-        for (String c : ciphers) {
-            if (c == null) continue;
-            String u = c.toUpperCase();
-            boolean staticRsaKx = u.startsWith("TLS_RSA_WITH") || u.startsWith("SSL_RSA_WITH");
-            boolean anonymousKx = u.contains("_ANON_");
-            if (staticRsaKx || anonymousKx || u.contains("CBC") || u.contains("3DES")
-                    || u.contains("DES_") || u.contains("RC4") || u.contains("NULL")
-                    || u.contains("EXPORT")) {
-                return true;
-            }
-        }
-        return false;
     }
 
     // Return the worse (later in A..F) of two letter grades (ignoring T which is handled earlier).

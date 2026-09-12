@@ -18,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * matter more here than the sizes do.
  * <p>
  * Pure arithmetic, so it runs on any platform. It cannot confirm these match the
- * real C structs; the §7.3 probe does that.
+ * real C structs; the Apple Silicon bring-up did that (§13.20).
  */
 public class DarwinLayoutTest {
 
@@ -55,14 +55,9 @@ public class DarwinLayoutTest {
     @Test
     public void constantsDifferFromLinux() {
         assertEquals(30, DarwinLibc.AF_INET6, "10 on Linux, 23 on Windows");
-        assertEquals(18, DarwinLibc.AF_LINK);
         assertEquals(0xFFFF, DarwinLibc.SOL_SOCKET, "1 on Linux");
         assertEquals(0x1006, DarwinLibc.SO_RCVTIMEO, "20 on Linux");
         assertEquals(2, DarwinLibc.AF_INET);
-        assertEquals(4, DarwinLibc.CTL_NET);
-        assertEquals(17, DarwinLibc.PF_ROUTE);
-        assertEquals(2, DarwinLibc.NET_RT_FLAGS);
-        assertEquals(0x400, DarwinLibc.RTF_LLINFO);
     }
 
     /** BSD errno numbers are not Linux's — mapping them by Linux value would be wrong. */

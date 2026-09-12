@@ -227,8 +227,12 @@ public final class HostDiscoveryFactory {
         }
     }
 
-    /** Backend selection, and the per-platform half of the wiring order. */
-    private enum Platform {
+    /**
+     * Backend selection, and the per-platform half of the wiring order. Package-private
+     * so {@code PlatformSelectionTest} can assert that this dispatcher and
+     * {@code PcapPlatform.forOsName} agree on every {@code os.name} (§13.21 S1).
+     */
+    enum Platform {
 
         LINUX {
             @Override
@@ -358,7 +362,7 @@ public final class HostDiscoveryFactory {
                 // Prefer a binding that can actually inject: a capture-only adapter
                 // would reject every send (spec section 8.6).
                 for (WindowsPcapBackend backend : pcapBackends) {
-                    if (backend.capabilities().icmpV4()) {
+                    if (backend.capabilities().anyIcmp()) {
                         return backend;
                     }
                 }
@@ -376,18 +380,23 @@ public final class HostDiscoveryFactory {
         };
 
         static Platform current() throws DiscoveryException {
-            String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
-            if (os.contains("linux")) {
-                return LINUX;
-            }
+            return forOsName(System.getProperty("os.name", ""));
+        }
+
+        /** Pure, so the test can walk every known {@code os.name} string. */
+        static Platform forOsName(String osName) throws DiscoveryException {
+            String os = osName == null ? "" : osName.toLowerCase(Locale.ROOT);
             if (os.contains("mac") || os.contains("darwin")) {
                 return MACOS;
             }
             if (os.contains("windows")) {
                 return WINDOWS;
             }
+            if (os.contains("linux")) {
+                return LINUX;
+            }
             throw new DiscoveryException(
-                    "Unsupported operating system '" + System.getProperty("os.name")
+                    "Unsupported operating system '" + osName
                     + "': host discovery supports Linux, macOS and Windows.");
         }
 
@@ -409,13 +418,6 @@ public final class HostDiscoveryFactory {
 
         abstract ICMPPing openStandalonePinger(ScheduledExecutorService s, ExecutorService d)
                 throws DiscoveryException;
-
-        static DiscoveryException notYetBuilt(String what, String step) {
-            return new DiscoveryException(
-                    what + " is not implemented yet (" + step + " of the build order). "
-                    + "The public API, codecs and cache are complete and testable; the Windows "
-                    + "pcap backend is the only platform backend built so far.");
-        }
     }
 
     /**
