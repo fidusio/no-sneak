@@ -12,6 +12,7 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -207,6 +208,78 @@ public class ProbeDefinitionLoaderTest {
         byte[] binary = new byte[]{0x3a, 0x00, (byte) 0xd4, 0x07, 'i', 's', 'm', 'a', 's', 't', 'e', 'r', 0x00};
         String decoded = new String(binary, java.nio.charset.StandardCharsets.ISO_8859_1);
         assertTrue(rule.pattern().matcher(decoded).find());
+    }
+
+    // ==================== Budgets and enumeration toggles ====================
+
+    private static final String STEP_PREFIX = "{\"name\":\"t\",\"service\":\"x\",\"ports\":[1],";
+    private static final String STEP_STATES = "\"start\":\"c\",\"states\":{"
+            + "\"c\":{\"action\":\"connect\",\"on\":{\"connected\":\"e\",\"error\":\"f\",\"timeout\":\"f\"}},"
+            + "\"e\":{\"action\":\"enumerate-ciphers\"%s,\"on\":{\"done\":\"d\"}},"
+            + "\"d\":{\"action\":\"done\"},\"f\":{\"action\":\"fail\"}}}";
+
+    private static ProbeDefinition step(String definitionExtra, String stateExtra) {
+        String json = STEP_PREFIX + definitionExtra + String.format(STEP_STATES, stateExtra);
+        return ProbeDefinitionLoader.parse(json, "inline-test");
+    }
+
+    @Test
+    public void enumerationTogglesAndBudgetsAreReadAndDefaultToNull() {
+        ProbeDefinition def = step("\"overallTimeoutSec\":90,",
+                ",\"includeWeak\":false,\"includeInsecure\":true,\"rankServerPreference\":true,\"maxInFlight\":4,"
+                        + "\"includeSSLv3\":false,\"includeTLS10\":true,\"includeTLS11\":false,\"revocationTimeoutMs\":2500");
+        assertEquals(90, def.getOverallTimeoutSec());
+        ProbeState st = def.state("e");
+        assertEquals(Boolean.FALSE, st.getIncludeWeak());
+        assertEquals(Boolean.TRUE, st.getIncludeInsecure());
+        assertEquals(Boolean.TRUE, st.getRankServerPreference());
+        assertEquals(4, st.getMaxInFlight());
+        assertEquals(Boolean.FALSE, st.getIncludeSSLv3());
+        assertEquals(Boolean.TRUE, st.getIncludeTLS10());
+        assertEquals(Boolean.FALSE, st.getIncludeTLS11());
+        assertEquals(2500, st.getRevocationTimeoutMs());
+
+        ProbeDefinition bare = step("", "");
+        assertNull(bare.getOverallTimeoutSec(), "absent = the engine's formula");
+        ProbeState plain = bare.state("e");
+        assertNull(plain.getIncludeWeak());
+        assertNull(plain.getIncludeSSLv3());
+        assertNull(plain.getMaxInFlight());
+        assertNull(plain.getRankServerPreference());
+        assertTrue(ProbeState.flag(null, true));
+        assertFalse(ProbeState.flag(null, false));
+        assertFalse(ProbeState.flag(Boolean.FALSE, true));
+    }
+
+    @Test
+    public void nonPositiveBudgetsAreRejectedAtLoad() {
+        assertThrows(IllegalArgumentException.class, () -> step("\"overallTimeoutSec\":0,", ""));
+        assertThrows(IllegalArgumentException.class, () -> step("\"overallTimeoutSec\":-5,", ""));
+        assertThrows(IllegalArgumentException.class, () -> step("", ",\"maxInFlight\":0"));
+        assertThrows(IllegalArgumentException.class, () -> step("", ",\"revocationTimeoutMs\":0"));
+        assertEquals(1, step("\"overallTimeoutSec\":1,", ",\"maxInFlight\":1").getOverallTimeoutSec());
+    }
+
+    @Test
+    public void theBundledDeepScansDeclareTheirTogglesAndBudget() {
+        for (String name : new String[]{"https-scan", "tls-scan"}) {
+            ProbeDefinition def = null;
+            for (ProbeDefinition d : ProbeDefinitionLoader.loadBundled()) {
+                if (name.equals(d.getName())) def = d;
+            }
+            assertNotNull(def, name);
+            assertEquals(90, def.getOverallTimeoutSec(), name + " declares its own watchdog");
+            ProbeState versions = def.state("versions");
+            assertEquals(Boolean.TRUE, versions.getIncludeSSLv3(), name);
+            assertEquals(Boolean.TRUE, versions.getIncludeTLS10(), name);
+            assertEquals(Boolean.TRUE, versions.getIncludeTLS11(), name);
+            ProbeState ciphers = def.state("ciphers");
+            assertEquals(Boolean.TRUE, ciphers.getIncludeWeak(), name);
+            assertEquals(Boolean.TRUE, ciphers.getIncludeInsecure(), name);
+            assertEquals(Boolean.FALSE, ciphers.getRankServerPreference(), name + " keeps the default cost");
+            assertEquals(8, ciphers.getMaxInFlight(), name);
+            assertEquals(8, def.state("groups").getMaxInFlight(), name);
+        }
     }
 
     private static void validate(String json) {

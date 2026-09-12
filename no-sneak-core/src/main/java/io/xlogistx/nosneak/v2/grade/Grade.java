@@ -27,6 +27,12 @@ import java.util.List;
  */
 public final class Grade {
 
+    /**
+     * The PQC verdict: {@code PQC_READY} when a hybrid group was negotiated; {@code PQC_CAPABLE}
+     * when TLS 1.3 was negotiated with a classical group (the server can be upgraded by enabling
+     * a hybrid — v1's PARTIAL); {@code CLASSICAL_ONLY} when the negotiated version is TLS 1.2 or
+     * older (no PQC key exchange exists there — v1's NOT_READY); {@code UNKNOWN} otherwise.
+     */
     public enum Pqc { PQC_READY, PQC_CAPABLE, CLASSICAL_ONLY, UNKNOWN }
 
     /**
@@ -194,16 +200,62 @@ public final class Grade {
         return null;
     }
 
-    /** Report-only findings: recorded and surfaced, but never a trust failure on their own. */
-    private static List<String> advisoriesOf(ProbeResult r) {
+    /**
+     * Report-only findings and remediation text: recorded and surfaced, but never a trust failure
+     * on their own. The wording is v1's ({@code PQCScanResult} / {@code ProtocolVersionTester}
+     * recommendations), so a reader of either generation's report sees the same advice.
+     */
+    static List<String> advisoriesOf(ProbeResult r) {
         List<String> out = new ArrayList<>();
+        // Certificate renewal — the trust verdict names the failure; this is the action to take.
+        if ("EXPIRED".equalsIgnoreCase(r.getCertValidity())) {
+            out.add("Certificate is EXPIRED (notAfter " + r.getCertNotAfter() + ") - renew immediately");
+        } else if ("NOT_YET_VALID".equalsIgnoreCase(r.getCertValidity())) {
+            out.add("Certificate is NOT YET VALID (notBefore " + r.getCertNotBefore()
+                    + ") - check server clock / issuance");
+        }
+        String trust = r.getCertChainTrust();
+        if (trust != null && !"TRUSTED".equalsIgnoreCase(trust) && !"UNKNOWN".equalsIgnoreCase(trust)) {
+            out.add("Certificate chain does not anchor to a trusted Root CA [" + trust + "]"
+                    + (r.getCertChainTrustMessage() != null ? ": " + r.getCertChainTrustMessage() : "")
+                    + " - install the missing intermediate or obtain a certificate from a trusted CA");
+        }
+        if (Boolean.FALSE.equals(r.getCertChainTimeValid())) {
+            out.add("An intermediate/root certificate in the chain is expired or not yet valid - replace it");
+        }
+        if ("REVOKED".equalsIgnoreCase(r.getRevocationStatus())) {
+            out.add("Certificate is REVOKED"
+                    + (r.getRevocationReason() != null ? " (" + r.getRevocationReason() + ")" : "")
+                    + " - renew immediately");
+        }
         if (Boolean.FALSE.equals(r.getCertHostnameValid())) {
             out.add("Certificate does not match the scanned hostname"
                     + (r.getCertHostnameMessage() != null ? ": " + r.getCertHostnameMessage() : ""));
         }
+        // Protocol posture: what to disable, and what to enable for PQC.
+        List<String> versions = r.getSupportedProtocolVersions();
+        boolean enumerated = versions != null && !versions.isEmpty();
+        if (contains(versions, "SSLv3")) {
+            out.add("CRITICAL: Disable SSLv3 (vulnerable to POODLE attack)");
+        }
+        if (contains(versions, "TLSv1.0")) {
+            out.add("Disable TLS 1.0 (deprecated, PCI DSS non-compliant)");
+        }
+        if (contains(versions, "TLSv1.1")) {
+            out.add("Disable TLS 1.1 (deprecated, PCI DSS non-compliant)");
+        }
+        boolean tls13 = enumerated ? contains(versions, "TLSv1.3") : "TLSv1.3".equals(r.getTlsVersion());
+        boolean anyTls = enumerated || r.getTlsVersion() != null;
+        if (anyTls && !tls13) {
+            out.add("Upgrade to TLS 1.3 for PQC support");
+        }
+        // PQC key exchange: TLS 1.3 negotiated with a classical group is one config change away.
+        if (r.getPqcStatus() == ProbeResult.PqcStatus.CLASSICAL) {
+            out.add("Enable PQC hybrid key exchange (X25519MLKEM768 or SecP256r1MLKEM768)");
+        }
         if (Boolean.FALSE.equals(r.getCertPqcReady()) && r.getPqcStatus() == ProbeResult.PqcStatus.PQC) {
-            out.add("Key exchange is PQC-hybrid but the certificate signature is classical "
-                    + "- consider an ML-DSA certificate for full quantum resistance");
+            out.add("Consider migrating to PQC certificates (ML-DSA) for full quantum resistance "
+                    + "- the key exchange is PQC-hybrid but the certificate signature is classical");
         }
         List<String> groups = r.getSupportedGroups();
         if (groups != null && !groups.isEmpty() && !acceptsPqcGroup(groups)) {
@@ -318,8 +370,8 @@ public final class Grade {
         if (r.getPqcStatus() == null) return Pqc.UNKNOWN;
         switch (r.getPqcStatus()) {
             case PQC: return Pqc.PQC_READY;
-            case PQC_READY: return Pqc.PQC_CAPABLE;
-            case CLASSICAL: return Pqc.CLASSICAL_ONLY;
+            case CLASSICAL: return Pqc.PQC_CAPABLE;     // TLS 1.3, classical group: upgradeable
+            case NOT_READY: return Pqc.CLASSICAL_ONLY;  // TLS <= 1.2: no PQC path on that version
             default: return Pqc.UNKNOWN;
         }
     }
@@ -333,14 +385,13 @@ public final class Grade {
         return rank(a) >= rank(b) ? a : b;
     }
 
+    /** The letters this class awards: A, B, C and F (T is decided before posture is looked at). */
     private static int rank(String g) {
         switch (g) {
             case "A": return 0;
             case "B": return 1;
             case "C": return 2;
-            case "D": return 3;
-            case "E": return 4;
-            case "F": return 5;
+            case "F": return 3;
             default: return 0;
         }
     }

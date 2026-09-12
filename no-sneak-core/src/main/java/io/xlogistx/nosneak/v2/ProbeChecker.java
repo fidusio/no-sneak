@@ -2,6 +2,7 @@ package io.xlogistx.nosneak.v2;
 
 import io.xlogistx.nosneak.v2.model.ProbeDefinition;
 import io.xlogistx.nosneak.v2.model.ProbeDefinitionLoader;
+import io.xlogistx.nosneak.v2.nmap.WellKnownPorts;
 import io.xlogistx.nosneak.v2.result.ProbeResult;
 import io.xlogistx.nosneak.v2.runtime.ConnectionGate;
 import io.xlogistx.nosneak.v2.runtime.Fanout;
@@ -20,7 +21,6 @@ import org.zoxweb.shared.task.CallableConsumerTask;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
@@ -474,11 +474,21 @@ public class ProbeChecker {
     /** Delivered when a sweep was stopped before any probe could identify the port. */
     private ProbeResult cancelled(String host, int port, String transport, List<ProbeDefinition> tried) {
         return ProbeResult.builder(host, port, transport)
-                .service(wellKnownService(port))
+                .service(wellKnownService(port, transport))
                 .complete(false)
-                .fact("probes-tried", String.valueOf(tried.size()))
+                .fact("probes-tried", triedNames(tried))
                 .note("cancelled")
                 .build();
+    }
+
+    /** Comma-separated probe names, the one shape {@code probes-tried} always takes. */
+    private static String triedNames(List<ProbeDefinition> tried) {
+        StringBuilder names = new StringBuilder();
+        for (ProbeDefinition d : tried) {
+            if (names.length() > 0) names.append(", ");
+            names.append(d.getName());
+        }
+        return names.toString();
     }
 
     /** Blocking convenience for CLI/tests: match-first. */
@@ -513,43 +523,32 @@ public class ProbeChecker {
 
     /** Delivered when no probe identified the port: complete=false, lists every probe tried. */
     private ProbeResult noneIdentified(String host, int port, String transport, List<ProbeDefinition> tried) {
-        StringBuilder names = new StringBuilder();
-        for (ProbeDefinition d : tried) {
-            if (names.length() > 0) names.append(", ");
-            names.append(d.getName());
-        }
+        String names = triedNames(tried);
         String note = "no-probe-identified; " + tried.size() + " probe(s) tried: "
-                + (names.length() > 0 ? names.toString() : "(none applicable)");
+                + (names.length() > 0 ? names : "(none applicable)");
         return ProbeResult.builder(host, port, transport)
-                .service(wellKnownService(port))
+                .service(wellKnownService(port, transport))
                 .complete(false)
-                .fact("probes-tried", names.toString())
+                .fact("probes-tried", names)
                 .note(note)
                 .build();
     }
 
     private ProbeResult unknown(String host, int port, String transport, String note) {
         return ProbeResult.builder(host, port, transport)
-                .service(wellKnownService(port))
+                .service(wellKnownService(port, transport))
                 .complete(false)
                 .note(note)
                 .build();
     }
 
-    // Minimal well-known-port guess for the fallback label. Superseded by the full
-    // ServiceMatch table once the nmap subsystem is copied into v2 (Phase 8).
-    private static final Map<Integer, String> WELL_KNOWN = new java.util.HashMap<>();
-    static {
-        WELL_KNOWN.put(21, "ftp"); WELL_KNOWN.put(22, "ssh"); WELL_KNOWN.put(25, "smtp");
-        WELL_KNOWN.put(53, "dns"); WELL_KNOWN.put(80, "http"); WELL_KNOWN.put(110, "pop3");
-        WELL_KNOWN.put(143, "imap"); WELL_KNOWN.put(443, "https"); WELL_KNOWN.put(465, "smtps");
-        WELL_KNOWN.put(587, "smtp"); WELL_KNOWN.put(993, "imaps"); WELL_KNOWN.put(995, "pop3s");
-        WELL_KNOWN.put(3306, "mysql"); WELL_KNOWN.put(5432, "postgresql"); WELL_KNOWN.put(6379, "redis");
-        WELL_KNOWN.put(8080, "http"); WELL_KNOWN.put(8443, "https"); WELL_KNOWN.put(27017, "mongodb");
-    }
-
-    private static String wellKnownService(int port) {
-        return WELL_KNOWN.get(port);
+    /**
+     * The fallback service label when no probe identifies the port: the one well-known-port
+     * table the nmap renderers use ({@link WellKnownPorts}), transport-aware, so a port cannot
+     * carry two names. {@code null} when the table has no entry — an absent fact, not "unknown".
+     */
+    private static String wellKnownService(int port, String transport) {
+        return WellKnownPorts.lookup(port, transport);
     }
 
     // ==================== CLI ====================

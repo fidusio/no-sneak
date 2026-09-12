@@ -65,6 +65,21 @@ public class CipherProbeCallback extends TLSProbeCallback {
         listener.onCipherProbeResult(targetVersion, null);
     }
 
+    /** The suites this probe offers, in order — what a test inspects to check an offer. */
+    public int[] offered() {
+        return ciphersToOffer.clone();
+    }
+
+    public ProtocolVersion targetVersion() {
+        return targetVersion;
+    }
+
+    /** Test seam: the server picked {@code selected} from the offer (see {@link TLSProbeCallback#finishAccepted()}). */
+    void finishAccepted(int selected) {
+        selectedCipherSuite = selected;
+        finishAccepted();
+    }
+
     /** Minimal TLS client for cipher enumeration. */
     private class ProbeEnumerationTlsClient extends DefaultTlsClient {
         private final String hostname;

@@ -116,9 +116,8 @@ public abstract class TLSProbeCallback extends TCPSessionCallback {
     public void accept(SelectionKey key) {
         if (done.get()) return;
 
-        if(this.selectionKey != null && this.selectionKey != key) {
+        if (this.selectionKey != null && this.selectionKey != key && log.isEnabled()) {
             log.getLogger().info("Key Mismatch current " + this.selectionKey + " new key " + key);
-
         }
 
         this.selectionKey = key;
@@ -211,6 +210,16 @@ public abstract class TLSProbeCallback extends TCPSessionCallback {
             } catch (Exception ignored) {
             }
         }
+    }
+
+    /**
+     * Test seam: finish this probe as <em>accepted</em> with no socket — the terminal transition
+     * {@link #accept(SelectionKey)} makes when the handshake completes. A rejection needs no seam:
+     * {@link #exception(Throwable)} is the public path NIOSocket itself takes. Package-private on
+     * purpose, like {@code ProbeTransport}; {@code ProbeCallbackSeams} in the test tree exposes it.
+     */
+    void finishAccepted() {
+        if (complete()) onProbeSuccess();
     }
 
     /**

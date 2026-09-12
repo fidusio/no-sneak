@@ -15,6 +15,11 @@ import io.xlogistx.nosneak.v2.result.ProbeResult;
  * error:<Class>}) and, when measured, the connect round-trip time. Which ports are listed and
  * which are collapsed into "Not shown" is {@link HostReport#portsToRender}'s decision, shared by
  * every formatter, so {@code --open} means the same thing in all of them.
+ * <p>
+ * A down host is printed as one line, {@code Host <target> is down (<reason>)}, so a report over
+ * a range says what happened to every target rather than only the live ones. Warnings are always
+ * printed; {@code -v} adds a run header (start time and command line) and, per live host, how
+ * many TCP and UDP ports were scanned.
  */
 public final class NormalFormatter implements OutputFormatter {
 
@@ -26,12 +31,24 @@ public final class NormalFormatter implements OutputFormatter {
     @Override
     public String render(ScanReport r) {
         StringBuilder sb = new StringBuilder();
+        boolean verbose = r.config != null && r.config.verbose;
+        if (verbose) {
+            sb.append("Starting NoSneak ").append(ScanReport.VERSION).append(" at ")
+              .append(ScanReport.nmapTime(r.startTimeMs));
+            if (r.commandLine != null) sb.append(" as: ").append(r.commandLine);
+            sb.append('\n');
+        }
         sb.append("NMap scan report - ").append(r.hosts.size()).append(" target(s), ")
           .append(r.hostsUp()).append(" up");
         if (r.durationMs() > 0) sb.append(", ").append(r.durationMs() / 1000.0).append("s");
         sb.append('\n');
         for (HostReport h : r.hosts) {
             if (!h.up) {
+                sb.append('\n').append("Host ").append(h.host);
+                if (h.ip != null && !h.ip.equals(h.host)) sb.append(" (").append(h.ip).append(')');
+                sb.append(" is down");
+                if (h.reason != null) sb.append(" (").append(h.reason).append(')');
+                sb.append('\n');
                 continue;
             }
             sb.append('\n').append("Host ").append(h.host);
@@ -40,7 +57,12 @@ public final class NormalFormatter implements OutputFormatter {
             if (h.latencyMs >= 0) sb.append(" (").append(h.latencyMs / 1000.0).append("s latency)");
             if (h.reason != null) sb.append(" [").append(h.reason).append(']');
             sb.append('\n');
+            if (h.hostname != null) sb.append("  Hostname: ").append(h.hostname).append('\n');
             if (h.mac != null) sb.append("  MAC Address: ").append(h.mac).append('\n');
+            if (verbose) {
+                sb.append("  Scanned: ").append(h.countProtocol("tcp")).append(" tcp, ")
+                  .append(h.countProtocol("udp")).append(" udp port(s)\n");
+            }
 
             RenderSelection sel = h.portsToRender(r.config);
             String notShown = sel.notShown();
@@ -55,11 +77,6 @@ public final class NormalFormatter implements OutputFormatter {
                             p.port + "/" + p.protocol, p.state.label(),
                             p.reason == null ? "" : p.reason, rtt(p), service(p)));
                 }
-            }
-            if (h.osGuess != null) {
-                sb.append("  OS guess: ").append(h.osGuess);
-                if (h.osAccuracy > 0) sb.append(" (").append(h.osAccuracy).append("%)");
-                sb.append('\n');
             }
         }
         for (String w : r.warnings) {

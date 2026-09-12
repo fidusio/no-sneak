@@ -94,6 +94,16 @@ public class PortScanCallback extends TCPSessionCallback {
                 () -> finish(PortState.FILTERED, "timeout"), this.timeoutSec, TimeUnit.SECONDS);
     }
 
+    /**
+     * The IP this probe was aimed at — the address the target resolved to at construction —
+     * or null if there is none. Available before the connect, so a host's {@code ip} can be
+     * recorded by whichever unit is built first, whatever the outcome.
+     */
+    public String remoteIp() {
+        java.net.InetSocketAddress a = getRemoteAddress();
+        return a != null && a.getAddress() != null ? a.getAddress().getHostAddress() : null;
+    }
+
     @Override
     protected void connectedFinished() throws IOException {
         if (done.get() || !connected.compareAndSet(false, true)) {

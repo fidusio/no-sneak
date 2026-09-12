@@ -202,6 +202,45 @@ Four of the fourteen core test files (`scanners/`, `probe/`) target v1 and go wi
    priority matrix below for what is next.
 5. Restore a CI workflow that runs the suites somewhere without the proxy.
 
+## Status check (2026-09-12, commits `d1be5f7` Phase 1 update + `20a54f2` Phase 2 update, pushed)
+
+**Start here if you are picking the project up.** Everything from the 2026-09-11 review and the four
+fix waves that followed is committed and pushed on top of `9fb8bde`; the tree is clean. Build:
+whole project green through IntelliJ (`mcp__idea__build_project`; Maven still cannot fetch the
+surefire JUnit provider on this box, so tests run class-by-class through the IDE). Test suite at
+these commits: `no-sneak-net` 39 classes / ~372 tests, `no-sneak-core` 29 / ~309 (v2 alone 25 / ~272),
+`no-sneak-app` 13 / ~92, `ai-assistant` 9 / ~61 — the 18 classes touched by the waves were re-run
+after the merge, 213 tests, 0 failures. Live checks the same day: `xlogistx.io -p 22,443 -sV`
+(SSH version, grade A with the CBC advisory), `hostscan sweep 10.0.0.0/24` (254 probed, 26 alive).
+
+**Open, in full (7 rows; the matrix below has the detail):**
+- Yours: a CI runner that can reach Maven Central (row 2 of the matrix page).
+- Hardware: M1 and M9 need a Mac, L1 needs the Linux appliance on a v6 segment.
+- On this box: N3 (IPv6 unicast re-solicit — small code, proof needs L1's wire) and C1 (`DMTool`
+  Mongo URL default — one line, needs the right value).
+- Pinned by the maintainer, not scheduled: P17, the SSL-Labs posture checklist.
+
+**Conventions set during that work, binding for anything new** (also in the module docs):
+no thread ever blocks a pool thread; executors are injected parameters obtained from `TaskUtil`
+only at the composition root; `NIOSocket` for every Java socket; every rate cap is zoxweb
+`RateController` TIME mode on the injected scheduler (`no-sneak-net` `SweepDriver`, `no-sneak-core`
+`ScanGate` — formerly `RateLimiter`); JSON is `NVGenericMap` + `GSONUtil` with `printNull=true`,
+never a hand-written writer; the BCJSSE `tls-connect` engine comes from SunJSSE because the
+published `bctls` 1.86 jar is broken on JDK 9+ — `BcjsseEngineCreationTest`'s canary fails the day
+a fixed jar is on the classpath, which is the signal to remove that workaround.
+
+**Merge analysis and parity pass (2026-09-12):** `no-sneak-core/V1-V2-MERGE-ANALYSIS.md` is the
+code-verified v1-vs-v2 comparison. Verdict: keep v2, delete v1. The 18 regressions its §4 listed
+(stapled-OCSP fallthrough, the TLS-1.3-classical vs ≤1.2 PQC split, enumeration toggles, down
+hosts in Normal/CSV, CLI aliases, per-octet ranges, XML metadata, reverse DNS, …) were **all
+closed the same day** — see its "Status after the fix pass" section. v2 is now 365 pure tests in
+31 classes, all green; the whole repo compiles. **What is left is the merge itself**: delete the
+five v1 packages and their five test files, collapse `v2` → `io.xlogistx.nosneak`, move
+`/v2/probes/` → `/probes/`, and retarget the files in that document's §2.
+
+The filterable matrix page (same rows, live-updated during the work):
+https://claude.ai/code/artifact/ad7da1cc-7807-4109-ad77-cb166e70596e
+
 ## Priority matrix (2026-09-11) — discovery closed out; port detection and protocol identification next
 
 *Supersedes the "Suggested order" above for everything that touches scanning.* Host discovery

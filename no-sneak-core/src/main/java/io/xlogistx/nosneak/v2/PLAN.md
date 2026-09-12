@@ -1,5 +1,76 @@
 # no-sneak-core v2 — Plan of Action
 
+> ## 2026-09-12 — TLS/PQC parity pass: the v1 scanner's edges are back, in v2's shape
+>
+> `V1-V2-MERGE-ANALYSIS.md` §1.2/§4 found nine TLS/PQC regressions against `scanners/`. All closed:
+> a malformed OCSP staple now **falls through** to the active OCSP/CRL check; `pqc-status` regained
+> v1's three-way split (`PQC` / `CLASSICAL` = TLS 1.3 upgradeable / `NOT_READY` = ≤ TLS 1.2, via
+> `ProbeContext.classifyPqc`); `enumerate-versions`/`enumerate-ciphers`/`enumerate-groups` take
+> per-state toggles (`includeSSLv3`, `includeTLS10/11`, `includeWeak`, `includeInsecure`,
+> `maxInFlight`, `rankServerPreference`) and a definition may declare `overallTimeoutSec`
+> (`https-scan`/`tls-scan`: 90 s); `Grade` carries v1's remediation wording; `ProbeResult` has
+> `success`/`error-message` and per-suite `authentication`/`encryption`/`mac`; a CRL with no
+> presented issuer is `UNKNOWN`, never GOOD; enumeration children run through
+> `Fanout.runBounded` (8 in flight per context) and the REST `Checker` paces its sweep through a
+> `ScanGate` and counts `total-scanned` from `start-count-at` again. Optional v1 cipher **ranking**
+> is back behind `rankServerPreference` (bounded, sequential). New pure tests drive every
+> enumeration and revocation path through `ScriptedTransport` seams (`TlsEnumerationContextTest`,
+> `TlsAnalysisContextTest`, `NetworkRevocationCheckerTest`). v2 suite: 365 green.
+>
+> ## 2026-09-12 — nmap parity pass: every v1-only scanner feature closed in v2
+>
+> `V1-V2-MERGE-ANALYSIS.md` §1.3/§4 listed what `nmap/**` still had over `v2/nmap/**`. All of it
+> is now in v2, in v2's style (gate-paced units, injected scheduler, no blocking), so the v1
+> package can be deleted at merge without losing scanner behaviour:
+>
+> - **Down hosts render** in Normal (`Host <t> is down (<reason>)`) and CSV (one row, port
+>   columns blank). XML/Grepable/JSON already had them.
+> - **Target grammar**: per-octet ranges (`192.168.1-5.1-254`, any octet `n` or `a-b`, reversed
+>   bounds normalised) and comma-separated lists inside one token; expansion beyond
+>   `NMapScanner.MAX_EXPANSION` (65536) is cut short **with a warning on the report**
+>   (`expand(targets, warnings)`), never silently.
+> - **CLI aliases**: `--timeout`, attached `-p22,80`, `-sP`, `-PN`, `-h/--help/-?` (usage, exit 0;
+>   `NMap.HelpRequested` is an `IllegalArgumentException` whose message is the usage text, so the
+>   app's command box shows it unchanged), `-v/--verbose`, `--max-parallelism`/`-P N`,
+>   `-T <n|name>` / `-T4` / `-Taggressive` (paranoid…insane = T0…T5), and v1's `host=`, `range=a,b`,
+>   `timeout=` tokens. Unknown flags are still refused. `-v` adds a run header and per-host
+>   scanned-port counts to Normal; **warnings print regardless** — a degraded discovery mode is
+>   never hidden behind a flag.
+> - **Port spec dedupes** (first-seen order): `-p 80,80` scans 80 once.
+> - **Default ports are 1–1024** (v1's default; `--top-ports` remains the cheap alternative).
+>   `ScanPanel` builds its config through `NMap.parseCommand`, so a typed command without `-p`
+>   now scans 1024 ports per host and `maxWaitMs` grows with it — no code there depends on the
+>   old 20-port list.
+> - **XML metadata**: `<!DOCTYPE nmaprun>`, `scanner="nosneak"`, `args`/`start`/`startstr`/`version`,
+>   `<scaninfo type="connect" protocol="tcp" numservices services>` (+ a `udp` one when UDP ports
+>   were named), host `starttime`/`endtime`, `<hostnames><hostname type="PTR"/>`, `<runstats>`
+>   with `finished time/timestr/elapsed/summary` and `hosts up/down/total`. **Grepable** has the
+>   `# … scan initiated <date> as: <args>` header, the `# NoSneak done at …` footer and
+>   `Host: <ip> (<hostname>)`. **JSON** adds `startTime`/`endTime` (ISO-8601 UTC), `durationSec`,
+>   `hostsDown`, per-host `startTime`/`endTime` and `portStats {open, closed, filtered}`.
+> - **`HostReport.ip` on every path**: set at expansion for IP literals, and from the first
+>   `PortScanCallback` built for a hostname (`remoteIp()`), so `-Pn` reports carry the address.
+> - **Reverse DNS, non-blocking**: `ReverseDnsCallback` (a `UDPSessionCallback`, one PTR
+>   datagram per host through the `ScanGate`, deadline on the injected scheduler, dnsjava for the
+>   wire format) fills `HostReport.hostname`. Stage 0b between discovery and the port scan; `-n`
+>   never, `-R` every target, default live hosts only; `--dns-servers <ip>` overrides the system
+>   resolver (fallback `8.8.8.8`). `InetAddress.getHostName()` is not used anywhere.
+> - **Dead fields removed**: `HostReport.osGuess/osAccuracy` and `PortReport.ttl` (never assigned;
+>   OS detection is refused, a connect scan has no TTL) and their formatter branches.
+> - **One service table**: `WellKnownPorts` gained v1's `1521/tcp oracle` and `520/udp route`;
+>   `ProbeChecker`'s private 18-entry map is gone and its fallback label reads
+>   `WellKnownPorts.lookup(port, transport)` (null when unknown, transport-aware).
+> - **Formatter API**: `OutputFormatter.formatTo(report, OutputStream)` (UTF-8) and `mimeType()`;
+>   `NMap.main` writes files through `formatTo`.
+> - **Cleanups**: the 4-arg `NMapScanner.buildChecker` and `NMapScanner.log` are deleted.
+> - **Tests** (`v2/nmap`): `FormattersTest` (down hosts, metadata, JSON extras, mime/formatTo),
+>   `NMapParseCommandTest` (every alias, dedupe, defaults, `-n/-R/--dns-servers`),
+>   `NMapScannerTest` (per-octet, commas, cap warning, IP literals, table entries),
+>   `ReverseDnsCallbackTest` (hand-built PTR replies through the ingress hook, `ManualScheduler`
+>   deadline), and `NMapScannerEndToEndTest` — the one nmap test that owns pools and a real
+>   `NIOSocket`, scanning a loopback listener (`-Pn -n`): open port with banner, refused port
+>   closed, all five formats render.
+
 > ## 2026-07-29 — no-sneak-net discovery, pool injection, async REST, defect pass
 >
 > **1. nmap host discovery now goes through `no-sneak-net`.** An **on-link CIDR** is handed to

@@ -3,6 +3,7 @@ package io.xlogistx.nosneak.v2.runtime;
 import io.xlogistx.nosneak.v2.model.ProbeDefinition;
 import io.xlogistx.nosneak.v2.result.ProbeResult;
 import io.xlogistx.nosneak.v2.tls.PQCSessionConfig;
+import org.zoxweb.server.http.HTTPNIOSocket;
 import org.zoxweb.server.net.common.TCPSessionCallback;
 import org.zoxweb.server.net.common.UDPSessionCallback;
 import org.zoxweb.shared.net.IPAddress;
@@ -61,11 +62,15 @@ public final class ScriptedTransport implements ProbeTransport {
         public final ProbeTCPCallback cb;
         public final InetSocketAddress sni;
         public final boolean classicalOnly;
+        /** The context's transition hook — what a scripted handshake completes through. */
+        public final Consumer<PQCSessionConfig> onTransition;
 
-        TlsStart(ProbeTCPCallback cb, InetSocketAddress sni, boolean classicalOnly) {
+        TlsStart(ProbeTCPCallback cb, InetSocketAddress sni, boolean classicalOnly,
+                 Consumer<PQCSessionConfig> onTransition) {
             this.cb = cb;
             this.sni = sni;
             this.classicalOnly = classicalOnly;
+            this.onTransition = onTransition;
         }
     }
 
@@ -78,6 +83,13 @@ public final class ScriptedTransport implements ProbeTransport {
     public RuntimeException failOpen;
     /** When true, every write throws — a dead channel. */
     public boolean failWrite;
+    /**
+     * When set, {@code startTls} hands this session to the context as the live handshake, so a
+     * test scripts what the "server" negotiated (see {@code ScriptedTls}) and completes it with
+     * {@link #handshaked}. Null (the default) keeps the empty session: a handshake state then
+     * ends only by timeout or cancel.
+     */
+    public PQCSessionConfig scriptedTls;
 
     // ---- ProbeTransport ----
 
@@ -119,8 +131,8 @@ public final class ScriptedTransport implements ProbeTransport {
     @Override
     public TlsSession startTls(ProbeTCPCallback cb, InetSocketAddress sni, boolean classicalOnly,
                                Consumer<PQCSessionConfig> onTransition) {
-        tlsStarts.add(new TlsStart(cb, sni, classicalOnly));
-        return new TlsSession(null, null);
+        tlsStarts.add(new TlsStart(cb, sni, classicalOnly, onTransition));
+        return new TlsSession(scriptedTls, null);
     }
 
     @Override
@@ -141,6 +153,19 @@ public final class ScriptedTransport implements ProbeTransport {
                                    Consumer<ProbeResult> callback) {
         Executor inline = Runnable::run;
         return new ProbeContext(this, scheduler, inline, target, definition, timeoutSec, callback);
+    }
+
+    /** A context with an HTTP client for {@code revocation-check} supplied (a capturing fake in tests). */
+    public ProbeContext newContext(ScheduledExecutorService scheduler, HTTPNIOSocket http, IPAddress target,
+                                   ProbeDefinition definition, int timeoutSec) {
+        Executor inline = Runnable::run;
+        return new ProbeContext(this, scheduler, inline, http, target, definition, timeoutSec, delivered::add);
+    }
+
+    /** The scripted handshake completed: the "server" side of a {@code tls-handshake} state. */
+    public static void handshaked(TlsStart start, PQCSessionConfig session) {
+        session.handshakeComplete.set(true);
+        start.onTransition.accept(session);
     }
 
     public Conn last() {

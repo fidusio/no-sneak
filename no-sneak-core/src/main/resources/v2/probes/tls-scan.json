@@ -5,6 +5,7 @@
   "ports": [],
   "priority": 71,
   "portScoped": false,
+  "overallTimeoutSec": 90,
   "start": "connect",
   "states": {
     "connect":    { "action": "connect", "on": { "connected": "tls", "error": "fail", "timeout": "fail" } },
@@ -12,9 +13,9 @@
     "pqc":        { "action": "pqc-check", "on": { "done": "certchain" } },
     "certchain":  { "action": "cert-chain-validate", "on": { "done": "revocation" } },
     "revocation": { "action": "revocation-check", "on": { "done": "versions" } },
-    "versions":   { "action": "enumerate-versions", "on": { "done": "ciphers" } },
-    "ciphers":    { "action": "enumerate-ciphers", "on": { "done": "groups" } },
-    "groups":     { "action": "enumerate-groups", "on": { "done": "record" } },
+    "versions":   { "action": "enumerate-versions", "includeSSLv3": true, "includeTLS10": true, "includeTLS11": true, "maxInFlight": 8, "on": { "done": "ciphers" } },
+    "ciphers":    { "action": "enumerate-ciphers", "includeWeak": true, "includeInsecure": true, "rankServerPreference": false, "maxInFlight": 8, "on": { "done": "groups" } },
+    "groups":     { "action": "enumerate-groups", "maxInFlight": 8, "on": { "done": "record" } },
     "record":     { "action": "record", "note": "tls-scan", "on": { "done": "done" } },
     "done":       { "action": "done" },
     "fail":       { "action": "fail" }

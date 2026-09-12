@@ -176,4 +176,80 @@ public class FanoutTest {
         Fanout.dispatch(Collections.emptyList(), TaskUtil.defaultTaskProcessor());
         Fanout.dispatch(null, TaskUtil.defaultTaskProcessor());
     }
+
+    // ==================== runBounded: the enumeration launcher ====================
+
+    /**
+     * Children that finish only when the test says so: each child parks its join, the test
+     * releases them one at a time and watches how many were started in between.
+     */
+    @Test
+    public void runBoundedNeverStartsMoreThanTheWindowAndAdmitsOnePerCompletion() {
+        final int n = 12;
+        final int cap = 3;
+        List<ParallelJoin> parked = new ArrayList<>();
+        List<Consumer<ParallelJoin>> children = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            children.add(parked::add);
+        }
+        AtomicInteger done = new AtomicInteger();
+        Fanout.runBounded(children, cap, done::incrementAndGet, Runnable::run);
+
+        assertEquals(cap, parked.size(), "only the first window starts");
+        assertEquals(0, done.get());
+        for (int released = 0; released < n; released++) {
+            assertTrue(parked.size() - released <= cap, "in flight must never exceed the window");
+            parked.get(released).childDone();
+            assertEquals(Math.min(n, cap + released + 1), parked.size(),
+                    "each completion admits exactly one more child");
+        }
+        assertEquals(n, parked.size());
+        assertEquals(1, done.get(), "the barrier fires once, when the last child finishes");
+    }
+
+    @Test
+    public void runBoundedWithAWindowAtLeastTheChildCountIsPlainRun() {
+        AtomicInteger started = new AtomicInteger();
+        List<Consumer<ParallelJoin>> children = new ArrayList<>();
+        for (int i = 0; i < 4; i++) {
+            children.add(j -> { started.incrementAndGet(); j.childDone(); });
+        }
+        AtomicInteger done = new AtomicInteger();
+        Fanout.runBounded(children, 4, done::incrementAndGet, Runnable::run);
+        assertEquals(4, started.get());
+        assertEquals(1, done.get());
+        Fanout.runBounded(children, 0, done::incrementAndGet, Runnable::run); // 0 = no window
+        assertEquals(8, started.get());
+        assertEquals(2, done.get());
+    }
+
+    @Test
+    public void runBoundedToleratesSynchronousCompletionsDoubleDoneAndThrowingChildren() {
+        List<Consumer<ParallelJoin>> children = new ArrayList<>();
+        AtomicInteger ran = new AtomicInteger();
+        for (int i = 0; i < 20; i++) {
+            final int k = i;
+            children.add(j -> {
+                ran.incrementAndGet();
+                if (k % 3 == 0) {
+                    throw new IllegalStateException("child " + k + " blew up before arming anything");
+                }
+                j.childDone();
+                if (k % 3 == 1) {
+                    j.childDone(); // a misbehaving child reports twice: must admit exactly one successor
+                }
+            });
+        }
+        AtomicInteger done = new AtomicInteger();
+        Fanout.runBounded(children, 2, done::incrementAndGet, Runnable::run);
+        assertEquals(20, ran.get(), "every child ran exactly once");
+        assertEquals(1, done.get());
+    }
+
+    @Test
+    public void runBoundedWithNoChildrenFiresImmediately() {
+        AtomicInteger done = new AtomicInteger();
+        Fanout.runBounded(Collections.emptyList(), 3, done::incrementAndGet, Runnable::run);
+        assertEquals(1, done.get());
+    }
 }

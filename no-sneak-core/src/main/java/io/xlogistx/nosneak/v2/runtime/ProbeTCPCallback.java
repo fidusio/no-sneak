@@ -29,7 +29,6 @@ public class ProbeTCPCallback extends TCPSessionCallback {
     private final int connectionIndex;
     // Non-pooled per-connection buffer reclaimed by GC.
     private final ByteBuffer readBuffer = ByteBuffer.allocate(16384);
-    private volatile SelectionKey selectionKey;
 
     public ProbeTCPCallback(ProbeContext context, IPAddress address, int connectionIndex) {
         super(address);
@@ -58,7 +57,6 @@ public class ProbeTCPCallback extends TCPSessionCallback {
 
     @Override
     public void accept(SelectionKey key) {
-        this.selectionKey = key;
         try {
             if (key.isReadable()) {
                 SocketChannel channel = (SocketChannel) key.channel();

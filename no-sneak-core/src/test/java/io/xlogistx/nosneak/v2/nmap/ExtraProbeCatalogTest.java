@@ -40,10 +40,12 @@ public class ExtraProbeCatalogTest {
     }
 
     private static ProbeChecker build(NMapConfig cfg, ScanReport report) throws Exception {
+        // The single buildChecker: a null gate means "unpaced", which is what a catalog test wants.
         Method m = NMapScanner.class.getDeclaredMethod("buildChecker",
-                org.zoxweb.server.net.NIOSocket.class, NMapConfig.class, int.class, ScanReport.class);
+                org.zoxweb.server.net.NIOSocket.class, NMapConfig.class, int.class, ScanReport.class,
+                ScanGate.class);
         m.setAccessible(true);
-        return (ProbeChecker) m.invoke(null, null, cfg, 5, report);
+        return (ProbeChecker) m.invoke(null, null, cfg, 5, report, null);
     }
 
     @Test

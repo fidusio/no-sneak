@@ -58,6 +58,15 @@ public class VersionProbeCallback extends TLSProbeCallback {
         return v.toString();
     }
 
+    /** The single version this probe offers — what a test inspects to identify a child. */
+    public ProtocolVersion targetVersion() {
+        return targetVersion;
+    }
+
+    public String versionName() {
+        return versionName;
+    }
+
     @Override
     protected DefaultTlsClient createTlsClient() {
         return new ProbeVersionTlsClient(hostname, targetVersion);

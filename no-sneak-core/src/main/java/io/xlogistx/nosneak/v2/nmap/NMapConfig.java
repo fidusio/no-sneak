@@ -87,6 +87,33 @@ public final class NMapConfig {
     public int timeoutSec = DEFAULT_TIMEOUT_SEC;
 
     /**
+     * {@code -v} / {@code --verbose}: a rendering preference, like {@link #openOnly}. The Normal
+     * formatter then prints a run header (start time, command line) and a per-host line saying
+     * how many TCP/UDP ports were scanned. Warnings are printed regardless — a degraded
+     * discovery mode or a cancelled scan must never be hidden behind a flag.
+     */
+    public boolean verbose = false;
+
+    /**
+     * When the reverse lookup (PTR) that fills {@link ScanReport.HostReport#hostname} runs.
+     * nmap's flags: {@code -n} never, {@code -R} every target including down ones; the default
+     * is live hosts only. The lookup is a non-blocking datagram unit through the scan gate.
+     */
+    public enum ReverseDns { NEVER, UP_HOSTS, ALL }
+
+    /** See {@link ReverseDns}; default {@link ReverseDns#UP_HOSTS}. */
+    public ReverseDns reverseDns = ReverseDns.UP_HOSTS;
+
+    /**
+     * {@code --dns-servers <ip>}: the resolver the PTR queries go to, as an IP literal. {@code
+     * null} → the system resolver's first entry, falling back to {@code 8.8.8.8}.
+     */
+    public String dnsServer;
+
+    /** PTR query timeout in milliseconds; each lookup is one datagram unit with this deadline. */
+    public long dnsTimeoutMs = ReverseDnsCallback.DEFAULT_TIMEOUT_MS;
+
+    /**
      * nmap-style timing templates, mapped onto the three knobs above. {@code T3} is the
      * default. Lower templates are for fragile or monitored segments; higher ones are for
      * lab networks you own. Nothing here changes <i>what</i> is sent, only how fast.
@@ -131,6 +158,10 @@ public final class NMapConfig {
     public NMapConfig extraProbe(ProbeDefinition d) { if (d != null) extraProbes.add(d); return this; }
     public NMapConfig rate(int maxInFlight, int maxPerSec) { this.maxInFlight = maxInFlight; this.maxPerSec = maxPerSec; return this; }
     public NMapConfig timeoutInSec(int s) { this.timeoutSec = s > 0 ? s : DEFAULT_TIMEOUT_SEC; return this; }
+    public NMapConfig verbose(boolean b) { this.verbose = b; return this; }
+    public NMapConfig reverseDns(ReverseDns mode) { if (mode != null) this.reverseDns = mode; return this; }
+    public NMapConfig dnsServer(String ip) { this.dnsServer = ip != null && !ip.isEmpty() ? ip : null; return this; }
+    public NMapConfig dnsTimeoutMs(long ms) { this.dnsTimeoutMs = ms > 0 ? ms : ReverseDnsCallback.DEFAULT_TIMEOUT_MS; return this; }
 
     /** Applies a {@link Timing} template to the three rate knobs; later explicit flags override. */
     public NMapConfig timing(Timing t) {

@@ -80,6 +80,8 @@ public class ProbeContextTest {
         assertEquals("ssh", r.getService());
         assertEquals("OpenSSH_8.2p1 Ubuntu-4ubuntu0.11", r.getServiceVersion());
         assertTrue(r.getNote().contains("ssh"));
+        assertTrue(r.isSuccess());
+        assertNull(r.getErrorMessage());
         assertTrue(ctx.isTerminated());
         assertEquals(0, clock.liveCount(), "every timer is cancelled at delivery");
     }
@@ -357,5 +359,68 @@ public class ProbeContextTest {
         connected(loserConn);
         inbound(loserConn, "SSH-2.0-lose\r\n");
         assertEquals(0, tx.delivered.size(), "the cancelled loser never delivers");
+    }
+
+    // ---------------------------------------------------------------- the error surface and the budget
+
+    @Test
+    public void aFailedProbeCarriesSuccessFalseAndTheTerminalNoteAsTheError() {
+        start(bundled("ssh"));
+        Conn c = tx.last();
+        connected(c);
+        peerClosed(c);
+
+        ProbeResult r = tx.delivered.get(0);
+        assertFalse(r.isComplete());
+        assertFalse(r.isSuccess());
+        assertEquals("fail", r.getErrorMessage());
+        assertEquals("false", r.toNVGenericMap().getValue("success"));
+    }
+
+    @Test
+    public void theOverallWatchdogCarriesItsMarkerAsTheError() {
+        start(bundled("ssh"));
+        connected(tx.last());
+        clock.tasks.get(0).run(); // the watchdog, armed first in start()
+        ProbeResult r = tx.delivered.get(0);
+        assertFalse(r.isSuccess());
+        assertEquals("overall-timeout", r.getErrorMessage());
+    }
+
+    @Test
+    public void anActionFailureNoteIsAppendedToTheError() {
+        ProbeContext ctx = start(bundled("ssh"));
+        ctx.noteFailure("expect: java.lang.IllegalStateException: boom"); // what ProbeActionConsumer records
+        clock.fireLatest(); // the connect window → "timeout" → fail
+        ProbeResult r = tx.delivered.get(0);
+        assertFalse(r.isSuccess());
+        assertEquals("fail: expect: java.lang.IllegalStateException: boom", r.getErrorMessage());
+    }
+
+    @Test
+    public void aCompletedProbeHasNoErrorEvenAfterANotedFailure() {
+        ProbeContext ctx = start(bundled("ssh"));
+        ctx.noteFailure("something recovered from");
+        Conn c = tx.last();
+        connected(c);
+        inbound(c, "SSH-2.0-OpenSSH_9.6\r\n");
+        ProbeResult r = tx.delivered.get(0);
+        assertTrue(r.isSuccess(), "reaching done is success, whatever happened en route");
+        assertNull(r.getErrorMessage());
+    }
+
+    @Test
+    public void aDefinitionMayDeclareItsOwnOverallBudget() {
+        ProbeDefinition def = parse("{\"name\":\"budget\",\"service\":\"x\",\"ports\":[1],\"overallTimeoutSec\":7,"
+                + "\"start\":\"connect\",\"states\":{\"connect\":{\"action\":\"connect\",\"on\":{\"connected\":\"done\","
+                + "\"error\":\"fail\",\"timeout\":\"fail\"}},\"done\":{\"action\":\"done\"},\"fail\":{\"action\":\"fail\"}}}",
+                "budget");
+        start(def);
+        assertEquals(7_000L, clock.tasks.get(0).delayMs, "the declared budget replaces max(4 x timeout, 30)");
+
+        tx = new ScriptedTransport();
+        clock = new ManualScheduler();
+        start(bundled("tls-scan"));
+        assertEquals(90_000L, clock.tasks.get(0).delayMs, "the bundled deep scan declares 90 s");
     }
 }

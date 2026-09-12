@@ -98,6 +98,11 @@ public class GroupProbeCallback extends TLSProbeCallback {
     protected void sslUpgraded(SSLConfigInt sslConfig) throws IOException {
     }
 
+    /** The single group this probe offers — what a test inspects to identify a child. */
+    public int namedGroup() {
+        return namedGroup;
+    }
+
     @Override
     protected DefaultTlsClient createTlsClient() {
         return new SingleGroupTlsClient(hostname, namedGroup);

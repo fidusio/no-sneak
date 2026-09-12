@@ -87,6 +87,72 @@ public class NMapScannerTest {
                 NMapScanner.expand(Collections.singletonList("host-with-dash")));
     }
 
+    // ==================== v1 grammar: per-octet ranges, comma tokens, the cap (item 11) ====================
+
+    @Test
+    public void perOctetRangesExpandInAddressOrder() {
+        assertEquals(Arrays.asList("192.168.1.1", "192.168.1.2", "192.168.1.3",
+                                   "192.168.2.1", "192.168.2.2", "192.168.2.3"),
+                NMapScanner.expand(Collections.singletonList("192.168.1-2.1-3")));
+        assertEquals(Arrays.asList("10.1.0.5", "10.2.0.5"),
+                NMapScanner.expand(Collections.singletonList("10.1-2.0.5")), "any octet may be a range");
+        assertEquals(Arrays.asList("10.0.0.1", "10.0.0.2"),
+                NMapScanner.expand(Collections.singletonList("10.0.0.2-1")), "a reversed octet bound is normalised");
+        assertEquals(Collections.singletonList("10.0.0.300-1"),
+                NMapScanner.expand(Collections.singletonList("10.0.0.300-1")), "an octet past 255 is not an address");
+        assertEquals(Collections.singletonList("10.0.1-2"),
+                NMapScanner.expand(Collections.singletonList("10.0.1-2")), "three parts is not the grammar");
+    }
+
+    @Test
+    public void commaSeparatedTargetsInsideOneToken() {
+        assertEquals(Arrays.asList("10.0.0.1", "10.0.0.5", "example.com"),
+                NMapScanner.expand(Collections.singletonList("10.0.0.1,10.0.0.5,example.com")));
+        assertEquals(Arrays.asList("10.0.0.1", "10.0.0.2", "10.0.0.9"),
+                NMapScanner.expand(Collections.singletonList("10.0.0.1-2, 10.0.0.9,,")), "blanks between commas are skipped");
+        assertEquals(Arrays.asList("10.0.0.1", "10.0.0.2"),
+                NMapScanner.expand(Arrays.asList("10.0.0.1,10.0.0.2", "10.0.0.2,10.0.0.1")), "still de-duplicated");
+    }
+
+    @Test
+    public void expansionIsCappedWithAWarningInsteadOfSilently() {
+        List<String> warnings = new java.util.ArrayList<>();
+        List<String> cidr = NMapScanner.expand(Collections.singletonList("10.0.0.0/15"), warnings);
+        assertEquals(NMapScanner.MAX_EXPANSION, cidr.size());
+        assertEquals("10.0.0.1", cidr.get(0));
+        assertEquals(Collections.singletonList("target expansion capped at 65536 addresses for '10.0.0.0/15'"), warnings);
+
+        warnings.clear();
+        List<String> octets = NMapScanner.expand(Collections.singletonList("10.0-1.0-255.0-255"), warnings);
+        assertEquals(NMapScanner.MAX_EXPANSION, octets.size());
+        assertEquals("10.0.0.0", octets.get(0));
+        assertEquals("10.0.255.255", octets.get(octets.size() - 1), "cut short, in address order");
+        assertEquals(1, warnings.size());
+        assertTrue(warnings.get(0).endsWith("for '10.0-1.0-255.0-255'"), warnings.get(0));
+
+        warnings.clear();
+        assertEquals(65534, NMapScanner.expand(Collections.singletonList("10.0.0.0/16"), warnings).size());
+        assertTrue(warnings.isEmpty(), "a /16 fits; no warning");
+        assertEquals(NMapScanner.MAX_EXPANSION,
+                NMapScanner.expand(Collections.singletonList("10.0.0.0/8")).size(), "no sink: still capped, silently");
+    }
+
+    @Test
+    public void ipLiteralsAreRecognisedWithoutAnyLookup() {
+        assertTrue(NMapScanner.isIpLiteral("10.0.0.1"));
+        assertTrue(NMapScanner.isIpLiteral(" 192.168.1.254 "));
+        assertTrue(NMapScanner.isIpLiteral("::1"));
+        assertTrue(NMapScanner.isIpLiteral("fe80::1%eth0"));
+        assertTrue(NMapScanner.isIpLiteral("[2001:db8::1]"));
+        assertFalse(NMapScanner.isIpLiteral("example.com"));
+        assertFalse(NMapScanner.isIpLiteral("10.0.0"));
+        assertFalse(NMapScanner.isIpLiteral("10.0.0.1-5"));
+        assertFalse(NMapScanner.isIpLiteral("host:80"));
+        assertFalse(NMapScanner.isIpLiteral(null));
+        assertEquals("10.0.0.1", NMapScanner.literalAddress("10.0.0.1").getHostAddress());
+        assertEquals(null, NMapScanner.literalAddress("example.com"), "a name is never resolved here");
+    }
+
     // ==================== Port specs ====================
 
     @Test
@@ -121,6 +187,14 @@ public class NMapScannerTest {
         assertEquals("https", WellKnownPorts.name(443, "tcp"));
         assertEquals("domain", WellKnownPorts.name(53, "udp"));
         assertEquals("unknown", WellKnownPorts.name(64999, "tcp"));
+        // merged from the v1 ServiceMatch table (item 17): the two entries v2 lacked
+        assertEquals("oracle", WellKnownPorts.name(1521, "tcp"));
+        assertEquals("route", WellKnownPorts.name(520, "udp"));
+        assertEquals("unknown", WellKnownPorts.name(520, "tcp"), "transport-aware: route is UDP only");
+        // the null-returning form the probe engine's fallback label uses
+        assertEquals(null, WellKnownPorts.lookup(64999, "tcp"));
+        assertEquals("domain", WellKnownPorts.lookup(53, "udp"));
+        assertEquals("http", WellKnownPorts.lookup(80, null), "no protocol reads as TCP");
     }
 
     @Test

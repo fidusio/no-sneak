@@ -289,8 +289,7 @@ public class PQCTlsClient extends DefaultTlsClient {
             }
         } catch (Exception e) {
             if (log.isEnabled()) {
-                log.getLogger().info("Could not extract key_share: " + e.getMessage());
-                e.printStackTrace();
+                log.getLogger().info("Could not extract key_share: " + e);
             }
         }
     }

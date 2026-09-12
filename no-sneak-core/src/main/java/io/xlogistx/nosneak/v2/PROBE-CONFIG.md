@@ -53,6 +53,7 @@ non-blocking `NIOSocket`, driven by zoxweb's trigger `StateMachine`.
   "ports": [443, 8443],         // declared ports → tier-1 match; [] = never tier-1 (fallback only)
   "priority": 72,               // higher wins in match-first
   "portScoped": true,           // true → runs ONLY on declared ports (excluded from fallback tier)
+  "overallTimeoutSec": 90,      // optional watchdog for one run; absent = max(4 × per-step timeout, 30 s)
   "start": "connect",           // id of the start state
   "states": { /* id → state */ }
 }
@@ -72,6 +73,17 @@ non-blocking `NIOSocket`, driven by zoxweb's trigger `StateMachine`.
 | `mode` | `tls-handshake` | `"pqc"` (default, Bouncy Castle) — classifies key exchange |
 | `note` | `record` | free-form annotation merged into the result |
 | `port` | `connect`/`reconnect`/`tls-connect` | alternate port to connect to |
+| `revocationTimeoutMs` | `revocation-check` | bound on the active OCSP/CRL attempt (default 5000; must be > 0) |
+| `includeSSLv3` / `includeTLS10` / `includeTLS11` | `enumerate-versions` | offer the legacy version as well (TLSv1.3 and TLSv1.2 are always offered). Absent = `true`, observe everything; the bundled deep scans spell all three out |
+| `includeWeak` / `includeInsecure` | `enumerate-ciphers` | offer opsec's weak (21) / insecure (9) TLS 1.2 sets besides the strong (9) set. Absent = `true` |
+| `rankServerPreference` | `enumerate-ciphers` | after a `server` preference verdict, derive the server's full order with a sequential chain of at most `ProbeContext.MAX_RANKING_STEPS` (10) handshakes → `server-cipher-ranking`. Absent = `false`, so the default cost of the action is unchanged |
+| `maxInFlight` | `enumerate-versions` / `-ciphers` / `-groups` | child handshakes open at once against the target (must be > 0). Absent = `ProbeContext.DEFAULT_MAX_IN_FLIGHT` (8) |
+
+Every toggle is a JSON boolean read into a `Boolean` (a tri-state: absent means "engine default"),
+so an older definition that omits them behaves exactly as before. The bundled `https-scan` and
+`tls-scan` set each one explicitly so the choice is visible in the JSON rather than implied by
+the code; `overallTimeoutSec: 90` there is v1's deep-scan watchdog, replacing the 30–40 s ceiling
+the per-step formula gave a probe that runs a handshake, three enumerations and a revocation fetch.
 
 ### PatternRule (`expect`)
 
@@ -96,12 +108,12 @@ no reachable terminal (`done`/`fail`) is rejected at load time.
 | `starttls` | send `command`, wait for `ready` regex, mark the session as a STARTTLS upgrade → `ready` / `timeout` / `nomatch` / `error` |
 | `tls-connect` | open a JSSE (RSA-capable, trust-all) TLS session so `send`/`expect` run over TLS → `connected` / `error` / `timeout`; records `tls-version` / `cipher-suite` / `DIRECT_TLS` |
 | `tls-handshake` | Bouncy-Castle non-blocking handshake on the current channel (`mode:"pqc"`) → `handshaked` / `error` / `timeout` |
-| `pqc-check` | record TLS facts **and** classify key exchange → `pqc-status` = `PQC` / `CLASSICAL` / `UNKNOWN`; also records cert facts + validity + leaf key/signature analysis + RFC 6125 hostname match |
+| `pqc-check` | record TLS facts **and** classify key exchange → `pqc-status` = `PQC` (a hybrid ML-KEM group) / `CLASSICAL` (TLS 1.3 with a classical group — upgradeable) / `NOT_READY` (TLS 1.2 or older — no PQC path on that version) / `UNKNOWN`; `key-exchange-group` (the key_share group, or the suite's family on TLS 1.2) and `key-exchange-algorithm` (`ML-KEM hybrid` / `ECDHE` / `DHE` / `RSA`); also records cert facts + validity + leaf key/signature analysis + RFC 6125 hostname match |
 | `tls-facts` | record TLS facts without PQC classification (same cert facts) |
 | `cert-chain-validate` | PKIX chain validation → `cert-chain-trust` = `TRUSTED` / `UNTRUSTED_ROOT` / …, plus `cert-chain-trust-message`, the per-certificate `cert-chain[]` breakdown (trusted root appended), and `cert-chain-time-validity` |
-| `revocation-check` | stapled OCSP (RFC 6066) when the server stapled one; otherwise an **active OCSP** request to the leaf's AIA responder and, failing a definitive answer, its **CRL** — both non-blocking on the probe's own `NIOSocket`, bounded by the state's `revocationTimeoutMs` (default 5000), soft-fail to `UNKNOWN` → `revocation-status` / `revocation-method` (`stapled` \| `ocsp` \| `crl` \| `none` \| `<method>-unreachable`) / `revocation-date` / `revocation-reason`. Asynchronous: fires `done` when the answer is in |
-| `enumerate-versions` | probe TLSv1.3/1.2/1.1/1.0 **and SSLv3**, each a single-version handshake → `supported-protocol-versions` |
-| `enumerate-ciphers` | one handshake per candidate suite (opsec's 5 TLS 1.3 + 39 TLS 1.2 strong/weak/insecure suites, offered singly — an ordinary ClientHello) → `supported-cipher-suites` (flat names) and `supported-cipher-suite-details[]` (`name`, `version`, `strength`, `key-exchange`, `forward-secrecy`); then two more handshakes offering every accepted suite in our order and reversed → `server-cipher-preference` + `-mode` (`server` \| `client` \| `only-one-accepted`) |
+| `revocation-check` | stapled OCSP (RFC 6066) when the server stapled one **and it parses** — a malformed staple falls through to the active check, as v1 did, instead of ending as `ERROR/stapled`; otherwise an **active OCSP** request to the leaf's AIA responder and, failing a definitive answer, its **CRL** — both non-blocking on the probe's own `NIOSocket`, bounded by the state's `revocationTimeoutMs` (default 5000), soft-fail to `UNKNOWN` → `revocation-status` / `revocation-method` (`stapled` \| `ocsp` \| `crl` \| `none` \| `<method>-unreachable`) / `revocation-date` / `revocation-reason`. Asynchronous: fires `done` when the answer is in |
+| `enumerate-versions` | probe TLSv1.3/1.2 and, per the state's `includeTLS11` / `includeTLS10` / `includeSSLv3` toggles (default on), TLSv1.1/1.0 **and SSLv3**, each a single-version handshake, at most `maxInFlight` at once → `supported-protocol-versions` (best first) |
+| `enumerate-ciphers` | one handshake per candidate suite (opsec's 5 TLS 1.3 suites plus the strong TLS 1.2 set, plus the weak and insecure sets when `includeWeak` / `includeInsecure` are on — the default; offered singly, an ordinary ClientHello), at most `maxInFlight` at once → `supported-cipher-suites` (flat names) and `supported-cipher-suite-details[]` (`name`, `version`, `strength`, `key-exchange`, `authentication`, `encryption`, `mac`, `forward-secrecy`); then two more handshakes offering every accepted suite in our order and reversed → `server-cipher-preference` + `-mode` (`server` \| `client` \| `only-one-accepted`); with `rankServerPreference` and a `server` verdict, a sequential chain (offer the rest, remove the pick, repeat; at most 10 steps, each launched from the previous completion) → `server-cipher-ranking` |
 | `enumerate-groups` | one TLS 1.3 handshake per candidate named group, each offering only that group (X25519MLKEM768, SecP256r1MLKEM768, SecP384r1MLKEM1024, x25519, x448, secp256r1, secp384r1, secp521r1, ffdhe2048, ffdhe3072) → `supported-groups` (hybrids first) and `server-group-preference` (the group the main handshake negotiated when all were offered). A TLS 1.2-only server accepts none — key shares are a TLS 1.3 mechanism |
 | `record` | merge `note` into the result |
 | `done` / `fail` | terminal: deliver complete / incomplete |
@@ -133,10 +145,16 @@ no reachable terminal (`done`/`fail`) is rejected at load time.
 > nonstandard TLS port `tls-scan` wins → `service=tls` with the same analysis. On a non-TLS port
 > the deep probes fail the handshake and the service-specific probe wins.
 
+Two further definitions ship **on disk but unbundled**, exactly as v1 carried them
+(`/v2/probes/https-classical.json` — a classical-only BC handshake via `mode: "classical"`, and
+`/v2/probes/smtp-starttls.json` — the STARTTLS flow recording `tls-facts` without PQC
+classification). Load them by explicit file path; they are not sweep candidates.
+
 ## Result fields
 
 `service`, `service-version`, `service-<name>` (captures), `tls-state`
-(`NONE`/`DIRECT_TLS`/`STARTTLS_UPGRADED`), `pqc-status` (`PQC`/`CLASSICAL`/`UNKNOWN`),
+(`NONE`/`DIRECT_TLS`/`STARTTLS_UPGRADED`), `pqc-status` (`PQC`/`CLASSICAL`/`NOT_READY`/`UNKNOWN` —
+see `pqc-check`; `Grade` maps them to `PQC_READY`/`PQC_CAPABLE`/`CLASSICAL_ONLY`/`UNKNOWN`),
 `tls-version`, `cipher-suite`, `key-exchange-group`, `key-exchange-algorithm`,
 `cert-subject`, `cert-issuer`, `cert-not-before`, `cert-not-after`,
 `cert-validity` (`VALID`/`EXPIRED`/`NOT_YET_VALID`),
@@ -149,16 +167,29 @@ no reachable terminal (`done`/`fail`) is rejected at load time.
 `revocation-status`, `revocation-method`, `revocation-date`, `revocation-reason`,
 `supported-protocol-versions`, `supported-cipher-suites`,
 `supported-cipher-suite-details[]` (`name`, `version`, `strength`, `key-exchange`,
+`authentication`, `encryption`, `mac` — opsec's `parseCipherSuite` components —
 `forward-secrecy` = `YES`/`NO` — a string, for the same reason as the other tri-states),
-`server-cipher-preference` + `server-cipher-preference-mode`, `supported-groups`,
-`server-group-preference`, `complete`, `note`, `duration-ms`, `connections[]`.
+`server-cipher-preference` + `server-cipher-preference-mode`, `server-cipher-ranking` (only with
+`rankServerPreference`), `supported-groups`, `server-group-preference`, `complete`,
+`success` (`"true"`/`"false"` — a string so a false survives the default serializer;
+= `complete` and no error), `error-message` (why not: the `fail` terminal's note, the
+`overall-timeout` / `unhandled-outcome:…` marker, plus `<action>: <exception>` when an action
+threw on the way; absent on success), `note`, `duration-ms`, `connections[]`. The REST body adds
+`total-scanned`, the running check counter (seeded by the server config's `start-count-at`).
 
-**Enumeration budget (2026-09-11).** A deep probe (`https-scan`, `tls-scan`) opens at most
-5 (versions) + 44 (ciphers) + 2 (cipher preference) + 10 (groups) = **61 child connections**, each
-bounded by its own handshake timeout and all inside the probe's overall watchdog;
+**Enumeration budget (2026-09-11, pacing 2026-09-12).** A deep probe (`https-scan`, `tls-scan`)
+opens at most 5 (versions) + 44 (ciphers) + 2 (cipher preference) + 10 (groups) (+ up to 10
+ranking steps) child connections over its run, each bounded by its own handshake timeout and all
+inside the probe's overall watchdog (`overallTimeoutSec`, 90 s for the bundled deep scans);
 `ProbeContext.MAX_ENUMERATION_CHILDREN` (64) truncates any candidate list that would grow past
-it. Every child is a `Fanout` task on the injected executor — nothing blocks. Offering a weak
-suite or an old group is an ordinary ClientHello; nothing beyond a handshake is ever sent.
+it. How many are **open at once** is a separate, smaller bound: each enumeration state's
+`maxInFlight` (default `ProbeContext.DEFAULT_MAX_IN_FLIGHT`, 8) through `Fanout.runBounded` — the
+first window is dispatched in parallel and each child's completion admits the next, so one host
+never sees 44 simultaneous handshakes from one probe. Every child is a `Fanout` task on the
+injected executor, and on a gated checker (nmap's `ScanGate`, the REST `Checker`'s 8-in-flight /
+200-per-second gate) every child is also counted against the scan's window through
+`GatedProbeTransport` — nothing blocks anywhere. Offering a weak suite or an old group is an
+ordinary ClientHello; nothing beyond a handshake is ever sent.
 
 ### Certificate trust (ported from the v1 scanner)
 
@@ -356,10 +387,28 @@ looking like a clean result.
 
 The port and probe stages are paced by a non-blocking `ScanGate` (`--max-inflight` concurrency
 cap + `--max-rate` per-second). Targets accept host / IP / CIDR (`10.0.0.0/24`) / range
-(`10.0.0.1-50`). CLI flags: `-p`, `-sV`, `--probes a,b`, `-Pn` (skip discovery), `-sn` (discovery
-only), `-PR` (ARP/NDP only), `-PE` (ICMP only), `--no-icmp` / `--no-arp` / `--no-tcp-ping`,
-`--icmp-probes N`, `--max-inflight N`, `--max-rate N`, `-t <sec>`. A missing or non-numeric flag
-value is a clear error plus usage and exit 2, not a stack trace; a failed run exits 1.
+(`10.0.0.1-50`, `10.0.0.1-10.0.1.9`, per-octet `192.168.1-5.1-254`) / comma-separated lists in
+one token (`10.0.0.1,10.0.0.5,example.com`); a spec that expands past 65536 addresses is cut
+short and the report carries `target expansion capped at 65536 addresses for '<spec>'`. CLI
+flags: `-p <spec>` or `-p<spec>` (default **1-1024**), `-sV`, `--probes a,b`, `-Pn`/`-PN` (skip
+discovery), `-sn`/`-sP` (discovery only), `-PR` (ARP/NDP only), `-PE` (ICMP only), `--no-icmp` /
+`--no-arp` / `--no-tcp-ping`, `--icmp-probes N`, `-n` / `-R` (never / always reverse-resolve;
+default live hosts), `--dns-servers <ip>`, `-T0..-T5` / `-T <n|name>` / `-Taggressive`,
+`--max-inflight N` (= `--max-parallelism N` = `-P N`), `--max-rate N`, `-t <sec>` (= `--timeout`),
+`-v`, `-h`, and v1's legacy `host=`, `range=a,b`, `timeout=` tokens. Duplicate ports in a spec
+are scanned once. A missing or non-numeric flag value, or an unknown flag, is a clear error plus
+usage and exit 2, not a stack trace; `-h` prints usage and exits 0; a failed run exits 1.
+
+**Reverse DNS (2026-09-12).** Stage 0b, between discovery and the port scan: one PTR datagram
+per host through the same `ScanGate`, from `ReverseDnsCallback` — a `UDPSessionCallback` on an
+ephemeral socket connected to the resolver, query built by dnsjava (`ReverseMap.fromAddress` +
+`Message.newQuery`), deadline (2 s, `NMapConfig.dnsTimeoutMs`) on the injected scheduler,
+reply parsed into `HostReport.hostname`. Live hosts by default, every target with `-R`, nobody
+with `-n`; a hostname target whose address never resolved has nothing to reverse and is skipped.
+The resolver is `--dns-servers <ip>` (an IP literal; a name is refused with a warning), else the
+system resolver's first entry, else `8.8.8.8`. Nothing calls `InetAddress.getHostName()`.
+`HostReport.ip` is now set on every path: at expansion for IP literals, from the first
+`PortScanCallback` built (`remoteIp()`) for a hostname — so `-Pn` reports carry the address too.
 
 Every run ends with a stats line:
 
@@ -392,9 +441,28 @@ rtt 25 ms; no banner on either, as expected. The renderers below do not yet show
 `OutputFormatter`. CLI: `-oN -oX -oG -oJ -oC <file>` and `-oA <base>` (all formats to
 `base.<ext>`); console always prints Normal. All formats carry the deep TLS assessment
 (state/PQC/cert-validity/trust/grade), not just a banner. Model: `ScanReport` (run metadata +
-`HostReport`{up, reason, mac, osGuess, ip} + `PortReport`{protocol, state, reason, rtt, ttl,
-banner, probe}), `PortState` (full nmap set incl. OPEN_FILTERED), `WellKnownPorts` (service table
-+ TOP_100_TCP / TOP_20_UDP).
+`HostReport`{up, reason, ip, hostname, mac, latency, startTimeMs/endTimeMs} + `PortReport`{protocol,
+state, reason, rtt, banner, probe}), `PortState` (full nmap set incl. OPEN_FILTERED),
+`WellKnownPorts` (the **one** service table — `ProbeChecker`'s fallback label reads it too —
++ TOP_100_TCP / TOP_20_UDP). There is no `osGuess`/`osAccuracy` and no per-port `ttl`: OS
+detection is refused by policy and a connect scan has no TTL source, so the never-assigned
+fields were removed (2026-09-12). `OutputFormatter` also offers `formatTo(report, OutputStream)`
+(UTF-8) and `mimeType()` (`text/plain`, `application/xml`, `application/json`, `text/csv`).
+
+**Every target renders, up or down (2026-09-12).** Normal prints `Host <t> is down (<reason>)`
+per down host; CSV writes one row per down host with the port columns blank; XML, grepable and
+JSON already listed them. XML now carries the metadata nmap consumers key on: `<!DOCTYPE
+nmaprun>`, `scanner="nosneak"`, `args`/`start`/`startstr`/`version`, a `<scaninfo>` per protocol
+scanned (`type="connect" protocol="tcp" numservices services="1-1024,8080"`, plus a `udp` one
+when UDP ports were named), host `starttime`/`endtime`, `<hostnames><hostname name type="PTR"/>`,
+and `<runstats><finished time timestr elapsed summary/><hosts up down total/></runstats>`.
+Grepable has the `# Nmap-compatible scan initiated <date> as: <args>` header, the `# NoSneak
+done at <date> -- N IP addresses (M hosts up) scanned in X.XX seconds` footer and
+`Host: <ip> (<hostname>)` with empty parentheses when no name is known. JSON adds `startTime`/
+`endTime` (ISO-8601 UTC), `durationSec`, `hostsDown`, and per host `startTime`/`endTime` and
+`portStats {open, closed, filtered}`. Normal with `-v` prefixes a `Starting NoSneak 2.0 at
+<date> as: <args>` line and a `Scanned: N tcp, M udp port(s)` line per live host; warnings print
+with or without `-v`.
 
 **JSON is not hand-written (2026-09-12).** `JSONFormatter` is two lines: `ScanReport.toNVGenericMap()`
 rendered by `GSONUtil.toJSONGenericMap(m, true, true, false)` — the same serialiser `ProbeResult`
@@ -435,8 +503,9 @@ subsystems and `raw/` SYN/FIN/… engines were dead/stub code. v2 decisions:
   come later via a native raw-socket layer (JDK 25 Panama FFM, no external lib). The flag names
   are nmap's; what a raw layer buys here is *accurate port state* (open vs filtered) on networks
   the operator is authorized to scan — not evasion, which stays out of scope.
-- **OS detection** (`-O`): open-port **heuristic only** (best-effort, low confidence). True
-  TCP/IP-stack fingerprinting needs raw packets → same FFM layer.
+- **OS detection** (`-O`): **rejected at parse time**, by policy (repo root `CLAUDE.md`, no
+  fingerprinting). The `osGuess`/`osAccuracy` fields that once waited for an open-port heuristic
+  were never assigned and are gone (2026-09-12).
 - **ARP ping / remote MAC**: **DONE — no longer deferred.** The old reasoning was right about the
   JDK (no API through JDK 25 exposes a remote host's MAC; `NetworkInterface.getHardwareAddress()`
   is local-NIC only, and the `arp`-command shell-out was correctly refused), but the conclusion is
@@ -496,8 +565,28 @@ highest wins at once and the rest are cancelled, all-fail → none-identified wi
 name and `probes-tried`, `checkAll` in priority order. `runtime/SendBytesTest` (7) pins the
 `hex:`/`base64:`/`text:`/bare/`payload` codecs and that only text is templated;
 `model/MongoPayloadTest` (3) decodes the two hand-written MongoDB hex payloads against the OP_QUERY /
-OP_MSG wire format. What still needs a live server: the Bouncy Castle handshake itself, the
-enumeration children, and `tls-connect` over JSSE.
+OP_MSG wire format.
+
+**The TLS analysis and enumeration actions through the engine (2026-09-12).** Two more seams,
+both package-private and documented as such: `ScriptedTransport.scriptedTls` hands a
+`PQCSessionConfig` whose `tlsClient` is `runtime/ScriptedTls.FakeTlsClient` (negotiated version,
+suite, group, chain and staple are fields the test sets) to the context as the live handshake,
+and `ProbeContext.activeRevocation` replaces the active OCSP/CRL check. The enumeration children
+are completed without a socket through `analysis/ProbeCallbackSeams` (`accept` = the callback's
+package-private `finishAccepted`, `reject` = the public `exception` path NIOSocket takes).
+`runtime/TlsAnalysisContextTest` (13) drives `pqc-check` (hybrid → `PQC`, TLS 1.3 classical →
+`CLASSICAL`, TLS 1.2 → `NOT_READY`, the key-exchange group and algorithm), `cert-chain-validate`
+on an in-memory CA + leaf, and every branch of `revocation-check`: a usable staple, a malformed
+staple that must fall through to the active check, OCSP and CRL answers, a leaf naming nothing,
+and the responder budget fired by hand on the `ManualScheduler` with a capturing `HTTPNIOSocket`
+— plus the `success` / `error-message` surface. `runtime/TlsEnumerationContextTest` (11) drives
+`enumerate-versions` (candidate set per toggle, best-first recording), `enumerate-ciphers` (the
+8-wide window is never exceeded, the toggles shrink the offer, the preference probe's `server` /
+`client` / `only-one-accepted` verdicts, and the ranking chain one handshake at a time) and
+`enumerate-groups`. `analysis/NetworkRevocationCheckerTest` (9) pins the OCSP → CRL fall-through,
+the timeout, exactly-once completion, and that a CRL is neither fetched nor trusted without the
+issuer. `runtime/FanoutTest` gained the `runBounded` window tests. What still needs a live server:
+the Bouncy Castle handshake bytes themselves and `tls-connect` over JSSE.
 
 ## Known deferrals
 

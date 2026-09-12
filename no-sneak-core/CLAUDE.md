@@ -32,6 +32,8 @@ backlog — evidence from versions, extensions and negotiated parameters. Full r
 | `src/main/java/io/xlogistx/nosneak/v2/PLAN.md` | **Start here.** v2 migration status, phase log, architecture decisions, and the running verification record |
 | `src/main/java/io/xlogistx/nosneak/v2/PROBE-CONFIG.md` | v2 reference: action library, candidate selection, bundled probes, result fields, tests, deferrals |
 | `PROBE-CONFIG.md` | Probe-authoring tutorial (written for v1; the DSL is unchanged in v2) |
+| `V1-V2-MERGE-ANALYSIS.md` | **Read before the merge.** Code-verified v1-vs-v2 comparison: verdict, per-subsystem ledgers, the 18 regressions to close before v1 is deleted, and the rename retarget list |
+
 | `ACTION-PLAN.md` | v1 history, the open-defect checklist, and the SSL-Labs parity backlog |
 | `README.md` | Module overview + the full scanner requirements document |
 
@@ -108,8 +110,8 @@ io.xlogistx.nosneak.v2
 ├── service/                Checker — REST /check-qdz/{domain}/{detailed}
 └── tools/                  DMTool · NoSneakUtil
 
-src/main/resources/v2/probes/   18 bundled probe definitions (becomes /probes/ at merge)
-src/test/java/io/xlogistx/nosneak/v2/   112 pure, no-network tests
+src/main/resources/v2/probes/   18 bundled + 2 unbundled probe definitions (becomes /probes/ at merge)
+src/test/java/io/xlogistx/nosneak/v2/   365 pure, no-network tests in 31 classes (2026-09-12)
 ```
 
 ## Build, test, verify
@@ -149,10 +151,12 @@ deliberately touch no sockets.
    with `ProbeDefinitionLoader.BUNDLED`; move `PLAN.md`/`PROBE-CONFIG.md` out of the source tree to
    the module root; repoint `src/test/resources/http_server_config.json` from
    `services.QDZChecker` to `v2.service.Checker`.
-5. **Smaller open items** — named-group enumeration (A12), active/network OCSP (only stapled is
-   implemented), weak-cipher candidates in the enumeration sweep, `DMTool`'s stale hardcoded Mongo
-   URL (C1), and the nmap parity list (UDP scan, timing templates, `--top-ports`, `-O`, the
-   Panama-FFM raw-socket layer for SYN scans and OS fingerprinting).
+5. **Smaller open items** — `DMTool`'s stale hardcoded Mongo URL (C1). The rest of the old list
+   is done: named-group enumeration, network OCSP + CRL, weak/insecure cipher candidates (now
+   per-probe toggles), UDP scan, timing templates, `--top-ports`; `-O` and raw SYN scans are
+   rejected by policy, not deferred. **The v1 parity pass is complete (2026-09-12, see
+   `V1-V2-MERGE-ANALYSIS.md` → *Status after the fix pass*)** — nothing v1 had is missing from v2,
+   so the merge is now only the deletion/rename described there.
 
 > **Host discovery is no longer nmap's gap (2026-07-29).** `no-sneak-core` depends on
 > **`no-sneak-net`**. An on-link CIDR goes through **`HostScanner.sweep()`** — the module's

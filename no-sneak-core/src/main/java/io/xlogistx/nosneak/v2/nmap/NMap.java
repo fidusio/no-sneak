@@ -7,13 +7,16 @@ import org.zoxweb.server.task.TaskUtil;
 import org.zoxweb.shared.io.SharedIOUtil;
 import org.zoxweb.shared.task.CallableConsumerTask;
 
-import java.nio.charset.StandardCharsets;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -24,23 +27,26 @@ import java.util.concurrent.TimeUnit;
  *
  * <pre>
  * Usage: NMap &lt;target...&gt; [options]
- *   target        host | IP | CIDR (10.0.0.0/24) | range (10.0.0.1-50)
- *   -p &lt;spec&gt;      ports: 22,80,443 or 1-1024; T:/U: prefixes  (default: common ports)
+ *   target        host | IP | CIDR (10.0.0.0/24) | range (10.0.0.1-50, 192.168.1-5.1-254) | a,b,c
+ *   -p &lt;spec&gt;      ports: 22,80,443 or 1-1024; T:/U: prefixes  (default: 1-1024)
  *   -sU           UDP scan (common UDP ports, or the U: half of -p); UDP-only unless T: ports given
  *   --top-ports N scan nmap's N most common TCP ports (max 100)
  *   --open        report only open ports
  *   -sV           probe scan: service/version/TLS/PQC on open ports
  *   --probes a,b  restrict the probe scan to named probes
- *   -Pn           skip host discovery (treat every target as up)
- *   -sn           discovery only (no port scan)
+ *   -Pn / -PN     skip host discovery (treat every target as up)
+ *   -sn / -sP     discovery only (no port scan)
  *   -PR           ARP/NDP discovery only (on-link; yields the remote MAC)
  *   -PE           ICMP-echo discovery only
  *   --no-icmp / --no-arp / --no-tcp-ping   turn one discovery method off
  *   --icmp-probes N   echo requests per host (pipelined; default 2)
- *   -T0..-T5      timing template (default T3 = 256 in flight, 2000/s, 5 s timeout)
- *   --max-inflight N / --max-rate N   rate limits (0 = unlimited)
- *   -t &lt;sec&gt;      per-connection timeout (default 5)
- *   -oN/-oX/-oG/-oJ/-oC &lt;file&gt;   write Normal/XML/Grepable/JSON/CSV
+ *   -n / -R       never / always reverse-resolve (default: live hosts only)
+ *   --dns-servers ip   resolver for the PTR lookups (default: the system resolver)
+ *   -T0..-T5, -T &lt;n|name&gt;   timing template (default T3 = 256 in flight, 2000/s, 5 s timeout)
+ *   --max-inflight N / --max-parallelism N / -P N / --max-rate N   rate limits (0 = unlimited)
+ *   -t &lt;sec&gt; / --timeout &lt;sec&gt;   per-connection timeout (default 5)
+ *   -v            verbose Normal output
+ *   -oN/-oX/-oG/-oJ/-oC &lt;file&gt;   write Normal/XML/Grepable/JSON/CSV ("-" = stdout)
  *   -oA &lt;base&gt;    write all formats to base.&lt;ext&gt;
  * </pre>
  * Raw and evasive scan types ({@code -sS -sF -sX -sN -sA -sW -sM}, {@code -O}, {@code --stealth})
@@ -49,10 +55,12 @@ import java.util.concurrent.TimeUnit;
  */
 public final class NMap {
 
-    public static final int[] DEFAULT_PORTS = {
-            21, 22, 23, 25, 53, 80, 110, 143, 443, 465, 587, 993, 995,
-            3306, 3389, 5432, 6379, 8080, 8443, 27017
-    };
+    /**
+     * The TCP ports scanned when {@code -p} is absent: {@code 1-1024}, nmap's classic
+     * well-known range and what the v1 scanner defaulted to. {@code --top-ports N} is the
+     * cheaper alternative when a thousand connects per host is too many.
+     */
+    public static final int[] DEFAULT_PORTS = range(1, 1024);
 
     /**
      * Scan types this tool will never implement, with the reason spelled out at the point of
@@ -62,7 +70,25 @@ public final class NMap {
     static final List<String> REJECTED_SCAN_FLAGS = List.of(
             "-sS", "-sF", "-sX", "-sN", "-sA", "-sW", "-sM", "-O", "--stealth");
 
+    /**
+     * Thrown by {@link #parseArgs} on {@code -h}/{@code --help}/{@code -?}: not an error, but
+     * the parse cannot continue. Its message is the usage text, so a caller that treats it like
+     * any other {@link IllegalArgumentException} still shows the right thing; {@link #main}
+     * prints it and exits 0.
+     */
+    public static final class HelpRequested extends IllegalArgumentException {
+        public HelpRequested() {
+            super(usageText());
+        }
+    }
+
     private NMap() {
+    }
+
+    private static int[] range(int from, int to) {
+        int[] out = new int[to - from + 1];
+        for (int i = 0; i < out.length; i++) out[i] = from + i;
+        return out;
     }
 
     /** The two halves of a {@code -p} spec: what {@code T:} named (or bare tokens) and what {@code U:} named. */
@@ -85,15 +111,16 @@ public final class NMap {
      * Parse a port spec with optional nmap-style protocol prefixes. A prefix applies to every
      * token after it until the next prefix; bare tokens are TCP. {@code "T:22,80,U:53,161"}
      * yields TCP {22, 80} and UDP {53, 161}. Ranges are clamped to 1..65535 before iterating,
-     * so {@code 1-2000000000} cannot look like a hang.
+     * so {@code 1-2000000000} cannot look like a hang. A port named twice ({@code 80,80} or
+     * {@code 22,20-25}) is scanned once, in first-seen order.
      */
     public static PortSpec parsePortSpec(String spec) {
-        List<Integer> tcp = new ArrayList<>();
-        List<Integer> udp = new ArrayList<>();
+        Set<Integer> tcp = new LinkedHashSet<>();
+        Set<Integer> udp = new LinkedHashSet<>();
         if (spec == null || spec.isEmpty()) {
             return new PortSpec(DEFAULT_PORTS.clone(), new int[0]);
         }
-        List<Integer> current = tcp;
+        Set<Integer> current = tcp;
         for (String token : spec.split(",")) {
             token = token.trim();
             if (token.isEmpty()) continue;
@@ -129,9 +156,10 @@ public final class NMap {
         return new PortSpec(toArray(tcp), toArray(udp));
     }
 
-    private static int[] toArray(List<Integer> ports) {
+    private static int[] toArray(Set<Integer> ports) {
         int[] out = new int[ports.size()];
-        for (int i = 0; i < out.length; i++) out[i] = ports.get(i);
+        int i = 0;
+        for (int p : ports) out[i++] = p;
         return out;
     }
 
@@ -153,6 +181,25 @@ public final class NMap {
                 + "Operating scope). Use the default TCP connect scan.";
     }
 
+    /**
+     * A timing template by digit ({@code 4}), by enum name ({@code T4}) or by nmap's word
+     * ({@code aggressive}): paranoid/sneaky/polite/normal/aggressive/insane = T0..T5.
+     */
+    public static NMapConfig.Timing timingOf(String value, String flag) {
+        String v = value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+        switch (v) {
+            case "0": case "t0": case "paranoid":   return NMapConfig.Timing.T0;
+            case "1": case "t1": case "sneaky":     return NMapConfig.Timing.T1;
+            case "2": case "t2": case "polite":     return NMapConfig.Timing.T2;
+            case "3": case "t3": case "normal":     return NMapConfig.Timing.T3;
+            case "4": case "t4": case "aggressive": return NMapConfig.Timing.T4;
+            case "5": case "t5": case "insane":     return NMapConfig.Timing.T5;
+            default:
+                throw new IllegalArgumentException(flag + " expects 0..5 or "
+                        + "paranoid|sneaky|polite|normal|aggressive|insane, got '" + value + "'");
+        }
+    }
+
     private static int port(String token, String spec) {
         try {
             return Integer.parseInt(token.trim());
@@ -171,7 +218,10 @@ public final class NMap {
     }
 
     private static int intArg(String[] args, int i, String flag) {
-        String v = argOf(args, i, flag);
+        return intOf(argOf(args, i, flag), flag);
+    }
+
+    private static int intOf(String v, String flag) {
         try {
             return Integer.parseInt(v.trim());
         } catch (NumberFormatException e) {
@@ -201,21 +251,29 @@ public final class NMap {
                 case "--top-ports":    cfg.ports(topPorts(intArg(args, ++i, a))); tcpSpecified = true; break;
                 case "-sU":            cfg.udpScan(true); break;
                 case "--open":         cfg.openOnly(true); break;
-                case "-T0": case "-T1": case "-T2": case "-T3": case "-T4": case "-T5":
-                    cfg.timing(NMapConfig.Timing.valueOf(a.substring(1))); break;
+                case "-T":             cfg.timing(timingOf(argOf(args, ++i, a), a)); break;
                 case "-sV":            cfg.probeScan(true); break;
                 case "--probes":       for (String n : argOf(args, ++i, a).split(",")) cfg.probe(n.trim()); break;
-                case "-Pn":            cfg.discovery(false); break;
-                case "-sn":            discoveryOnly = true; break;
+                case "-Pn": case "-PN": cfg.discovery(false); break;
+                case "-sn": case "-sP": discoveryOnly = true; break;
                 case "--no-icmp":      cfg.discoveryIcmp(false); break;
                 case "--no-arp":       cfg.discoveryArp(false); break;
                 case "--no-tcp-ping":  cfg.discoveryTcp(false); break;
                 case "-PR":            cfg.discoveryTcp(false).discoveryIcmp(false).discoveryArp(true); break;
                 case "-PE":            cfg.discoveryTcp(false).discoveryArp(false).discoveryIcmp(true); break;
                 case "--icmp-probes":  cfg.icmpProbes(intArg(args, ++i, a)); break;
-                case "--max-inflight": cfg.maxInFlight = intArg(args, ++i, a); break;
+                case "-n":             cfg.reverseDns(NMapConfig.ReverseDns.NEVER); break;
+                case "-R":             cfg.reverseDns(NMapConfig.ReverseDns.ALL); break;
+                case "--dns-servers":  cfg.dnsServer(argOf(args, ++i, a).split(",")[0].trim()); break;
+                case "--max-inflight": case "--max-parallelism": case "-P":
+                                       cfg.maxInFlight = intArg(args, ++i, a); break;
                 case "--max-rate":     cfg.maxPerSec = intArg(args, ++i, a); break;
-                case "-t":             cfg.timeoutInSec(intArg(args, ++i, a)); break;
+                case "-t": case "--timeout":
+                                       cfg.timeoutInSec(intArg(args, ++i, a)); break;
+                case "-v": case "--verbose":
+                                       cfg.verbose(true); break;
+                case "-h": case "--help": case "-?":
+                                       throw new HelpRequested();
                 case "-oN":            outputs.put(OutputFormat.NORMAL, argOf(args, ++i, a)); break;
                 case "-oX":            outputs.put(OutputFormat.XML, argOf(args, ++i, a)); break;
                 case "-oG":            outputs.put(OutputFormat.GREPABLE, argOf(args, ++i, a)); break;
@@ -229,10 +287,32 @@ public final class NMap {
                     break;
                 }
                 default:
-                    if (a.startsWith("-")) {
+                    if (a.startsWith("-p") && a.length() > 2) {
+                        // attached form: -p22,80 / -p1-1024 / -pT:22,U:53
+                        PortSpec spec = parsePortSpec(a.substring(2));
+                        cfg.ports(spec.tcp());
+                        tcpSpecified = spec.tcp().length > 0;
+                        if (spec.udp().length > 0) {
+                            cfg.udpPorts(spec.udp());
+                        }
+                    } else if (a.startsWith("-T") && a.length() > 2) {
+                        cfg.timing(timingOf(a.substring(2), "-T"));       // -T4, -Taggressive
+                    } else if (a.startsWith("host=")) {
+                        cfg.target(a.substring("host=".length()));         // v1 legacy key=value
+                    } else if (a.startsWith("range=")) {
+                        String[] lh = a.substring("range=".length()).split(",");
+                        if (lh.length != 2) {
+                            throw new IllegalArgumentException("range= expects two ports, range=<from>,<to>");
+                        }
+                        cfg.ports(parsePortSpec(intOf(lh[0], "range=") + "-" + intOf(lh[1], "range=")).tcp());
+                        tcpSpecified = true;
+                    } else if (a.startsWith("timeout=")) {
+                        cfg.timeoutInSec(intOf(a.substring("timeout=".length()), "timeout="));
+                    } else if (a.startsWith("-")) {
                         throw new IllegalArgumentException("unknown option: " + a);
+                    } else {
+                        cfg.target(a);
                     }
-                    cfg.target(a);
             }
         }
         if (cfg.targets.isEmpty()) {
@@ -280,7 +360,7 @@ public final class NMap {
         }
         // The hidden cancel hook is stripped before parsing so it never reaches the config.
         long cancelAfterMs = -1;
-        java.util.List<String> kept = new java.util.ArrayList<>();
+        List<String> kept = new ArrayList<>();
         for (int i = 0; i < args.length; i++) {
             if (CANCEL_AFTER_FLAG.equals(args[i]) && i + 1 < args.length) {
                 cancelAfterMs = Long.parseLong(args[++i]);
@@ -293,6 +373,10 @@ public final class NMap {
         Map<OutputFormat, String> outputs = new LinkedHashMap<>();
         try {
             cfg = parseArgs(outputs, args);
+        } catch (HelpRequested h) {
+            usage();
+            System.exit(0);
+            return;
         } catch (IllegalArgumentException e) {
             System.err.println(e.getMessage());
             usage();
@@ -348,9 +432,17 @@ public final class NMap {
 
             System.out.print(new NormalFormatter().render(report)); // console = normal
             for (Map.Entry<OutputFormat, String> e : outputs.entrySet()) {
-                try {
-                    String content = OutputFormat.formatter(e.getKey()).render(report);
-                    Files.write(Paths.get(e.getValue()), content.getBytes(StandardCharsets.UTF_8));
+                if ("-".equals(e.getValue())) { // nmap convention: "-" means stdout
+                    try {
+                        OutputFormat.formatter(e.getKey()).formatTo(report, System.out);
+                    } catch (Exception w) {
+                        System.err.println("Failed writing " + e.getKey() + " to stdout: " + w.getMessage());
+                        exitCode = 1;
+                    }
+                    continue;
+                }
+                try (OutputStream out = Files.newOutputStream(Paths.get(e.getValue()))) {
+                    OutputFormat.formatter(e.getKey()).formatTo(report, out);
                     System.out.println("Wrote " + e.getKey() + " -> " + e.getValue());
                 } catch (Exception w) {
                     System.err.println("Failed writing " + e.getValue() + ": " + w.getMessage());
@@ -380,10 +472,11 @@ public final class NMap {
     public static long maxWaitMs(NMapConfig cfg) {
         int hosts = Math.max(1, NMapScanner.expand(cfg.targets).size());
         // A silent UDP port costs the full timeout (one retransmit inside it), like a filtered
-        // TCP port, so UDP ports are units of the same size.
+        // TCP port, so UDP ports are units of the same size. The PTR lookup is one more unit
+        // per host.
         int ports = (cfg.ports != null ? cfg.ports.length : DEFAULT_PORTS.length)
                 + (cfg.udpPorts != null ? cfg.udpPorts.length : 0)
-                + NMapScanner.DEFAULT_DISCOVERY_PORTS.length + 1;
+                + NMapScanner.DEFAULT_DISCOVERY_PORTS.length + 2;
         long units = (long) hosts * ports * (cfg.probeScan ? 2 : 1);
         long par = cfg.maxInFlight > 0 ? cfg.maxInFlight : 64;
         long waves = units / par + 1;
@@ -396,8 +489,10 @@ public final class NMap {
     public static String usageText() {
         return """
                 Usage: NMap <target...> [options]
-                  target         host | IP | CIDR (10.0.0.0/24) | range (10.0.0.1-50)
-                  -p <spec>      ports: 22,80,443 or 1-1024 (default: common ports)
+                  target         host | IP | CIDR (10.0.0.0/24) | range (10.0.0.1-50, 10.0.0.1-10.0.1.9,
+                                 192.168.1-5.1-254) | comma-separated list (10.0.0.1,10.0.0.5,example.com)
+                                 (expansion is capped at 65536 addresses per spec, with a warning)
+                  -p <spec>      ports: 22,80,443 or 1-1024 (default: 1-1024); -p22,80 also accepted
                                  T:/U: prefixes accepted (T:22,80,U:53); U: ports get a UDP probe
                   -sU            UDP scan: common UDP ports, or the U: ports of -p; UDP-only unless
                                  T: ports or --top-ports are named too (open / closed / open|filtered)
@@ -405,19 +500,26 @@ public final class NMap {
                   --open         report only open ports
                   -sV            probe scan: service/version/TLS/PQC on open ports
                   --probes a,b   restrict probe scan to named probes
-                  -Pn            skip host discovery (all targets up)
-                  -sn            discovery only (no port scan)
+                  -Pn / -PN      skip host discovery (all targets up)
+                  -sn / -sP      discovery only (no port scan)
                   -PR            ARP/NDP discovery only (on-link; yields remote MAC)
                   -PE            ICMP-echo discovery only
                   --no-icmp / --no-arp / --no-tcp-ping   turn one method off
                   --icmp-probes N   echo requests per host (pipelined; default 2)
+                  -n / -R        never / always reverse-resolve hostnames (default: live hosts only)
+                  --dns-servers <ip>   resolver for the PTR lookups (default: system resolver, else 8.8.8.8)
                   -T0..-T5       timing template: in-flight / per-second / timeout
+                                 also -T <n>, -T4, -T aggressive (paranoid|sneaky|polite|normal|aggressive|insane)
                                  T0 1/1/15s  T1 4/10/15s  T2 16/50/10s  T3 256/2000/5s (default)
                                  T4 512/5000/3s  T5 1024/10000/2s
-                  --max-inflight N / --max-rate N   rate limits (default 256 / 2000; 0 = unlimited)
-                  -t <sec>       per-connection timeout (default 5)
-                  -oN/-oX/-oG/-oJ/-oC <file>   write Normal/XML/Grepable/JSON/CSV
+                  --max-inflight N / --max-parallelism N / -P N   concurrent-connection cap (default 256; 0 = unlimited)
+                  --max-rate N   new connections per second (default 2000; 0 = unlimited)
+                  -t <sec> / --timeout <sec>   per-connection timeout (default 5)
+                  -v / --verbose run header and per-host scanned-port counts in Normal output
+                  -h / --help    this text
+                  -oN/-oX/-oG/-oJ/-oC <file>   write Normal/XML/Grepable/JSON/CSV ("-" = stdout)
                   -oA <base>     write all formats to base.<ext>
+                  legacy (v1):   host=<target>  range=<from>,<to>  timeout=<sec>
                 Not supported, by design: -sS -sF -sX -sN -sA -sW -sM -O --stealth
                   (assessment-only tooling: TCP connect scan, no raw or evasive scans)""";
     }

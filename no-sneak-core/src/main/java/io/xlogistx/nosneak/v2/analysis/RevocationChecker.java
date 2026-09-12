@@ -38,6 +38,9 @@ public final class RevocationChecker {
     public static final String METHOD_CRL = "crl";
     public static final String METHOD_NONE = "none";
 
+    /** The message behind an {@code UNKNOWN}/{@code crl} for a chain that carried no issuer. */
+    public static final String ISSUER_NOT_PRESENTED = "CRL not verifiable: issuer certificate not presented";
+
     private RevocationChecker() {
     }
 
@@ -55,8 +58,10 @@ public final class RevocationChecker {
     }
 
     /**
-     * Look the leaf up in a DER-encoded CRL. When the issuer is supplied the CRL signature is
-     * verified first; a CRL that does not verify is reported as {@code UNKNOWN}, never as GOOD.
+     * Look the leaf up in a DER-encoded CRL. The CRL signature is verified against the issuer
+     * first; a CRL that does not verify — or that cannot be verified because the server presented
+     * no issuer certificate — is reported as {@code UNKNOWN}, never as GOOD: an unverified CRL
+     * that omits the serial proves nothing.
      */
     public static RevocationResult fromCRL(byte[] crlDer, X509Certificate leaf, X509Certificate issuer) {
         if (crlDer == null || crlDer.length == 0) {
@@ -65,16 +70,17 @@ public final class RevocationChecker {
         if (leaf == null) {
             return RevocationResult.error(METHOD_CRL, "No leaf certificate to look up");
         }
+        if (issuer == null) {
+            return RevocationResult.unknown(METHOD_CRL, ISSUER_NOT_PRESENTED);
+        }
         try {
             CertificateFactory cf = CertificateFactory.getInstance("X.509");
             X509CRL crl = (X509CRL) cf.generateCRL(new ByteArrayInputStream(crlDer));
-            if (issuer != null) {
-                try {
-                    crl.verify(issuer.getPublicKey());
-                } catch (Exception e) {
-                    return RevocationResult.unknown(METHOD_CRL, "CRL signature does not verify against the issuer: "
-                            + e.getMessage());
-                }
+            try {
+                crl.verify(issuer.getPublicKey());
+            } catch (Exception e) {
+                return RevocationResult.unknown(METHOD_CRL, "CRL signature does not verify against the issuer: "
+                        + e.getMessage());
             }
             Date next = crl.getNextUpdate();
             if (next != null && next.before(new Date())) {

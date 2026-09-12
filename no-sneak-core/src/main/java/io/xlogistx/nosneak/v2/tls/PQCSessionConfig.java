@@ -28,13 +28,10 @@ public class PQCSessionConfig implements CloseableType {
     // Network channel
     public volatile SocketChannel channel;
 
-    // Buffers for NIO <-> BC TLS bridge
-    // Incoming encrypted data from network
+    // Buffer for the NIO <-> BC TLS bridge: incoming encrypted data from the network. (The
+    // outbound and application-data buffers that used to sit beside it were never read: BC's
+    // non-blocking protocol hands bytes out through readOutput/readInput into caller arrays.)
     public volatile ByteBuffer inNetData;
-    // Outgoing encrypted data to network
-    public volatile ByteBuffer outNetData;
-    // Decrypted application data
-    public volatile ByteBuffer inAppData;
 
     // State machine reference
     public volatile PQCConnectionHelper connectionHelper;
@@ -57,22 +54,19 @@ public class PQCSessionConfig implements CloseableType {
     public PQCSessionConfig(InetSocketAddress hostname, boolean classicalOnly) {
         this.hostname = hostname;
         this.classicalOnly = classicalOnly;
-        // Allocate buffers - 16KB is standard TLS record size
+        // 16KB is the standard TLS record size
         this.inNetData = ByteBufferUtil.allocateByteBuffer(SharedIOUtil.K_16);
-        this.outNetData = ByteBufferUtil.allocateByteBuffer(SharedIOUtil.K_16);
-        this.inAppData = ByteBufferUtil.allocateByteBuffer(SharedIOUtil.K_16);
 
         closeableDelegate.setDelegate(()->{
             if (tlsProtocol != null) {
                 try {
                     tlsProtocol.close();
-                } catch (Exception ignored) {
-                    ignored.printStackTrace();
+                } catch (Exception e) {
+                    if (log.isEnabled()) log.getLogger().info("tlsProtocol close for " + hostname + ": " + e);
                 }
             }
             SharedIOUtil.close(channel);
-            ByteBufferUtil.cache(inNetData, outNetData, inAppData);
-
+            ByteBufferUtil.cache(inNetData);
 
             if (log.isEnabled()) log.getLogger().info("PQCSessionConfig closed for " + hostname);
         });

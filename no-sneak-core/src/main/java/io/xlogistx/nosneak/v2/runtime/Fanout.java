@@ -6,6 +6,7 @@ import org.zoxweb.server.fsm.Trigger;
 import org.zoxweb.server.fsm.TriggerConsumer;
 import java.util.List;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
@@ -58,6 +59,54 @@ public final class Fanout {
         for (int i = 0; i < n; i++) {
             sm.publish(new Trigger<Void>(sm, "go-" + i, st, null));
         }
+    }
+
+    /**
+     * {@link #run} with at most {@code maxInFlight} children started at once. The first window
+     * is dispatched in parallel exactly as {@code run} does; each child's {@code childDone()}
+     * then admits the next unstarted child, dispatched through the same trigger machinery on the
+     * same executor, until every child has run. {@code onAllDone} fires once all have finished.
+     * This is the launcher a deep TLS probe uses against a single host: it keeps the number of
+     * simultaneous handshakes at one peer bounded without any thread ever waiting for a slot.
+     * A {@code maxInFlight <= 0} means no window (plain {@code run}).
+     */
+    public static void runBounded(List<Consumer<ParallelJoin>> children, int maxInFlight,
+                                  Runnable onAllDone, Executor executor) {
+        int n = children == null ? 0 : children.size();
+        if (maxInFlight <= 0 || maxInFlight >= n) {
+            run(children, onAllDone, executor);
+            return;
+        }
+        ParallelJoin all = new ParallelJoin(n, onAllDone);
+        AtomicInteger next = new AtomicInteger(maxInFlight);
+        List<Consumer<ParallelJoin>> window = new java.util.ArrayList<>(maxInFlight);
+        for (int i = 0; i < maxInFlight; i++) {
+            window.add(admitting(children, i, next, all, executor));
+        }
+        run(window, null, executor);
+    }
+
+    /**
+     * Child {@code i} wrapped so that its completion counts once on the overall barrier and then
+     * dispatches the next unstarted child. Each wrapped child gets its own one-shot join, so a
+     * child that (wrongly) reports done twice still admits exactly one successor.
+     */
+    private static Consumer<ParallelJoin> admitting(List<Consumer<ParallelJoin>> children, int i,
+                                                    AtomicInteger next, ParallelJoin all, Executor executor) {
+        return ignored -> {
+            ParallelJoin one = new ParallelJoin(1, () -> {
+                all.childDone();
+                int j = next.getAndIncrement();
+                if (j < children.size()) {
+                    run(List.of(admitting(children, j, next, all, executor)), null, executor);
+                }
+            });
+            try {
+                children.get(i).accept(one);
+            } catch (RuntimeException e) {
+                one.childDone(); // a child that throws before arming its callback still finishes
+            }
+        };
     }
 
     @SuppressWarnings({"rawtypes", "unchecked"})

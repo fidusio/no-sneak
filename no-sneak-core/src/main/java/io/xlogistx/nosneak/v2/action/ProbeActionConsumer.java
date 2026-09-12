@@ -35,6 +35,9 @@ public class ProbeActionConsumer extends TriggerConsumer<ProbeContext> {
         try {
             action.execute(context, state);
         } catch (Exception e) {
+            // Remembered so the terminal result can say what went wrong (error-message), not
+            // only that the "error" outcome was taken.
+            context.noteFailure(action.name() + ": " + e);
             context.fire("error");
         }
     }

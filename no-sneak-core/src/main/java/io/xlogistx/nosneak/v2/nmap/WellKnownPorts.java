@@ -6,6 +6,11 @@ import java.util.Map;
 /**
  * Well-known port → service-name table (fallback when no probe identifies the service) plus
  * nmap-style top-ports lists for {@code --top-ports}.
+ * <p>
+ * This is the <b>one</b> service-name table in v2: the nmap renderers and the probe engine's
+ * fallback label ({@code ProbeChecker}) both read it, so a port cannot be "domain" in one
+ * report and "dns" in another. Transport-aware — {@code 53/tcp} and {@code 53/udp} are looked
+ * up in different maps, and {@code 520/udp} (route) has no TCP twin.
  */
 public final class WellKnownPorts {
 
@@ -35,7 +40,8 @@ public final class WellKnownPorts {
         TCP.put(111, "rpcbind"); TCP.put(135, "msrpc"); TCP.put(139, "netbios-ssn");
         TCP.put(143, "imap"); TCP.put(443, "https"); TCP.put(445, "microsoft-ds");
         TCP.put(465, "smtps"); TCP.put(587, "submission"); TCP.put(993, "imaps");
-        TCP.put(995, "pop3s"); TCP.put(1433, "ms-sql-s"); TCP.put(1723, "pptp");
+        TCP.put(995, "pop3s"); TCP.put(1433, "ms-sql-s"); TCP.put(1521, "oracle");
+        TCP.put(1723, "pptp");
         TCP.put(3306, "mysql"); TCP.put(3389, "ms-wbt-server"); TCP.put(5432, "postgresql");
         TCP.put(5900, "vnc"); TCP.put(6379, "redis"); TCP.put(8080, "http-proxy");
         TCP.put(8443, "https-alt"); TCP.put(27017, "mongodb"); TCP.put(9200, "elasticsearch");
@@ -44,7 +50,8 @@ public final class WellKnownPorts {
         UDP.put(53, "domain"); UDP.put(67, "dhcps"); UDP.put(68, "dhcpc"); UDP.put(69, "tftp");
         UDP.put(123, "ntp"); UDP.put(137, "netbios-ns"); UDP.put(138, "netbios-dgm");
         UDP.put(161, "snmp"); UDP.put(162, "snmptrap"); UDP.put(500, "isakmp");
-        UDP.put(514, "syslog"); UDP.put(1900, "upnp"); UDP.put(5353, "mdns");
+        UDP.put(514, "syslog"); UDP.put(520, "route"); UDP.put(1900, "upnp");
+        UDP.put(5353, "mdns");
     }
 
     private WellKnownPorts() {
@@ -52,8 +59,18 @@ public final class WellKnownPorts {
 
     /** Service name for {@code port}/{@code protocol}, or {@code "unknown"}. */
     public static String name(int port, String protocol) {
+        String n = lookup(port, protocol);
+        return n != null ? n : "unknown";
+    }
+
+    /**
+     * Service name for {@code port}/{@code protocol}, or {@code null} when the table has no
+     * entry — for callers that record "no name" as an absent fact rather than the word
+     * "unknown". A null or unrecognised protocol is looked up as TCP.
+     */
+    public static String lookup(int port, String protocol) {
         Map<Integer, String> m = "udp".equalsIgnoreCase(protocol) ? UDP : TCP;
-        return m.getOrDefault(port, "unknown");
+        return m.get(port);
     }
 
     /** First {@code n} top TCP ports. */

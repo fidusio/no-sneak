@@ -25,6 +25,10 @@ public class ProbeDefinition {
     // imaps-pqc) so they can't mislabel an arbitrary TLS service (Postgres-over-TLS, etc.).
     private boolean portScoped = false;
     private String start;       // id of the initial state
+    // Overall watchdog for one run of this probe, in seconds. Null = the engine's formula,
+    // max(4 x per-step timeout, 30 s). A deep scan (handshake + versions + ciphers + groups +
+    // revocation) declares its own budget rather than inheriting a ceiling meant for a banner grab.
+    private Integer overallTimeoutSec;
     private Map<String, ProbeState> states;
 
     public String getName() {
@@ -57,6 +61,11 @@ public class ProbeDefinition {
 
     public String getStart() {
         return start;
+    }
+
+    /** Overall watchdog for a run of this probe, in seconds; null = {@code max(4 x timeout, 30)}. */
+    public Integer getOverallTimeoutSec() {
+        return overallTimeoutSec;
     }
 
     public Map<String, ProbeState> getStates() {

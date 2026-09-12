@@ -2,6 +2,7 @@ package io.xlogistx.nosneak.v2.nmap;
 
 import io.xlogistx.nosneak.v2.grade.Grade;
 import org.zoxweb.shared.util.NVBoolean;
+import org.zoxweb.shared.util.NVDouble;
 import org.zoxweb.shared.util.NVGenericMap;
 import org.zoxweb.shared.util.NVGenericMapList;
 import org.zoxweb.shared.util.NVInt;
@@ -10,15 +11,33 @@ import org.zoxweb.shared.util.NVStringList;
 import java.util.Map;
 import io.xlogistx.nosneak.v2.result.ProbeResult;
 
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Result of a staged {@link NMapScanner} run: run-level metadata plus one {@link HostReport} per
- * target (up/down, discovery reason, MAC, OS guess) and, for live hosts, the per-port scan +
- * optional probe identification. Embeddable — the output formatters render this model.
+ * target (up/down, discovery reason, MAC, reverse-DNS name, per-host timing) and, for live
+ * hosts, the per-port scan + optional probe identification. Embeddable — the output formatters
+ * render this model.
+ * <p>
+ * There is no OS guess and no per-port TTL here, on purpose: OS fingerprinting is refused by
+ * policy ({@code -O} is rejected at parse time) and a connect scan has no TTL source, so the
+ * fields that once existed for them were never assigned and have been removed.
  */
 public final class ScanReport {
+
+    /** What the XML and grepable renderers name as the scanner. */
+    public static final String SCANNER = "nosneak";
+    /** The scanner version those renderers emit. */
+    public static final String VERSION = "2.0";
+
+    /** nmap's own timestamp shape ({@code Fri Sep 12 09:35:51 2026}), in the local zone. */
+    private static final DateTimeFormatter NMAP_TIME =
+            DateTimeFormatter.ofPattern("EEE MMM d HH:mm:ss yyyy", Locale.US);
 
     public volatile long startTimeMs;
     public volatile long endTimeMs;
@@ -44,14 +63,22 @@ public final class ScanReport {
      * lost on the way out. Hidden port states ({@code --open}, or the collapse past
      * {@link RenderSelection#COLLAPSE_THRESHOLD}) are reported under {@code notShown} so a
      * consumer can tell "no closed ports" from "closed ports were not listed".
+     * <p>
+     * Times appear twice: as epoch milliseconds ({@code startTimeMs}, {@code durationMs}) for
+     * arithmetic and as ISO-8601 UTC strings ({@code startTime}, {@code endTime}) plus
+     * {@code durationSec} for reading.
      */
     public NVGenericMap toNVGenericMap() {
         NVGenericMap m = new NVGenericMap("ScanReport");
         m.add("scanner", "XNMap");
         m.add(new NVLong("startTimeMs", startTimeMs));
+        m.add("startTime", isoTime(startTimeMs));
+        m.add("endTime", isoTime(endTimeMs));
         m.add(new NVLong("durationMs", durationMs()));
+        m.add(new NVDouble("durationSec", durationMs() / 1000.0));
         m.add(new NVInt("targets", hosts.size()));
         m.add(new NVInt("up", hostsUp()));
+        m.add(new NVInt("hostsDown", hostsDown()));
         if (commandLine != null) {
             m.add("command", commandLine);
         }
@@ -73,20 +100,54 @@ public final class ScanReport {
         return n;
     }
 
+    public int hostsDown() {
+        return hosts.size() - hostsUp();
+    }
+
     public long durationMs() {
         return endTimeMs >= startTimeMs ? endTimeMs - startTimeMs : 0;
+    }
+
+    /** The run's duration in seconds, as nmap prints it ({@code 2.50}). */
+    public double durationSec() {
+        return durationMs() / 1000.0;
+    }
+
+    /** ISO-8601 in UTC ({@code 2026-09-12T16:35:51Z}); zone-independent, so a stored report reads the same everywhere. */
+    public static String isoTime(long epochMs) {
+        return Instant.ofEpochMilli(epochMs).toString();
+    }
+
+    /** nmap's {@code startstr}/{@code timestr} shape in the local zone ({@code Fri Sep 12 09:35:51 2026}). */
+    public static String nmapTime(long epochMs) {
+        return NMAP_TIME.format(Instant.ofEpochMilli(epochMs).atZone(ZoneId.systemDefault()));
+    }
+
+    /**
+     * nmap's closing summary: {@code NoSneak done at <time>; N IP addresses (M hosts up) scanned
+     * in X.XX seconds}. Shared by the XML {@code finished summary} and the grepable footer.
+     */
+    public String summary() {
+        int total = hosts.size();
+        int up = hostsUp();
+        return "NoSneak done at " + nmapTime(endTimeMs) + "; " + total + " IP address"
+                + (total == 1 ? "" : "es") + " (" + up + " host" + (up == 1 ? "" : "s")
+                + " up) scanned in " + String.format(Locale.US, "%.2f", durationSec()) + " seconds";
     }
 
     public static final class HostReport {
         public final String host;
         public volatile String ip;
+        /** Reverse-DNS (PTR) name, when the lookup ran and answered; see {@link ReverseDnsCallback}. */
         public volatile String hostname;
         public volatile boolean up;
-        public volatile String reason;    // syn-ack / conn-refused / arp-reply / icmp-echo
+        public volatile String reason;    // tcp-ping / conn-refused / arp-reply / icmp-echo / no-response
         public volatile String mac;
         public volatile long latencyMs = -1;
-        public volatile String osGuess;   // best-effort OS from open ports/services
-        public volatile int osAccuracy;   // 0..100
+        /** When this host's first scan unit was launched (epoch ms); {@code 0} until then. */
+        public volatile long startTimeMs;
+        /** When the last stage that touched this host finished (epoch ms); {@code 0} until then. */
+        public volatile long endTimeMs;
         public final List<PortReport> ports = new ArrayList<>();
 
         public HostReport(String host) {
@@ -103,10 +164,13 @@ public final class ScanReport {
             if (reason != null) m.add("reason", reason);
             if (mac != null) m.add("mac", mac);
             if (latencyMs >= 0) m.add(new NVLong("latencyMs", latencyMs));
-            if (osGuess != null) {
-                m.add("osGuess", osGuess);
-                m.add(new NVInt("osAccuracy", osAccuracy));
-            }
+            if (startTimeMs > 0) m.add("startTime", isoTime(startTimeMs));
+            if (endTimeMs > 0) m.add("endTime", isoTime(endTimeMs));
+            NVGenericMap stats = new NVGenericMap("portStats");
+            stats.add(new NVInt("open", countState(PortState.OPEN)));
+            stats.add(new NVInt("closed", countState(PortState.CLOSED)));
+            stats.add(new NVInt("filtered", countState(PortState.FILTERED)));
+            m.add(stats);
             RenderSelection sel = portsToRender(cfg);
             if (!sel.hidden.isEmpty()) {
                 NVGenericMap hidden = new NVGenericMap("notShown");
@@ -134,6 +198,13 @@ public final class ScanReport {
         public int countState(PortState s) {
             int n = 0;
             for (PortReport p : ports) if (p.state == s) n++;
+            return n;
+        }
+
+        /** Ports of one protocol ({@code "tcp"}/{@code "udp"}) recorded for this host. */
+        public int countProtocol(String protocol) {
+            int n = 0;
+            for (PortReport p : ports) if (protocol.equalsIgnoreCase(p.protocol)) n++;
             return n;
         }
 
@@ -226,9 +297,8 @@ public final class ScanReport {
         public final int port;
         public volatile String protocol = "tcp";
         public volatile PortState state;
-        public volatile String reason;    // syn-ack / conn-refused / no-response / udp-response
+        public volatile String reason;    // connected / conn-refused / no-response / udp-response
         public volatile long rttMs = -1;
-        public volatile int ttl = -1;
         public volatile String banner;
         public volatile ProbeResult probe; // service/version/TLS identification if probed
 
@@ -253,7 +323,6 @@ public final class ScanReport {
             m.add("state", state.label());
             if (reason != null) m.add("reason", reason);
             if (rttMs >= 0) m.add(new NVLong("rttMs", rttMs));
-            if (ttl >= 0) m.add(new NVInt("ttl", ttl));
             String service = serviceName();
             if (service != null) m.add("service", service);
             if (banner != null && !banner.isEmpty()) m.add("banner", banner);

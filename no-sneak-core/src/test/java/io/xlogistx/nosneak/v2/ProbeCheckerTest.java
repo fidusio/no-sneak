@@ -200,7 +200,9 @@ public class ProbeCheckerTest {
         c.check("127.0.0.1", 53, "tcp", new CallableConsumerTask<ProbeResult>().setConsumer(got::add));
         assertEquals(1, got.size());
         assertFalse(got.get(0).isComplete());
-        assertEquals("dns", got.get(0).getService());
+        // The fallback label comes from the one service table (nmap's WellKnownPorts), which
+        // uses the IANA name for 53/tcp; the checker's private "dns" map is gone.
+        assertEquals("domain", got.get(0).getService());
         assertEquals("", got.get(0).getServiceFact("probes-tried") == null ? "" : got.get(0).getServiceFact("probes-tried"));
         assertEquals(1, tx.connections.size(), "only the first checker opened a connection");
     }

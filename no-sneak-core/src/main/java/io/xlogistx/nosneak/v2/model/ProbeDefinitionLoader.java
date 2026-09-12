@@ -131,8 +131,9 @@ public final class ProbeDefinitionLoader {
 
     /**
      * Structural validation of a loaded definition: start state present, every
-     * transition target resolvable, every action known, and at least one
-     * terminal state reachable from start.
+     * transition target resolvable, every action known, at least one terminal state
+     * reachable from start, and every declared budget ({@code overallTimeoutSec},
+     * {@code maxInFlight}, {@code revocationTimeoutMs}) positive.
      */
     public static void validate(ProbeDefinition def, String source) {
         if (def == null) {
@@ -150,6 +151,10 @@ public final class ProbeDefinitionLoader {
             throw new IllegalArgumentException("Probe " + def.getName()
                     + " start state '" + start + "' is not defined");
         }
+        if (def.getOverallTimeoutSec() != null && def.getOverallTimeoutSec() <= 0) {
+            throw new IllegalArgumentException("Probe " + def.getName()
+                    + " overallTimeoutSec must be > 0, got " + def.getOverallTimeoutSec());
+        }
 
         for (Map.Entry<String, ProbeState> e : states.entrySet()) {
             String id = e.getKey();
@@ -158,6 +163,14 @@ public final class ProbeDefinitionLoader {
             if (action == null || !KNOWN_ACTIONS.contains(action)) {
                 throw new IllegalArgumentException("Probe " + def.getName() + " state '" + id
                         + "' has unknown action '" + action + "'");
+            }
+            if (st.getMaxInFlight() != null && st.getMaxInFlight() <= 0) {
+                throw new IllegalArgumentException("Probe " + def.getName() + " state '" + id
+                        + "' maxInFlight must be > 0, got " + st.getMaxInFlight());
+            }
+            if (st.getRevocationTimeoutMs() != null && st.getRevocationTimeoutMs() <= 0) {
+                throw new IllegalArgumentException("Probe " + def.getName() + " state '" + id
+                        + "' revocationTimeoutMs must be > 0, got " + st.getRevocationTimeoutMs());
             }
             if (st.getOn() != null) {
                 for (Map.Entry<String, String> t : st.getOn().entrySet()) {

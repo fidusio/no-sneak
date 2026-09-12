@@ -168,6 +168,20 @@ public class RevocationCheckerTest {
         assertTrue(r.getErrorMessage().contains("signature"));
     }
 
+    /**
+     * A chain of one: the server sent no issuer, so the CRL's signature cannot be checked. It
+     * used to read GOOD whenever the serial was absent — an unverified CRL proves nothing.
+     */
+    @Test
+    public void aCrlWithoutTheIssuerIsUnknownNeverGood() throws Exception {
+        RevocationResult r = RevocationChecker.fromCRL(crl(false, false), leaf, null);
+        assertEquals(RevocationStatus.UNKNOWN, r.getStatus());
+        assertEquals(RevocationChecker.METHOD_CRL, r.getMethod());
+        assertEquals(RevocationChecker.ISSUER_NOT_PRESENTED, r.getErrorMessage());
+        // Even a CRL that does list the leaf is not trusted unverified: still UNKNOWN, not REVOKED.
+        assertEquals(RevocationStatus.UNKNOWN, RevocationChecker.fromCRL(crl(true, false), leaf, null).getStatus());
+    }
+
     @Test
     public void reasonCodesMapToTheJdkNames() {
         assertEquals("KEY_COMPROMISE", RevocationChecker.reasonName(1));

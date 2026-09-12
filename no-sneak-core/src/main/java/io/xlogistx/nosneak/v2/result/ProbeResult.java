@@ -26,13 +26,20 @@ public class ProbeResult {
         STARTTLS_UPGRADED   // plaintext session upgraded to TLS mid-stream (e.g. 25 STARTTLS)
     }
 
-    /** Post-quantum readiness classification of the negotiated key exchange. */
+    /**
+     * Post-quantum readiness of the negotiated key exchange, as observed by {@code pqc-check}.
+     * The four values are the ones v1 distinguished (READY / PARTIAL / NOT_READY / ERROR), named
+     * for what was <em>seen</em> rather than judged — the grading layer maps them to a verdict.
+     */
     public enum PqcStatus {
-        PQC,        // a hybrid/PQC group was negotiated
-        PQC_READY,  // server accepted an offered hybrid group / advertises support
-        CLASSICAL,  // classical key exchange, no PQC
-        NOT_READY,  // TLS reached but no PQC path available
-        UNKNOWN     // not determined (no TLS, or handshake failed)
+        /** A hybrid ML-KEM group was negotiated. */
+        PQC,
+        /** TLS 1.3 negotiated, but with a classical group: the server could offer PQC, it just does not. */
+        CLASSICAL,
+        /** TLS 1.2 or older negotiated: no PQC key exchange is possible on this version at all. */
+        NOT_READY,
+        /** Not determined: no TLS, the handshake failed, or the key exchange could not be read. */
+        UNKNOWN
     }
 
     /**
@@ -97,6 +104,9 @@ public class ProbeResult {
     private final String certValidity;
     private final boolean complete;
     private final String note;
+    // Explicit error surface (v1 carried success + error-message; consumers keyed on them).
+    private final boolean success;
+    private final String errorMessage;
     private final long observedAtMs;
     private final long durationMs;
     private final List<ConnectionTrace> connections;
@@ -119,6 +129,7 @@ public class ProbeResult {
     private final List<CipherSuiteInfo> supportedCipherSuiteDetails;
     private final String serverCipherPreference;
     private final String serverCipherPreferenceMode;
+    private final List<String> serverCipherRanking;
     private final List<String> supportedGroups;
     private final String serverGroupPreference;
     private final String revocationStatus;
@@ -145,6 +156,8 @@ public class ProbeResult {
         this.certValidity = b.certValidity;
         this.complete = b.complete;
         this.note = b.note;
+        this.errorMessage = b.errorMessage;
+        this.success = b.complete && b.errorMessage == null;
         this.observedAtMs = b.observedAtMs;
         this.durationMs = b.durationMs;
         this.connections = b.connections;
@@ -165,6 +178,7 @@ public class ProbeResult {
         this.supportedCipherSuiteDetails = b.supportedCipherSuiteDetails;
         this.serverCipherPreference = b.serverCipherPreference;
         this.serverCipherPreferenceMode = b.serverCipherPreferenceMode;
+        this.serverCipherRanking = b.serverCipherRanking;
         this.supportedGroups = b.supportedGroups;
         this.serverGroupPreference = b.serverGroupPreference;
         this.revocationStatus = b.revocationStatus;
@@ -185,6 +199,16 @@ public class ProbeResult {
     public String getKeyExchangeGroup() { return keyExchangeGroup; }
     public boolean isComplete() { return complete; }
     public String getNote() { return note; }
+
+    /** {@code complete} and no error was recorded — the one flag a consumer should key on. */
+    public boolean isSuccess() { return success; }
+
+    /**
+     * Why the probe did not succeed: the {@code fail} terminal's note, the overall-timeout or
+     * unhandled-outcome marker, and the message of any exception an action threw on the way;
+     * {@code null} when it succeeded.
+     */
+    public String getErrorMessage() { return errorMessage; }
     public long getObservedAtMs() { return observedAtMs; }
     public List<ConnectionTrace> getConnections() { return connections; }
 
@@ -254,6 +278,13 @@ public class ProbeResult {
     /** {@code server} when the pick did not change with the client's order, {@code client} when it did, {@code only-one-accepted} when there was nothing to compare. */
     public String getServerCipherPreferenceMode() { return serverCipherPreferenceMode; }
 
+    /**
+     * The server's own preference order, most preferred first, when {@code enumerate-ciphers} ran
+     * with {@code rankServerPreference} and the mode was {@code server}; empty otherwise. Bounded
+     * to the first ten picks.
+     */
+    public List<String> getServerCipherRanking() { return serverCipherRanking; }
+
     /** TLS 1.3 named groups the server completed a handshake on (best first), or an empty list. */
     public List<String> getSupportedGroups() { return supportedGroups; }
 
@@ -305,6 +336,9 @@ public class ProbeResult {
                 if (s.version != null) sm.add("version", s.version);
                 if (s.strength != null) sm.add("strength", s.strength);
                 if (s.keyExchange != null) sm.add("key-exchange", s.keyExchange);
+                if (s.authentication != null) sm.add("authentication", s.authentication);
+                if (s.encryption != null) sm.add("encryption", s.encryption);
+                if (s.mac != null) sm.add("mac", s.mac);
                 // String, not NVBoolean: a `false` boolean vanishes from the JSON (see above).
                 sm.add("forward-secrecy", s.forwardSecrecy ? "YES" : "NO");
                 suites.add(sm);
@@ -313,6 +347,9 @@ public class ProbeResult {
         }
         if (serverCipherPreference != null) nvgm.add("server-cipher-preference", serverCipherPreference);
         if (serverCipherPreferenceMode != null) nvgm.add("server-cipher-preference-mode", serverCipherPreferenceMode);
+        if (serverCipherRanking != null && !serverCipherRanking.isEmpty()) {
+            nvgm.add(new org.zoxweb.shared.util.NVStringList("server-cipher-ranking", serverCipherRanking));
+        }
         if (supportedGroups != null && !supportedGroups.isEmpty()) {
             nvgm.add(new org.zoxweb.shared.util.NVStringList("supported-groups", supportedGroups));
         }
@@ -352,6 +389,10 @@ public class ProbeResult {
             nvgm.add(chainList);
         }
         nvgm.add(new NVBoolean("complete", complete));
+        // A string on purpose: the framework's default JSON serializer drops a `false` boolean,
+        // and "success": false is exactly the value a consumer must be able to see.
+        nvgm.add("success", Boolean.toString(success));
+        if (errorMessage != null) nvgm.add("error-message", errorMessage);
         if (note != null) nvgm.add("note", note);
         nvgm.add(new NVLong("observed-at-ms", observedAtMs));
         nvgm.add(new NVLong("duration-ms", durationMs));
@@ -375,7 +416,9 @@ public class ProbeResult {
         return "ProbeResult{" + host + ":" + port + "/" + transport
                 + " service=" + service + (version != null ? " version=" + version : "")
                 + " tls=" + tlsState + " pqc=" + pqcStatus
-                + " complete=" + complete + (note != null ? " note=" + note : "") + "}";
+                + " complete=" + complete + " success=" + success
+                + (errorMessage != null ? " error=" + errorMessage : "")
+                + (note != null ? " note=" + note : "") + "}";
     }
 
     /** One server-accepted cipher suite, as observed by {@code enumerate-ciphers}. Facts only. */
@@ -387,14 +430,28 @@ public class ProbeResult {
         public final String strength;
         /** {@code ECDHE} / {@code DHE} / {@code RSA} / … from the suite name; {@code ECDHE/DHE} for TLS 1.3. */
         public final String keyExchange;
+        /** {@code RSA} / {@code ECDSA} / {@code DSS} / {@code ANON} / {@code PSK}; {@code Cert} for TLS 1.3 (opsec's parse). */
+        public final String authentication;
+        /** The bulk cipher, e.g. {@code AES-256-GCM}, {@code CHACHA20-POLY1305}, {@code 3DES}. */
+        public final String encryption;
+        /** The MAC / PRF hash, e.g. {@code SHA384}, {@code SHA256}, {@code SHA}, {@code MD5}. */
+        public final String mac;
         public final boolean forwardSecrecy;
 
         public CipherSuiteInfo(String name, String version, String strength, String keyExchange,
                                boolean forwardSecrecy) {
+            this(name, version, strength, keyExchange, null, null, null, forwardSecrecy);
+        }
+
+        public CipherSuiteInfo(String name, String version, String strength, String keyExchange,
+                               String authentication, String encryption, String mac, boolean forwardSecrecy) {
             this.name = name;
             this.version = version;
             this.strength = strength;
             this.keyExchange = keyExchange;
+            this.authentication = authentication;
+            this.encryption = encryption;
+            this.mac = mac;
             this.forwardSecrecy = forwardSecrecy;
         }
 
@@ -431,6 +488,7 @@ public class ProbeResult {
         private String certValidity;
         private boolean complete = false;
         private String note;
+        private String errorMessage;
         private long observedAtMs = System.currentTimeMillis();
         private long durationMs;
         private final List<ConnectionTrace> connections = new ArrayList<>();
@@ -451,6 +509,7 @@ public class ProbeResult {
         private final List<CipherSuiteInfo> supportedCipherSuiteDetails = new ArrayList<>();
         private String serverCipherPreference;
         private String serverCipherPreferenceMode;
+        private final List<String> serverCipherRanking = new ArrayList<>();
         private final List<String> supportedGroups = new ArrayList<>();
         private String serverGroupPreference;
         private String revocationStatus;
@@ -478,6 +537,12 @@ public class ProbeResult {
         public Builder certNotAfter(String v) { this.certNotAfter = v; return this; }
         public Builder certValidity(String v) { this.certValidity = v; return this; }
         public Builder complete(boolean v) { this.complete = v; return this; }
+
+        /**
+         * Record why the probe did not succeed; {@code null} clears it. Set by the engine at
+         * terminal delivery: {@link ProbeResult#isSuccess()} is {@code complete && errorMessage == null}.
+         */
+        public Builder errorMessage(String v) { this.errorMessage = v; return this; }
         public Builder observedAtMs(long v) { this.observedAtMs = v; return this; }
         public Builder durationMs(long v) { this.durationMs = v; return this; }
 
@@ -567,6 +632,13 @@ public class ProbeResult {
          */
         public Builder addCipherSuite(String name, String version, String strength, String keyExchange,
                                       boolean forwardSecrecy) {
+            return addCipherSuite(name, version, strength, keyExchange, null, null, null, forwardSecrecy);
+        }
+
+        /** As above, with the suite's authentication / encryption / MAC components (opsec's parse). */
+        public Builder addCipherSuite(String name, String version, String strength, String keyExchange,
+                                      String authentication, String encryption, String mac,
+                                      boolean forwardSecrecy) {
             if (name == null || name.isEmpty()) {
                 return this;
             }
@@ -576,7 +648,16 @@ public class ProbeResult {
                     return this;
                 }
             }
-            supportedCipherSuiteDetails.add(new CipherSuiteInfo(name, version, strength, keyExchange, forwardSecrecy));
+            supportedCipherSuiteDetails.add(new CipherSuiteInfo(name, version, strength, keyExchange,
+                    authentication, encryption, mac, forwardSecrecy));
+            return this;
+        }
+
+        /** Append the next suite of the server's own preference order (deduped, insertion order). */
+        public Builder addServerCipherRank(String suite) {
+            if (suite != null && !suite.isEmpty() && !serverCipherRanking.contains(suite)) {
+                serverCipherRanking.add(suite);
+            }
             return this;
         }
 

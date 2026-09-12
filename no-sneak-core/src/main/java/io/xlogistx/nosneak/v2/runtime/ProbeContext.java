@@ -86,11 +86,28 @@ public class ProbeContext {
     /** Parallel dispatch for fan-out children; taken from the same {@link NIOSocket}. */
     private final Executor executor;
     /**
-     * HTTP over the same {@link NIOSocket}, for the active OCSP/CRL fetch of
-     * {@code revocation-check}. Null on the test seam: a scripted probe then reports revocation
-     * as unknown/none rather than touching a network.
+     * The socket this probe rides on, kept so the HTTP client for the active OCSP/CRL fetch of
+     * {@code revocation-check} can be built <em>only when that action runs</em> — most probes
+     * never need one. Null on the test seam.
      */
-    private final HTTPNIOSocket httpNio;
+    private final NIOSocket nioSocket;
+    /** Built lazily by {@link #httpNio()}; a test may inject one through the seam constructor. */
+    private volatile HTTPNIOSocket httpNio;
+
+    /**
+     * Test seam: how the active OCSP/CRL check is performed. Production builds a
+     * {@link NetworkRevocationChecker} on {@link #httpNio()}; a test installs a fake through
+     * {@link #activeRevocation(ActiveRevocation)} to script the responder's answer or to prove
+     * the network path was (or was not) taken. Package-private, like {@link ProbeTransport}.
+     */
+    interface ActiveRevocation {
+        void check(X509Certificate leaf, X509Certificate issuer, long timeoutMs, Consumer<RevocationResult> onResult);
+    }
+
+    private volatile ActiveRevocation activeRevocation;
+
+    /** The last action failure noted by {@link #noteFailure(String)}; surfaces as {@code error-message}. */
+    private volatile String lastFailure;
 
     private final ProbeEngine engine;
     private final ProbeResult.Builder result;
@@ -141,7 +158,7 @@ public class ProbeContext {
         // them. Taking them from the socket also makes it impossible to arm a timeout on one pool
         // while the I/O it guards runs on another.
         this(new NioProbeTransport(nioSocket), nioSocket.getScheduler(), nioSocket.getExecutor(),
-             new HTTPNIOSocket(nioSocket), target, definition, timeoutSec, userCallback);
+             nioSocket, null, target, definition, timeoutSec, userCallback);
     }
 
     /**
@@ -152,15 +169,23 @@ public class ProbeContext {
     ProbeContext(ProbeTransport transport, ScheduledExecutorService scheduler, Executor executor,
                  IPAddress target, ProbeDefinition definition, int timeoutSec,
                  Consumer<ProbeResult> userCallback) {
-        this(transport, scheduler, executor, null, target, definition, timeoutSec, userCallback);
+        this(transport, scheduler, executor, null, null, target, definition, timeoutSec, userCallback);
     }
 
+    /** The seam constructor with an HTTP client for {@code revocation-check} supplied up front. */
     ProbeContext(ProbeTransport transport, ScheduledExecutorService scheduler, Executor executor,
                  HTTPNIOSocket httpNio, IPAddress target, ProbeDefinition definition, int timeoutSec,
                  Consumer<ProbeResult> userCallback) {
+        this(transport, scheduler, executor, null, httpNio, target, definition, timeoutSec, userCallback);
+    }
+
+    private ProbeContext(ProbeTransport transport, ScheduledExecutorService scheduler, Executor executor,
+                         NIOSocket nioSocket, HTTPNIOSocket httpNio, IPAddress target,
+                         ProbeDefinition definition, int timeoutSec, Consumer<ProbeResult> userCallback) {
         this.transport = transport;
         this.scheduler = scheduler;
         this.executor = executor;
+        this.nioSocket = nioSocket;
         this.httpNio = httpNio;
         this.target = target;
         this.definition = definition;
@@ -181,7 +206,10 @@ public class ProbeContext {
             if (terminated.get()) {
                 return;
             }
-            int overall = Math.max(timeoutSec * 4, 30);
+            // The definition may declare its own budget (a deep scan runs a handshake, three
+            // enumerations and a revocation fetch); otherwise a multiple of the per-step timeout.
+            Integer declared = definition.getOverallTimeoutSec();
+            int overall = declared != null && declared > 0 ? declared : Math.max(timeoutSec * 4, 30);
             overallDeadline = scheduler
                     .schedule(() -> deliver(false, "overall-timeout"), overall, TimeUnit.SECONDS);
             engine.start();
@@ -212,6 +240,12 @@ public class ProbeContext {
             result.addConnection(connectionIndex, currentPort, terminalNote);
             result.complete(complete);
             result.note(terminalNote);
+            // The explicit error surface: a fail terminal's note, the overall-timeout or
+            // unhandled-outcome marker, plus the exception an action threw on the way if any.
+            // A probe that reached `done` succeeded whatever it recovered from en route.
+            String failure = lastFailure;
+            result.errorMessage(complete ? null
+                    : (failure != null ? terminalNote + ": " + failure : terminalNote));
             result.durationMs(System.currentTimeMillis() - startTime);
             closeCurrent();
             engine.close();
@@ -560,25 +594,60 @@ public class ProbeContext {
         result.tlsVersion(client.getNegotiatedVersionString());
         result.cipherSuite(client.getNegotiatedCipherSuiteName());
 
+        // The group: the TLS 1.3 key_share the server answered with; for TLS 1.2 there is no
+        // key_share, so the suite's key-exchange family stands in for it.
         String kex = client.getNegotiatedKeyExchangeName();
         if (kex == null || "UNKNOWN".equals(kex)) {
             kex = client.getKeyExchangeAlgorithm();
         }
         result.keyExchangeGroup(kex);
-        result.keyExchangeAlgorithm(kex);
+        String cls = OPSecUtil.singleton().classifyKeyExchange(kex);
+        result.keyExchangeAlgorithm(keyExchangeAlgorithmName(cls));
 
         if (classifyPqc) {
-            String cls = OPSecUtil.singleton().classifyKeyExchange(kex);
-            if ("PQC_HYBRID".equals(cls)) {
-                result.pqcStatus(ProbeResult.PqcStatus.PQC);
-            } else if (cls == null || "UNKNOWN".equals(cls)) {
-                result.pqcStatus(ProbeResult.PqcStatus.UNKNOWN);
-            } else {
-                result.pqcStatus(ProbeResult.PqcStatus.CLASSICAL);
-            }
+            result.pqcStatus(classifyPqc(client.getNegotiatedVersion(), cls));
         }
 
         recordCertFacts(client);
+    }
+
+    /**
+     * The algorithm family behind a negotiated group / suite, for {@code key-exchange-algorithm}:
+     * {@code ML-KEM hybrid}, {@code ECDHE}, {@code DHE}, {@code RSA}; null when unclassifiable.
+     */
+    static String keyExchangeAlgorithmName(String classification) {
+        if (classification == null) {
+            return null;
+        }
+        switch (classification) {
+            case "PQC_HYBRID": return "ML-KEM hybrid";
+            case "ECDHE": return "ECDHE";
+            case "DHE": return "DHE";
+            case "RSA": return "RSA";
+            default: return null;
+        }
+    }
+
+    /**
+     * v1's four-way readiness, from what the handshake showed: a hybrid group is {@code PQC};
+     * TLS 1.3 with a classical group is {@code CLASSICAL} (the server could offer a hybrid);
+     * TLS 1.2 or older is {@code NOT_READY} (no PQC key exchange exists on that version);
+     * anything unreadable is {@code UNKNOWN}.
+     */
+    static ProbeResult.PqcStatus classifyPqc(ProtocolVersion negotiated, String kexClassification) {
+        if ("PQC_HYBRID".equals(kexClassification)) {
+            return ProbeResult.PqcStatus.PQC;
+        }
+        if (negotiated == null) {
+            return ProbeResult.PqcStatus.UNKNOWN;
+        }
+        if (!ProtocolVersion.TLSv13.isEqualOrEarlierVersionOf(negotiated)) {
+            return ProbeResult.PqcStatus.NOT_READY;
+        }
+        if (kexClassification == null || "UNKNOWN".equals(kexClassification)) {
+            return ProbeResult.PqcStatus.UNKNOWN;
+        }
+        return ProbeResult.PqcStatus.CLASSICAL;
     }
 
     private void recordCertFacts(PQCTlsClient client) {
@@ -741,12 +810,17 @@ public class ProbeContext {
      * (success/failure/own timeout), so the join always resolves.
      */
     public void enumerateVersions() {
+        enumerateVersions(null);
+    }
+
+    /**
+     * As {@link #enumerateVersions()}, with the state's toggles: TLSv1.3 and TLSv1.2 are always
+     * offered; {@code includeTLS11} / {@code includeTLS10} / {@code includeSSLv3} (default true,
+     * observe everything) add the legacy versions; {@code maxInFlight} bounds the children.
+     */
+    public void enumerateVersions(ProbeState state) {
         final int port = currentPort > 0 ? currentPort : target.getPort();
-        final ProtocolVersion[] candidates = {
-                ProtocolVersion.TLSv13, ProtocolVersion.TLSv12,
-                ProtocolVersion.TLSv11, ProtocolVersion.TLSv10,
-                ProtocolVersion.SSLv3 // probe legacy SSLv3 too so an insecure server is flagged
-        };
+        final ProtocolVersion[] candidates = versionCandidates(state);
         final Map<String, Boolean> results = new ConcurrentHashMap<>();
         List<Consumer<ParallelJoin>> children = new ArrayList<>();
         for (ProtocolVersion candidate : candidates) {
@@ -766,7 +840,7 @@ public class ProbeContext {
                 }
             });
         }
-        Fanout.run(children, () -> onVersionsDone(results), executor);
+        Fanout.runBounded(children, maxInFlight(state), () -> onVersionsDone(results), executor);
     }
 
     private void onVersionsDone(Map<String, Boolean> results) {
@@ -781,25 +855,62 @@ public class ProbeContext {
         });
     }
 
+    /** The versions {@code enumerate-versions} offers under {@code state}'s toggles, best first. */
+    static ProtocolVersion[] versionCandidates(ProbeState state) {
+        List<ProtocolVersion> out = new ArrayList<>();
+        out.add(ProtocolVersion.TLSv13);
+        out.add(ProtocolVersion.TLSv12);
+        if (ProbeState.flag(state != null ? state.getIncludeTLS11() : null, true)) {
+            out.add(ProtocolVersion.TLSv11);
+        }
+        if (ProbeState.flag(state != null ? state.getIncludeTLS10() : null, true)) {
+            out.add(ProtocolVersion.TLSv10);
+        }
+        if (ProbeState.flag(state != null ? state.getIncludeSSLv3() : null, true)) {
+            out.add(ProtocolVersion.SSLv3); // legacy SSLv3 too, so an insecure server is flagged
+        }
+        return out.toArray(new ProtocolVersion[0]);
+    }
+
+    /** Child handshakes in flight at once against the target when the state names no cap. */
+    public static final int DEFAULT_MAX_IN_FLIGHT = 8;
+
+    /** The state's {@code maxInFlight}, or {@link #DEFAULT_MAX_IN_FLIGHT}. */
+    static int maxInFlight(ProbeState state) {
+        Integer v = state != null ? state.getMaxInFlight() : null;
+        return v != null && v > 0 ? v : DEFAULT_MAX_IN_FLIGHT;
+    }
+
     /**
-     * Upper bound on the child connections one enumeration step may open at once. A deep probe
-     * today costs at most 5 (versions) + 44 (ciphers) + 2 (cipher preference) + 10 (groups) = 61
-     * connections, each bounded by its own handshake timeout; candidate lists longer than this
-     * are truncated rather than allowed to grow silently.
+     * Upper bound on the child connections one enumeration step may <em>own</em>. A deep probe
+     * today costs at most 5 (versions) + 44 (ciphers) + 2 (cipher preference) + 10 (groups)
+     * (+ up to 10 ranking steps) connections, each bounded by its own handshake timeout;
+     * candidate lists longer than this are truncated rather than allowed to grow silently. How
+     * many are <em>open at once</em> is a separate, smaller bound: the state's {@code maxInFlight}
+     * ({@link #DEFAULT_MAX_IN_FLIGHT}) through {@link Fanout#runBounded}.
      */
     public static final int MAX_ENUMERATION_CHILDREN = 64;
+
+    /** Ranking steps after the first pick when {@code rankServerPreference} is on. */
+    public static final int MAX_RANKING_STEPS = 10;
 
     /** TLS 1.3 suites (5) — every one AEAD; opsec's list. */
     private static final int[] TLS13_CIPHERS = OPSecUtil.ALL_TLS13_CIPHERS;
 
     /**
-     * TLS 1.2 candidates: opsec's strong (9), weak (21) and insecure (9) sets, in that order, so
-     * a server's <em>whole</em> accepted surface is observed and the weak-suite grading rule has
-     * something to look at. Offering an old suite in a ClientHello is an ordinary handshake.
+     * TLS 1.2 candidates under {@code state}'s toggles: opsec's strong (9) set always, then the
+     * weak (21) and insecure (9) sets when {@code includeWeak} / {@code includeInsecure} are on
+     * (the default), so a server's <em>whole</em> accepted surface is observed and the
+     * weak-suite grading rule has something to look at. Offering an old suite in a ClientHello
+     * is an ordinary handshake.
      */
-    private static final int[] TLS12_CIPHERS = concat(OPSecUtil.ALL_TLS12_STRONG,
-                                                      OPSecUtil.ALL_TLS12_WEAK,
-                                                      OPSecUtil.ALL_TLS12_INSECURE);
+    static int[] tls12Candidates(ProbeState state) {
+        boolean weak = ProbeState.flag(state != null ? state.getIncludeWeak() : null, true);
+        boolean insecure = ProbeState.flag(state != null ? state.getIncludeInsecure() : null, true);
+        return concat(OPSecUtil.ALL_TLS12_STRONG,
+                      weak ? OPSecUtil.ALL_TLS12_WEAK : new int[0],
+                      insecure ? OPSecUtil.ALL_TLS12_INSECURE : new int[0]);
+    }
 
     private static int[] concat(int[]... parts) {
         int n = 0;
@@ -833,15 +944,26 @@ public class ProbeContext {
      * {@code done}.
      */
     public void enumerateCiphers() {
+        enumerateCiphers(null);
+    }
+
+    /**
+     * As {@link #enumerateCiphers()}, with the state's toggles: {@code includeWeak} /
+     * {@code includeInsecure} (default true) widen the TLS 1.2 offer, {@code maxInFlight} bounds
+     * the children, and {@code rankServerPreference} (default false) follows a {@code server}
+     * verdict with the sequential ranking chain that records {@code server-cipher-ranking}.
+     */
+    public void enumerateCiphers(ProbeState state) {
         final int port = currentPort > 0 ? currentPort : target.getPort();
         final Map<Integer, Boolean> accepted = new ConcurrentHashMap<>();
         List<Consumer<ParallelJoin>> children = new ArrayList<>();
         final int[] tls13 = bounded(TLS13_CIPHERS, MAX_ENUMERATION_CHILDREN);
-        final int[] tls12 = bounded(TLS12_CIPHERS, Math.max(0, MAX_ENUMERATION_CHILDREN - tls13.length));
+        final int[] tls12 = bounded(tls12Candidates(state), Math.max(0, MAX_ENUMERATION_CHILDREN - tls13.length));
         cipherChildren(children, accepted, ProtocolVersion.TLSv13, tls13, port);
         cipherChildren(children, accepted, ProtocolVersion.TLSv12, tls12, port);
         final int[] ordered = concat(tls13, tls12);
-        Fanout.run(children, () -> onCiphersDone(accepted, ordered, port), executor);
+        final boolean rank = ProbeState.flag(state != null ? state.getRankServerPreference() : null, false);
+        Fanout.runBounded(children, maxInFlight(state), () -> onCiphersDone(accepted, ordered, port, rank), executor);
     }
 
     private void cipherChildren(List<Consumer<ParallelJoin>> children, Map<Integer, Boolean> accepted,
@@ -868,7 +990,7 @@ public class ProbeContext {
         }
     }
 
-    private void onCiphersDone(Map<Integer, Boolean> accepted, int[] ordered, int port) {
+    private void onCiphersDone(Map<Integer, Boolean> accepted, int[] ordered, int port, boolean rank) {
         final List<Integer> accepted13 = new ArrayList<>();
         final List<Integer> accepted12 = new ArrayList<>();
         guarded(() -> {
@@ -883,15 +1005,16 @@ public class ProbeContext {
                 OPSecUtil.CipherComponents parts = ops.parseCipherSuite(name);
                 result.addCipherSuite(name, v13 ? "TLSv1.3" : "TLSv1.2",
                         parts.strength != null ? parts.strength.name() : null,
-                        parts.keyExchange, parts.forwardSecrecy);
+                        parts.keyExchange, parts.authentication, parts.encryption, parts.mac,
+                        parts.forwardSecrecy);
             }
         });
         // Preference is only meaningful where the server had a choice; TLS 1.2 first because
         // that is where weak suites live, TLS 1.3 otherwise.
         if (accepted12.size() >= 2) {
-            probeCipherPreference(accepted12, ProtocolVersion.TLSv12, port);
+            probeCipherPreference(accepted12, ProtocolVersion.TLSv12, port, rank);
         } else if (accepted13.size() >= 2) {
-            probeCipherPreference(accepted13, ProtocolVersion.TLSv13, port);
+            probeCipherPreference(accepted13, ProtocolVersion.TLSv13, port, rank);
         } else {
             guarded(() -> {
                 List<Integer> only = accepted12.isEmpty() ? accepted13 : accepted12;
@@ -909,7 +1032,7 @@ public class ProbeContext {
      * A server that returns the same suite both times enforces its own preference; one that
      * follows the client's first choice does not. Two children, bounded like every other probe.
      */
-    private void probeCipherPreference(List<Integer> acceptedSuites, ProtocolVersion ver, int port) {
+    private void probeCipherPreference(List<Integer> acceptedSuites, ProtocolVersion ver, int port, boolean rank) {
         final int[] forward = new int[acceptedSuites.size()];
         final int[] reversed = new int[acceptedSuites.size()];
         for (int i = 0; i < forward.length; i++) {
@@ -920,7 +1043,7 @@ public class ProbeContext {
         List<Consumer<ParallelJoin>> children = new ArrayList<>();
         children.add(preferenceChild("forward", forward, ver, port, picks));
         children.add(preferenceChild("reversed", reversed, ver, port, picks));
-        Fanout.run(children, () -> onPreferenceDone(picks, forward), executor);
+        Fanout.run(children, () -> onPreferenceDone(picks, forward, ver, port, rank), executor);
     }
 
     private Consumer<ParallelJoin> preferenceChild(String label, int[] offer, ProtocolVersion ver, int port,
@@ -942,20 +1065,70 @@ public class ProbeContext {
         };
     }
 
-    private void onPreferenceDone(Map<String, Integer> picks, int[] forward) {
+    private void onPreferenceDone(Map<String, Integer> picks, int[] forward, ProtocolVersion ver, int port,
+                                  boolean rank) {
+        Integer f = picks.get("forward");
+        Integer r = picks.get("reversed");
+        boolean decided = f != null && f != 0 && r != null && r != 0;
+        boolean server = decided && f.equals(r);
         guarded(() -> {
-            Integer f = picks.get("forward");
-            Integer r = picks.get("reversed");
-            if (f != null && f != 0 && r != null && r != 0) {
-                if (f.equals(r)) {
-                    result.serverCipherPreference(PQCTlsClient.getCipherSuiteName(f), "server");
-                } else {
-                    // The pick moved with our order: the server takes the client's first choice.
-                    result.serverCipherPreference(PQCTlsClient.getCipherSuiteName(f), "client");
-                }
+            if (decided) {
+                // Same pick both times: the server enforces its order. Otherwise the pick moved
+                // with ours: the server takes the client's first choice.
+                result.serverCipherPreference(PQCTlsClient.getCipherSuiteName(f), server ? "server" : "client");
             }
-            engine.fire("done");
         });
+        if (server && rank) {
+            rankServerPreference(forward, f, ver, port);
+        } else {
+            fire("done");
+        }
+    }
+
+    /**
+     * The server's own preference order, v1-style: offer every accepted suite, remove the pick,
+     * offer the rest, and so on — one handshake at a time, each launched from the previous one's
+     * completion, at most {@link #MAX_RANKING_STEPS} after the first pick (already known from the
+     * preference probe). Nothing waits; a step that fails or picks something we did not offer
+     * ends the chain with what was learned. Records {@code server-cipher-ranking}.
+     */
+    private void rankServerPreference(int[] accepted, int firstPick, ProtocolVersion ver, int port) {
+        List<Integer> remaining = new ArrayList<>();
+        for (int c : accepted) {
+            if (c != firstPick) {
+                remaining.add(c);
+            }
+        }
+        guarded(() -> result.addServerCipherRank(PQCTlsClient.getCipherSuiteName(firstPick)));
+        rankingStep(remaining, ver, port, 1);
+    }
+
+    private void rankingStep(List<Integer> remaining, ProtocolVersion ver, int port, int step) {
+        if (remaining.isEmpty() || step > MAX_RANKING_STEPS || terminated.get()) {
+            fire("done");
+            return;
+        }
+        int[] offer = new int[remaining.size()];
+        for (int i = 0; i < offer.length; i++) {
+            offer[i] = remaining.get(i);
+        }
+        try {
+            CipherProbeCallback probe = new CipherProbeCallback(
+                    scheduler, new IPAddress(target.getInetAddress(), port), hostname(), ver, offer,
+                    (v, cipherId) -> {
+                        if (cipherId == null || cipherId == 0 || !remaining.remove(cipherId)) {
+                            fire("done"); // rejected, or a pick outside the offer: the record must not lie
+                            return;
+                        }
+                        guarded(() -> result.addServerCipherRank(PQCTlsClient.getCipherSuiteName(cipherId)));
+                        rankingStep(remaining, ver, port, step + 1); // sequential: the next launch from this completion
+                    });
+            probe.timeoutInSec(Math.max(timeoutSec, 5));
+            transport.open(probe);
+        } catch (Exception e) {
+            if (log.isEnabled()) log.getLogger().info("ranking step " + step + " not launched: " + e.getMessage());
+            fire("done");
+        }
     }
 
     /**
@@ -967,6 +1140,11 @@ public class ProbeContext {
      * key shares are a TLS 1.3 mechanism.
      */
     public void enumerateGroups() {
+        enumerateGroups(null);
+    }
+
+    /** As {@link #enumerateGroups()}; the state's {@code maxInFlight} bounds the children. */
+    public void enumerateGroups(ProbeState state) {
         final int port = currentPort > 0 ? currentPort : target.getPort();
         final Map<Integer, Boolean> accepted = new ConcurrentHashMap<>();
         final int[] candidates = bounded(GroupProbeCallback.CANDIDATE_GROUPS, MAX_ENUMERATION_CHILDREN);
@@ -990,7 +1168,7 @@ public class ProbeContext {
                 }
             });
         }
-        Fanout.run(children, () -> onGroupsDone(accepted, candidates), executor);
+        Fanout.runBounded(children, maxInFlight(state), () -> onGroupsDone(accepted, candidates), executor);
     }
 
     private void onGroupsDone(Map<Integer, Boolean> accepted, int[] candidates) {
@@ -1029,16 +1207,28 @@ public class ProbeContext {
         try {
             RevocationResult stapled = RevocationChecker.fromStaple(cfg.tlsClient.getStapledOCSPResponse());
             if (RevocationChecker.METHOD_STAPLED.equals(stapled.getMethod())) {
-                recordRevocation(stapled);
-                fire("done");
-                return;
+                // A staple answers only when it parsed: a malformed or empty staple must not end
+                // the check as ERROR/stapled, it falls through to the active OCSP/CRL path.
+                if (stapled.getStatus() != OPSecUtil.RevocationStatus.ERROR) {
+                    recordRevocation(stapled);
+                    fire("done");
+                    return;
+                }
+                if (log.isEnabled()) {
+                    log.getLogger().info("Stapled OCSP unusable (" + stapled.getErrorMessage()
+                            + "), falling back to active check");
+                }
             }
             X509Certificate[] chain = x509Chain(cfg.tlsClient);
             X509Certificate leaf = chain.length > 0 ? chain[0] : null;
             X509Certificate issuer = chain.length > 1 ? chain[1] : null;
             long budget = state != null && state.getRevocationTimeoutMs() != null
                     ? state.getRevocationTimeoutMs() : NetworkRevocationChecker.DEFAULT_TIMEOUT_MS;
-            new NetworkRevocationChecker(httpNio, scheduler).check(leaf, issuer, budget, r -> guarded(() -> {
+            ActiveRevocation active = activeRevocation;
+            if (active == null) {
+                active = (l, i, t, cb) -> new NetworkRevocationChecker(httpNio(), scheduler).check(l, i, t, cb);
+            }
+            active.check(leaf, issuer, budget, r -> guarded(() -> {
                 recordRevocation(r);
                 engine.fire("done");
             }));
@@ -1241,6 +1431,37 @@ public class ProbeContext {
 
     public String hostname() {
         return target.getInetAddress();
+    }
+
+    /**
+     * Remember why an action failed so the terminal result can carry it as {@code error-message}
+     * (called by {@code ProbeActionConsumer} before it routes the {@code error} outcome).
+     */
+    public void noteFailure(String message) {
+        if (message != null && !message.isEmpty()) {
+            lastFailure = message;
+            if (log.isEnabled()) log.getLogger().info("action failure: " + message);
+        }
+    }
+
+    /**
+     * The HTTP client for the active OCSP/CRL fetch, built on first use over the probe's own
+     * {@link NIOSocket}; null on the test seam (a scripted probe then reports revocation as
+     * unknown rather than touching a network). Only {@code revocation-check} calls this, so a
+     * probe that never checks revocation never builds one.
+     */
+    HTTPNIOSocket httpNio() {
+        HTTPNIOSocket h = httpNio;
+        if (h == null && nioSocket != null) {
+            h = new HTTPNIOSocket(nioSocket);
+            httpNio = h;
+        }
+        return h;
+    }
+
+    /** Install the {@link ActiveRevocation} seam (tests); null restores the production path. */
+    void activeRevocation(ActiveRevocation seam) {
+        this.activeRevocation = seam;
     }
 
     public ProbeResult.Builder result() {

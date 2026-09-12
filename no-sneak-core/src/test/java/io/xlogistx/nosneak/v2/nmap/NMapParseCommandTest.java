@@ -220,9 +220,140 @@ public class NMapParseCommandTest {
     @Test
     public void usageTextDocumentsTheNewFlagsAndTheRefusals() {
         String u = NMap.usageText();
-        for (String s : List.of("--top-ports", "--open", "-T0..-T5", "T:/U:", "-sU", "-sS", "assessment-only")) {
+        for (String s : List.of("--top-ports", "--open", "-T0..-T5", "T:/U:", "-sU", "-sS", "assessment-only",
+                "--timeout", "--max-parallelism", "-sP", "-PN", "--dns-servers", "1-1024", "-p22,80",
+                "aggressive", "host=", "range=", "timeout=", "-h", "--verbose")) {
             assertTrue(u.contains(s), "usage must mention " + s);
         }
+    }
+
+    // ==================== v1 CLI aliases (merge-analysis §4 item 12) ====================
+
+    @Test
+    public void timeoutLongFormIsAnAliasOfDashT() {
+        assertEquals(9, NMap.parseCommand("10.0.0.1 --timeout 9").timeoutSec);
+        assertThrows(IllegalArgumentException.class, () -> NMap.parseCommand("10.0.0.1 --timeout"));
+        assertThrows(IllegalArgumentException.class, () -> NMap.parseCommand("10.0.0.1 --timeout x"));
+    }
+
+    @Test
+    public void attachedPortSpecIsAccepted() {
+        assertArrayEquals(new int[]{22, 80}, NMap.parseCommand("10.0.0.1 -p22,80").ports);
+        assertArrayEquals(new int[]{1, 2, 3}, NMap.parseCommand("10.0.0.1 -p1-3").ports);
+        NMapConfig both = NMap.parseCommand("10.0.0.1 -pT:22,U:53");
+        assertArrayEquals(new int[]{22}, both.ports);
+        assertArrayEquals(new int[]{53}, both.udpPorts);
+        assertThrows(IllegalArgumentException.class, () -> NMap.parseCommand("10.0.0.1 -phttp"));
+    }
+
+    @Test
+    public void spAndPnUpperCaseAliases() {
+        NMapConfig sp = NMap.parseCommand("10.0.0.0/24 -sP");
+        assertEquals(0, sp.ports.length, "-sP is -sn: discovery only");
+        assertEquals(0, sp.udpPorts.length);
+        assertFalse(NMap.parseCommand("10.0.0.1 -PN").discovery, "-PN is -Pn");
+        assertFalse(NMap.parseCommand("10.0.0.1 -Pn").discovery);
+    }
+
+    @Test
+    public void helpIsAnIllegalArgumentWhoseMessageIsTheUsage() {
+        for (String flag : List.of("-h", "--help", "-?")) {
+            NMap.HelpRequested h = assertThrows(NMap.HelpRequested.class, () -> NMap.parseCommand(flag), flag);
+            assertEquals(NMap.usageText(), h.getMessage());
+            assertTrue(h instanceof IllegalArgumentException, "callers that catch IAE keep working");
+        }
+        assertThrows(NMap.HelpRequested.class, () -> NMap.parseCommand("10.0.0.1 -p 80 -h"),
+                "help wins wherever it appears");
+    }
+
+    @Test
+    public void verboseIsRecordedOnTheConfig() {
+        assertFalse(NMap.parseCommand("10.0.0.1").verbose);
+        assertTrue(NMap.parseCommand("10.0.0.1 -v").verbose);
+        assertTrue(NMap.parseCommand("10.0.0.1 --verbose").verbose);
+    }
+
+    @Test
+    public void maxParallelismAndDashPAreMaxInflight() {
+        assertEquals(8, NMap.parseCommand("10.0.0.1 --max-parallelism 8").maxInFlight);
+        assertEquals(9, NMap.parseCommand("10.0.0.1 -P 9").maxInFlight);
+        assertEquals(2000, NMap.parseCommand("10.0.0.1 -P 9").maxPerSec, "the rate knob is untouched");
+        assertThrows(IllegalArgumentException.class, () -> NMap.parseCommand("10.0.0.1 -P"));
+    }
+
+    @Test
+    public void timingByDigitOrNameSeparateOrAttached() {
+        for (String form : List.of("-T 4", "-T4", "-T aggressive", "-Taggressive", "-T T4", "-T Aggressive")) {
+            NMapConfig cfg = NMap.parseCommand("10.0.0.1 " + form);
+            assertEquals(512, cfg.maxInFlight, form);
+            assertEquals(5000, cfg.maxPerSec, form);
+            assertEquals(3, cfg.timeoutSec, form);
+        }
+        String[] names = {"paranoid", "sneaky", "polite", "normal", "aggressive", "insane"};
+        for (int t = 0; t <= 5; t++) {
+            assertEquals(NMap.parseCommand("10.0.0.1 -T" + t).maxInFlight,
+                    NMap.parseCommand("10.0.0.1 -T " + names[t]).maxInFlight, names[t] + " is T" + t);
+            assertEquals(NMapConfig.Timing.valueOf("T" + t), NMap.timingOf(names[t], "-T"));
+        }
+        assertThrows(IllegalArgumentException.class, () -> NMap.parseCommand("10.0.0.1 -T 9"));
+        assertThrows(IllegalArgumentException.class, () -> NMap.parseCommand("10.0.0.1 -T bogus"));
+        assertThrows(IllegalArgumentException.class, () -> NMap.parseCommand("10.0.0.1 -T"));
+    }
+
+    @Test
+    public void legacyKeyValueTokensSurvive() {
+        NMapConfig cfg = NMap.parseCommand("host=10.0.0.1 range=20,25 timeout=7");
+        assertEquals(List.of("10.0.0.1"), cfg.targets);
+        assertArrayEquals(new int[]{20, 21, 22, 23, 24, 25}, cfg.ports);
+        assertEquals(7, cfg.timeoutSec);
+        assertEquals(List.of("10.0.0.1,10.0.0.9"), NMap.parseCommand("host=10.0.0.1,10.0.0.9").targets,
+                "a host= value is a target token; expand() splits the commas");
+        assertThrows(IllegalArgumentException.class, () -> NMap.parseCommand("host=10.0.0.1 range=20"));
+        assertThrows(IllegalArgumentException.class, () -> NMap.parseCommand("host=10.0.0.1 timeout=x"));
+    }
+
+    @Test
+    public void unknownFlagsAreStillRejectedAfterTheAliases() {
+        assertThrows(IllegalArgumentException.class, () -> NMap.parseCommand("10.0.0.1 --parallelism 4"));
+        assertThrows(IllegalArgumentException.class, () -> NMap.parseCommand("10.0.0.1 -x"));
+        assertThrows(IllegalArgumentException.class, () -> NMap.parseCommand("10.0.0.1 -Px"));
+    }
+
+    // ==================== port-spec dedupe (item 13) ====================
+
+    @Test
+    public void duplicatePortsAreScannedOnceInFirstSeenOrder() {
+        assertArrayEquals(new int[]{80}, NMap.parseCommand("10.0.0.1 -p 80,80").ports);
+        assertArrayEquals(new int[]{22, 20, 21, 23, 24, 25}, NMap.parseCommand("10.0.0.1 -p 22,20-25,22").ports);
+        NMap.PortSpec spec = NMap.parsePortSpec("U:53,53,T:53");
+        assertArrayEquals(new int[]{53}, spec.udp(), "dedupe is per protocol");
+        assertArrayEquals(new int[]{53}, spec.tcp());
+    }
+
+    // ==================== default port set (item 16: v1's 1-1024) ====================
+
+    @Test
+    public void defaultPortsAreOneToTenTwentyFour() {
+        assertEquals(1024, NMap.DEFAULT_PORTS.length);
+        assertEquals(1, NMap.DEFAULT_PORTS[0]);
+        assertEquals(1024, NMap.DEFAULT_PORTS[1023]);
+        assertEquals(null, NMap.parseCommand("10.0.0.1").ports, "no -p leaves ports null; the scanner substitutes the default");
+        assertArrayEquals(NMap.DEFAULT_PORTS, NMap.parsePorts(""));
+        assertTrue(NMap.maxWaitMs(NMap.parseCommand("10.0.0.1")) > NMap.maxWaitMs(NMap.parseCommand("10.0.0.1 -p 80")),
+                "the wait budget follows the larger default");
+    }
+
+    // ==================== reverse DNS flags (item 15) ====================
+
+    @Test
+    public void reverseDnsFlagsAndResolverOverride() {
+        assertEquals(NMapConfig.ReverseDns.UP_HOSTS, NMap.parseCommand("10.0.0.1").reverseDns);
+        assertEquals(NMapConfig.ReverseDns.NEVER, NMap.parseCommand("10.0.0.1 -n").reverseDns);
+        assertEquals(NMapConfig.ReverseDns.ALL, NMap.parseCommand("10.0.0.1 -R").reverseDns);
+        assertEquals(null, NMap.parseCommand("10.0.0.1").dnsServer);
+        assertEquals("1.1.1.1", NMap.parseCommand("10.0.0.1 --dns-servers 1.1.1.1,9.9.9.9").dnsServer,
+                "the first server is used; the PTR unit has one resolver");
+        assertThrows(IllegalArgumentException.class, () -> NMap.parseCommand("10.0.0.1 --dns-servers"));
     }
 
     // ---- UDP scan (-sU, U: ports) ----

@@ -6,6 +6,8 @@ import org.zoxweb.server.net.common.UDPSessionCallback;
 import org.zoxweb.server.net.ssl.SSLConfigInt;
 
 import java.nio.ByteBuffer;
+import java.util.concurrent.Executor;
+
 
 /**
  * One UDP datagram session within a {@link ProbeContext}. UDP is connectionless: the
@@ -14,8 +16,6 @@ import java.nio.ByteBuffer;
  * {@code expect} matcher. Inbound datagrams are dispatched on
  * the executor supplied by the context; the context serialises ingress.
  */
-import java.util.concurrent.Executor;
-
 public class ProbeUDPCallback extends UDPSessionCallback {
 
     public static final LogWrapper log = new LogWrapper(ProbeUDPCallback.class).setEnabled(false);

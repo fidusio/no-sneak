@@ -5,6 +5,7 @@ import org.zoxweb.server.util.GSONUtil;
 import org.zoxweb.shared.util.NVGenericMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -211,6 +212,77 @@ public class ProbeResultTest {
         // index 0 / false values would be dropped by toJSONDefault - the include-defaults
         // renderer must keep them.
         assertTrue(json(r.toNVGenericMap()).contains("\"index\""));
+    }
+
+    // ==================== The explicit error surface ====================
+
+    @Test
+    public void successAndErrorMessageSurviveTheDefaultSerializer() throws Exception {
+        ProbeResult failed = ProbeResult.builder("h", 443, "tcp")
+                .complete(false).errorMessage("fail: expect: boom").build();
+        assertFalse(failed.isSuccess());
+        assertEquals("fail: expect: boom", failed.getErrorMessage());
+        NVGenericMap m = failed.toNVGenericMap();
+        assertEquals("false", m.getValue("success"), "a string, so a false never vanishes");
+        assertEquals("fail: expect: boom", m.getValue("error-message"));
+        // A string pair, not an NVBoolean: the framework's default renderer drops a false boolean.
+        assertTrue(m.get("success") instanceof org.zoxweb.shared.util.NVPair, String.valueOf(m.get("success")));
+        String rendered = json(m);
+        assertTrue(rendered.contains("\"success\": \"false\"") || rendered.contains("\"success\":\"false\""), rendered);
+        assertTrue(rendered.contains("error-message"), rendered);
+
+        ProbeResult ok = ProbeResult.builder("h", 443, "tcp").complete(true).build();
+        assertTrue(ok.isSuccess());
+        assertNull(ok.getErrorMessage());
+        assertEquals("true", ok.toNVGenericMap().getValue("success"));
+        assertNull(ok.toNVGenericMap().get("error-message"));
+
+        ProbeResult completeButErrored = ProbeResult.builder("h", 443, "tcp")
+                .complete(true).errorMessage("x").build();
+        assertFalse(completeButErrored.isSuccess(), "success is complete AND no error");
+    }
+
+    // ==================== Cipher components and ranking ====================
+
+    @Test
+    public void cipherComponentsAreRecordedAndSerialized() {
+        ProbeResult r = ProbeResult.builder("h", 443, "tcp")
+                .addCipherSuite("TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384", "TLSv1.2", "STRONG",
+                        "ECDHE", "RSA", "AES-256-GCM", "SHA384", true)
+                .addCipherSuite("TLS_AES_128_GCM_SHA256", "TLSv1.3", "STRONG", "ECDHE/DHE", true) // old form
+                .build();
+        ProbeResult.CipherSuiteInfo full = r.getSupportedCipherSuiteDetails().get(0);
+        assertEquals("RSA", full.authentication);
+        assertEquals("AES-256-GCM", full.encryption);
+        assertEquals("SHA384", full.mac);
+        ProbeResult.CipherSuiteInfo plain = r.getSupportedCipherSuiteDetails().get(1);
+        assertNull(plain.authentication, "the five-argument form leaves the components absent");
+        String rendered = json(r.toNVGenericMap());
+        assertTrue(rendered.contains("\"authentication\": \"RSA\"") || rendered.contains("\"authentication\":\"RSA\""), rendered);
+        assertTrue(rendered.contains("AES-256-GCM"), rendered);
+        assertTrue(rendered.contains("\"mac\": \"SHA384\"") || rendered.contains("\"mac\":\"SHA384\""), rendered);
+    }
+
+    @Test
+    public void serverCipherRankingKeepsOrderDedupesAndSerializes() {
+        ProbeResult r = ProbeResult.builder("h", 443, "tcp")
+                .addServerCipherRank("B").addServerCipherRank("A").addServerCipherRank("B").addServerCipherRank("")
+                .build();
+        assertEquals(java.util.List.of("B", "A"), r.getServerCipherRanking());
+        assertTrue(json(r.toNVGenericMap()).contains("server-cipher-ranking"));
+        ProbeResult none = ProbeResult.builder("h", 443, "tcp").build();
+        assertNotNull(none.getServerCipherRanking());
+        assertTrue(none.getServerCipherRanking().isEmpty());
+        assertNull(none.toNVGenericMap().get("server-cipher-ranking"), "absent when nothing was ranked");
+    }
+
+    @Test
+    public void theRetiredPqcReadyValueIsGone() {
+        for (ProbeResult.PqcStatus s : ProbeResult.PqcStatus.values()) {
+            assertTrue(s == ProbeResult.PqcStatus.PQC || s == ProbeResult.PqcStatus.CLASSICAL
+                    || s == ProbeResult.PqcStatus.NOT_READY || s == ProbeResult.PqcStatus.UNKNOWN, s.name());
+        }
+        assertEquals(4, ProbeResult.PqcStatus.values().length);
     }
 
     /** Render the way the CLI does (include-defaults), not via the default-omitting helper. */

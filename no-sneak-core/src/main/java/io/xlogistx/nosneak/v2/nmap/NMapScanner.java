@@ -12,7 +12,6 @@ import io.xlogistx.nosneak.net.common.SweepOptions;
 import io.xlogistx.nosneak.net.tools.HostScanner;
 import io.xlogistx.nosneak.v2.result.ProbeResult;
 import io.xlogistx.nosneak.v2.runtime.ParallelJoin;
-import org.zoxweb.server.logging.LogWrapper;
 import org.zoxweb.server.net.NIOSocket;
 import org.zoxweb.shared.net.IPAddress;
 import org.zoxweb.shared.task.CallableConsumer;
@@ -42,6 +41,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * Staged, fully non-blocking network scanner (the embeddable core behind {@link NMap}):
  * <ol>
  *   <li><b>host discovery</b> (optional) over the target range — TCP-ping + optional ICMP;</li>
+ *   <li><b>reverse DNS</b> (unless {@code -n}) — one PTR datagram per live host (every host
+ *       with {@code -R}) through the same gate, filling {@code HostReport.hostname};</li>
  *   <li><b>port scan</b> of the selected TCP ports on each live host;</li>
  *   <li><b>UDP scan</b> (when UDP ports were named) — one datagram, one retransmit, per port;</li>
  *   <li><b>probe scan</b> (optional) — run the probe engine on open ports to identify
@@ -53,8 +54,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * blocking sockets, no per-target threads.
  */
 public final class NMapScanner {
-
-    public static final LogWrapper log = new LogWrapper(NMapScanner.class).setEnabled(false);
 
     /** Small common set used for TCP-ping host discovery. */
     public static final int[] DEFAULT_DISCOVERY_PORTS = {80, 443, 22, 3389, 445};
@@ -202,8 +201,13 @@ public final class NMapScanner {
         final ScanReport report = new ScanReport();
         report.startTimeMs = System.currentTimeMillis();
         report.config = cfg;
-        for (String h : expand(cfg.targets)) {
-            report.hosts.add(new HostReport(h));
+        for (String h : expand(cfg.targets, report.warnings)) {
+            HostReport hr = new HostReport(h);
+            hr.startTimeMs = report.startTimeMs;
+            if (isIpLiteral(h)) {
+                hr.ip = h; // known before any packet; a hostname's ip is set by its first unit
+            }
+            report.hosts.add(hr);
         }
         if (report.hosts.isEmpty()) {
             report.endTimeMs = System.currentTimeMillis();
@@ -247,13 +251,19 @@ public final class NMapScanner {
                 report.warnings.add(cancellationSummary(report));
             }
             report.endTimeMs = System.currentTimeMillis();
+            for (HostReport hr : report.hosts) {
+                if (hr.endTimeMs == 0) {
+                    hr.endTimeMs = report.endTimeMs; // the last stage that touched it just ended
+                }
+            }
             handle.deliver(report);
             onComplete.accept(report);
         };
         final Runnable afterDiscovery =
-                () -> portScanStage(nio, limiter, report, ports, cfg, to, handle,
-                        () -> udpScanStage(nio, limiter, report, cfg, to, handle,
-                                () -> probeStage(nio, limiter, report, cfg, to, handle, finish)));
+                () -> reverseDnsStage(nio, limiter, report, cfg, handle,
+                        () -> portScanStage(nio, limiter, report, ports, cfg, to, handle,
+                                () -> udpScanStage(nio, limiter, report, cfg, to, handle,
+                                        () -> probeStage(nio, limiter, report, cfg, to, handle, finish))));
 
         if (handle.isCancelled()) {
             // Cancelled before the first packet: nothing was learned, say so, deliver once.
@@ -359,16 +369,21 @@ public final class NMapScanner {
             return out;
         }
         for (String t : cfg.targets) {
-            String s = t == null ? "" : t.trim();
-            if (s.indexOf('/') < 0) {
+            if (t == null) {
                 continue;
             }
-            try {
-                if (scanner.interfaceFor(CidrRange.parse(s).networkAddress()).isPresent()) {
-                    out.add(s);
+            for (String piece : t.split(",")) { // a token may name several targets (expand's grammar)
+                String s = piece.trim();
+                if (s.indexOf('/') < 0) {
+                    continue;
                 }
-            } catch (RuntimeException ignored) {
-                // Not a parseable CIDR — expand() leaves it literal and the per-host path takes it.
+                try {
+                    if (scanner.interfaceFor(CidrRange.parse(s).networkAddress()).isPresent()) {
+                        out.add(s);
+                    }
+                } catch (RuntimeException ignored) {
+                    // Not a parseable CIDR — expand() leaves it literal and the per-host path takes it.
+                }
             }
         }
         return out;
@@ -501,6 +516,9 @@ public final class NMapScanner {
         final ParallelJoin j = new ParallelJoin(unitCount, () -> {
             hr.up = up.get();
             hr.reason = up.get() ? reason.get() : "no-response";
+            if (!hr.up) {
+                hr.endTimeMs = System.currentTimeMillis(); // no later stage visits a down host
+            }
             hostDone.run();
         });
 
@@ -533,6 +551,9 @@ public final class NMapScanner {
                             }
                             unit.complete();
                         });
+                        if (hr.ip == null) {
+                            hr.ip = cb.remoteIp(); // the resolved address, whatever the port says
+                        }
                         abort[0] = cb::abort;
                         handle.track(abort[0]);
                         nio.addClientSocket(cb, to + 2);
@@ -623,6 +644,84 @@ public final class NMapScanner {
         });
     }
 
+    // ==================== Stage 0b: reverse DNS ====================
+
+    /**
+     * One PTR datagram per host whose address is known, through the same gate as every other
+     * unit: live hosts by default, every host with {@code -R}, nobody with {@code -n}. A
+     * hostname target that never resolved has no address to reverse and is skipped. The lookup
+     * never blocks — see {@link ReverseDnsCallback} — and a host whose resolver stays silent
+     * simply keeps a null {@code hostname}.
+     */
+    private static void reverseDnsStage(NIOSocket nio, ScanGate limiter, ScanReport report,
+                                        NMapConfig cfg, ScanHandle handle, Runnable onDone) {
+        if (cfg.reverseDns == NMapConfig.ReverseDns.NEVER || handle.isCancelled()) {
+            onDone.run();
+            return;
+        }
+        final Map<HostReport, InetAddress> wanted = new LinkedHashMap<>();
+        for (HostReport hr : report.hosts) {
+            if (hr.hostname != null || !(hr.up || cfg.reverseDns == NMapConfig.ReverseDns.ALL)) {
+                continue;
+            }
+            InetAddress addr = literalAddress(hr.ip != null ? hr.ip : hr.host);
+            if (addr != null) {
+                wanted.put(hr, addr);
+            }
+        }
+        if (wanted.isEmpty()) {
+            onDone.run();
+            return;
+        }
+        final InetSocketAddress server = ReverseDnsCallback.resolverAddress(cfg.dnsServer, report.warnings);
+        final ParallelJoin j = new ParallelJoin(wanted.size(), onDone);
+        for (Map.Entry<HostReport, InetAddress> e : wanted.entrySet()) {
+            final HostReport hr = e.getKey();
+            final InetAddress addr = e.getValue();
+            final Unit unit = new Unit(limiter, j);
+            limiter.submit(() -> {
+                if (handle.isCancelled()) {
+                    unit.complete();
+                    return;
+                }
+                final Runnable[] abort = new Runnable[1];
+                try {
+                    ReverseDnsCallback cb = new ReverseDnsCallback(
+                            nio.getScheduler(), addr, server, cfg.dnsTimeoutMs, r -> {
+                        if (abort[0] != null) {
+                            handle.untrack(abort[0]);
+                        }
+                        if (r.hostname() != null) {
+                            hr.hostname = r.hostname();
+                        }
+                        if (!hr.up) {
+                            hr.endTimeMs = System.currentTimeMillis(); // -R: this was its last unit
+                        }
+                        unit.complete();
+                    });
+                    abort[0] = cb::abort;
+                    handle.track(abort[0]);
+                    nio.addDatagramSocket(new InetSocketAddress(0), cb); // ephemeral local bind
+                } catch (Exception ex) {
+                    // The kickoff failed (bind, connect or send); the hostname stays unknown.
+                    unit.complete();
+                }
+            });
+        }
+    }
+
+    /** An {@link InetAddress} for an IP literal, built without any lookup; null for anything else. */
+    static InetAddress literalAddress(String s) {
+        if (!isIpLiteral(s)) {
+            return null;
+        }
+        try {
+            return InetAddress.getByName(s.trim()); // a literal never reaches the resolver
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     // ==================== Stage 1: port scan ====================
 
     private static void portScanStage(NIOSocket nio, ScanGate limiter, ScanReport report,
@@ -684,6 +783,9 @@ public final class NMapScanner {
                         target.banner = r.banner();
                         unit.complete();
                     });
+                    if (hr.ip == null) {
+                        hr.ip = cb.remoteIp(); // -Pn: no discovery unit ran, so this is the first to know
+                    }
                     abort[0] = cb::abort;
                     handle.track(abort[0]);
                     nio.addClientSocket(cb, to + 2);
@@ -862,11 +964,7 @@ public final class NMapScanner {
         }
     }
 
-    /** The catalog without a connection gate — for callers and tests that pace nothing. */
-    private static ProbeChecker buildChecker(NIOSocket nio, NMapConfig cfg, int to, ScanReport report) {
-        return buildChecker(nio, cfg, to, report, null);
-    }
-
+    /** The probe catalog for this scan; {@code gate} null means unpaced (tests only). */
     private static ProbeChecker buildChecker(NIOSocket nio, NMapConfig cfg, int to, ScanReport report,
                                              ScanGate gate) {
         // The catalog is bundled + caller-supplied definitions. ProbeChecker's constructor does
@@ -928,60 +1026,170 @@ public final class NMapScanner {
 
     // ==================== Target expansion (host / CIDR / range) ====================
 
-    /** Expand hostnames, IPs, CIDR ({@code a.b.c.d/nn}) and ranges ({@code a.b.c.d-e} or
-     *  {@code a.b.c.d-a.b.c.f}) into an ordered, de-duplicated target list. Non-IPv4 tokens
-     *  (hostnames) pass through unchanged. Expansion is capped at 65536 addresses per token. */
-    public static List<String> expand(List<String> targets) {
+    /** Most addresses one spec may expand to; beyond it the spec is cut short and a warning says so. */
+    public static final int MAX_EXPANSION = 65536;
+
+    /**
+     * Expand a target list into an ordered, de-duplicated address list. Each token may be:
+     * <ul>
+     *   <li>a hostname or single IP — passed through unchanged;</li>
+     *   <li>a CIDR, {@code a.b.c.d/nn} (network and broadcast excluded below /31);</li>
+     *   <li>a full range, {@code a.b.c.d-w.x.y.z};</li>
+     *   <li>a per-octet range, {@code 192.168.1-5.1-254}, each octet {@code n} or {@code a-b}
+     *     (which subsumes the last-octet form {@code 10.0.0.5-7}; a reversed bound is
+     *     normalised);</li>
+     *   <li>a comma-separated list of any of the above inside one token.</li>
+     * </ul>
+     * Expansion is capped at {@link #MAX_EXPANSION} addresses per spec; the spec is cut short
+     * and, when {@code warnings} is given, a warning names it. Anything unparseable stays a
+     * literal target (a hostname with a dash, a malformed CIDR), never a silent sweep.
+     *
+     * @param warnings receives the cap warning; may be null
+     */
+    public static List<String> expand(List<String> targets, List<String> warnings) {
         Set<String> out = new LinkedHashSet<>();
         if (targets == null) {
             return new ArrayList<>();
         }
         for (String raw : targets) {
             if (raw == null) continue;
-            String t = raw.trim();
-            if (t.isEmpty()) continue;
-            int slash = t.indexOf('/');
-            long lo = -1, hi = -1;
-            if (slash > 0) {
-                long base = ipToLong(t.substring(0, slash));
-                int bits = parseIntSafe(t.substring(slash + 1), -1);
-                if (base >= 0 && bits >= 0 && bits <= 32) {
-                    long mask = bits == 0 ? 0 : (0xFFFFFFFFL << (32 - bits)) & 0xFFFFFFFFL;
-                    long network = base & mask;
-                    long broadcast = network | (~mask & 0xFFFFFFFFL);
-                    lo = bits >= 31 ? network : network + 1;
-                    hi = bits >= 31 ? broadcast : broadcast - 1;
-                }
-            } else {
-                int dash = t.indexOf('-');
-                if (dash > 0) {
-                    long l = ipToLong(t.substring(0, dash));
-                    String rt = t.substring(dash + 1).trim();
-                    if (l >= 0) {
-                        long h = ipToLong(rt);
-                        if (h < 0) { // "a.b.c.d-e" last-octet form
-                            int last = parseIntSafe(rt, -1);
-                            if (last >= 0 && last <= 255) {
-                                h = (l & 0xFFFFFF00L) | (last & 0xFFL);
-                            }
-                        }
-                        if (h >= 0) {
-                            lo = Math.min(l, h);
-                            hi = Math.max(l, h);
-                        }
-                    }
-                }
-            }
-            if (lo >= 0 && hi >= lo) {
-                long count = Math.min(hi - lo + 1, 65536);
-                for (long i = 0; i < count; i++) {
-                    out.add(longToIp(lo + i));
-                }
-            } else {
-                out.add(t); // hostname or single IP — pass through
+            for (String piece : raw.split(",")) {
+                String t = piece.trim();
+                if (t.isEmpty()) continue;
+                expandOne(t, out, warnings);
             }
         }
         return new ArrayList<>(out);
+    }
+
+    /** {@link #expand(List, List)} without a warning sink. */
+    public static List<String> expand(List<String> targets) {
+        return expand(targets, null);
+    }
+
+    private static void expandOne(String t, Set<String> out, List<String> warnings) {
+        int slash = t.indexOf('/');
+        if (slash > 0) {
+            long base = ipToLong(t.substring(0, slash));
+            int bits = parseIntSafe(t.substring(slash + 1), -1);
+            if (base >= 0 && bits >= 0 && bits <= 32) {
+                long mask = bits == 0 ? 0 : (0xFFFFFFFFL << (32 - bits)) & 0xFFFFFFFFL;
+                long network = base & mask;
+                long broadcast = network | (~mask & 0xFFFFFFFFL);
+                long lo = bits >= 31 ? network : network + 1;
+                long hi = bits >= 31 ? broadcast : broadcast - 1;
+                emitRange(t, lo, hi, out, warnings);
+                return;
+            }
+            out.add(t); // malformed CIDR: literal
+            return;
+        }
+        int dash = t.indexOf('-');
+        if (dash > 0) {
+            long l = ipToLong(t.substring(0, dash));
+            long h = ipToLong(t.substring(dash + 1));
+            if (l >= 0 && h >= 0) {
+                emitRange(t, Math.min(l, h), Math.max(l, h), out, warnings);
+                return;
+            }
+            int[][] octets = parseOctetRanges(t);
+            if (octets != null) {
+                emitOctets(t, octets, out, warnings);
+                return;
+            }
+        }
+        out.add(t); // hostname or single IP — pass through
+    }
+
+    private static void emitRange(String spec, long lo, long hi, Set<String> out, List<String> warnings) {
+        long count = hi - lo + 1;
+        if (count > MAX_EXPANSION) {
+            capped(spec, warnings);
+            count = MAX_EXPANSION;
+        }
+        for (long i = 0; i < count; i++) {
+            out.add(longToIp(lo + i));
+        }
+    }
+
+    /**
+     * {@code a.b.c.d} where each part is {@code n} or {@code n-m} within 0..255, as
+     * {@code [4][2]} normalised bounds; null when the token is not of that shape.
+     */
+    private static int[][] parseOctetRanges(String t) {
+        String[] parts = t.split("\\.", -1);
+        if (parts.length != 4) {
+            return null;
+        }
+        int[][] bounds = new int[4][2];
+        for (int i = 0; i < 4; i++) {
+            String p = parts[i].trim();
+            int d = p.indexOf('-');
+            int a, b;
+            if (d > 0) {
+                a = parseIntSafe(p.substring(0, d), -1);
+                b = parseIntSafe(p.substring(d + 1), -1);
+            } else {
+                a = b = parseIntSafe(p, -1);
+            }
+            if (a < 0 || a > 255 || b < 0 || b > 255) {
+                return null;
+            }
+            bounds[i][0] = Math.min(a, b);
+            bounds[i][1] = Math.max(a, b);
+        }
+        return bounds;
+    }
+
+    private static void emitOctets(String spec, int[][] o, Set<String> out, List<String> warnings) {
+        long total = 1;
+        for (int[] b : o) {
+            total *= (b[1] - b[0] + 1);
+        }
+        if (total > MAX_EXPANSION) {
+            capped(spec, warnings);
+        }
+        long emitted = 0;
+        for (int a = o[0][0]; a <= o[0][1]; a++) {
+            for (int b = o[1][0]; b <= o[1][1]; b++) {
+                for (int c = o[2][0]; c <= o[2][1]; c++) {
+                    for (int d = o[3][0]; d <= o[3][1]; d++) {
+                        if (emitted++ >= MAX_EXPANSION) {
+                            return;
+                        }
+                        out.add(a + "." + b + "." + c + "." + d);
+                    }
+                }
+            }
+        }
+    }
+
+    private static void capped(String spec, List<String> warnings) {
+        if (warnings != null) {
+            warnings.add("target expansion capped at " + MAX_EXPANSION + " addresses for '" + spec + "'");
+        }
+    }
+
+    /**
+     * True for an IPv4 dotted quad or an IPv6 literal (optionally with a zone index) — an
+     * address that needs no lookup. Anything else is treated as a hostname.
+     */
+    public static boolean isIpLiteral(String s) {
+        if (s == null) {
+            return false;
+        }
+        String t = s.trim();
+        if (ipToLong(t) >= 0) {
+            return true;
+        }
+        if (t.startsWith("[") && t.endsWith("]")) {
+            t = t.substring(1, t.length() - 1);
+        }
+        int pct = t.indexOf('%');
+        if (pct > 0) {
+            t = t.substring(0, pct);
+        }
+        return t.indexOf(':') >= 0 && t.matches("[0-9A-Fa-f:.]+");
     }
 
     private static long ipToLong(String s) {

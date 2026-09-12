@@ -6,7 +6,8 @@ import io.xlogistx.nosneak.v2.nmap.ScanReport.PortReport;
 import io.xlogistx.nosneak.v2.result.ProbeResult;
 
 /**
- * CSV — one row per (host, listed port).
+ * CSV — one row per (host, listed port), and one row per down host with the port columns blank
+ * so a consumer sees every target that was scanned, not only the ones that answered.
  * <p>
  * The two newest columns, {@code reason} and {@code rttms}, are appended at the end so a
  * consumer that reads by position keeps working; {@code rttms} is empty when the port never
@@ -29,6 +30,9 @@ public final class CSVFormatter implements OutputFormatter {
         sb.append(HEADER).append('\n');
         for (HostReport h : r.hosts) {
             if (!h.up) {
+                // A down host is a fact worth a row: host/ip/hostname/mac, every port column empty.
+                row(sb, h.host, nz(h.ip), nz(h.hostname), nz(h.mac),
+                        "", "", "", "", "", "", "", "", "", "", "");
                 continue;
             }
             for (PortReport p : h.portsToRender(r.config).shown) {

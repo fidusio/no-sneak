@@ -47,10 +47,6 @@
             <groupId>io.xlogistx</groupId>
             <artifactId>xlogistx-opsec</artifactId>
         </dependency>
-        <dependency>
-            <groupId>io.xlogistx</groupId>
-            <artifactId>xlogistx-gui-audio</artifactId>
-        </dependency>
 
         <dependency>
             <groupId>org.zoxweb</groupId>

@@ -63,7 +63,7 @@ public final class NetworkRevocationChecker {
      *
      * @param leaf      the server's leaf certificate
      * @param issuer    its issuer, needed to build the OCSP CertificateID and to verify a CRL;
-     *                  when absent OCSP is skipped and only a CRL lookup (unverified) is tried
+     *                  when absent neither is possible and the answer is {@code UNKNOWN} at once
      * @param timeoutMs upper bound on the whole attempt; {@code <= 0} uses {@link #DEFAULT_TIMEOUT_MS}
      */
     public void check(X509Certificate leaf, X509Certificate issuer, long timeoutMs,
@@ -105,8 +105,13 @@ public final class NetworkRevocationChecker {
                     fetchCRL(leaf, issuer, crlUrls.get(0), attempt, attempt::finish);
                 }
             });
-        } else if (!crlUrls.isEmpty()) {
+        } else if (!crlUrls.isEmpty() && issuer != null) {
             fetchCRL(leaf, issuer, crlUrls.get(0), attempt, attempt::finish);
+        } else if (!crlUrls.isEmpty()) {
+            // A CRL fetched without the issuer could not be signature-verified, so it could never
+            // say GOOD (see RevocationChecker.fromCRL); do not spend a request to learn that.
+            attempt.finish(RevocationResult.unknown(RevocationChecker.METHOD_CRL,
+                    RevocationChecker.ISSUER_NOT_PRESENTED));
         } else {
             attempt.finish(RevocationResult.unknown(RevocationChecker.METHOD_OCSP,
                     "OCSP responder present but the issuer certificate was not sent, so no request can be built"));

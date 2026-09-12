@@ -449,14 +449,18 @@ public class GradeTest {
 
     // ==================== PQC readiness ====================
 
+    /**
+     * v1's READY / PARTIAL / NOT_READY, restored: a hybrid group is ready; TLS 1.3 with a classical
+     * group is one configuration change away (capable); TLS 1.2 or older has no PQC path at all.
+     */
     @Test
     public void pqcReadinessMapsFromStatus() {
         assertEquals(Grade.Pqc.PQC_READY,
                 Grade.of(healthy().pqcStatus(ProbeResult.PqcStatus.PQC).build()).pqc());
         assertEquals(Grade.Pqc.PQC_CAPABLE,
-                Grade.of(healthy().pqcStatus(ProbeResult.PqcStatus.PQC_READY).build()).pqc());
-        assertEquals(Grade.Pqc.CLASSICAL_ONLY,
                 Grade.of(healthy().pqcStatus(ProbeResult.PqcStatus.CLASSICAL).build()).pqc());
+        assertEquals(Grade.Pqc.CLASSICAL_ONLY,
+                Grade.of(healthy().pqcStatus(ProbeResult.PqcStatus.NOT_READY).build()).pqc());
         assertEquals(Grade.Pqc.UNKNOWN,
                 Grade.of(healthy().pqcStatus(ProbeResult.PqcStatus.UNKNOWN).build()).pqc());
     }
@@ -488,5 +492,90 @@ public class GradeTest {
         Grade g = Grade.of(healthy().build());
         assertFalse(g.advisories() == null);
         assertTrue(g.advisories().isEmpty());
+    }
+
+    // ==================== Remediation text (v1's recommendations, restored) ====================
+
+    private static boolean advised(Grade g, String fragment) {
+        return g.advisories().stream().anyMatch(a -> a.contains(fragment));
+    }
+
+    @Test
+    public void deprecatedVersionsCarryTheirRemediation() {
+        Grade sslv3 = Grade.of(healthy().addProtocolVersion("SSLv3").build());
+        assertTrue(advised(sslv3, "Disable SSLv3") && advised(sslv3, "POODLE"), sslv3.advisories().toString());
+
+        Grade tls10 = Grade.of(healthy().addProtocolVersion("TLSv1.0").build());
+        assertTrue(advised(tls10, "Disable TLS 1.0") && advised(tls10, "PCI DSS"), tls10.advisories().toString());
+        assertFalse(advised(tls10, "Disable TLS 1.1"));
+
+        Grade tls11 = Grade.of(healthy().addProtocolVersion("TLSv1.1").build());
+        assertTrue(advised(tls11, "Disable TLS 1.1"), tls11.advisories().toString());
+    }
+
+    @Test
+    public void missingTls13AdvisesTheUpgrade() {
+        ProbeResult r = ProbeResult.builder("legacy.example.com", 443, "tcp")
+                .service("https")
+                .tlsState(ProbeResult.TlsState.DIRECT_TLS)
+                .pqcStatus(ProbeResult.PqcStatus.NOT_READY)
+                .tlsVersion("TLSv1.2")
+                .certValidity("VALID")
+                .certChainTrust("TRUSTED", "ok")
+                .addProtocolVersion("TLSv1.2")
+                .complete(true)
+                .build();
+        Grade g = Grade.of(r);
+        assertTrue(advised(g, "Upgrade to TLS 1.3 for PQC support"), g.advisories().toString());
+        assertEquals(Grade.Pqc.CLASSICAL_ONLY, g.pqc());
+        assertFalse(advised(Grade.of(healthy().build()), "Upgrade to TLS 1.3"), "TLS 1.3 is already accepted");
+    }
+
+    @Test
+    public void tls13WithClassicalKeyExchangeAdvisesEnablingAHybrid() {
+        Grade g = Grade.of(healthy().pqcStatus(ProbeResult.PqcStatus.CLASSICAL).build());
+        assertEquals(Grade.Pqc.PQC_CAPABLE, g.pqc());
+        assertTrue(advised(g, "Enable PQC hybrid key exchange (X25519MLKEM768 or SecP256r1MLKEM768)"),
+                g.advisories().toString());
+        assertFalse(advised(Grade.of(healthy().build()), "Enable PQC hybrid"), "already hybrid: nothing to enable");
+    }
+
+    @Test
+    public void classicalCertificateAdviceUsesTheV1Wording() {
+        Grade g = Grade.of(healthy().certKeyAnalysis("RSA", "SHA256withRSA", "RSA", 2048, false).build());
+        assertTrue(advised(g, "Consider migrating to PQC certificates (ML-DSA)"), g.advisories().toString());
+        assertFalse(advised(Grade.of(healthy().certKeyAnalysis("RSA", "SHA256withRSA", "RSA", 2048, false)
+                .pqcStatus(ProbeResult.PqcStatus.CLASSICAL).build()), "ML-DSA"),
+                "only a PQC key exchange makes the certificate the remaining gap");
+    }
+
+    @Test
+    public void trustFailuresCarryRenewalAdvice() {
+        Grade expired = Grade.of(healthy().certValidity("EXPIRED").certNotAfter("2025-01-01T00:00:00Z").build());
+        assertTrue(advised(expired, "EXPIRED") && advised(expired, "renew immediately")
+                && advised(expired, "2025-01-01T00:00:00Z"), expired.advisories().toString());
+
+        Grade notYet = Grade.of(healthy().certValidity("NOT_YET_VALID").build());
+        assertTrue(advised(notYet, "NOT YET VALID") && advised(notYet, "server clock"), notYet.advisories().toString());
+
+        Grade untrusted = Grade.of(healthy().certChainTrust("UNTRUSTED_ROOT", "anchor not found").build());
+        assertTrue(advised(untrusted, "trusted Root CA") && advised(untrusted, "UNTRUSTED_ROOT")
+                && advised(untrusted, "anchor not found"), untrusted.advisories().toString());
+
+        Grade chain = Grade.of(healthy().certChainTimeValid(false).build());
+        assertTrue(advised(chain, "intermediate/root certificate"), chain.advisories().toString());
+
+        Grade revoked = Grade.of(healthy().revocation("REVOKED", "ocsp", null, "KEY_COMPROMISE").build());
+        assertTrue(advised(revoked, "REVOKED (KEY_COMPROMISE)") && advised(revoked, "renew immediately"),
+                revoked.advisories().toString());
+
+        assertFalse(advised(Grade.of(healthy().certChainTrust("UNKNOWN", "no store").build()), "Root CA"),
+                "a soft UNKNOWN chain result is not a finding");
+    }
+
+    @Test
+    public void aNonTlsServiceGetsNoProtocolAdvice() {
+        Grade g = Grade.of(ProbeResult.builder("h", 22, "tcp").service("ssh").complete(true).build());
+        assertTrue(g.advisories().isEmpty(), g.advisories().toString());
     }
 }

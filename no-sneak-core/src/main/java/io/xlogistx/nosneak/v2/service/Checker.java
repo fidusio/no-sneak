@@ -1,5 +1,6 @@
 package io.xlogistx.nosneak.v2.service;
 
+import io.xlogistx.common.data.PropertyContainer;
 import io.xlogistx.common.http.HTTPProtocolHandler;
 import io.xlogistx.common.http.SimpleProtoSession;
 import io.xlogistx.http.EndpointsUtil;
@@ -8,6 +9,7 @@ import io.xlogistx.nosneak.v2.ProbeChecker;
 import io.xlogistx.nosneak.v2.grade.Grade;
 import io.xlogistx.nosneak.v2.model.ProbeDefinition;
 import io.xlogistx.nosneak.v2.model.ProbeDefinitionLoader;
+import io.xlogistx.nosneak.v2.nmap.ScanGate;
 import io.xlogistx.nosneak.v2.result.ProbeResult;
 import org.zoxweb.server.http.HTTPUtil;
 import org.zoxweb.server.logging.LogWrapper;
@@ -27,6 +29,7 @@ import org.zoxweb.shared.net.IPAddress;
 import org.zoxweb.shared.protocol.ProtoSession;
 import org.zoxweb.shared.task.CallableConsumerTask;
 import org.zoxweb.shared.util.NVGenericMap;
+import org.zoxweb.shared.util.NVLong;
 import org.zoxweb.shared.util.ResourceManager;
 
 import java.net.InetAddress;
@@ -35,6 +38,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 
 /**
@@ -66,13 +70,49 @@ import java.util.function.Supplier;
  * The response is written from the probe's completion callback, after which the session becomes
  * closeable and the connection is released.
  */
-public class Checker {
+public class Checker extends PropertyContainer<NVGenericMap> {
 
     public static final LogWrapper log = new LogWrapper(Checker.class).setEnabled(false);
 
     private static final int TIMEOUT_SEC = 10;
     /** Backstop: if the sweep never calls back, answer anyway rather than leave the client hung. */
     private static final long RESPONSE_DEADLINE_SEC = TIMEOUT_SEC * 8L + 20L;
+
+    /**
+     * Pacing for one check: the candidate sweep opens every matching probe at once (17 bundled
+     * definitions on a common port) and a deep probe adds its enumeration children, all against a
+     * single host. Eight sockets in flight and 200 launches/s keep that an ordinary client load.
+     */
+    static final int MAX_IN_FLIGHT = 8;
+    static final int MAX_PER_SEC = 200;
+
+    /**
+     * Checks answered so far — {@code total-scanned} in every response body, as v1 reported it.
+     * Process-wide (the direct entry point counts too) and seeded from the server configuration's
+     * {@code start-count-at} property when this class is configured as an HTTP server bean.
+     */
+    private static final AtomicLong SCAN_COUNT = new AtomicLong(1000);
+
+    /** @return the number of checks answered so far (the value the next response will exceed by one) */
+    public static long scanCount() {
+        return SCAN_COUNT.get();
+    }
+
+    /** Reads {@code start-count-at} from the bean's configured properties; ignored when absent or {@code <= 0}. */
+    @Override
+    protected void refreshProperties() {
+        try {
+            NVGenericMap props = getProperties();
+            if (props != null && props.getNV("start-count-at") != null) {
+                long startCountingAt = props.getValueAsLong("start-count-at");
+                if (startCountingAt > 0) {
+                    SCAN_COUNT.set(startCountingAt);
+                }
+            }
+        } catch (Exception e) {
+            if (log.isEnabled()) log.getLogger().info("start-count-at not applied: " + e);
+        }
+    }
 
     // ==================== Server-free entry point ====================
 
@@ -207,7 +247,10 @@ public class Checker {
         List<ProbeDefinition> probes = detailed
                 ? Collections.singletonList(ProbeDefinitionLoader.load("/v2/probes/https-scan.json"))
                 : ProbeDefinitionLoader.loadBundled();
-        return new ProbeChecker(nio, probes)
+        // Paced: without a gate a quick check opens every candidate's socket at once and a
+        // detailed one adds up to MAX_ENUMERATION_CHILDREN handshakes, all at one host.
+        ScanGate gate = new ScanGate(nio.getScheduler(), MAX_IN_FLIGHT, MAX_PER_SEC);
+        return new ProbeChecker(nio, probes, gate)
                 .timeoutInSec(TIMEOUT_SEC)
                 .matchPorts(!detailed); // detailed = run the single https-scan def regardless of port
     }
@@ -281,12 +324,16 @@ public class Checker {
         return Boolean.FALSE; // we own the response; the server must not write one
     }
 
-    /** The facts, plus the derived verdict so a consumer reads one authoritative trust answer. */
+    /**
+     * The facts, plus the derived verdict so a consumer reads one authoritative trust answer, and
+     * the running {@code total-scanned} counter (incremented atomically per answered check).
+     */
     private static NVGenericMap response(ProbeResult result) {
         NVGenericMap out = result.toNVGenericMap();
         if (result.getTlsState() != ProbeResult.TlsState.NONE) {
             out.add(Grade.of(result).toNVGenericMap());
         }
+        out.add(new NVLong("total-scanned", SCAN_COUNT.incrementAndGet()));
         return out;
     }
 
