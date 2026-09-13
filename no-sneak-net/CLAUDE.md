@@ -1713,7 +1713,7 @@ Without it: warnings on JDK 25, hard failure in a future release. This is a **JV
 
 The appliance (Linux/aarch64) **was** the gate, and it has been passed (§13.6) — Linux is verified on
 x86-64 and aarch64, Windows on live hardware, and macOS on Apple Silicon (§13.20) — the §7.3 ABI
-gate was retired rather than passed (§13.14). The sole unproven claim left is Linux IPv6/NDP (L1).
+gate was retired rather than passed (§13.14). Linux IPv6/NDP (L1) was the last unproven claim and closed on a wire in §13.24.
 
 1. **Codec unit tests (host-independent, run everywhere).** Build/parse round-trips for ARP, ICMPv4, ICMPv6 echo, NS/NA. Known-good RFC 1071 checksum vectors and an ICMPv6 pseudo-header vector. Solicited-node multicast and `33:33:ff:*` MAC derivation vectors. Gratuitous-ARP classification (SPA == TPA). NS/NA hop-limit-255 validation, both accept and reject cases. `TtlDistance.hopCount` boundary cases (64/128/255, and observed values just below each).
 2. **Layout tests — three targets, not six.** Every layout is selected on `os.name` only (§2.3), so the matrix collapses. Assert: Linux `sockaddr_in`=16, `sockaddr_in6`=28, `sockaddr_ll`=20, `timeval`=16, `packet_mreq`=16; macOS `sockaddr_in`=16 with `sin_family` at offset **1**, `sockaddr_in6`=28, `timeval`=16; Windows `pcap_pkthdr`=16 with `caplen` at offset **8**, `bpf_program`=16.
@@ -1959,7 +1959,7 @@ Fixed with `NicBinding.isNetworkOrBroadcast`, backed by `LocalAddress.networkAdd
 
 ### 13.9 Steps 6 and 7 — the Linux backend
 
-> **RUN AND VERIFIED ON LIVE HARDWARE, 2026-07-27** (Linux **x86-64 and aarch64**, under jar-loader, as root). A `/24` sweep finds every live host with its MAC, hop count and RTT; `resolve` and `ping` both work, on both architectures. What that run exposed is in §13.12 — the code was structurally right and still failed on real hosts for a reason no amount of re-reading would have found. The one part of this backend still untested on a wire is **IPv6/NDP**: the test segment has no v6 neighbours.
+> **RUN AND VERIFIED ON LIVE HARDWARE, 2026-07-27** (Linux **x86-64 and aarch64**, under jar-loader, as root). A `/24` sweep finds every live host with its MAC, hop count and RTT; `resolve` and `ping` both work, on both architectures. What that run exposed is in §13.12 — the code was structurally right and still failed on real hosts for a reason no amount of re-reading would have found. IPv6/NDP was the one part of this backend still untested on a wire — the segment had no v6 neighbours then; it moved packets on 2026-09-13 (§13.24).
 
 | Class | Role |
 |---|---|
@@ -2882,7 +2882,7 @@ Nothing here is a regression from §13.20; the numbers in that section stand.
 
 | # | Item | Evidence | Why it matters |
 |---|---|---|---|
-| L1 | **IPv6/NDP has still never been on a wire.** | §13.9, and §13.20 confirms the Mac segment had no responsive v6 neighbour either | This is now **the module's only remaining unproven claim**. It needs a segment with a v6 neighbour that answers, on any platform — whoever finds one first closes it for everybody. |
+| ~~L1~~ | **CLOSED 2026-09-13 (§13.24).** ~~IPv6/NDP has still never been on a wire.~~ `ACTIVE_NDP` resolves in 1–8 ms, ICMPv6 echo 4/4, `discoverIpv6Segment` finds 18 of 18 responders — after the wire exposed a first-reply snapshot defect, fixed there. | §13.24 | The Linux backend has no unproven claim left. |
 | L2 | **FIXED — closed by S10 (§13.23-C): `HostRecord.fromProbes` is the one record constructor.** **`sweepOne` uses `reachable()`/`avgRtt()` where §13.18 says `measured()`.** | `LinuxHostDiscovery:651-665` (and `DarwinPcapBackend:471-491`) | §13.18 claims *"all three backends use `measured()` before publishing an RTT"* — **that is false; only Windows does.** Harmless today because only Windows manufactures `PingProbe.localInterface` probes, but it is the shape that fabricated `icmp 0.000 ms`, and the doc sentence is the §13.19 prose-decay failure. Fix both backends and correct the sentence. |
 | L3 | **FIXED (§13.23-A)** — folded into M2's shared static. ~~Passive-learning guard inlined, same as macOS M2.~~ | was `LinuxHostDiscovery:848` | — |
 
@@ -2912,7 +2912,7 @@ measure: the adapter-disabled-mid-sweep check in §13.23-B.
 | S12 | **FIXED (§13.23-C): `util.SweepTargets`, `SweepTargetsTest`; a /24 now reads `254 probed`.** **Off-link sweeps still echo the range's own network and broadcast addresses.** `isNetworkOrBroadcast` checks the *interface's* prefix only; `sweep 10.1.0.0/24` from `10.0.0.0/24` routes echoes to `10.1.0.0` and `10.1.0.255` through the gateway — the amplification the wire-discipline block forbids, gated only by the router's directed-broadcast setting. | `sweepOne` on all three backends; `CidrRange.hosts()` | Also skip the range's first/last address when the range is off-link or wider than the interface's prefix. Do this before running §13.22's /22 measurement. |
 | S13 | **FIXED (§13.23-B)** — **`close()` can settle an in-flight ICMP probe twice.** All three pingers iterate `inFlight` and settle `IO` without claiming entries, racing the timeout task's `remove(key) != null`; `PendingCall.settle` counts entries, so a `count = 3` result can complete as `[A, A, B]`. Same one-arg `pendingResolves.remove(target)` in the resolve-timeout tasks could tear down a later `PendingResolve` for the same address (reachable only after `cache().clear()`). | `LinuxIcmpPing`, `DarwinIcmpPing`, `WindowsPcapBackend.close()` and the timeout lambdas | Claim with `remove(key, entry)` before settling. |
 | S14 | **FIXED (§13.23-B)** — **A dead reader is silent.** A `DiscoveryException` from `pcap_next_ex` or a persistent non-`EAGAIN` `recvfrom` error ends the loop with `running = false` and nothing else: capabilities still advertise everything, pending resolves are not failed, and later calls report `TIMEOUT` at full budget. The ICMP readers also spin at 100 % on a sticky error because they treat every `-1` as a tick. | `DarwinPcapBackend.readLoop`, `WindowsPcapBackend` reader, `LinuxIcmpPing`/`DarwinIcmpPing.readLoop` | Fail pending work with the error text and degrade `capabilities()`; check errno before treating `-1` as a tick. M3's family, at the reader. |
-| S15 | **FIXED in code (§13.23-A); the wire proof is L1.** All three `onIpv6` learn the sender from the Ethernet header before the ICMPv6 and hop-255 gates. ~~IPv6 passive learning discards the frame source it already has~~, so hosts that answer `ff02::1` without soliciting us are never recorded by `discoverIpv6Segment`; only hosts that sent an NS for *our* address during the window appear. The IPv6 twin of the §13.13 `ETH_P_IP` learner, missing on both platforms. Bears directly on L1. | `LinuxHostDiscovery.readLoop` → `onIpv6(payload)` without `frameSource`; `DarwinPcapBackend.onIpv6` ignores `eth.src()` | Pass the Ethernet source through and learn it under the M2 guard. |
+| S15 | **FIXED in code (§13.23-A); wire proof on Linux in §13.24.** All three `onIpv6` learn the sender from the Ethernet header before the ICMPv6 and hop-255 gates. ~~IPv6 passive learning discards the frame source it already has~~, so hosts that answer `ff02::1` without soliciting us are never recorded by `discoverIpv6Segment`; only hosts that sent an NS for *our* address during the window appear. The IPv6 twin of the §13.13 `ETH_P_IP` learner, missing on both platforms. Bears directly on L1. | `LinuxHostDiscovery.readLoop` → `onIpv6(payload)` without `frameSource`; `DarwinPcapBackend.onIpv6` ignores `eth.src()` | Pass the Ethernet source through and learn it under the M2 guard. |
 | S16 | **FIXED (§13.23-C moved it to `src/test`; deleted outright on 2026-09-12 at the maintainer's request — §13.16 keeps the measurement and how to repeat it).** **`spike/WindowsArpSpike` ships in the production jar.** A one-off `main()` diagnostic (six ARP injections, prints a verdict), referenced only from §13.16 and the README. | `src/main/java/…/spike/WindowsArpSpike.java` | Move to `src/test` or delete; §13.16 keeps the measurement. |
 | S17 | **FIXED (§13.23-C): `CidrRangeTest`, `SweepOptionsTest`, `SockaddrFillTest`, `DarwinSockaddrFillTest`, `Icmp6FilterTest`, `IdentifiersTest`; `PcapPlatform`/factory via `PlatformSelectionTest`. Still untested: `HostDiscoveryFactory` wiring, `PcapDevices`.** **Untested pure code worth pinning from the Windows box:** `CidrRange` (no unit test at all — host-bit masking, `/31`/`/32`, IPv6 iteration, the `BigInteger` sign-byte/leading-zero paths in `toAddress`), `SweepOptions` validation (§13.3 claims it is pinned; it is not), the `fillSockaddr*` helpers on both libcs, `Libc.setIcmp6Filter`, `Identifiers`, `PcapPlatform.current()` (S1), `HostDiscoveryFactory`, `PcapDevices`. | same review | — |
 
@@ -3456,6 +3456,121 @@ Two events, four neighbours: the gateway and `.234` never sent an ARP/NDP event 
 and were learned from the Ethernet header of ordinary traffic — and `.234`'s link-local IPv6
 address is the first entry the §13.23-A IPv6 learner (S15) has produced on a wire. This is the
 number M1 has to compare, and it was not printable before.
+
+### 13.24 Linux re-verified after the Windows-box rewrite, and the first IPv6 wire — L1 closed
+
+**Why this section exists.** §13.22 and §13.23 rewrote both Linux classes (packages A–D: the
+`SweepDriver` fan-out, shared `PassiveLearning`, per-send errno capture, reader-death degradation,
+claim-before-settle, dispatcher-side completions, `HostRecord.fromProbes`, `SweepTargets`) from
+the Windows box, and nothing had touched Linux hardware since the 2026-07-28 baseline. The module
+has been burned by exactly that before (`2f0669b`, "fixing windows issues, but claude recreated
+linux problem"), so the rewrite is not verified until it runs here. It ran on **2026-09-13**, same
+box as §13.12 (eth0 `10.0.0.61/24`, gateway `10.0.0.1`, Ubuntu kernel 6.8, JDK 25.0.4, x86-64),
+as root through the `HostScan` CLI. Maven runs the suite on this box (the surefire provider
+resolves here, unlike the Windows box): 38 classes / 394 tests green before this section's change,
+**39 / 401 after**.
+
+**The 2026-07-28 baseline reproduces — no regression from the rewrite.**
+
+| Command | 2026-07-28 (`8bf700d`) | 2026-09-13 (after §13.23) |
+|---|---|---|
+| `resolve 10.0.0.1` | `ACTIVE_ARP` ~11 ms | `ACTIVE_ARP` 6 ms |
+| `resolve 10.0.0.61` (own) | `LOCAL_INTERFACE` ~2 ms | `LOCAL_INTERFACE` 0 ms |
+| `ping 10.0.0.1` | ttl 64 | 4/4, ttl 64, ~1.5 ms |
+| `ping 8.8.8.8` | ttl 116 (kernel routes) | 4/4, ttl 116, ~15 ms |
+| `ping 10.0.0.61` (own) | real sub-ms RTT | 0.17–0.32 ms (§13.18: never short-circuit this on Linux) |
+| `sweep 10.0.0.0/24` | 256 probed, 18 alive (18 by MAC, 18 by ICMP) 1.39 s | **254 probed**, 23 alive (23 by MAC, 21 by ICMP) 1539 ms; again: 21 (21 / 21) 1536 ms |
+| `observe 15 --cache` | — | 2 observations, **10 neighbours in cache, three of them `fe80::`** — the S15 IPv6 frame-header learner, first seen on Linux |
+| unprivileged `status` / `resolve` / `ping` | §13.19: no working pinger at all | `UNAVAILABLE` naming both `EPERM`s (`socket(17,2,…)` and `socket(2,3,1)`) — §13.19 stands |
+
+254 probed is S12 (§13.23-C) doing what it said. The 23-vs-21 are `10.0.0.74` and `10.0.0.234`,
+alive by ARP only on the first run — the passive-only population §13.13 is about. The network has
+grown since July; the 18-alive figure was the segment then, not a target.
+
+**L1 closed: IPv6/NDP moved packets on Linux.** This segment turned out to have what the Mac's
+did not: `ping -6 ff02::1%eth0` draws **18 neighbours** (19 lines, one of them us). Measured:
+
+```
+resolve fe80::4025:47ff:fe35:3ec%eth0        42:25:47:35:03:ec  RESOLVED  8 ms via ACTIVE_NDP   (the gateway; same MAC ARP reports)
+resolve fe80::618:d6ff:fe06:ca6f%eth0        04:18:d6:06:ca:6f  RESOLVED  8 ms via ACTIVE_NDP
+resolve fe80::deef:9ff:fee6:567c%eth0        dc:ef:09:e6:56:7c  RESOLVED  1 ms via ACTIVE_NDP
+resolve fe80::ea8b:7c7d:1c4c:6a56%eth0 (own) b0:7b:25:82:64:45  RESOLVED  0 ms via LOCAL_INTERFACE
+ping    fe80::4025:47ff:fe35:3ec%eth0        4 sent, 4 received, rtt 0.452/1.429/4.327 ms, ttl=n/a
+ping    fe80::4025:47ff:fe35:3ec (no scope)  NETWORK_UNREACHABLE, nothing sent   (the §13.9 guard)
+ping    2001:4860:4860::8888                 IO - sendto(ICMPv6) failed: ENETUNREACH   (no v6 default route here; §13.23-B's errno surfaces)
+```
+
+So the hand-built IPv6 header at hop limit 255 over `AF_PACKET`, the solicited-node multicast MAC,
+NA parsing under the hop-255 gate, the `ICMP6_FILTER` on the raw socket, and `sin6_scope_id` all
+work as written. `ttl=n/a` is the documented asymmetry (§13.9): the kernel strips the v6 header.
+§13.9's "still untested on a wire" and §13.21's L1 are retired by this run; §13.23-A's S15 has its
+wire proof (the `fe80::` cache rows above and the `ndp` row below).
+
+**The defect the wire found — `discoverIpv6Segment` looked too early.** Before the fix:
+
+```
+segment eth0:  14 probed, 14 alive (14 by MAC, 0 by ICMP) in 10 ms
+segment eth0:  15 probed, 15 alive (15 by MAC, 0 by ICMP) in 18 ms
+```
+
+Eighteen hosts answered the same all-nodes echo; the tool reported fourteen, in ten milliseconds,
+with none of them "by ICMP". The three it missed were exactly the three whose replies took over
+80 ms in the system ping (`…:661b` 87 ms, `…:c68e` 123 ms, `…:d472` 135 ms). Cause: one multicast
+request draws one reply per neighbour, all carrying the same sequence; `PendingCall` settles that
+sequence on the **first** reply and the ping's future completes — and the snapshot was chained to
+that future. The stragglers still arrived and were still learned, into a cache nobody looked at
+again. "0 by ICMP" was the same shape: the pinger can only ever hand back one reply per sequence.
+
+Fix, Linux only: the snapshot is scheduled at the **end of the per-host window** (on the injected
+scheduler, hopped to the dispatcher — no pool thread waits), regardless of when the first reply
+lands; and the NDP-socket reader, which already sees every IPv6 frame on the NIC, records the
+senders of ICMPv6 echo **replies addressed to one of our own addresses** into the open window's
+set — classified before the hop-255 gate, since a reply arrives at hop limit 64. A neighbour in
+that set is `icmpAlive`; one known only from passive learning is not, and keeps its provenance.
+No RTT is reported, because the pinger timed only the first reply. After:
+
+```
+segment eth0:          20 probed, 20 alive (20 by MAC, 19 by ICMP) in 1016 ms
+segment eth0:          19 probed, 19 alive (19 by MAC, 18 by ICMP) in 1022 ms
+segment eth0 -w 3000:  18 probed, 18 alive (18 by MAC, 18 by ICMP) in 3018 ms
+```
+
+18 by ICMP is every host the system ping saw. The extra one or two rows are passive-only
+neighbours — `10.0.0.234`'s `fe80::18aa:…:bcf5`, which never answers an echo and now prints as
+`ndp` rather than `icmp`. That label is the one shared-code change: `HostScanFormat.host` said
+`arp` for any host not proved by ICMP, which for an IPv6 row was simply false; it now says `ndp`
+for a v6 address. Pinned: `platform/linux/Ipv6SegmentEchoTest` (7) for the frame classification
+(reply to us / reply to someone else / request / NS / our own loop-back / off-link sender /
+truncated). The window timing itself needs sockets and is not unit-pinned; the numbers above are
+its proof.
+
+**The sockets are now under test, as root.** `platform/linux/LinuxLiveTest` (8) opens the real
+backend through `HostScanner` and asserts only machine-local facts, so it passes on any Linux box
+with root and one IPv4 interface and says nothing about who else is on the segment: the
+capability split (pinger vs interface), own IPv4 and own link-local v6 → `LOCAL_INTERFACE` with
+the NIC's MAC in under 100 ms, a 4/4 loopback echo with a real RTT and TTL 64, unscoped `fe80::`
+→ `NETWORK_UNREACHABLE` with nothing on the wire, the default gateway → `ACTIVE_ARP` on the first
+attempt from a cleared cache, `sweep <own>/32` → exactly one record (us, MAC, ICMP), and
+`discoverIpv6Segment` returning **no earlier than the window** with its ICMP count equal to the
+records flagged `icmpAlive`, none of them us. Without root the whole class is skipped by an
+assumption, so the ordinary suite stays pure. Run:
+
+```
+sudo env PATH=$PATH mvn -o -pl no-sneak-net test -DskipTests=false -Dtest=LinuxLiveTest -Dmaven.repo.local=$HOME/.m2/repository
+sudo chown -R $USER target        # Maven under sudo writes target/ as root
+```
+
+Whole suite as root on 2026-09-13: **40 classes / 409 tests, 0 failures**; unprivileged, the same
+minus the 8 live tests.
+
+**Not changed, by the Linux-only rule.** `WindowsPcapBackend.discoverIpv6Segment` returns the
+cache immediately by design (§13.10). `DarwinPcapBackend` echoes and then snapshots on the ping's
+first reply — the same shape as the defect above — and M9's owner should apply the same window
+when a Mac meets a segment like this one.
+
+**Still open, now measurable on this box.** N3 (unicast NS re-solicit) has a wire at last. The
+§13.23-C gateway-side capture of a routed sweep still needs a capture point on the far side, and
+the two-subnet-NIC check still needs a NIC with two prefixes.
 
 ---
 

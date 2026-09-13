@@ -24,14 +24,13 @@ Tier-1 probe engine. This module answers the question that comes before them.
 | Linux passive IPv4 learning (`ETH_P_IP`)          | **done and verified** — resolves hosts the kernel itself cannot reach                                                               |
 | Windows unicast-ARP retry + `GetIpNetEntry2` hint | **done and verified on live hardware** — resolves a host that ignores broadcast ARP (§13.16)                                        |
 | Windows passive learning (`ip`/`ip6` + NDP NS)    | **done and verified on live hardware** — finds hosts no sweep reaches (§13.17)                                                      |
-| Linux IPv6 / NDP                                  | **written, never exercised on a wire** — no v6 neighbours on the test segment                                                       |
+| Linux IPv6 / NDP                                  | **done and verified on live hardware** — NDP resolve, ICMPv6 echo and all-nodes segment discovery, 18 neighbours (§13.24)          |
 | macOS ICMP                                        | **done and verified on live hardware — Apple Silicon (arm64)** — on/off-link v4, v6, link-local                                     |
 | macOS ARP/NDP                                     | **done and verified on live hardware — Apple Silicon (arm64)** — ARP, sweep, passive observe over libpcap, wired and Wi-Fi (§13.20) |
 
 Windows, Linux **and now macOS** all have runtime evidence behind them, on real segments rather than
 in principle — macOS was brought up on Apple Silicon on 2026-07-29 (§13.20), which found and fixed the
-last two live-only bugs. One claim still lacks a wire: **Linux IPv6/NDP** (written, never on a wire —
-no v6 neighbours on the test segment). Everywhere else, "done" means it moved packets.
+last two live-only bugs. The last claim without a wire, **Linux IPv6/NDP**, was verified on 2026-09-13 (§13.24). Everywhere else, "done" means it moved packets.
 
 **Broadcast ARP is not universally delivered, on either platform.** Wi-Fi access points buffer
 broadcast against the DTIM interval and commonly suppress it, so a station can be fully reachable by

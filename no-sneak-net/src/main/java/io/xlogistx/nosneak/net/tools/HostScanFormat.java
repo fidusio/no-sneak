@@ -121,12 +121,17 @@ public final class HostScanFormat {
                                      + r.detail().map(d -> " - " + d).orElse(""));
     }
 
-    /** One swept host: address, MAC, what proved it alive, and the RTT if any. */
+    /**
+     * One swept host: address, MAC, what proved it alive, and the RTT if any. A host
+     * that did not answer ICMP was proved by its layer-2 answer, which is ARP for IPv4
+     * and NDP for IPv6 — no IPv6 neighbour was ever found by ARP (§13.24).
+     */
     public static String host(HostRecord h) {
         return String.format("  %-39s %-19s %-8s %s",
                              h.ip().getHostAddress(),
                              h.mac().map(Object::toString).orElse("-"),
-                             h.icmpAlive() ? "icmp" : "arp",
+                             h.icmpAlive() ? "icmp"
+                                     : h.ip() instanceof java.net.Inet6Address ? "ndp" : "arp",
                              h.rtt().map(d -> String.format("%.3f ms", millis(d))).orElse(""));
     }
 

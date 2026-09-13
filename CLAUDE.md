@@ -64,8 +64,7 @@ platform** — start there if you are picking work up.
 **Every platform now has a layer-2 backend**; macOS was the last, and goes through libpcap rather
 than the kernel neighbour table §7.3 gated on — that ABI is retired, not measured (§13.14). macOS was
 brought up on Apple Silicon on 2026-07-29 and now has runtime evidence like the others — active ARP,
-sweep over wired and Wi-Fi, and passive observe all moved packets (§13.20). One claim still lacks a
-wire and is the one to distrust: **Linux IPv6/NDP** (written, never on a wire).
+sweep over wired and Wi-Fi, and passive observe all moved packets (§13.20). The last claim without a wire, **Linux IPv6/NDP**, was verified on live hardware on 2026-09-13 (§13.24), and the whole Linux backend was re-run against its 2026-07-28 baseline the same day after the September rewrite.
 
 ## `no-sneak-core` is one code base now
 

@@ -20,7 +20,7 @@ that are not written down anywhere else.*
 |---|---|
 | Scanning engine | `no-sneak-core/ACTION-PLAN.md` → *Pending Issues / Next Steps* (item 1, vulnerability-check checklist, is the largest remaining gap) |
 | Probe engine reference / deferrals | `no-sneak-core/PROBE-CONFIG.md` → *Known deferrals* |
-| Host discovery | `no-sneak-net/CLAUDE.md` §13.21 — open items split per platform. **As of 2026-09-11 every code item there is fixed** (§13.22 sweep admission; §13.23-A/B/C the rest); what remains is M1/M9/L1 (need a Mac / the appliance / a v6 segment — **Linux IPv6/NDP has still never touched a wire**) and S6 (by design). Next steps for this module are rows N1–N5 in the priority matrix at the bottom of this file. |
+| Host discovery | `no-sneak-net/CLAUDE.md` §13.21 — open items split per platform. **As of 2026-09-11 every code item there is fixed** (§13.22 sweep admission; §13.23-A/B/C the rest); what remains is M1/M9 (need a Mac); **L1 closed 2026-09-13 — Linux IPv6/NDP verified on a wire, §13.24**. Next steps for this module are rows N1–N5 in the priority matrix at the bottom of this file. |
 | App loading/session | `no-sneak-app/LOADING.md` |
 
 ## Code review findings (2026-08-13, uncommitted working tree)
@@ -138,8 +138,8 @@ anything ships.
   resolved from `db-url=` → `NOSNEAK_DB_URL` → `-Dnosneak.db.url`, and with none set the tool prints
   usage and exits without touching a database (`tools/DMToolTest` pins the order and greps the source
   for any `mongodb://localhost` or `replicaSet=` creeping back).
-- **Linux IPv6/NDP** in `no-sneak-net` compiles and has tests but has never been verified on real
-  hardware — distrust it until it moves packets (§13.21).
+- ~~**Linux IPv6/NDP** in `no-sneak-net` compiles and has tests but has never been verified on real
+  hardware~~ **Verified 2026-09-13** on a segment with 18 v6 neighbours (`no-sneak-net/CLAUDE.md` §13.24).
 ## Status check (2026-09-09, commit `c082f11`)
 
 A read of the tree against this file and the per-module lists, with the code grepped and the build
@@ -217,8 +217,8 @@ after the merge, 213 tests, 0 failures. Live checks the same day: `xlogistx.io -
 
 **Open, in full (7 rows; the matrix below has the detail):**
 - Yours: a CI runner that can reach Maven Central (row 2 of the matrix page).
-- Hardware: M1 and M9 need a Mac, L1 needs the Linux appliance on a v6 segment.
-- On this box: N3 (IPv6 unicast re-solicit — small code, proof needs L1's wire). ~~C1~~ closed
+- Hardware: M1 and M9 need a Mac. ~~L1 needs the Linux appliance on a v6 segment~~ closed 2026-09-13 (§13.24).
+- N3 (IPv6 unicast re-solicit — small code; the Linux dev box now has the v6 wire to prove it on). ~~C1~~ closed
   2026-09-12 by removing the default rather than choosing a value.
 - Pinned by the maintainer, not scheduled: P17, the SSL-Labs posture checklist.
 
@@ -250,6 +250,20 @@ five v1 packages and their five test files, collapse `v2` → `io.xlogistx.nosne
 The filterable matrix page (same rows, live-updated during the work):
 https://claude.ai/code/artifact/ad7da1cc-7807-4109-ad77-cb166e70596e
 
+## Status check (2026-09-13, Linux dev box) — the September rewrite re-verified on Linux, L1 closed
+
+The §13.22–§13.23 rewrite of the Linux backend had been done entirely from the Windows box. Run on
+Linux hardware as root on 2026-09-13 (`no-sneak-net/CLAUDE.md` §13.24): every 2026-07-28 baseline
+number reproduces (ARP resolve, local-interface short-circuit, loopback RTT, off-link ping, a /24
+sweep now at 254 probed), the unprivileged failure is still the honest `EPERM` pair, and Maven
+runs the module suite on this box — **39 classes / 401 tests, 0 failures**. This segment has 18
+IPv6 neighbours, so **L1 is closed**: `ACTIVE_NDP` in 1–8 ms, ICMPv6 echo 4/4, segment discovery
+18 of 18 by ICMP after fixing a first-reply snapshot defect the wire exposed (Linux only; the
+Darwin twin is M9's). One shared-code change: the `HostScan` host row says `ndp` rather than `arp`
+for an IPv6 neighbour not proved by ICMP. A root-gated live class, `platform/linux/LinuxLiveTest`
+(8), now exercises the real Linux sockets and is skipped without root — as root the module is
+40 classes / 409 tests. Uncommitted at the time of writing.
+
 ## Priority matrix (2026-09-11) — discovery closed out; port detection and protocol identification next
 
 *Supersedes the "Suggested order" above for everything that touches scanning.* Host discovery
@@ -278,8 +292,8 @@ P = parity (v1 had it, so it is a regression at merge). **effort** S < 1 day, M 
 |---|---|---|---|---|---|---|
 | ~~N1~~ | **FIXED 2026-09-11 (wave 1).** A probe registered but never sent (the sender threw before arming its deadline) left the call incomplete; `PendingCall.failRemaining` closes every open slot and each `ping()` calls it from its abort path. Pinned by `PendingCallTest.aCallWhoseProbeWasNeverSentStillCompletes`. §13.23-E. | — | — | — | — | `util/PendingCall`, three `ping()` methods |
 | ~~N2~~ | **FIXED 2026-09-11 (wave 1).** `hostscan observe [seconds] [--cache]` reports events and cached neighbours separately and prints `cache().snapshot()` per interface. First wire evidence of the IPv6 learner: a neighbour's `fe80::` learned from frame headers alone. §13.23-E. | — | — | — | — | `tools/HostScan`, `tools/HostScanFormat` |
-| N3 | IPv6 unicast-NS re-solicit (the v6 twin of §13.13's unicast ARP) deliberately not built; a passive v6 sighting while a v6 resolve is pending gets no re-solicit. Needs a `dst16` overload of `Icmp6.neighborSolicitation` and a wire (L1). | P | M | L1 owner | codec test only | `codecs/Icmp6`, three backends' `learnSender` |
-| N4 | Hardware-gated measurements: M1 (Mac `observe 60` before/after `ip6` in the filter), M9 (v6 neighbour + arena-shutdown race on a Mac), L1 (Linux NDP never on a wire). | D | S each | a Mac / the appliance / a v6 segment | N | — |
+| N3 | IPv6 unicast-NS re-solicit (the v6 twin of §13.13's unicast ARP) deliberately not built; a passive v6 sighting while a v6 resolve is pending gets no re-solicit. Needs a `dst16` overload of `Icmp6.neighborSolicitation`; the wire exists since 2026-09-13 (Linux dev box, §13.24). | P | M | — | codec test + live on the Linux box | `codecs/Icmp6`, three backends' `learnSender` |
+| N4 | Hardware-gated measurements: M1 (Mac `observe 60` before/after `ip6` in the filter), M9 (v6 neighbour + arena-shutdown race on a Mac). ~~L1 (Linux NDP never on a wire)~~ **closed 2026-09-13 (§13.24)**, which also found and fixed a first-reply snapshot defect in Linux `discoverIpv6Segment`; Darwin has the same shape and is M9's to fix. | D | S each | a Mac | N | — |
 | ~~N5~~ | **FIXED 2026-09-11 (§13.23-D).** S6: futures completed inline on reader threads, so a blocking user continuation could stall that NIC's capture (or ICMP JVM-wide). Completions now hop to the injected dispatcher; the reader never runs a continuation; RTTs are unchanged because they are computed before the hop. Pinned by `CompletionThreadTest`. | — | — | — | — | `util/PendingResolve`, `util/PendingCall` |
 
 ### `no-sneak-core` stage 1 — live ports

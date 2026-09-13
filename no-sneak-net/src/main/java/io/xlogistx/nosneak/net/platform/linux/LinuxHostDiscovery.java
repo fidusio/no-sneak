@@ -41,6 +41,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -114,6 +115,13 @@ public final class LinuxHostDiscovery implements HostDiscovery {
     private final ConcurrentHashMap<InetAddress, PendingResolve> pending = new ConcurrentHashMap<>();
     private final CopyOnWriteArrayList<Consumer<ObservedNeighbor>> observers =
             new CopyOnWriteArrayList<>();
+    /**
+     * One set per {@link #discoverIpv6Segment} window still open: the on-link senders
+     * whose ICMPv6 echo REPLY to one of our addresses the NDP-socket reader saw while
+     * the window ran. The pinger cannot supply this — a multicast echo draws many
+     * replies for one sequence and {@code PendingCall} keeps only the first (§13.24).
+     */
+    private final CopyOnWriteArrayList<Set<InetAddress>> echoWindows = new CopyOnWriteArrayList<>();
 
     private final Object arpSendLock = new Object();
     private final Object ndpSendLock = new Object();
@@ -683,41 +691,64 @@ public final class LinuxHostDiscovery implements HostDiscovery {
      * Echoes to the all-nodes link-local multicast address, SCOPED to this
      * interface — {@code ff02::1} cannot be routed without a scope id, and an
      * unbound pinger cannot guess which segment is meant.
+     * <p>
+     * The snapshot is taken when the per-host WINDOW closes, never when the echo's
+     * future completes. One multicast request draws one reply per neighbour, all for
+     * the same sequence, and the pinger settles that sequence on the FIRST of them —
+     * so the future completes in single-digit milliseconds while the slower hosts are
+     * still answering. Measured on the first Linux v6 wire (§13.24): the first-reply
+     * snapshot found 14 of 18 responders in 10 ms and lost exactly the three whose
+     * replies took over 80 ms. The window runs on the scheduler and the snapshot on
+     * the dispatcher; no pool thread waits.
+     * <p>
+     * {@code icmpAlive} is true for a neighbour whose echo reply to one of our own
+     * addresses the NDP reader saw during the window — our own frame-level evidence,
+     * the same way {@link #onIpv4} learns from an IPv4 echo reply. Neighbours known
+     * only from passive learning report {@code false}, with their cache provenance.
+     * No RTT is reported: the pinger timed only the first reply.
      */
     @Override
     public CompletableFuture<SweepSummary> discoverIpv6Segment(SweepOptions options,
                                                                Consumer<HostRecord> onHost) {
         Instant started = Instant.now();
         ICMPPing p = pinger;
-        CompletableFuture<PingResult> echoed;
-        if (p != null && options.doIcmp()) {
+        Set<InetAddress> responders = ConcurrentHashMap.newKeySet();
+        CompletableFuture<Void> window = new CompletableFuture<>();
+        boolean active = p != null && options.doIcmp();
+        if (active) {
+            echoWindows.add(responders);
             try {
                 InetAddress allNodes = Inet6Address.getByAddress(
                         null, InetAddress.ofLiteral("ff02::1").getAddress(), binding.ifIndex());
-                echoed = p.ping(allNodes, Math.max(1, options.pingCount()),
-                                options.perHostTimeout());
-            } catch (java.net.UnknownHostException e) {
-                echoed = CompletableFuture.completedFuture(null);
+                // The result is deliberately ignored: the window, not the first reply,
+                // decides when to look. The pinger still bounds its own probe.
+                p.ping(allNodes, Math.max(1, options.pingCount()), options.perHostTimeout());
+            } catch (java.net.UnknownHostException | RuntimeException ignored) {
+                // Nothing went out; the window still reports what passive learning knows.
             }
+            scheduler.schedule(() -> window.complete(null),
+                               Math.max(1, options.perHostTimeout().toMillis()),
+                               TimeUnit.MILLISECONDS);
         } else {
-            echoed = CompletableFuture.completedFuture(null);
+            // Nothing is sent and nothing is awaited: report the cache as it stands.
+            window.complete(null);
         }
 
-        return echoed.thenApply(ignored -> {
-            // Responders land in the cache through the NDP reader; report whatever
-            // is known, active or passive.
+        return window.thenApplyAsync(ignored -> {
+            echoWindows.remove(responders);
             List<HostRecord> found = new ArrayList<>();
             for (IpMacCache.Entry e : cache.snapshot()) {
                 if (e.ip() instanceof Inet6Address && e.hasMac()) {
-                    found.add(new HostRecord(e.ip(), Optional.of(e.mac()), false,
+                    found.add(new HostRecord(e.ip(), Optional.of(e.mac()), responders.contains(e.ip()),
                             Optional.empty(), PingProbe.TTL_UNAVAILABLE, Optional.empty(),
                             e.provenance(), e.lastSeen()));
                 }
             }
+            int icmp = (int) found.stream().filter(HostRecord::icmpAlive).count();
             found.forEach(r -> dispatcher.execute(() -> onHost.accept(r)));
-            return new SweepSummary(found.size(), found.size(), found.size(), 0,
+            return new SweepSummary(found.size(), found.size(), found.size(), icmp,
                                     Duration.between(started, Instant.now()));
-        });
+        }, dispatcher);
     }
 
     // ---- capture ----
@@ -914,6 +945,16 @@ public final class LinuxHostDiscovery implements HostDiscovery {
         if (len <= 0) {
             return;
         }
+        // An echo reply lands at hop limit 64, so it must be classified BEFORE the
+        // hop-255 gate below, which is RFC 4861's rule for ND messages only. Only a
+        // window that is open cares, and only for a reply addressed to us from an
+        // on-link sender the learner would accept (§13.24).
+        if (!echoWindows.isEmpty() && isEchoReplyToUs(binding, ip, payload, off, len, frameSource)) {
+            InetAddress source = address(ip.src16());
+            for (Set<InetAddress> window : echoWindows) {
+                window.add(source);
+            }
+        }
         // RFC 4861 7.1.1: NS and NA whose hop limit is not 255 have crossed a
         // router and MUST be discarded. Proves the SENDER is on-link — not that the
         // address it advertises is, which is what the guard below checks.
@@ -1026,6 +1067,21 @@ public final class LinuxHostDiscovery implements HostDiscovery {
                 entry.completeAll(entry.abort(why));
             }
         });
+    }
+
+    /**
+     * True for an ICMPv6 echo REPLY (type 129) whose destination is one of this
+     * interface's own addresses and whose sender passes the passive-learning guard —
+     * the frame-level fact {@link #discoverIpv6Segment} counts as {@code icmpAlive}.
+     * Pure, so {@code Ipv6SegmentEchoTest} pins it without a socket.
+     */
+    static boolean isEchoReplyToUs(NicBinding binding, Ipv6Header.View ip, byte[] payload,
+                                   int off, int len, MacAddress frameSource) {
+        if (Icmp6.parseEchoReply(payload, off, len).isEmpty()) {
+            return false;
+        }
+        return binding.isLocalAddress(address(ip.dst16()))
+                && PassiveLearning.learnable(binding, address(ip.src16()), frameSource);
     }
 
     private static InetAddress address(byte[] raw) {
