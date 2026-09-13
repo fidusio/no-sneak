@@ -148,7 +148,8 @@ deliberately touch no sockets.
 3. **HTTP security headers + CNSA 2.0 compliance** — the remaining Sprint 4/5 features.
 4. **Merge chores** — done 2026-09-12 (packages collapsed, `/probes/` bundled, docs at the module
    root, `http_server_config.json` on `service.Checker`).
-5. **Smaller open items** — `DMTool`'s stale hardcoded Mongo URL (C1). The rest of the old list
+5. **Smaller open items** — none left from the old list (C1, the `DMTool` Mongo default, closed
+   2026-09-12: the URL now comes only from `db-url=`, `NOSNEAK_DB_URL` or `-Dnosneak.db.url`). The rest
    is done: named-group enumeration, network OCSP + CRL, weak/insecure cipher candidates (now
    per-probe toggles), UDP scan, timing templates, `--top-ports`; `-O` and raw SYN scans are
    rejected by policy, not deferred. **The v1 parity pass is complete (2026-09-12, see

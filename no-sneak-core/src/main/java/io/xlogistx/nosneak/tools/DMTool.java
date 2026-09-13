@@ -31,12 +31,17 @@ import org.zoxweb.shared.util.SUS;
  *   <li>{@code update-password} &ndash; change a subject's password after authenticating.
  *       Params: {@code subject}, {@code password}, {@code new-password}.</li>
  * </ul>
- * The optional {@code db-url} param overrides the default MongoDB connection.
+ * The datastore connection is never hard-coded (issue C1). It is resolved, in order, from the
+ * {@code db-url} param, the {@code NOSNEAK_DB_URL} environment variable, and the
+ * {@code nosneak.db.url} system property; if none is set the tool prints usage and exits
+ * without touching any database.
  */
-public class
-DMTool {
+public class DMTool {
     private static final LogWrapper log = new LogWrapper(DMTool.class);
-    private static final String DB_URL = "mongodb://localhost:27017/xlog_datastore_test?replicaSet=rs0";
+    /** Environment variable consulted when {@code db-url=} is absent. */
+    public static final String DB_URL_ENV = "NOSNEAK_DB_URL";
+    /** System property consulted when neither {@code db-url=} nor the environment variable is set. */
+    public static final String DB_URL_PROPERTY = "nosneak.db.url";
 
     private static final String USAGE =
             "Usage: command=<command> subject=<username> password=<password> [options]\n" +
@@ -49,7 +54,8 @@ DMTool {
             "  update-password  subject=<username> password=<password> new-password=<password>\n" +
             "\n" +
             "Options:\n" +
-            "  db-url=<url>     override the datastore connection (default: " + DB_URL + ")";
+            "  db-url=<url>     the datastore connection, e.g. mongodb://host:27017/<database>\n" +
+            "                   (or set " + DB_URL_ENV + " in the environment, or -D" + DB_URL_PROPERTY + ")";
 
     enum Command
     implements GetName {
@@ -93,6 +99,22 @@ DMTool {
         }
     }
 
+    /**
+     * The datastore URL from the first non-blank source, in the order the tool documents:
+     * command-line param, environment variable, system property.
+     *
+     * @throws IllegalArgumentException when none is set — there is deliberately no default
+     */
+    static String resolveDbUrl(String param, String env, String property) {
+        for (String candidate : new String[]{param, env, property}) {
+            if (candidate != null && !candidate.trim().isEmpty()) {
+                return candidate.trim();
+            }
+        }
+        throw new IllegalArgumentException("no datastore URL: pass db-url=<url>, set "
+                + DB_URL_ENV + ", or run with -D" + DB_URL_PROPERTY + "=<url>");
+    }
+
     public static void main(String ...args) {
         try
         {
@@ -102,7 +124,8 @@ DMTool {
             SUS.checkIfNull("command is null", command);
             String subject = params.stringValue(Param.SUBJECT);
             String password = params.stringValue(Param.PASSWORD);
-            String dbURL = params.stringValue(Param.DB_URL, DB_URL);
+            String dbURL = resolveDbUrl(params.stringValue(Param.DB_URL, null),
+                    System.getenv(DB_URL_ENV), System.getProperty(DB_URL_PROPERTY));
             DomainSecurityManager dsm = NoSneakUtil.SINGLETON.createDomainSecManager(dbURL);
             log.getLogger().info("Domain security manager: " + dsm);
 

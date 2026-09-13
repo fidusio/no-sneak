@@ -22,7 +22,7 @@ checklist against v2*, not a work queue against v1 — do not "fix" v1 code.
 | **A13** (no header analysis / no grading) | **Half done** — grading shipped as `v2/grade/Grade` (letter + PQC readiness + trust verdict); HTTP security headers still missing. Two grading defects were fixed 2026-07-29: the weak-cipher rule flagged healthy `TLS_ECDHE_RSA_*` suites while missing static-RSA ones, and an unenumerated scan was scored `A`. |
 | **B1–B12** (nmap: fake raw engines, dead service/os packages, blocking sleeps, …) | **Moot** — v2's `nmap` is NIO-native and defers service detection to the probe engine. Raw scans are a deliberate deferral to a future Panama-FFM layer; remaining parity items are listed in the v2 `PROBE-CONFIG.md`. **Host discovery is no longer a gap (2026-07-29):** it runs on `no-sneak-net` — `HostScanner.sweep()` for on-link CIDRs, per-host `ping`/`resolve` otherwise — so a scan reports the remote **MAC**, which v1 never could. |
 | **C2** (latent NPE-return) | **Fixed in v2** — `v2/tools/NoSneakUtil` always builds the domain manager from the cached-or-new datastore. |
-| **C1** (stale hardcoded Mongo URL) | **Still open in v2** — `v2/tools/DMTool:38` keeps `mongodb://localhost:27017/…` as `DB_URL`. Overridable at the command line, so it is a stale default rather than a bug; revisit if the datastore really moved to H2. |
+| **C1** (stale hardcoded Mongo URL) | **Fixed 2026-09-12** — `tools/DMTool` has no default; the URL resolves from `db-url=`, `NOSNEAK_DB_URL`, `-Dnosneak.db.url`, else usage and exit. Pinned by `tools/DMToolTest`. |
 | **D1** (README wrong) | **Fixed 2026-07-26.** |
 | **D2** (documentation drift) | **Fixed** for v2; v1 names in this file are left as historical record. |
 | **D3** (blocking at the boundaries) | **Fixed in v2** — the REST `Checker` uses a bounded wait; only the CLI/test convenience wrappers block, by design. |
@@ -173,7 +173,7 @@ work can resume across sessions. Checkboxes track remediation.
 
 ### C. `tools/` (admin utilities, unrelated to scanning)
 
-- [ ] **C1 — `DMTool` hardcodes a MongoDB default URL**
+- [x] **C1 — `DMTool` hardcodes a MongoDB default URL** (fixed 2026-09-12: no default; param/env/property resolution)
   (`mongodb://localhost:27017/...`, `DMTool.java:38`) though recent git history moved the
   datastore to local H2 — likely stale.
 - [ ] **C2 — `NoSneakUtil.createDomainSecManager` latent NPE-return.** If `DATA_STORE`

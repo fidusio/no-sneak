@@ -1,5 +1,14 @@
 # no-sneak-core v2 — Plan of Action
 
+> ## 2026-09-12 — C1 closed: `DMTool` has no datastore default
+>
+> The stale `mongodb://localhost:27017/xlog_datastore_test?replicaSet=rs0` constant is gone.
+> `DMTool.resolveDbUrl` takes the first non-blank of `db-url=` (param), `NOSNEAK_DB_URL` (env),
+> `nosneak.db.url` (system property) and otherwise throws, so the tool prints usage and exits
+> without opening a connection to a database nobody chose. `tools/DMToolTest` (5) pins the
+> order, the refusal message, and that no `mongodb://localhost` / `replicaSet=` literal returns
+> to the source. Suite: 373 green.
+>
 > ## 2026-09-12 — MERGED: one generation, package `io.xlogistx.nosneak`
 >
 > The original packages (`nmap`, `probe`, `scanners`, `services`, `tools`), their five test files,

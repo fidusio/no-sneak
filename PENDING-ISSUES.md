@@ -134,8 +134,10 @@ anything ships.
 - **Vulnerability scanning (A11)** is still the largest v2 gap — checklist in
   `ACTION-PLAN.md` → *Pending Issues / Next Steps* item 1.
 - ~~Named-group enumeration (A12)~~ **Done** — `enumerate-groups` ships (`supported-groups`, `server-group-preference`).
-- **Stale Mongo default (C1)** — `tools/DMTool:38` keeps `mongodb://localhost:27017/…` as
-  `DB_URL`; overridable, stale default rather than a bug.
+- ~~Stale Mongo default (C1)~~ **FIXED 2026-09-12.** `DMTool` carries no datastore URL at all: it is
+  resolved from `db-url=` → `NOSNEAK_DB_URL` → `-Dnosneak.db.url`, and with none set the tool prints
+  usage and exits without touching a database (`tools/DMToolTest` pins the order and greps the source
+  for any `mongodb://localhost` or `replicaSet=` creeping back).
 - **Linux IPv6/NDP** in `no-sneak-net` compiles and has tests but has never been verified on real
   hardware — distrust it until it moves packets (§13.21).
 ## Status check (2026-09-09, commit `c082f11`)
@@ -216,8 +218,8 @@ after the merge, 213 tests, 0 failures. Live checks the same day: `xlogistx.io -
 **Open, in full (7 rows; the matrix below has the detail):**
 - Yours: a CI runner that can reach Maven Central (row 2 of the matrix page).
 - Hardware: M1 and M9 need a Mac, L1 needs the Linux appliance on a v6 segment.
-- On this box: N3 (IPv6 unicast re-solicit — small code, proof needs L1's wire) and C1 (`DMTool`
-  Mongo URL default — one line, needs the right value).
+- On this box: N3 (IPv6 unicast re-solicit — small code, proof needs L1's wire). ~~C1~~ closed
+  2026-09-12 by removing the default rather than choosing a value.
 - Pinned by the maintainer, not scheduled: P17, the SSL-Labs posture checklist.
 
 **Conventions set during that work, binding for anything new** (also in the module docs):
