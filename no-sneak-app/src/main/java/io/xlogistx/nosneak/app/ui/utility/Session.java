@@ -463,11 +463,9 @@ public class Session {
     public void changePassword(char[] current, char[] next) throws SecurityException {
         if (principalID == null) throw new SecurityException("Not Logged in");
 
-        // 1. verify the current password
-        try {
-            domainSecurityManager.login(principalID, new String(current));
-        } catch (SecurityException e) {
-            throw new SecurityException("Current password is incorrect", e);
+        // 1. verify the current password (no login: works while a password reset is pending too)
+        if (!domainSecurityManager.verifyPassword(principalID, new String(current))) {
+            throw new SecurityException("Current password is incorrect");
         }
 
         // 2. validate the new password against the policy
