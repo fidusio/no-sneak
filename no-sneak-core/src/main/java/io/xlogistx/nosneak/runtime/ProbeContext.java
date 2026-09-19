@@ -19,7 +19,7 @@ import org.zoxweb.server.net.NIOSocket;
 import org.zoxweb.shared.io.SharedIOUtil;
 import org.zoxweb.shared.net.IPAddress;
 import org.zoxweb.shared.util.SharedBase64;
-import org.zoxweb.shared.util.SharedStringUtil;
+import org.zoxweb.shared.util.SUS;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -460,7 +460,7 @@ public class ProbeContext {
         String data = state.getData();
         if (data != null) {
             if (data.startsWith("hex:")) {
-                return SharedStringUtil.hexToBytes(data.substring(4));
+                return SUS.hexToBytes(data.substring(4));
             }
             if (data.startsWith("base64:")) {
                 return SharedBase64.decode(data.substring(7));

@@ -8,6 +8,7 @@ import io.xlogistx.gui.*;
 import io.xlogistx.nosneak.app.Main;
 import io.xlogistx.nosneak.app.ui.utility.*;
 import net.miginfocom.swing.MigLayout;
+import org.zoxweb.shared.security.AccessSecurityException;
 import org.zoxweb.shared.crypto.CIPassword;
 import org.zoxweb.shared.data.DataConst;
 import org.zoxweb.shared.filters.FilterType;
@@ -615,7 +616,7 @@ public class SubjectPanel extends JPanel {
         APIKey<String> generated;
         try {
             generated = ctx.session().generateAPIKey();
-        } catch (SecurityException e) {
+        } catch (AccessSecurityException e) {
             JOptionPane.showMessageDialog(this, e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
             return;
         }
@@ -639,7 +640,7 @@ public class SubjectPanel extends JPanel {
             APIKey<String> refreshed;
             try {
                 refreshed = ctx.session().generateAPIKey();
-            } catch (SecurityException e) {
+            } catch (AccessSecurityException e) {
                 JOptionPane.showMessageDialog(this, e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
                 return;
             }

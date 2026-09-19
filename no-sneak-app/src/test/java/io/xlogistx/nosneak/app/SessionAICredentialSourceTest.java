@@ -3,6 +3,7 @@ package io.xlogistx.nosneak.app;
 import io.xlogistx.nosneak.app.ui.assistant.SessionAICredentialSource;
 import io.xlogistx.nosneak.app.ui.utility.Session;
 import org.junit.jupiter.api.Test;
+import org.zoxweb.shared.security.AccessSecurityException;
 import org.zoxweb.server.security.DomainSecurityManagerDefault;
 import org.zoxweb.server.security.HashUtil;
 import org.zoxweb.server.util.MockAPIDataStore;
@@ -28,9 +29,9 @@ public class SessionAICredentialSourceTest {
                 new DomainSecurityManagerDefault().setDataStore(new MockAPIDataStore())
                         .addCredentialType(CIPassword.class)
                         .addCredentialType(SubjectAPIKey.class);
-        dsm.createSubjectID("kailen", HashUtil.toBCryptPassword("Password1!"));
+        dsm.createSubjectID("kailen01", HashUtil.toBCryptPassword("Password1!"));
         Session s = new Session(dsm);
-        s.loginUsernamePassword("kailen", "Password1!".toCharArray());
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
         return s;
     }
 
@@ -72,7 +73,7 @@ public class SessionAICredentialSourceTest {
         Session s = loggedInSession();
         SessionAICredentialSource source = new SessionAICredentialSource(s);
 
-        SecurityException ex = assertThrows(SecurityException.class,
+        AccessSecurityException ex = assertThrows(AccessSecurityException.class,
                 () -> source.addAPIKey("label", "", "openai", "", "", "", "   "));
         assertEquals("Key cannot be empty", ex.getMessage());
         assertTrue(source.APIKeys().isEmpty(), "nothing may be stored on a rejected add");
@@ -84,7 +85,7 @@ public class SessionAICredentialSourceTest {
         SessionAICredentialSource source = new SessionAICredentialSource(s);
         s.logout();
 
-        assertThrows(SecurityException.class,
+        assertThrows(AccessSecurityException.class,
                 () -> source.addAPIKey("label", "", "openai", "", "", "", "sk-x"));
     }
 

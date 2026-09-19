@@ -38,7 +38,7 @@ public class AIChat extends PropertyDAO {
 
     public static final NVConfigEntity NVC_AI_CHAT = new NVConfigEntityPortable(
             "ai_chat", null, "AIChat", true, false, false, false,
-            AIChat.class, SharedUtil.extractNVConfigs(Param.values()), null, false,
+            AIChat.class, SUS.extractNVConfigs(Param.values()), null, false,
             PropertyDAO.NVC_PROPERTY_DAO
     );
 

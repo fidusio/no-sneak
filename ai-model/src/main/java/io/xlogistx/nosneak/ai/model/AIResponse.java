@@ -29,7 +29,7 @@ public class AIResponse extends PropertyDAO {
 
     public static final NVConfigEntity NVC_AI_RESPONSE = new NVConfigEntityPortable(
             "ai_response", null, "AIResponse", true, false, false, false,
-            AIResponse.class, SharedUtil.extractNVConfigs(Param.values()), null, false,
+            AIResponse.class, SUS.extractNVConfigs(Param.values()), null, false,
             PropertyDAO.NVC_PROPERTY_DAO
     );
 

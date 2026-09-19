@@ -1,5 +1,6 @@
 package io.xlogistx.nosneak.ai;
 
+import org.zoxweb.shared.security.AccessSecurityException;
 import org.zoxweb.shared.data.ReferenceIDDAO;
 import org.zoxweb.shared.security.APIKey;
 import org.zoxweb.shared.util.SUS;
@@ -48,9 +49,9 @@ public interface AICredentialSource {
      * credential owned by the source.
      *
      * @return the created key
-     * @throws SecurityException when signed out, the secret is blank, or the store rejects it
+     * @throws AccessSecurityException when signed out, the secret is blank, or the store rejects it
      */
     APIKey<String> addAPIKey(String label, String description, String provider, String baseURL,
-                             String authType, String headerName, String secret) throws SecurityException;
+                             String authType, String headerName, String secret) throws AccessSecurityException;
 
 }

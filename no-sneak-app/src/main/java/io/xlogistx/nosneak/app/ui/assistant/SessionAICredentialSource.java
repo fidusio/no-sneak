@@ -2,6 +2,7 @@ package io.xlogistx.nosneak.app.ui.assistant;
 
 import io.xlogistx.nosneak.ai.AICredentialSource;
 import io.xlogistx.nosneak.app.ui.utility.Session;
+import org.zoxweb.shared.security.AccessSecurityException;
 import org.zoxweb.shared.security.APIKey;
 import org.zoxweb.shared.security.CredentialInfo;
 import org.zoxweb.shared.security.SubjectAPIKey;
@@ -55,7 +56,7 @@ public class SessionAICredentialSource implements AICredentialSource {
 
     @Override
     public APIKey<String> addAPIKey(String label, String description, String provider, String baseURL,
-                                    String authType, String headerName, String secret) throws SecurityException {
+                                    String authType, String headerName, String secret) throws AccessSecurityException {
         APIKey<String> key = session.storeAPIKey(label, description, "", "", secret,
                 provider, baseURL, authType, headerName, true);
         session.setAssistantEnabled(key, true);

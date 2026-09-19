@@ -32,7 +32,7 @@ public class AIMessage extends PropertyDAO {
 
     public static final NVConfigEntity NVC_AI_MESSAGE = new NVConfigEntityPortable(
             "ai_message", null, "AIMessage", true, false, false, false,
-            AIMessage.class, SharedUtil.extractNVConfigs(Param.values()), null, false,
+            AIMessage.class, SUS.extractNVConfigs(Param.values()), null, false,
             PropertyDAO.NVC_PROPERTY_DAO
     );
 

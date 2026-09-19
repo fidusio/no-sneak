@@ -2,6 +2,7 @@ package io.xlogistx.nosneak.app;
 
 import io.xlogistx.nosneak.app.ui.utility.Session;
 import org.junit.jupiter.api.Test;
+import org.zoxweb.shared.security.AccessSecurityException;
 import org.zoxweb.server.security.DomainSecurityManagerDefault;
 import org.zoxweb.server.security.HashUtil;
 import org.zoxweb.server.util.MockAPIDataStore;
@@ -24,7 +25,7 @@ public class ProfileRoundTripTest {
         DomainSecurityManager dsm =
                 new DomainSecurityManagerDefault().setDataStore(new MockAPIDataStore())
                         .addCredentialType(CIPassword.class);
-        dsm.createSubjectID("kailen", HashUtil.toBCryptPassword("Password1!"));
+        dsm.createSubjectID("kailen01", HashUtil.toBCryptPassword("Password1!"));
         return new Session(dsm);
     }
 
@@ -37,7 +38,7 @@ public class ProfileRoundTripTest {
     @Test
     public void saveThenLoad() {
         Session s = freshSession();
-        s.loginUsernamePassword("kailen", "Password1!".toCharArray());
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
 
         s.saveProfile(map("firstName", "Jane", "city", "NYC"));
 
@@ -50,7 +51,7 @@ public class ProfileRoundTripTest {
     @Test
     public void overwriteReplacesNotAppends() {
         Session s = freshSession();
-        s.loginUsernamePassword("kailen", "Password1!".toCharArray());
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
 
         s.saveProfile(map("firstName", "Jane"));
         s.saveProfile(map("firstName", "Ann"));   // second save of same key
@@ -62,7 +63,7 @@ public class ProfileRoundTripTest {
     @Test
     public void saveRejectedWhenSignedOut() {
         Session s = freshSession();   // never logged in
-        SecurityException ex = assertThrows(SecurityException.class,
+        AccessSecurityException ex = assertThrows(AccessSecurityException.class,
                 () -> s.saveProfile(map("firstName", "Jane")),
                 "saving a profile with no signed-in subject must be refused");
         assertEquals("Not Logged in", ex.getMessage());
@@ -73,17 +74,17 @@ public class ProfileRoundTripTest {
         DomainSecurityManager dsm =
                 new DomainSecurityManagerDefault().setDataStore(new MockAPIDataStore())
                         .addCredentialType(CIPassword.class);
-        dsm.createSubjectID("kailen", HashUtil.toBCryptPassword("Password1!"));
+        dsm.createSubjectID("kailen01", HashUtil.toBCryptPassword("Password1!"));
         Session s = new Session(dsm);
 
-        s.loginUsernamePassword("kailen", "Password1!".toCharArray());
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
         s.saveProfile(map("firstName", "Jane"));
         s.logout();
 
         assertEquals("", s.loadProfile("firstName").get("firstName"),
                 "logged out → nothing to load");
 
-        s.loginUsernamePassword("kailen", "Password1!".toCharArray());
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
         assertEquals("Jane", s.loadProfile("firstName").get("firstName"),
                 "profile must persist across logout/login in the same store");
     }

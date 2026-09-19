@@ -144,7 +144,7 @@ public class AssistantPanel extends JPanel {
      * {@code name} becomes the attachment's visible label, so keep it short: it renders as a chip
      * in the transcript, and an over-long one used to push the conversation off-screen.
      *
-     * @throws SecurityException if there is no chat open, or the text is blank — an attachment
+     * @throws org.zoxweb.shared.security.AccessSecurityException if there is no chat open, or the text is blank — an attachment
      *                           with nowhere to land is otherwise silently dropped. The caller is
      *                           expected to show the message.
      */

@@ -44,7 +44,7 @@ public class AICapture extends PropertyDAO {
 
     public static final NVConfigEntity NVC_AI_CAPTURE = new NVConfigEntityPortable(
             "ai_capture", null, "AICapture", true, false, false, false,
-            AICapture.class, SharedUtil.extractNVConfigs(Param.values()), null, false,
+            AICapture.class, SUS.extractNVConfigs(Param.values()), null, false,
             PropertyDAO.NVC_PROPERTY_DAO
     );
 

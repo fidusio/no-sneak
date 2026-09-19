@@ -56,7 +56,7 @@ public class AISource extends PropertyDAO {
 
     public static final NVConfigEntity NVC_AI_SOURCE = new NVConfigEntityPortable(
             "ai_source", null, "AISource", true, false, false, false,
-            AISource.class, SharedUtil.extractNVConfigs(Param.values()), null, false,
+            AISource.class, SUS.extractNVConfigs(Param.values()), null, false,
             PropertyDAO.NVC_PROPERTY_DAO
     );
 

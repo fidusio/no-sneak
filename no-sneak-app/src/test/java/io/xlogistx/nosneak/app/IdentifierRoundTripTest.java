@@ -2,6 +2,7 @@ package io.xlogistx.nosneak.app;
 
 import io.xlogistx.nosneak.app.ui.utility.Session;
 import org.junit.jupiter.api.Test;
+import org.zoxweb.shared.security.AccessSecurityException;
 import org.zoxweb.server.security.DomainSecurityManagerDefault;
 import org.zoxweb.server.security.HashUtil;
 import org.zoxweb.server.util.MockAPIDataStore;
@@ -16,7 +17,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * add rules (blank/duplicate), the "can't remove the last one" guard, and the repoint of
  * the active subject when you remove the identifier you logged in as.
  *
- * <p>Failure is signalled by a thrown {@link SecurityException} (message = the reason);
+ * <p>Failure is signalled by a thrown {@link AccessSecurityException} (message = the reason);
  * success returns normally.</p>
  */
 public class IdentifierRoundTripTest {
@@ -25,9 +26,9 @@ public class IdentifierRoundTripTest {
         DomainSecurityManager dsm =
                 new DomainSecurityManagerDefault().setDataStore(new MockAPIDataStore())
                         .addCredentialType(CIPassword.class);
-        dsm.createSubjectID("kailen", HashUtil.toBCryptPassword("Password1!"));
+        dsm.createSubjectID("kailen01", HashUtil.toBCryptPassword("Password1!"));
         Session s = new Session(dsm);
-        s.loginUsernamePassword("kailen", "Password1!".toCharArray());
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
         return s;
     }
 
@@ -44,7 +45,7 @@ public class IdentifierRoundTripTest {
         assertDoesNotThrow(() -> s.addIdentifier("kailen@example.com"), "adding a fresh identifier should succeed");
 
         assertEquals(2, s.getAllPrincipalIDForLoggedInUser().size());
-        assertNotNull(find(s, "kailen"));
+        assertNotNull(find(s, "kailen01"));
         assertNotNull(find(s, "kailen@example.com"));
     }
 
@@ -52,16 +53,16 @@ public class IdentifierRoundTripTest {
     public void addRejectsBlank() {
         Session s = loggedInSession();
         assertEquals("Principal ID can't be empty",
-                assertThrows(SecurityException.class, () -> s.addIdentifier("   ")).getMessage());
+                assertThrows(AccessSecurityException.class, () -> s.addIdentifier("   ")).getMessage());
         assertEquals(1, s.getAllPrincipalIDForLoggedInUser().size(), "no identifier should have been added");
     }
 
     @Test
     public void cannotRemoveLastIdentifier() {
         Session s = loggedInSession();
-        PrincipalIdentifier only = find(s, "kailen");
+        PrincipalIdentifier only = find(s, "kailen01");
         assertEquals("Could not remove identifier",
-                assertThrows(SecurityException.class, () -> s.removeIdentifier(only)).getMessage());
+                assertThrows(AccessSecurityException.class, () -> s.removeIdentifier(only)).getMessage());
         assertEquals(1, s.getAllPrincipalIDForLoggedInUser().size());
     }
 
@@ -71,7 +72,7 @@ public class IdentifierRoundTripTest {
         s.addIdentifier("kailen@example.com");   // 2 identifiers, so the "last one" guard passes
 
         assertEquals("Identifier cannot be empty",
-                assertThrows(SecurityException.class, () -> s.removeIdentifier(null)).getMessage());
+                assertThrows(AccessSecurityException.class, () -> s.removeIdentifier(null)).getMessage());
         assertEquals(2, s.getAllPrincipalIDForLoggedInUser().size(), "nothing should have been removed");
     }
 
@@ -83,7 +84,7 @@ public class IdentifierRoundTripTest {
         // remove the identifier we did NOT authenticate with; the active subject must be untouched
         PrincipalIdentifier alt = find(s, "alt@example.com");
         assertDoesNotThrow(() -> s.removeIdentifier(alt));
-        assertEquals("kailen", s.getPrincipalID(),
+        assertEquals("kailen01", s.getPrincipalID(),
                 "removing a non-active identifier must not repoint the subject");
         assertEquals(1, s.getAllPrincipalIDForLoggedInUser().size());
     }
@@ -94,7 +95,7 @@ public class IdentifierRoundTripTest {
         s.addIdentifier("kailen@example.com");
 
         // remove the identifier we authenticated with; subject should repoint to the survivor
-        PrincipalIdentifier active = find(s, "kailen");
+        PrincipalIdentifier active = find(s, "kailen01");
         assertDoesNotThrow(() -> s.removeIdentifier(active));
         assertEquals("kailen@example.com", s.getPrincipalID(),
                 "removing the active identifier must repoint the subject to a survivor");

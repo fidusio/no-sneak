@@ -35,9 +35,9 @@ public class AssistantStorageTest {
         DomainSecurityManager dsm =
                 new DomainSecurityManagerDefault().setDataStore(new MockAPIDataStore())
                         .addCredentialType(CIPassword.class);
-        dsm.createSubjectID("kailen", HashUtil.toBCryptPassword(PWD));
+        dsm.createSubjectID("kailen01", HashUtil.toBCryptPassword(PWD));
         Session s = new Session(dsm);
-        s.loginUsernamePassword("kailen", PWD.toCharArray());
+        s.loginUsernamePassword("kailen01", PWD.toCharArray());
         return s;
     }
 

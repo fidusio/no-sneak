@@ -38,7 +38,7 @@ public class AIProviderConfig extends PropertyDAO {
 
     public static final NVConfigEntity NVC_AI_PROVIDER_CONFIG = new NVConfigEntityPortable(
             "ai_provider_config", null, "AIProviderConfig", true, false, false, false,
-            AIProviderConfig.class, SharedUtil.extractNVConfigs(Param.values()), null, false,
+            AIProviderConfig.class, SUS.extractNVConfigs(Param.values()), null, false,
             PropertyDAO.NVC_PROPERTY_DAO
     );
 

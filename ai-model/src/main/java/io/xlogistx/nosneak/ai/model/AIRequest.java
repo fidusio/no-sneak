@@ -29,7 +29,7 @@ public class AIRequest extends PropertyDAO {
 
     public static final NVConfigEntity NVC_AI_REQUEST = new NVConfigEntityPortable(
             "ai_request", null, "AIRequest", true, false, false, false,
-            AIRequest.class, SharedUtil.extractNVConfigs(Param.values()), null, false,
+            AIRequest.class, SUS.extractNVConfigs(Param.values()), null, false,
             PropertyDAO.NVC_PROPERTY_DAO
     );
 

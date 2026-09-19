@@ -11,6 +11,7 @@ import io.xlogistx.nosneak.ai.assistant.AssistantCallback;
 import io.xlogistx.nosneak.ai.assistant.AssistantContext;
 import io.xlogistx.nosneak.ai.model.*;
 import net.miginfocom.swing.MigLayout;
+import org.zoxweb.shared.security.AccessSecurityException;
 import org.zoxweb.server.io.UByteArrayInputStream;
 import org.zoxweb.shared.util.NVEntity;
 
@@ -973,9 +974,9 @@ public class ChatPanel extends JPanel {
 
     public void attachText(String text, String name) {
         if (text == null || text.isBlank())
-            throw new SecurityException("There is nothing to send.");
+            throw new AccessSecurityException("There is nothing to send.");
         if (ctx.currentChat() == null)
-            throw new SecurityException("Open a chat first (Chat History > + New Chat)");
+            throw new AccessSecurityException("Open a chat first (Chat History > + New Chat)");
         pendingSources.add(SourceSupport.fromText(text, name));
         refreshSkillTooltip();
     }

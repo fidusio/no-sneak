@@ -29,11 +29,11 @@ public class DataStoreSetupFlowTest {
             assertNotNull(dsm, "setup must produce a DomainSecurityManager");
 
             Session session = new Session(dsm);
-            assertDoesNotThrow(() -> session.registerUsernamePassword("bob", "Password9!".toCharArray()),
+            assertDoesNotThrow(() -> session.registerUsernamePassword("bob-tester", "Password9!".toCharArray()),
                     "the store produced by setup must accept a registration");
-            assertDoesNotThrow(() -> session.loginUsernamePassword("bob", "Password9!".toCharArray()),
+            assertDoesNotThrow(() -> session.loginUsernamePassword("bob-tester", "Password9!".toCharArray()),
                     "the freshly registered user must be able to log in against the setup store");
-            assertEquals("bob", session.getPrincipalID());
+            assertEquals("bob-tester", session.getPrincipalID());
         } finally {
             ds.close();
         }

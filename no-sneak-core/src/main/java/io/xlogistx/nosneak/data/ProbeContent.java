@@ -28,7 +28,7 @@ public class ProbeContent extends PropertyDAO {
             false,
             false,
             ProbeContent.class,
-            SharedUtil.extractNVConfigs(Param.values()),
+            SUS.extractNVConfigs(Param.values()),
             null,
             false,
             PropertyDAO.NVC_PROPERTY_DAO);

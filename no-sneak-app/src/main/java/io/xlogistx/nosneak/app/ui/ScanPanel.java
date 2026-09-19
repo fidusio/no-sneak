@@ -14,6 +14,7 @@ import io.xlogistx.nosneak.nmap.NMapScanner;
 import io.xlogistx.nosneak.nmap.ScanReport;
 import io.xlogistx.nosneak.nmap.output.OutputFormat;
 import net.miginfocom.swing.MigLayout;
+import org.zoxweb.shared.security.AccessSecurityException;
 import org.zoxweb.shared.task.CallableConsumerTask;
 import org.zoxweb.shared.util.SUS;
 
@@ -774,7 +775,7 @@ public class ScanPanel extends JPanel {
         if (SUS.isEmpty(content) || sendToChat == null) return;
         try {
             sendToChat.accept(content, SUS.isEmpty(name) ? "scan result" : name);
-        } catch (SecurityException e) {
+        } catch (AccessSecurityException e) {
             JOptionPane.showMessageDialog(this, e.getMessage(), "Send to chat", JOptionPane.WARNING_MESSAGE);
             return;
         }

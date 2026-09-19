@@ -2,6 +2,7 @@ package io.xlogistx.nosneak.app;
 
 import io.xlogistx.nosneak.app.ui.utility.Session;
 import org.junit.jupiter.api.Test;
+import org.zoxweb.shared.security.AccessSecurityException;
 import org.zoxweb.server.security.DomainSecurityManagerDefault;
 import org.zoxweb.server.security.HashUtil;
 import org.zoxweb.server.util.MockAPIDataStore;
@@ -20,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * Also covers the label/description round-trip, editing the metadata via
  * {@link Session#changeAPIDetails}, and the creation/validation failure paths.
  *
- * <p>Failure is signalled by a thrown {@link SecurityException} (business-rule guards and
+ * <p>Failure is signalled by a thrown {@link AccessSecurityException} (business-rule guards and
  * AppID-filter rejections alike); success returns normally.</p>
  */
 public class APIKeyRoundTripTest {
@@ -30,7 +31,7 @@ public class APIKeyRoundTripTest {
                 new DomainSecurityManagerDefault().setDataStore(new MockAPIDataStore())
                         .addCredentialType(CIPassword.class)
                         .addCredentialType(SubjectAPIKey.class);
-        dsm.createSubjectID("kailen", HashUtil.toBCryptPassword("Password1!"));
+        dsm.createSubjectID("kailen01", HashUtil.toBCryptPassword("Password1!"));
         return new Session(dsm);
     }
 
@@ -45,7 +46,7 @@ public class APIKeyRoundTripTest {
     @Test
     public void createThenLoginWithApiKey() {
         Session s = mockSession();
-        assertDoesNotThrow(() -> s.loginUsernamePassword("kailen", "Password1!".toCharArray()), "password login");
+        assertDoesNotThrow(() -> s.loginUsernamePassword("kailen01", "Password1!".toCharArray()), "password login");
 
         String apiKey = s.generateAPIKey().getAPIKey();
         assertNotNull(apiKey, "generateAPIKey returned null");
@@ -57,13 +58,13 @@ public class APIKeyRoundTripTest {
 
         assertDoesNotThrow(() -> s.loginAPIKey(apiKey.toCharArray()), "API-key login should succeed");
         assertTrue(s.isAuthenticated(), "session should be authenticated after API-key login");
-        assertEquals("kailen", s.getPrincipalID(), "API-key login should resolve the owning principal");
+        assertEquals("kailen01", s.getPrincipalID(), "API-key login should resolve the owning principal");
     }
 
     @Test
     public void labelRoundTripsIntoCredentialList() {
         Session s = mockSession();
-        s.loginUsernamePassword("kailen", "Password1!".toCharArray());
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
         assertDoesNotThrow(() -> s.storeAPIKey("prod-key", "for production", null, null, s.generateAPIKey().getAPIKey(), null, null, null, null, false));
 
         SubjectAPIKey stored = firstApiKey(s);
@@ -75,7 +76,7 @@ public class APIKeyRoundTripTest {
     @Test
     public void assistantEnabledFlagRoundTrips() {
         Session s = mockSession();
-        s.loginUsernamePassword("kailen", "Password1!".toCharArray());
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
         assertDoesNotThrow(() -> s.storeAPIKey("ai-key", "desc", null, null, s.generateAPIKey().getAPIKey(), "openai", null, null, null, false));
 
         SubjectAPIKey stored = firstApiKey(s);
@@ -92,7 +93,7 @@ public class APIKeyRoundTripTest {
     @Test
     public void setAssistantEnabledRejectedWhenSignedOut() {
         Session s = mockSession();
-        SecurityException ex = assertThrows(SecurityException.class,
+        AccessSecurityException ex = assertThrows(AccessSecurityException.class,
                 () -> s.setAssistantEnabled(new SubjectAPIKey(), true));
         assertEquals("Not signed in", ex.getMessage());
     }
@@ -100,7 +101,7 @@ public class APIKeyRoundTripTest {
     @Test
     public void changeApiDetailsUpdatesLabelAndDescription() {
         Session s = mockSession();
-        s.loginUsernamePassword("kailen", "Password1!".toCharArray());
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
         assertDoesNotThrow(() -> s.storeAPIKey("old-label", "old desc", null, null, s.generateAPIKey().getAPIKey(), null, null, null, null, false));
 
         SubjectAPIKey stored = firstApiKey(s);
@@ -118,7 +119,7 @@ public class APIKeyRoundTripTest {
     @Test
     public void changeApiDetailsCanClearMetadata() {
         Session s = mockSession();
-        s.loginUsernamePassword("kailen", "Password1!".toCharArray());
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
         assertDoesNotThrow(() -> s.storeAPIKey("label", "desc", null, null, s.generateAPIKey().getAPIKey(), null, null, null, null, false));
 
         SubjectAPIKey stored = firstApiKey(s);
@@ -139,7 +140,7 @@ public class APIKeyRoundTripTest {
     @Test
     public void changeApiDetailsUpdatesAppID() {
         Session s = mockSession();
-        s.loginUsernamePassword("kailen", "Password1!".toCharArray());
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
         assertDoesNotThrow(() -> s.storeAPIKey("label", "desc", null, null, s.generateAPIKey().getAPIKey(), null, null, null, null, false));
 
         SubjectAPIKey stored = firstApiKey(s);
@@ -157,7 +158,7 @@ public class APIKeyRoundTripTest {
     @Test
     public void changeApiDetailsRejectedWhenSignedOut() {
         Session s = mockSession();
-        SecurityException ex = assertThrows(SecurityException.class,
+        AccessSecurityException ex = assertThrows(AccessSecurityException.class,
                 () -> s.changeAPIDetails(new SubjectAPIKey(), "label", "desc", null, null, null, null, null, null),
                 "editing metadata must be refused when no subject is signed in");
         assertEquals("Not Logged in", ex.getMessage());
@@ -166,7 +167,7 @@ public class APIKeyRoundTripTest {
     @Test
     public void revokeRemovesKeyAndBlocksLogin() {
         Session s = mockSession();
-        s.loginUsernamePassword("kailen", "Password1!".toCharArray());
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
         String secret = s.generateAPIKey().getAPIKey();
         assertDoesNotThrow(() -> s.storeAPIKey("doomed", "desc", null, null, secret, null, null, null, null, false));
 
@@ -177,7 +178,7 @@ public class APIKeyRoundTripTest {
         assertNull(firstApiKey(s), "the revoked key must be gone from the credential list");
 
         s.logout();
-        assertThrows(SecurityException.class, () -> s.loginAPIKey(secret.toCharArray()), "a revoked key must not log in");
+        assertThrows(AccessSecurityException.class, () -> s.loginAPIKey(secret.toCharArray()), "a revoked key must not log in");
         assertFalse(s.isAuthenticated());
     }
 
@@ -185,19 +186,19 @@ public class APIKeyRoundTripTest {
     public void revokeRejectsBadInput() {
         Session s = mockSession();
         assertEquals("Not signed in",
-                assertThrows(SecurityException.class, () -> s.deleteAPIKey(new SubjectAPIKey())).getMessage(),
+                assertThrows(AccessSecurityException.class, () -> s.deleteAPIKey(new SubjectAPIKey())).getMessage(),
                 "refused when signed out");
 
-        s.loginUsernamePassword("kailen", "Password1!".toCharArray());
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
         assertEquals("Empty Key",
-                assertThrows(SecurityException.class, () -> s.deleteAPIKey(null)).getMessage(),
+                assertThrows(AccessSecurityException.class, () -> s.deleteAPIKey(null)).getMessage(),
                 "refused with a null key");
     }
 
     @Test
     public void rotateInvalidatesOldKeyAndNewOneWorks() {
         Session s = mockSession();
-        s.loginUsernamePassword("kailen", "Password1!".toCharArray());
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
         String oldSecret = s.generateAPIKey().getAPIKey();
         assertDoesNotThrow(() -> s.storeAPIKey("rotate-me", "desc", null, null, oldSecret, null, null, null, null, false));
 
@@ -210,24 +211,24 @@ public class APIKeyRoundTripTest {
         assertNotEquals(oldSecret, newSecret, "rotate must issue a different secret");
 
         s.logout();
-        assertThrows(SecurityException.class, () -> s.loginAPIKey(oldSecret.toCharArray()),
+        assertThrows(AccessSecurityException.class, () -> s.loginAPIKey(oldSecret.toCharArray()),
                 "the old secret must stop working after rotate");
         assertFalse(s.isAuthenticated());
 
         assertDoesNotThrow(() -> s.loginAPIKey(newSecret.toCharArray()), "the new secret must work after rotate");
-        assertEquals("kailen", s.getPrincipalID(), "rotated-key login should resolve the owning principal");
+        assertEquals("kailen01", s.getPrincipalID(), "rotated-key login should resolve the owning principal");
     }
 
     @Test
     public void rotateRejectsBadInput() {
         Session s = mockSession();
         assertEquals("Not signed in",
-                assertThrows(SecurityException.class, () -> s.rotateAPIKey(new SubjectAPIKey())).getMessage(),
+                assertThrows(AccessSecurityException.class, () -> s.rotateAPIKey(new SubjectAPIKey())).getMessage(),
                 "refused when signed out");
 
-        s.loginUsernamePassword("kailen", "Password1!".toCharArray());
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
         assertEquals("Empty Key",
-                assertThrows(SecurityException.class, () -> s.rotateAPIKey(null)).getMessage(),
+                assertThrows(AccessSecurityException.class, () -> s.rotateAPIKey(null)).getMessage(),
                 "refused with a null key");
     }
 
@@ -237,15 +238,15 @@ public class APIKeyRoundTripTest {
 
         // Not signed in: both generate and create are refused.
         assertEquals("Not signed in",
-                assertThrows(SecurityException.class, s::generateAPIKey).getMessage(),
+                assertThrows(AccessSecurityException.class, s::generateAPIKey).getMessage(),
                 "generateAPIKey is refused when signed out");
         assertEquals("Not signed in",
-                assertThrows(SecurityException.class,
+                assertThrows(AccessSecurityException.class,
                         () -> s.storeAPIKey("label", "desc", null, null, "anything", null, null, null, null, false)).getMessage());
 
-        s.loginUsernamePassword("kailen", "Password1!".toCharArray());
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
         assertEquals("Key cannot be empty",
-                assertThrows(SecurityException.class,
+                assertThrows(AccessSecurityException.class,
                         () -> s.storeAPIKey("label", "desc", null, null, "   ", null, null, null, null, false)).getMessage());
         // NOTE: the "Invalid API key format" branch is not asserted here — SharedBase64.decode
         // is lenient and does not throw on arbitrary junk, so a malformed key is currently
@@ -255,13 +256,13 @@ public class APIKeyRoundTripTest {
     @Test
     public void loginApiKeyRejectsUnknownKey() {
         Session s = mockSession();
-        s.loginUsernamePassword("kailen", "Password1!".toCharArray());
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
 
         s.storeAPIKey("real", "desc", null, null, s.generateAPIKey().getAPIKey(), null, null, null, null, false);
         String phantom = s.generateAPIKey().getAPIKey();   // validly formatted, but never stored
         s.logout();
 
-        assertThrows(SecurityException.class, () -> s.loginAPIKey(phantom.toCharArray()),
+        assertThrows(AccessSecurityException.class, () -> s.loginAPIKey(phantom.toCharArray()),
                 "a key that was never stored must not log in");
         assertFalse(s.isAuthenticated());
     }
@@ -269,7 +270,7 @@ public class APIKeyRoundTripTest {
     @Test
     public void createStoresDomainAndAppIDWhenBothProvided() {
         Session s = mockSession();
-        s.loginUsernamePassword("kailen", "Password1!".toCharArray());
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
         assertDoesNotThrow(() -> s.storeAPIKey("labelled", "desc", "example.com", "myapp123", s.generateAPIKey().getAPIKey(), null, null, null, null, true),
                 "create with a valid domain + app id should succeed");
 
@@ -283,7 +284,7 @@ public class APIKeyRoundTripTest {
     @Test
     public void createNormalizesDomainAndAppIDCase() {
         Session s = mockSession();
-        s.loginUsernamePassword("kailen", "Password1!".toCharArray());
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
         // The domain and app-id filters lower-case their input, so mixed-case entry is normalized.
         assertDoesNotThrow(() -> s.storeAPIKey("labelled", "desc", "Example.COM", "MyApp123", s.generateAPIKey().getAPIKey(), null, null, null, null, true));
 
@@ -296,7 +297,7 @@ public class APIKeyRoundTripTest {
     @Test
     public void createSkipsAppIDWhenOnlyOnePartProvided() {
         Session s = mockSession();
-        s.loginUsernamePassword("kailen", "Password1!".toCharArray());
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
 
         // Only a domain (no app id): the app-id block requires both, so it is skipped and the
         // key is still created without an app-id association.
@@ -312,9 +313,9 @@ public class APIKeyRoundTripTest {
     @Test
     public void createRejectsInvalidDomain() {
         Session s = mockSession();
-        s.loginUsernamePassword("kailen", "Password1!".toCharArray());
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
         // "not a domain" fails FilterType.DOMAIN, which throws rather than returning a reason.
-        assertThrows(SecurityException.class,
+        assertThrows(AccessSecurityException.class,
                 () -> s.storeAPIKey("bad-domain", "desc", "not a domain", "myapp123", s.generateAPIKey().getAPIKey(), null, null, null, null, true),
                 "an invalid domain must be rejected");
     }
@@ -322,9 +323,9 @@ public class APIKeyRoundTripTest {
     @Test
     public void createRejectsNonAlphanumericAppID() {
         Session s = mockSession();
-        s.loginUsernamePassword("kailen", "Password1!".toCharArray());
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
         // AppIDNameFilter only accepts letters and digits, so "my-app" (a dash) is rejected.
-        assertThrows(SecurityException.class,
+        assertThrows(AccessSecurityException.class,
                 () -> s.storeAPIKey("bad-app", "desc", "example.com", "my-app", s.generateAPIKey().getAPIKey(), null, null, null, null, true),
                 "a non-alphanumeric app id must be rejected");
     }
@@ -332,7 +333,7 @@ public class APIKeyRoundTripTest {
     @Test
     public void externalKeyStoresMetadataAndMarksExternal() {
         Session s = mockSession();
-        s.loginUsernamePassword("kailen", "Password1!".toCharArray());
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
         assertDoesNotThrow(() -> s.storeAPIKey("ext", "desc", "example.com", "myapp123",
                 s.generateAPIKey().getAPIKey(), "anthropic", "https://api.anthropic.com", "Bearer", "x-api-key", true));
 
@@ -348,7 +349,7 @@ public class APIKeyRoundTripTest {
     @Test
     public void internalKeyIsNotMarkedExternal() {
         Session s = mockSession();
-        s.loginUsernamePassword("kailen", "Password1!".toCharArray());
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
         assertDoesNotThrow(() -> s.storeAPIKey("local", "desc", null, null,
                 s.generateAPIKey().getAPIKey(), null, null, null, null, false));
 

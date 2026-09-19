@@ -2,6 +2,7 @@ package io.xlogistx.nosneak.app;
 
 import io.xlogistx.nosneak.app.ui.utility.Session;
 import org.junit.jupiter.api.Test;
+import org.zoxweb.shared.security.AccessSecurityException;
 import org.zoxweb.server.security.DomainSecurityManagerDefault;
 import org.zoxweb.server.security.HashUtil;
 import org.zoxweb.server.util.MockAPIDataStore;
@@ -26,7 +27,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * (unlike an {@code NVEntityReferenceList}, which it silently drops), so what round-trips here
  * also round-trips against Mongo.</p>
  *
- * <p>Failure is signalled by a thrown {@link SecurityException}; success returns normally.</p>
+ * <p>Failure is signalled by a thrown {@link AccessSecurityException}; success returns normally.</p>
  */
 public class AddressRoundTripTest {
 
@@ -34,9 +35,9 @@ public class AddressRoundTripTest {
         DomainSecurityManager dsm =
                 new DomainSecurityManagerDefault().setDataStore(new MockAPIDataStore())
                         .addCredentialType(CIPassword.class);
-        dsm.createSubjectID("kailen", HashUtil.toBCryptPassword("Password1!"));
+        dsm.createSubjectID("kailen01", HashUtil.toBCryptPassword("Password1!"));
         Session s = new Session(dsm);
-        s.loginUsernamePassword("kailen", "Password1!".toCharArray());
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
         return s;
     }
 
@@ -84,7 +85,7 @@ public class AddressRoundTripTest {
 
         // re-read from the store via a fresh login to confirm the edit survived persistence
         s.logout();
-        s.loginUsernamePassword("kailen", "Password1!".toCharArray());
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
 
         List<NVGenericMap> all = s.getAllAddresses();
         assertEquals(1, all.size(), "editing must not add a second address");
@@ -121,7 +122,7 @@ public class AddressRoundTripTest {
 
         // reload from the store via a fresh login so nothing is served from memory
         s.logout();
-        s.loginUsernamePassword("kailen", "Password1!".toCharArray());
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
 
         List<NVGenericMap> all = s.getAllAddresses();
         assertEquals(1, all.size());
@@ -151,7 +152,7 @@ public class AddressRoundTripTest {
 
         // reload from the store and confirm every edited field survived
         s.logout();
-        s.loginUsernamePassword("kailen", "Password1!".toCharArray());
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
 
         List<NVGenericMap> all = s.getAllAddresses();
         assertEquals(1, all.size(), "editing must not add a second address");
@@ -169,16 +170,16 @@ public class AddressRoundTripTest {
         DomainSecurityManager dsm =
                 new DomainSecurityManagerDefault().setDataStore(new MockAPIDataStore())
                         .addCredentialType(CIPassword.class);
-        dsm.createSubjectID("kailen", HashUtil.toBCryptPassword("Password1!"));
+        dsm.createSubjectID("kailen01", HashUtil.toBCryptPassword("Password1!"));
         Session s = new Session(dsm);
 
-        s.loginUsernamePassword("kailen", "Password1!".toCharArray());
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
         s.addAddress(address("Home", "1 Main St", "NYC"));
         s.logout();
 
         assertTrue(s.getAllAddresses().isEmpty(), "logged out → nothing to load");
 
-        s.loginUsernamePassword("kailen", "Password1!".toCharArray());
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
         List<NVGenericMap> all = s.getAllAddresses();
         assertEquals(1, all.size(), "the address must persist across logout/login in the same store");
         assertEquals("1 Main St", all.get(0).getValue("street"));
@@ -189,15 +190,15 @@ public class AddressRoundTripTest {
         DomainSecurityManager dsm =
                 new DomainSecurityManagerDefault().setDataStore(new MockAPIDataStore())
                         .addCredentialType(CIPassword.class);
-        dsm.createSubjectID("kailen", HashUtil.toBCryptPassword("Password1!"));
+        dsm.createSubjectID("kailen01", HashUtil.toBCryptPassword("Password1!"));
         Session s = new Session(dsm);   // never logged in
 
         assertTrue(s.getAllAddresses().isEmpty(), "getAllAddresses returns empty when signed out");
         assertEquals("Not Logged in",
-                assertThrows(SecurityException.class, () -> s.addAddress(address("H", "1 St", "NYC"))).getMessage());
+                assertThrows(AccessSecurityException.class, () -> s.addAddress(address("H", "1 St", "NYC"))).getMessage());
         assertEquals("Not Logged in",
-                assertThrows(SecurityException.class, () -> s.changeAddressDetails(address("H", "1 St", "NYC"))).getMessage());
+                assertThrows(AccessSecurityException.class, () -> s.changeAddressDetails(address("H", "1 St", "NYC"))).getMessage());
         assertEquals("Not Logged in",
-                assertThrows(SecurityException.class, () -> s.deleteAddress(address("H", "1 St", "NYC"))).getMessage());
+                assertThrows(AccessSecurityException.class, () -> s.deleteAddress(address("H", "1 St", "NYC"))).getMessage());
     }
 }

@@ -25,7 +25,7 @@ public class AIModel extends PropertyDAO {
 
     public static final NVConfigEntity NVC_AI_MODEL = new NVConfigEntityPortable(
             "ai_model", null, "AIModel", true, false, false, false,
-            AIModel.class, SharedUtil.extractNVConfigs(Param.values()), null, false,
+            AIModel.class, SUS.extractNVConfigs(Param.values()), null, false,
             PropertyDAO.NVC_PROPERTY_DAO
     );
 
