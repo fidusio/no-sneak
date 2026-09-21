@@ -10,6 +10,11 @@ that are not written down anywhere else.*
 > attacks, DoS, or evasion). Finding 1 below is a data-boundary defect, which is the other half of
 > the same rule set.
 
+> **Latest: Status check (2026-09-20)** further down — **start there.** The scan pipeline was made
+> fast and `-sV` was made honest in one session; it lists what changed, what was measured, and the
+> five things left open, two of them parked by the maintainer. Everything from that session was
+> **uncommitted** when it was written.
+>
 > **Status check 2026-09-09** at the bottom of this file: build/test state on the dev box, and
 > confirmation that all ten findings below were still open at `c082f11`. **All ten were fixed on
 > 2026-09-11** (wave 1, group ζ) — see the priority matrix at the bottom for what is still open.
@@ -227,9 +232,11 @@ no thread ever blocks a pool thread; executors are injected parameters obtained 
 only at the composition root; `NIOSocket` for every Java socket; every rate cap is zoxweb
 `RateController` TIME mode on the injected scheduler (`no-sneak-net` `SweepDriver`, `no-sneak-core`
 `ScanGate` — formerly `RateLimiter`); JSON is `NVGenericMap` + `GSONUtil` with `printNull=true`,
-never a hand-written writer; the BCJSSE `tls-connect` engine comes from SunJSSE because the
+never a hand-written writer. ~~The BCJSSE `tls-connect` engine comes from SunJSSE because the
 published `bctls` 1.86 jar is broken on JDK 9+ — `BcjsseEngineCreationTest`'s canary fails the day
-a fixed jar is on the classpath, which is the signal to remove that workaround.
+a fixed jar is on the classpath, which is the signal to remove that workaround.~~ **Removed
+2026-09-20:** the canary fired on the local repository's `bctls` 1.85; the pin and the canary are
+gone, `tls-connect` uses the JCA default (BCJSSE), `TlsConnectContextTest` pins engine creation.
 
 **Merge done (2026-09-12, later the same day):** the original packages, their five test files
 and `src/main/resources/probes/` (old set) plus the orphan `services-categories-info.json` are
@@ -263,6 +270,62 @@ Darwin twin is M9's). One shared-code change: the `HostScan` host row says `ndp`
 for an IPv6 neighbour not proved by ICMP. A root-gated live class, `platform/linux/LinuxLiveTest`
 (8), now exercises the real Linux sockets and is skipped without root — as root the module is
 40 classes / 409 tests. Uncommitted at the time of writing.
+
+## Status check (2026-09-20, Windows dev box) — scan pipeline speed, `-sV` correctness, handoff
+
+**Start here if you are picking the project up.** One long session on the Windows box (the same
+machine that is 10.0.0.61 on the maintainer's `/24`; Avast installed, Npcap installed). The
+measured record with reasons is `no-sneak-core/PLAN.md` → the 2026-09-19/20 entries; the design
+is `no-sneak-core/CLAUDE.md` → *The scan pipeline*. At the time of writing **43 files were modified
+and uncommitted** (35 M, 4 A, 1 D, 1 R) — the maintainer commits; nothing here was.
+
+**What changed (all in `no-sneak-core` unless noted):**
+- `--up-only` — every formatter lists only live hosts (`ScanReport.hostsToRender()`); counts still cover the range.
+- Adaptive connect deadline — 10 × the host's discovery RTT, clamped to [`--min-rtt-timeout` (500 ms), `-t`]; unmeasured on-link hosts inherit the segment's median RTT; `PortScanCallback` has a millisecond constructor.
+- Probes streamed from the connect callback (`CountdownMonitor.addChild`), admitted on the gate's **priority lane** (`ConnectionGate.submitFirst`); `probeStage` is UDP-only now.
+- `ScanGate` honours caps ≥ 1000/s (per-slot quantum over zoxweb `RateController`; was capped at ~990/s whatever `-T` said). `ScanGateThroughputTest` measures it.
+- NIOSocket's `NIOChannelMonitor` appointment released when the callback's deadline wins (`PortScanCallback.releaseWith` → `abortClientSocket`); "Connection timed out" classifies as `timeout`.
+- Per-host discovery decides at the **first positive** unit instead of the slowest.
+- `ParallelJoin` → **`CountdownMonitor`** (rename, maintainer's request).
+- BCJSSE/SunJSSE pin (P23) and its canary **removed**; `tls-connect` uses the JCA default provider; `TlsConnectContextTest` replaces the canary.
+- **Gated probes never ran OCSP/CRL** (`UNKNOWN`/`none` since P14) — registry built contexts without the socket; fixed (`ProbeContext(ProbeTransport, NIOSocket, …)`, `GatedContextRevocationTest`).
+- `postgres-db.json`: `^S$`/`^N$` (an SSH banner matched `^S`), failed TLS handshake → `fail`, not an identification.
+- `https-scan.json` now ends with `tls-connect` + `GET /` to capture `Server:` as `service-version`; every failure of that tail records `no-server-header` and still delivers the posture.
+- `NMap` usage text regrouped (Discovery / Timing / Output) and documents the above.
+- App (`no-sneak-app`): copy icon beside *Send to chat* on the scanner card and a *Copy* row action in the result list.
+
+**Measured on the maintainer's `/24`, 25 hosts up, ~24,500 filtered ports:** 136 s → 39.8 → 13.9
+→ 8.25 → **6.17 s** (`-T5 --min-rtt-timeout 200 --max-inflight 4096 --up-only --open`). First
+`-sV` run 68.9 s at `-T3`, before the priority lane. Single host `10.0.0.1 -p T:53,U:53 -sV`: 7.9 s
+→ 6.1 s (the remaining 5 s is the 53/tcp fallback sweep waiting one `-t`; `-t 2` halves it).
+`xlogistx.io -p 443 -sV --probes https-scan`: 5.0 s, grade A, `GOOD`/`crl`, `Server: NOYFB`.
+
+**Test state:** core **399 tests in 36 classes, all green** through the hand-rolled launcher
+(`.claude/tools/`, whole suite ≈ 16 s; its `cp.txt` drifts — a wave of `NoClassDefFoundError`
+means the snapshot, not the code) and per class through IntelliJ. `no-sneak-app` builds; its Swing
+changes have no tests.
+
+**Open, in full:**
+1. **Parked by the maintainer:** aborting the sibling TCP-pings at the first discovery positive
+   races zoxweb's connect completion on the executor and prints a `ClosedChannelException` stack
+   trace (`TCPSessionCallback.connected` → `getRemoteAddress` on a closed channel; harmless to the
+   result, noisy). Fix when picked up: stop aborting them in `NMapScanner.discoverHost` (they finish
+   on their own in ms, or hold one slot for ≤ `-t`); keep the first-positive verdict.
+2. **Design question for the maintainer:** the match-first sweep launches every candidate at once —
+   ~18 connections to one sshd plus the port scan's banner grab — and OpenSSH `MaxStartups 10:30:100`
+   drops past ten, so the tier-1 `ssh` probe can lose to a fallback (seen on 10.0.0.8/.12 before the
+   postgres fix). Proposal: run tier 2 only if tier 1 yields nothing. Not started.
+3. `https-scan`'s header tail hit its timeout on a TLS-1.2-only host (10.0.0.8: `no-server-header`
+   in 9.5 s vs 5.0 s elsewhere). Posture delivered, header missing; cause not investigated.
+4. **Declined, do not reopen:** an antivirus/interception-proxy detection warning (Avast Mail Shield
+   made 25/110/119/143/465/563/587/993/995 read `open` on every host). Scan with the shield off.
+5. Unchanged from the matrix below: CI runner (maintainer's), M1/M9 (need a Mac), N3 (IPv6 unicast
+   re-solicit), P17 pinned. App backlog in `no-sneak-app/CLAUDE.md` → *Needed fixes*.
+
+**Environment facts that will mislead you on this box:** Avast's mail shield fakes open ports and
+its TLS proxy fakes `UNTRUSTED_ROOT`; with Avast off, Windows Firewall stealth mode turns the
+scanning host's own closed ports into `filtered`. Every host on the segment drops rather than
+resets, so nearly every port pays the full adaptive deadline.
 
 ## Priority matrix (2026-09-11) — discovery closed out; port detection and protocol identification next
 
@@ -319,12 +382,12 @@ P = parity (v1 had it, so it is a regression at merge). **effort** S < 1 day, M 
 | ~~P11~~ | **FIXED 2026-09-11 (wave 2 γ).** `ProbeTransport` seam (`NioProbeTransport` in production) + injected scheduler/executor; `ScriptedTransport` and `ManualScheduler` drive the FSM with no socket or timer. `ProbeContextTest` (18): banner match/capture, split reads, nomatch, error, both wait timeouts, watchdog, unmapped outcome, failed write, reconnect, STARTTLS → handshake start, cancel, exactly-once, stale `armGen` timer. Still live-only: the BC handshake, enumeration children, JSSE `tls-connect`. | — | — | — | — | `v2/runtime/*` |
 | ~~P12~~ | **FIXED 2026-09-11 (wave 2 γ).** `ProbeCheckerTest` (14): two-tier ordering, portScoped exclusion, election waits for higher priority, immediate win + cancel, none-identified fallback, `checkAll` order. `SendBytesTest` (7) pins the codecs and text-only templating; `MongoPayloadTest` (3) verifies both hex payloads against OP_QUERY/OP_MSG. Live: xlogistx.io 22 (OpenSSH 8.2p1), 25 (JAMES, STARTTLS → PQC X25519MLKEM768), 443 (PQC, TRUSTED, TLS 1.3 only, grade A); google.com 443 (PQC, TLS 1.0–1.3, grade C). | — | — | — | — | tests |
 | ~~P13~~ | **FIXED 2026-09-11 (wave 3 ε).** `enumerate-groups` action: one single-group TLS 1.3 handshake per candidate (3 ML-KEM hybrids, 5 curves, 2 FFDHE) → `supported-groups` + `server-group-preference`; in `https-scan`/`tls-scan`; report-only advisory when no hybrid is accepted. Live: xlogistx.io accepts 8 groups, google.com 3, both prefer X25519MLKEM768. `GroupProbeCallbackTest`, `GradeTest`. | — | — | — | — | `analysis/GroupProbeCallback`, `ProbeContext.enumerateGroups` |
-| ~~P14~~ | **FIXED 2026-09-11 (wave 3 ε).** `NetworkRevocationChecker`: OCSP POST to the AIA responder, then CRL from the CDP, non-blocking on the injected `HTTPNIOSocket`, bounded by `revocationTimeoutMs` (default 5 s), exactly-once, soft-fail `UNKNOWN/<method>-unreachable`; `revocation-date`/`-reason` kept; CRL signature and freshness verified. Live: both hosts GOOD via crl (neither CA publishes an OCSP responder any more; the OCSP branch is covered by the BC fixture). `RevocationCheckerTest` (9). | — | — | — | — | `analysis/*RevocationChecker`, `ProbeContext.checkRevocation` |
+| ~~P14~~ | **FIXED 2026-09-11 (wave 3 ε).** `NetworkRevocationChecker`: OCSP POST to the AIA responder, then CRL from the CDP, non-blocking on the injected `HTTPNIOSocket`, bounded by `revocationTimeoutMs` (default 5 s), exactly-once, soft-fail `UNKNOWN/<method>-unreachable`; `revocation-date`/`-reason` kept; CRL signature and freshness verified. Live: both hosts GOOD via crl (neither CA publishes an OCSP responder any more; the OCSP branch is covered by the BC fixture). `RevocationCheckerTest` (9). **Addendum 2026-09-20:** the live verification was on the ungated `ProbeChecker` CLI; the gated path (`NMapScanner`, the app) built its contexts without a socket and reported `UNKNOWN`/`none` on every scan until `GatedProbeTransport.Registry.create` was fixed to keep it (`GatedContextRevocationTest`). | — | — | — | — | `analysis/*RevocationChecker`, `ProbeContext.checkRevocation`, `GatedProbeTransport.Registry` |
 | ~~P15~~ | **FIXED 2026-09-11 (wave 3 ε).** `enumerate-ciphers` offers opsec's strong + weak + insecure TLS 1.2 sets (39) and all 5 TLS 1.3 suites; each accepted suite recorded with version/strength/key-exchange/forward-secrecy; `server-cipher-preference` from two ordered offers; RC4/NULL/EXPORT/DES/anon cap the letter at C. Enumeration budget: at most 64 child connections per deep probe. Live: google.com shows TLS_RSA_* and 3DES. See P24 for the grading side effect. | — | — | — | — | `ProbeContext.enumerateCiphers`, `Grade`, `ProbeResult` |
 | ~~P16~~ | **FIXED 2026-09-11 (wave 1).** `Checker.TargetGuard`: resolves once on the pool, rejects loopback, link-local, site-local/ULA, unspecified, multicast and anything resolving to them; REST path answers 401/400 via `Responder`. `CheckerPrivateIpTest` (6). | — | — | — | — | `v2/service/Checker.java` |
 | P17 📌 | **PINNED 2026-09-11 by the maintainer — recorded, deliberately not scheduled.** ACTION-PLAN item 1, the SSL-Labs-parity posture checklist (padding-oracle family, named-CVE evidence from version/extension presence only, renegotiation, downgrade/SCSV, compression, ALPN, resumption, 0-RTT, DH hygiene, intolerance, HSTS/pinning). Detection-only by design; anything not decidable without an exploit attempt stays unimplemented. | P | L (many S/M) | P11, P13 | mostly live | new actions + probe JSON |
 | ~~P18~~ | **FIXED 2026-09-11 (wave 1).** Ticks are applied to the parsed `NMapConfig` (`ScanPanel.ProbeSelection`), keyed by stored-record GUID, never spliced into the command; re-save updates the existing row. **Remaining, nmap side (P22):** a stored probe named exactly like a bundled one still runs both. | — | — | — | — | `ScanPanel.java` |
-| ~~P23~~ | **FIXED 2026-09-11 (wave 4 λ).** Not a classpath mismatch — every BC artifact is 1.86 — but a defect inside `bctls-jdk18on` 1.86 as published: its multi-release `versions/9/SSLEngineUtil` returns `ProvSSLEngine` while the un-versioned `ProvSSLContextSpi` calls the `SSLEngine` descriptor, so `createSSLEngine` throws on JDK ≥ 9 whenever BCJSSE (registered at position 2 by `SecUtil`) resolves `"TLS"`. `ProbeSecureCallback` now mints the `tls-connect` engine from `SunJSSE` explicitly; PQC stays on the BC TLS-API path. Also fixed: `sslUpgraded` was empty while zoxweb 2.4.0 signals handshake completion only there, so `https-version` could never complete. Live: `Server: gws` on google.com, `NOYFB` on xlogistx.io. `BcjsseEngineCreationTest` (3) includes a canary that fails once a consistent bctls is on the classpath — then remove the explicit provider. | — | — | — | — | `v2/runtime/ProbeSecureCallback.java` |
+| ~~P23~~ | **FIXED 2026-09-11 (wave 4 λ).** Not a classpath mismatch — every BC artifact is 1.86 — but a defect inside `bctls-jdk18on` 1.86 as published: its multi-release `versions/9/SSLEngineUtil` returns `ProvSSLEngine` while the un-versioned `ProvSSLContextSpi` calls the `SSLEngine` descriptor, so `createSSLEngine` throws on JDK ≥ 9 whenever BCJSSE (registered at position 2 by `SecUtil`) resolves `"TLS"`. `ProbeSecureCallback` now mints the `tls-connect` engine from `SunJSSE` explicitly; PQC stays on the BC TLS-API path. Also fixed: `sslUpgraded` was empty while zoxweb 2.4.0 signals handshake completion only there, so `https-version` could never complete. Live: `Server: gws` on google.com, `NOYFB` on xlogistx.io. `BcjsseEngineCreationTest` (3) includes a canary that fails once a consistent bctls is on the classpath — then remove the explicit provider. **Canary fired and workaround removed 2026-09-20** (`bctls` 1.85 on the classpath); `TlsConnectContextTest` (2) replaces it. | — | — | — | — | `runtime/ProbeSecureCallback.java` |
 | ~~P24~~ | **FIXED 2026-09-11 (wave 4 μ).** `Grade.CipherPosture` applies SSL Labs' tiers: insecure (RC4/NULL/EXPORT/DES/anon) → C; no forward secrecy (static RSA/ECDH) or 3DES → B; forward-secret CBC → advisory "CBC suites accepted: …; prefer AEAD", letter unchanged. Forward secrecy from `supported-cipher-suite-details`, name-inferred otherwise. `Grade.toString()` prints advisories. Live: xlogistx.io back to A with the CBC advisory; google.com stays C. `GradeTest` (37). | — | — | — | — | `grade/Grade.java` |
 | ~~P20~~ | **FIXED 2026-09-11 (wave 2 ο).** Every formatter renders per-port `reason` and, when measured, the RTT (Normal columns, JSON `reason`/`rttMs`, XML `rttms` on `<port>` + `<extraports>`, CSV trailing `reason,rttms`, gnmap owner/rpc slots). Live on xlogistx.io in all five formats. `FormattersTest` (11). | — | — | — | — | `v2/nmap/output/*` |
 | ~~P21~~ | **FIXED 2026-09-11 (wave 2 ο).** One shared rule, `HostReport.portsToRender(cfg)`: `--open` lists only potentially-open ports and keeps the hidden counts; without it a non-open state is listed up to 10 entries and collapsed beyond, as nmap does. | — | — | — | — | `ScanReport.RenderSelection`, all formatters |

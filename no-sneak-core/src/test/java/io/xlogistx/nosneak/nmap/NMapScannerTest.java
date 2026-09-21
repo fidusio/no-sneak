@@ -16,6 +16,79 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 public class NMapScannerTest {
 
+    // ---- the adaptive connect timeout ----
+
+    private static ScanReport.HostReport hostWithRtt(long rttMs) {
+        ScanReport.HostReport hr = new ScanReport.HostReport("10.0.0.9");
+        hr.up = true;
+        hr.latencyMs = rttMs;
+        return hr;
+    }
+
+    @Test
+    public void connectTimeoutIsTenRoundTripsClampedBetweenFloorAndCeiling() {
+        NMapConfig cfg = new NMapConfig(); // -t 5, --min-rtt-timeout 500
+        assertEquals(500, NMapScanner.connectTimeoutMs(hostWithRtt(10), cfg), "10 ms LAN RTT → the floor");
+        assertEquals(500, NMapScanner.connectTimeoutMs(hostWithRtt(0), cfg), "a sub-millisecond RTT still gets the floor");
+        assertEquals(1_000, NMapScanner.connectTimeoutMs(hostWithRtt(100), cfg), "10 × RTT once above the floor");
+        assertEquals(5_000, NMapScanner.connectTimeoutMs(hostWithRtt(900), cfg), "-t stays the ceiling");
+    }
+
+    @Test
+    public void connectTimeoutFallsBackToTheConfiguredValueWithoutAnRtt() {
+        NMapConfig cfg = new NMapConfig();
+        assertEquals(5_000, NMapScanner.connectTimeoutMs(hostWithRtt(-1), cfg), "-Pn / TCP-ping-only: nothing measured");
+        assertEquals(5_000, NMapScanner.connectTimeoutMs(null, cfg));
+        assertEquals(2_000, NMapScanner.connectTimeoutMs(hostWithRtt(-1), new NMapConfig().timeoutInSec(2)));
+    }
+
+    @Test
+    public void theFloorAndCeilingFollowTheFlags() {
+        NMapConfig cfg = new NMapConfig().minRttTimeoutMs(200).timeoutInSec(1);
+        assertEquals(200, NMapScanner.connectTimeoutMs(hostWithRtt(10), cfg));
+        assertEquals(1_000, NMapScanner.connectTimeoutMs(hostWithRtt(300), cfg), "ceiling below 10 × RTT wins");
+        // A ceiling under the floor: the ceiling wins, since -t is the caller's hard limit.
+        assertEquals(1_000, NMapScanner.connectTimeoutMs(hostWithRtt(10), new NMapConfig().minRttTimeoutMs(5_000).timeoutInSec(1)));
+    }
+
+    @Test
+    public void aSweptHostWithoutAnRttInheritsTheSegmentsMedian() {
+        ScanReport.HostReport a = hostWithRtt(9);
+        ScanReport.HostReport b = hostWithRtt(10);
+        ScanReport.HostReport c = hostWithRtt(10);
+        ScanReport.HostReport wifiOutlier = hostWithRtt(81);    // one power-saving Wi-Fi client
+        ScanReport.HostReport ownAddress = hostWithRtt(-1);     // LOCAL_INTERFACE: no round trip
+        ScanReport.HostReport passiveOnly = hostWithRtt(-1);    // learned from ARP traffic, never pinged
+        ScanReport.HostReport down = hostWithRtt(-1);
+        down.up = false;
+        NMapScanner.inheritSegmentRtt(List.of(a, b, c, wifiOutlier, ownAddress, passiveOnly, down));
+        assertEquals(9, a.latencyMs, "a measured host keeps its own RTT");
+        assertEquals(81, wifiOutlier.latencyMs, "so does the outlier");
+        assertEquals(10, ownAddress.latencyMs, "the segment's median, not its slowest");
+        assertEquals(10, passiveOnly.latencyMs);
+        assertEquals(-1, down.latencyMs, "a down host is never touched");
+        // and the point of it: the deadline is now the floor, not the -t ceiling
+        assertEquals(500, NMapScanner.connectTimeoutMs(ownAddress, new NMapConfig()));
+    }
+
+    @Test
+    public void theMedianOfTwoIsTheUpperOne() {
+        ScanReport.HostReport fast = hostWithRtt(9);
+        ScanReport.HostReport slow = hostWithRtt(20);
+        ScanReport.HostReport unknown = hostWithRtt(-1);
+        NMapScanner.inheritSegmentRtt(List.of(fast, slow, unknown));
+        assertEquals(20, unknown.latencyMs, "with two measurements err towards the slower");
+    }
+
+    @Test
+    public void withNothingMeasuredNothingIsInvented() {
+        ScanReport.HostReport a = hostWithRtt(-1);
+        ScanReport.HostReport b = hostWithRtt(-1);
+        NMapScanner.inheritSegmentRtt(List.of(a, b));
+        assertEquals(-1, a.latencyMs);
+        assertEquals(-1, b.latencyMs);
+    }
+
     @Test
     public void hostnamesAndSingleIpsPassThrough() {
         List<String> out = NMapScanner.expand(Arrays.asList("example.com", "10.0.0.5"));

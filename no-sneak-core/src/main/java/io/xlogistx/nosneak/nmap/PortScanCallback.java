@@ -56,7 +56,7 @@ public class PortScanCallback extends TCPSessionCallback {
 
     private final Consumer<Result> onResult;
     private final ScheduledExecutorService scheduler;
-    private final int timeoutSec;
+    private final long timeoutMs;
     private final boolean grabBanner;
     private final long startNanos = System.nanoTime();
     private final AtomicBoolean done = new AtomicBoolean(false);
@@ -65,6 +65,36 @@ public class PortScanCallback extends TCPSessionCallback {
     private volatile long rttMs = -1;
     private volatile ScheduledFuture<?> deadline;
     private volatile ScheduledFuture<?> bannerWindow;
+    /** Runs once when the probe finishes; see {@link #releaseWith}. */
+    private volatile Runnable releaser;
+    private final AtomicBoolean released = new AtomicBoolean(false);
+
+    /**
+     * {@code NIOSocket.addClientSocket} arms its own connect timeout — an {@code NIOChannelMonitor}
+     * appointment on the scheduler that closes the channel and delivers
+     * {@code exception(IOException("Connection timed out"))} — and that appointment is cancelled
+     * only by a <em>successful</em> connect. Closing the socket does not release it. This probe's
+     * own deadline is shorter (the adaptive per-host timeout), so without this hook every filtered
+     * port left a stale appointment in the scheduler for the NIO timeout: on a {@code /24} × 1024
+     * ports, ~21,000 of them, each firing later to close an already-closed channel. The scanner
+     * hands in {@code () -> nio.abortClientSocket(key)}, which cancels the appointment while the
+     * connect is pending and is a harmless close afterwards. Runs exactly once, on whichever comes
+     * first: the probe finishing, or this call if the probe has already finished (a loopback
+     * connect can complete inside {@code addClientSocket}, before the key is even returned).
+     */
+    public void releaseWith(Runnable releaser) {
+        this.releaser = releaser;
+        if (done.get()) {
+            release();
+        }
+    }
+
+    private void release() {
+        Runnable r = releaser;
+        if (r != null && released.compareAndSet(false, true)) {
+            try { r.run(); } catch (Exception ignored) { }
+        }
+    }
 
     /**
      * State-only probe, no banner window: connect completes the probe at once. This is the
@@ -84,14 +114,25 @@ public class PortScanCallback extends TCPSessionCallback {
      */
     public PortScanCallback(ScheduledExecutorService scheduler, IPAddress address, int timeoutSec,
                             boolean grabBanner, Consumer<Result> onResult) {
+        this(scheduler, address, Math.max(timeoutSec, 1) * 1_000L, grabBanner, onResult);
+    }
+
+    /**
+     * Millisecond deadline. This is what the scanner's adaptive per-host timeout uses: on a
+     * segment whose hosts answered ARP in 10 ms, a five-second wait on every silently-dropped
+     * port is the whole cost of the scan, and {@link NMapScanner#connectTimeoutMs} derives
+     * something proportionate from the discovery RTT instead. Floor 1 ms; the caller clamps.
+     */
+    public PortScanCallback(ScheduledExecutorService scheduler, IPAddress address, long timeoutMs,
+                            boolean grabBanner, Consumer<Result> onResult) {
         super(address);
         this.scheduler = scheduler;
-        this.timeoutSec = Math.max(timeoutSec, 1);
+        this.timeoutMs = Math.max(timeoutMs, 1L);
         this.grabBanner = grabBanner;
         this.onResult = onResult;
         // FILTERED deadline: fires if neither connect nor refusal arrives.
         this.deadline = scheduler.schedule(
-                () -> finish(PortState.FILTERED, "timeout"), this.timeoutSec, TimeUnit.SECONDS);
+                () -> finish(PortState.FILTERED, "timeout"), this.timeoutMs, TimeUnit.MILLISECONDS);
     }
 
     /**
@@ -118,7 +159,7 @@ public class PortScanCallback extends TCPSessionCallback {
         // it with the banner window, which completes OPEN whatever the server does.
         cancel(deadline);
         deadline = null;
-        long window = Math.min(BANNER_WINDOW_MS, timeoutSec * 1_000L);
+        long window = Math.min(BANNER_WINDOW_MS, timeoutMs);
         bannerWindow = scheduler.schedule(
                 () -> finish(PortState.OPEN, "connected"), window, TimeUnit.MILLISECONDS);
     }
@@ -183,6 +224,11 @@ public class PortScanCallback extends TCPSessionCallback {
         if (m.contains("unreachable") || m.contains("no route")) {
             return new Classification(PortState.FILTERED, "no-route");
         }
+        if (m.contains("timed out") || m.contains("timeout")) {
+            // NIOSocket's own NIOChannelMonitor: IOException("Connection timed out"). Normally this
+            // probe's deadline fires first; when the monitor wins it is still a timeout, not an error.
+            return new Classification(PortState.FILTERED, "timeout");
+        }
         String name = e == null ? "unknown" : e.getClass().getSimpleName();
         return new Classification(PortState.FILTERED, "error:" + name);
     }
@@ -203,6 +249,7 @@ public class PortScanCallback extends TCPSessionCallback {
                     : cleanBanner(bannerBytes.toString(StandardCharsets.ISO_8859_1));
         }
         try { SharedIOUtil.close(this); } catch (Exception ignored) { }
+        release(); // cancel NIOSocket's connect-timeout appointment, not just the channel
         try { onResult.accept(new Result(state, reason, rttMs, banner)); } catch (Exception ignored) { }
     }
 

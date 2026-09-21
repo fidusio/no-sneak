@@ -170,6 +170,23 @@ public class ProbeContext {
         this(transport, scheduler, executor, null, httpNio, target, definition, timeoutSec, userCallback);
     }
 
+    /**
+     * A gated production context: the transport is the caller's (a {@link GatedProbeTransport}
+     * over the socket), the pools are the socket's, and the socket itself is kept so
+     * {@link #httpNio()} can build the HTTP client {@code revocation-check} needs — lazily, as the
+     * ungated constructor does. Until 2026-09-20 the gated registry used the transport-only
+     * constructor above, which carries no socket, so every scanner and app probe reported
+     * revocation as {@code UNKNOWN/none} ("no HTTP transport available") while the direct
+     * {@code ProbeChecker} CLI, on the ungated constructor, reported {@code GOOD/crl} for the same
+     * host. The seam constructors stay socket-less on purpose: a scripted probe must not reach a
+     * network.
+     */
+    ProbeContext(ProbeTransport transport, NIOSocket nioSocket, IPAddress target,
+                 ProbeDefinition definition, int timeoutSec, Consumer<ProbeResult> userCallback) {
+        this(transport, nioSocket.getScheduler(), nioSocket.getExecutor(), nioSocket, null,
+             target, definition, timeoutSec, userCallback);
+    }
+
     private ProbeContext(ProbeTransport transport, ScheduledExecutorService scheduler, Executor executor,
                          NIOSocket nioSocket, HTTPNIOSocket httpNio, IPAddress target,
                          ProbeDefinition definition, int timeoutSec, Consumer<ProbeResult> userCallback) {
@@ -813,7 +830,7 @@ public class ProbeContext {
         final int port = currentPort > 0 ? currentPort : target.getPort();
         final ProtocolVersion[] candidates = versionCandidates(state);
         final Map<String, Boolean> results = new ConcurrentHashMap<>();
-        List<Consumer<ParallelJoin>> children = new ArrayList<>();
+        List<Consumer<CountdownMonitor>> children = new ArrayList<>();
         for (ProtocolVersion candidate : candidates) {
             final ProtocolVersion ver = candidate;
             children.add(join -> {
@@ -947,7 +964,7 @@ public class ProbeContext {
     public void enumerateCiphers(ProbeState state) {
         final int port = currentPort > 0 ? currentPort : target.getPort();
         final Map<Integer, Boolean> accepted = new ConcurrentHashMap<>();
-        List<Consumer<ParallelJoin>> children = new ArrayList<>();
+        List<Consumer<CountdownMonitor>> children = new ArrayList<>();
         final int[] tls13 = bounded(TLS13_CIPHERS, MAX_ENUMERATION_CHILDREN);
         final int[] tls12 = bounded(tls12Candidates(state), Math.max(0, MAX_ENUMERATION_CHILDREN - tls13.length));
         cipherChildren(children, accepted, ProtocolVersion.TLSv13, tls13, port);
@@ -957,7 +974,7 @@ public class ProbeContext {
         Fanout.runBounded(children, maxInFlight(state), () -> onCiphersDone(accepted, ordered, port, rank), executor);
     }
 
-    private void cipherChildren(List<Consumer<ParallelJoin>> children, Map<Integer, Boolean> accepted,
+    private void cipherChildren(List<Consumer<CountdownMonitor>> children, Map<Integer, Boolean> accepted,
                                 ProtocolVersion ver, int[] ciphers, int port) {
         for (int c : ciphers) {
             final int cipher = c;
@@ -1031,14 +1048,14 @@ public class ProbeContext {
             reversed[forward.length - 1 - i] = acceptedSuites.get(i);
         }
         final Map<String, Integer> picks = new ConcurrentHashMap<>();
-        List<Consumer<ParallelJoin>> children = new ArrayList<>();
+        List<Consumer<CountdownMonitor>> children = new ArrayList<>();
         children.add(preferenceChild("forward", forward, ver, port, picks));
         children.add(preferenceChild("reversed", reversed, ver, port, picks));
         Fanout.run(children, () -> onPreferenceDone(picks, forward, ver, port, rank), executor);
     }
 
-    private Consumer<ParallelJoin> preferenceChild(String label, int[] offer, ProtocolVersion ver, int port,
-                                                   Map<String, Integer> picks) {
+    private Consumer<CountdownMonitor> preferenceChild(String label, int[] offer, ProtocolVersion ver, int port,
+                                                       Map<String, Integer> picks) {
         return join -> {
             try {
                 CipherProbeCallback probe = new CipherProbeCallback(
@@ -1139,7 +1156,7 @@ public class ProbeContext {
         final int port = currentPort > 0 ? currentPort : target.getPort();
         final Map<Integer, Boolean> accepted = new ConcurrentHashMap<>();
         final int[] candidates = bounded(GroupProbeCallback.CANDIDATE_GROUPS, MAX_ENUMERATION_CHILDREN);
-        List<Consumer<ParallelJoin>> children = new ArrayList<>();
+        List<Consumer<CountdownMonitor>> children = new ArrayList<>();
         for (int g : candidates) {
             final int group = g;
             children.add(join -> {

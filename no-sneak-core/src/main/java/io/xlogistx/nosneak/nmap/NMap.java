@@ -32,9 +32,11 @@ import java.util.concurrent.TimeUnit;
  *   -sU           UDP scan (common UDP ports, or the U: half of -p); UDP-only unless T: ports given
  *   --top-ports N scan nmap's N most common TCP ports (max 100)
  *   --open        report only open ports
- *   -sV           probe scan: service/version/TLS/PQC on open ports
+ *   --up-only     list only hosts found up (counts still cover every target)
+ *   -sV           probe scan: service/version/TLS/PQC on open ports, each probed as it connects
  *   --probes a,b  restrict the probe scan to named probes
- *   -Pn / -PN     skip host discovery (treat every target as up)
+ *   -Pn / -PN     skip host discovery (treat every target as up; discovery otherwise decides at
+ *                 the first positive answer from ARP, ICMP or a TCP-ping)
  *   -sn / -sP     discovery only (no port scan)
  *   -PR           ARP/NDP discovery only (on-link; yields the remote MAC)
  *   -PE           ICMP-echo discovery only
@@ -44,7 +46,9 @@ import java.util.concurrent.TimeUnit;
  *   --dns-servers ip   resolver for the PTR lookups (default: the system resolver)
  *   -T0..-T5, -T &lt;n|name&gt;   timing template (default T3 = 256 in flight, 2000/s, 5 s timeout)
  *   --max-inflight N / --max-parallelism N / -P N / --max-rate N   rate limits (0 = unlimited)
- *   -t &lt;sec&gt; / --timeout &lt;sec&gt;   per-connection timeout (default 5)
+ *   -t &lt;sec&gt; / --timeout &lt;sec&gt;   per-connection timeout (default 5) — the ceiling of the
+ *                 adaptive connect timeout (10 × the host's discovery RTT)
+ *   --min-rtt-timeout &lt;ms&gt;   floor of that adaptive timeout (default 500)
  *   -v            verbose Normal output
  *   -oN/-oX/-oG/-oJ/-oC &lt;file&gt;   write Normal/XML/Grepable/JSON/CSV ("-" = stdout)
  *   -oA &lt;base&gt;    write all formats to base.&lt;ext&gt;
@@ -251,6 +255,8 @@ public final class NMap {
                 case "--top-ports":    cfg.ports(topPorts(intArg(args, ++i, a))); tcpSpecified = true; break;
                 case "-sU":            cfg.udpScan(true); break;
                 case "--open":         cfg.openOnly(true); break;
+                case "--up-only":      cfg.upOnly(true); break;
+                case "--min-rtt-timeout": cfg.minRttTimeoutMs(intArg(args, ++i, a)); break;
                 case "-T":             cfg.timing(timingOf(argOf(args, ++i, a), a)); break;
                 case "-sV":            cfg.probeScan(true); break;
                 case "--probes":       for (String n : argOf(args, ++i, a).split(",")) cfg.probe(n.trim()); break;
@@ -497,9 +503,14 @@ public final class NMap {
                   -sU            UDP scan: common UDP ports, or the U: ports of -p; UDP-only unless
                                  T: ports or --top-ports are named too (open / closed / open|filtered)
                   --top-ports N  scan nmap's N most common TCP ports (1..100)
-                  --open         report only open ports
-                  -sV            probe scan: service/version/TLS/PQC on open ports
+                  --open         report only open ports (closed/filtered kept as counts under notShown)
+                  --up-only      list only hosts found up (run-level up/down counts still cover every target)
+                  -sV            probe scan: service/version/TLS/PQC on open ports. Each open port is
+                                 probed the moment it connects, ahead of the queued connects. A port no
+                                 bundled probe declares (53/tcp, say) costs one full -t while the
+                                 fallback candidates wait for a reply that never comes.
                   --probes a,b   restrict probe scan to named probes
+                Discovery (decided at the first positive answer from any method):
                   -Pn / -PN      skip host discovery (all targets up)
                   -sn / -sP      discovery only (no port scan)
                   -PR            ARP/NDP discovery only (on-link; yields remote MAC)
@@ -508,13 +519,20 @@ public final class NMap {
                   --icmp-probes N   echo requests per host (pipelined; default 2)
                   -n / -R        never / always reverse-resolve hostnames (default: live hosts only)
                   --dns-servers <ip>   resolver for the PTR lookups (default: system resolver, else 8.8.8.8)
+                Timing (every socket, connects and probes alike, goes through one gate):
                   -T0..-T5       timing template: in-flight / per-second / timeout
                                  also -T <n>, -T4, -T aggressive (paranoid|sneaky|polite|normal|aggressive|insane)
                                  T0 1/1/15s  T1 4/10/15s  T2 16/50/10s  T3 256/2000/5s (default)
                                  T4 512/5000/3s  T5 1024/10000/2s
                   --max-inflight N / --max-parallelism N / -P N   concurrent-connection cap (default 256; 0 = unlimited)
                   --max-rate N   new connections per second (default 2000; 0 = unlimited)
-                  -t <sec> / --timeout <sec>   per-connection timeout (default 5)
+                  -t <sec> / --timeout <sec>   per-connection timeout (default 5): the CEILING of the
+                                 adaptive connect timeout, which is 10 x the host's discovery RTT.
+                                 A silently dropped port costs that adaptive value, not -t; a host with
+                                 no measured RTT (-Pn) pays the full -t.
+                  --min-rtt-timeout <ms>   FLOOR of the adaptive timeout (default 500; 200 is safe on a wire)
+                  A wired LAN: -T5 --min-rtt-timeout 200 --max-inflight 4096  (a /24 x 1024 ports in ~6 s)
+                Output:
                   -v / --verbose run header and per-host scanned-port counts in Normal output
                   -h / --help    this text
                   -oN/-oX/-oG/-oJ/-oC <file>   write Normal/XML/Grepable/JSON/CSV ("-" = stdout)

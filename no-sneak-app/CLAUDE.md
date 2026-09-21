@@ -295,7 +295,10 @@ selector (left) and the raw result text (right).
 
 - **The command box is the real CLI.** `NMap.parseCommand(String)` — extracted from `NMap.main`
   so the two cannot drift — accepts `-p`, `-sV`, `-Pn`, `-sn`, `-PR`, `-PE`, `--probes`,
-  `--icmp-probes`, `--max-inflight`, `--max-rate`, `-t`. The output-file flags (`-oN`…`-oA`) are
+  `--icmp-probes`, `--max-inflight`, `--max-rate`, `-t`, `--min-rtt-timeout` (floor of the
+  adaptive connect timeout, default 500 ms; `-t` is its ceiling), `--open`, and `--up-only`
+  (list only hosts found up; a `/24 -sn` otherwise renders 254 entries, most of them
+  `"up": false`). The output-file flags (`-oN`…`-oA`) are
   **rejected**, not ignored: a caller holding a string has nowhere to write. Parsing happens on
   the EDT (it is instant and non-blocking) and a bad command shows a dialog with the message plus
   `NMap.usageText()`, rather than reaching `BackgroundTask`'s generic "Unexpected error".
@@ -317,7 +320,13 @@ selector (left) and the raw result text (right).
   renders what completed and saves nothing. The save of a finished report goes through
   `BackgroundTask.runCatching` — encrypting and inserting a 50 KB report on the EDT froze the UI
   (finding 2) — and is skipped, with a notice, if the subject who started the scan is no longer
-  the one signed in.
+  the one signed in. Since 2026-09-20 the engine paces connects with an adaptive per-host
+  deadline and streams `-sV` probes from the connect, so a `/24 × 1024 ports` from this panel
+  takes seconds, not minutes, on a LAN; the wait budget (`NMap.maxWaitMs`) is unchanged and
+  still generous. Recommended command on a wired segment:
+  `10.0.0.0/24 -T5 --min-rtt-timeout 200 --max-inflight 4096 --up-only --open`. If a local
+  antivirus mail shield is running, its ports read `open` on every host — see
+  `no-sneak-core/CLAUDE.md` → *Build, test, verify*.
 
 **Probe selector.** A rebuilt-per-refresh panel of checkboxes in two sections — *Bundled probes*
 (the 18 classpath definitions, loaded once off the EDT and cached) and *My probes* (stored
@@ -333,9 +342,11 @@ ticked — that dedupe belongs to the scanner, not the panel.
 
 **Result List / View scan.** A `ListSection` over `Session.getAllScanResults()` — a **projected**
 read that omits `content` — with rows labelled by target and a sublabel of
-`<full command>  ·  <timestamp>`. Row actions are *Send to chat*, *View*, and remove. Both View
-and Send **re-fetch the full row** by GUID first and bail with a dialog if it misses; sending a
-list instance would attach empty content.
+`<full command>  ·  <timestamp>`. Row actions are *Copy*, *Send to chat*, *View*, and remove. Copy,
+View and Send all **re-fetch the full row** by GUID first and bail with a dialog if it misses;
+sending or copying a list instance would attach empty content. The scanner card's result pane has
+the same pair, a copy icon beside *Send to chat* (2026-09-20): Copy is enabled whenever the pane
+holds a render, including the partial render of a stopped scan, while Send needs a completed one.
 
 **Probe Library / Edit probe.** A searchable `ListSection` over `Session.getAllProbes()` with
 add, edit and remove. Both save paths — the editor's Save and `saveProbeFromEditor` (the

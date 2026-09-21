@@ -31,7 +31,7 @@ public final class GrepableFormatter implements OutputFormatter {
         sb.append("# Nmap-compatible scan initiated ").append(ScanReport.nmapTime(r.startTimeMs));
         if (r.commandLine != null) sb.append(" as: ").append(r.commandLine);
         sb.append('\n');
-        for (HostReport h : r.hosts) {
+        for (HostReport h : r.hostsToRender()) {
             sb.append("Host: ").append(h.ip != null ? h.ip : h.host)
               .append(" (").append(h.hostname != null ? h.hostname : "").append(')');
             if (!h.up) {

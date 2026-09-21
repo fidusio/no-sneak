@@ -168,6 +168,20 @@ public class NMapParseCommandTest {
     }
 
     @Test
+    public void minRttTimeoutIsRecordedInMilliseconds() {
+        assertEquals(NMapConfig.DEFAULT_MIN_RTT_TIMEOUT_MS, NMap.parseCommand("10.0.0.1").minRttTimeoutMs);
+        assertEquals(250, NMap.parseCommand("10.0.0.1 --min-rtt-timeout 250").minRttTimeoutMs);
+        assertEquals(1, NMap.parseCommand("10.0.0.1 --min-rtt-timeout 0").minRttTimeoutMs, "never zero");
+        assertThrows(IllegalArgumentException.class, () -> NMap.parseCommand("10.0.0.1 --min-rtt-timeout"));
+    }
+
+    @Test
+    public void upOnlyFlagIsRecorded() {
+        assertTrue(NMap.parseCommand("10.0.0.0/24 -sn --up-only").upOnly);
+        assertFalse(NMap.parseCommand("10.0.0.0/24 -sn").upOnly);
+    }
+
+    @Test
     public void timingTemplatesMapOntoTheThreeKnobs() {
         int[][] expected = {
                 {1, 1, 15}, {4, 10, 15}, {16, 50, 10}, {256, 2000, 5}, {512, 5000, 3}, {1024, 10000, 2}};
@@ -220,7 +234,8 @@ public class NMapParseCommandTest {
     @Test
     public void usageTextDocumentsTheNewFlagsAndTheRefusals() {
         String u = NMap.usageText();
-        for (String s : List.of("--top-ports", "--open", "-T0..-T5", "T:/U:", "-sU", "-sS", "assessment-only",
+        for (String s : List.of("--top-ports", "--open", "--up-only", "--min-rtt-timeout", "CEILING", "FLOOR",
+                "probed the moment it connects", "first positive", "-T0..-T5", "T:/U:", "-sU", "-sS", "assessment-only",
                 "--timeout", "--max-parallelism", "-sP", "-PN", "--dns-servers", "1-1024", "-p22,80",
                 "aggressive", "host=", "range=", "timeout=", "-h", "--verbose")) {
             assertTrue(u.contains(s), "usage must mention " + s);

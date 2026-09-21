@@ -53,6 +53,26 @@ public final class ScanReport {
     public final List<HostReport> hosts = new ArrayList<>();
 
     /**
+     * The hosts a formatter lists: every target, or with {@link NMapConfig#upOnly} only those
+     * found up. ONE rule for all five formatters, the host-level twin of {@link
+     * HostReport#portsToRender}. The counts ({@link #hostsUp()}, {@link #hostsDown()},
+     * {@code hosts.size()}) are deliberately not filtered — they describe the range scanned, and
+     * that is what lets a reader tell a silent host from one that was never tried.
+     */
+    public List<HostReport> hostsToRender() {
+        if (config == null || !config.upOnly) {
+            return hosts;
+        }
+        List<HostReport> out = new ArrayList<>();
+        for (HostReport h : hosts) {
+            if (h.up) {
+                out.add(h);
+            }
+        }
+        return out;
+    }
+
+    /**
      * The report as an {@link NVGenericMap}: the ONE declared shape every JSON consumer sees —
      * the {@code -oJ} file, the app's stored report, and what the assistant reads. Rendered by
      * {@code GSONUtil.toJSONGenericMap}, never by hand.
@@ -87,7 +107,7 @@ public final class ScanReport {
             m.add(new NVStringList("warnings", new ArrayList<>(warnings)));
         }
         NVGenericMapList list = new NVGenericMapList("hosts");
-        for (HostReport h : hosts) {
+        for (HostReport h : hostsToRender()) {
             list.add(h.toNVGenericMap(config));
         }
         m.add(list);

@@ -120,7 +120,7 @@ v2 is the sounder design and does more, but **this is where the regressions live
 | Result status fields | `success`, `secure`, `error-message`, `overall-status`, `scan-id`, `total-scanned` | `complete` + `note` |
 | Options | `PQCScanOptions` (SSLv3, TLS1.0/1.1, weak, insecure, revocation, overall watchdog 90 s) | which actions the probe JSON lists; overall deadline hard-coded `max(4×timeout, 30 s)` (`ProbeContext:184`) |
 | Blocking dead code | `CipherSuiteEnumerator` (463 lines), `ProtocolVersionTester` (341), `new Socket()` — only `FeatureIntegrationTest` calls them | none |
-| Non-BC TLS | none | `tls-connect` uses SunJSSE (`ProbeSecureCallback:77-89`) because `bctls` 1.86 is broken on JDK 9+; `BcjsseEngineCreationTest` is the canary |
+| Non-BC TLS | none | `tls-connect` used SunJSSE (`ProbeSecureCallback`) because `bctls` 1.86 was broken on JDK 9+; `BcjsseEngineCreationTest` was the canary — **both removed 2026-09-20** once `bctls` 1.85 was on the classpath; now the JCA default (BCJSSE) |
 | Tests | 3 classes, 1,209 lines, network-bound | `Grade`, `ProbeResult`, `RevocationChecker` parsing, `GroupProbeCallback`; **nothing drives enumeration, chain validation or network revocation through `ProbeContext`** |
 
 Neither side implements ALPN, session resumption, renegotiation, compression, HSTS/security

@@ -42,7 +42,7 @@ public final class NormalFormatter implements OutputFormatter {
           .append(r.hostsUp()).append(" up");
         if (r.durationMs() > 0) sb.append(", ").append(r.durationMs() / 1000.0).append("s");
         sb.append('\n');
-        for (HostReport h : r.hosts) {
+        for (HostReport h : r.hostsToRender()) {
             if (!h.up) {
                 sb.append('\n').append("Host ").append(h.host);
                 if (h.ip != null && !h.ip.equals(h.host)) sb.append(" (").append(h.ip).append(')');

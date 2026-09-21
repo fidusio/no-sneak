@@ -131,6 +131,31 @@ public class ScanGateTest {
         gate.close();
     }
 
+    /**
+     * The probe lane: a {@code submitFirst} launch takes the next free slot ahead of everything
+     * queued by {@code submit}, but it does not bypass the window — it waits for a release like
+     * any other launch. This is what lets a probe streamed from a connect run while ~20k port
+     * connects are still queued, instead of behind them.
+     */
+    @Test
+    public void aPriorityLaunchTakesTheNextSlotAheadOfTheQueue() {
+        ScanGate gate = new ScanGate(scheduler, 1, 0);
+        java.util.List<String> order = new java.util.ArrayList<>();
+        gate.submit(() -> order.add("A"));          // takes the one slot and holds it
+        gate.submit(() -> order.add("B"));
+        gate.submit(() -> order.add("C"));
+        gate.submitFirst(() -> order.add("probe"));
+        assertEquals(java.util.List.of("A"), order, "the window is full: nothing else runs yet, priority or not");
+        assertEquals(3, gate.queued());
+        gate.release();                              // A finished
+        assertEquals(java.util.List.of("A", "probe"), order, "the priority launch jumps B and C");
+        gate.release();
+        gate.release();
+        assertEquals(java.util.List.of("A", "probe", "B", "C"), order);
+        assertEquals(0, gate.queued());
+        gate.close();
+    }
+
     /** The window and the pacer compose: a held launch still holds its slot. */
     @Test
     public void aHeldLaunchCountsAgainstTheWindow() throws Exception {

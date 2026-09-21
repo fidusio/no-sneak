@@ -100,6 +100,37 @@ public class FormattersTest {
     }
 
     @Test
+    public void upOnlyListsOnlyLiveHostsButTheCountsStillCoverTheRange() {
+        ScanReport r = report(false);
+        assertEquals(2, r.hostsToRender().size(), "without the flag every target is listed");
+
+        r.config.upOnly(true);
+        assertEquals(1, r.hostsToRender().size());
+        assertTrue(r.hostsToRender().getFirst().up);
+        assertEquals(1, r.hostsUp());
+        assertEquals(1, r.hostsDown(), "the counts describe the range, not the listing");
+
+        // JSON: one host entry, header counts untouched.
+        org.zoxweb.shared.util.NVGenericMap root = json(r);
+        assertEquals("2", str(root, "targets"));
+        assertEquals("1", str(root, "up"));
+        assertEquals("1", str(root, "hostsDown"));
+        java.util.List<org.zoxweb.shared.util.NVGenericMap> hosts =
+                ((org.zoxweb.shared.util.NVGenericMapList) root.get("hosts")).getValue();
+        assertEquals(1, hosts.size());
+        assertEquals("10.0.0.9", str(hosts.getFirst(), "host"));
+
+        // The other four formatters obey the same rule.
+        for (OutputFormat f : java.util.List.of(OutputFormat.NORMAL, OutputFormat.XML, OutputFormat.GREPABLE, OutputFormat.CSV)) {
+            String out = render(f, r);
+            assertTrue(out.contains("10.0.0.9"), f + ": " + out);
+            assertFalse(out.contains("10.0.0.250"), f + " must not list the down host: " + out);
+        }
+        assertTrue(render(OutputFormat.XML, r).contains("<hosts up=\"1\" down=\"1\" total=\"2\"/>"));
+        assertTrue(render(OutputFormat.NORMAL, r).contains("2 target(s), 1 up"));
+    }
+
+    @Test
     public void aStateWithMoreThanTheThresholdCollapsesIntoACount() {
         HostReport h = new HostReport("h");
         h.up = true;

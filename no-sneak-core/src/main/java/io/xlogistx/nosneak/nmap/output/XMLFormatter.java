@@ -51,7 +51,7 @@ public final class XMLFormatter implements OutputFormatter {
             sb.append("  <scaninfo type=\"udp\" protocol=\"udp\" numservices=\"").append(udp.length)
               .append("\" services=\"").append(rangeString(udp)).append("\"/>\n");
         }
-        for (HostReport h : r.hosts) {
+        for (HostReport h : r.hostsToRender()) {
             sb.append("  <host");
             if (h.startTimeMs > 0) sb.append(" starttime=\"").append(h.startTimeMs / 1000).append('"');
             if (h.endTimeMs > 0) sb.append(" endtime=\"").append(h.endTimeMs / 1000).append('"');

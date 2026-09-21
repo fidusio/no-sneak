@@ -180,19 +180,28 @@ public final class GatedProbeTransport implements ProbeTransport {
         /** Production: a context over the injected {@link NIOSocket}. */
         public ProbeContext create(NIOSocket nio, IPAddress target, ProbeDefinition definition,
                                    int timeoutSec, Consumer<ProbeResult> callback) {
-            return create(new NioProbeTransport(nio), nio.getScheduler(), nio.getExecutor(),
+            // Production: keep the socket on the context, so revocation-check can build its HTTP
+            // client. Routing this through the seam below (transport + pools only) is what left
+            // every gated probe without one until 2026-09-20 — see ProbeContext's constructor note.
+            return create(new NioProbeTransport(nio), nio.getScheduler(), nio.getExecutor(), nio,
                           target, definition, timeoutSec, callback);
         }
 
-        /** The seam: any transport (a scripted one in tests), injected executors. */
+        /** The seam: any transport (a scripted one in tests), injected executors, no socket. */
         public ProbeContext create(ProbeTransport delegate, ScheduledExecutorService scheduler,
                                    Executor executor, IPAddress target, ProbeDefinition definition,
                                    int timeoutSec, Consumer<ProbeResult> callback) {
+            return create(delegate, scheduler, executor, null, target, definition, timeoutSec, callback);
+        }
+
+        private ProbeContext create(ProbeTransport delegate, ScheduledExecutorService scheduler,
+                                    Executor executor, NIOSocket nioOrNull, IPAddress target,
+                                    ProbeDefinition definition, int timeoutSec,
+                                    Consumer<ProbeResult> callback) {
             GatedProbeTransport gated = new GatedProbeTransport(delegate, gate);
             Entry entry = new Entry(gated);
             ProbeContext[] self = new ProbeContext[1];
-            ProbeContext ctx = new ProbeContext(gated, scheduler, executor, target, definition,
-                                                timeoutSec, r -> {
+            Consumer<ProbeResult> delivered = r -> {
                 // The user callback runs FIRST: for a match-first sweep that callback is the
                 // election, which cancels the losing candidates — including any whose start is
                 // still queued in the gate. Handing this probe's slot back before that would let
@@ -203,14 +212,19 @@ public final class GatedProbeTransport implements ProbeTransport {
                     live.remove(self[0]);
                     finish(entry);
                 }
-            });
+            };
+            ProbeContext ctx = nioOrNull != null
+                    ? new ProbeContext(gated, nioOrNull, target, definition, timeoutSec, delivered)
+                    : new ProbeContext(gated, scheduler, executor, target, definition, timeoutSec, delivered);
             self[0] = ctx;
             live.put(ctx, entry);
             return ctx;
         }
 
         /**
-         * Admits {@code ctx}'s start through the gate. Runs it at once when a slot is free;
+         * Admits {@code ctx}'s start through the gate — on the priority lane, since a candidate
+         * exists only because a port just proved open and is worth more than the next queued
+         * port connect ({@link ConnectionGate#submitFirst}). Runs it at once when a slot is free;
          * otherwise the context stays unstarted — no timer of its arms — until one is.
          */
         public void start(ProbeContext ctx) {
@@ -219,7 +233,7 @@ public final class GatedProbeTransport implements ProbeTransport {
                 ctx.start();                       // not one of ours: nothing to count
                 return;
             }
-            gate.submit(() -> {
+            gate.submitFirst(() -> {
                 entry.launched.set(true);          // set BEFORE the cancelled check (see cancelled)
                 if (entry.cancelled) {
                     finish(entry);

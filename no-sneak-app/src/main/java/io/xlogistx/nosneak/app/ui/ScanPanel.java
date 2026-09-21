@@ -80,6 +80,8 @@ public class ScanPanel extends JPanel {
     private final JLabel effectiveLabel = new JLabel(" ");
     private final JTextArea resultText = new JTextArea();
     private final JButton sendResultToChatButton = new JButton("Send to chat", new IconUtil.NextIcon(16));
+    /** Copies the result pane to the clipboard; enabled whenever the pane holds a render, partial or not. */
+    private final JButton copyResultButton = new JButton(new IconUtil.CopyIcon(16));
     /** Enabled only while a scan runs; stops it through the scanner's handle. */
     private final JButton stopButton = new JButton("Stop", new IconUtil.StopIcon(16));
     /** The scan in progress, or null. Set on the worker, read on the EDT by the Stop button. */
@@ -148,6 +150,7 @@ public class ScanPanel extends JPanel {
         resultText.setText("");
         lastScanName = "";
         sendResultToChatButton.setEnabled(false);
+        copyResultButton.setEnabled(false);
         selectedScan = null;
         selectedProbe = null;
         if (viewScanTextArea != null) viewScanTextArea.setText("");
@@ -201,7 +204,13 @@ public class ScanPanel extends JPanel {
         JPanel result = new JPanel(new BorderLayout());
         sendResultToChatButton.setEnabled(false);
         sendResultToChatButton.addActionListener(_ -> setSendToChat(resultText.getText(), lastScanName));
-        result.add(sendResultToChatButton, BorderLayout.NORTH);
+        copyResultButton.setEnabled(false);
+        copyResultButton.setToolTipText("Copy the result to the clipboard");
+        copyResultButton.addActionListener(_ -> copyToClipboard(resultText.getText()));
+        JPanel resultActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        resultActions.add(copyResultButton);
+        resultActions.add(sendResultToChatButton);
+        result.add(resultActions, BorderLayout.NORTH);
         result.add(new JScrollPane(resultText), BorderLayout.CENTER);
 
         JSplitPane split = PanelBuilder.buildHorizontalSplitView(buildProbeSelector(), result, 320, 0);
@@ -256,6 +265,7 @@ public class ScanPanel extends JPanel {
                 resultText.setText(outcome.json() == null ? "" : outcome.json());
                 resultText.setCaretPosition(0);
                 sendResultToChatButton.setEnabled(false);
+                copyResultButton.setEnabled(outcome.json() != null); // a partial render is still worth copying
                 JOptionPane.showMessageDialog(this, outcome.stopped(), "Scan stopped",
                         JOptionPane.WARNING_MESSAGE);
                 return;
@@ -273,6 +283,7 @@ public class ScanPanel extends JPanel {
             resultText.setCaretPosition(0);
             lastScanName = scanName;
             sendResultToChatButton.setEnabled(true);
+            copyResultButton.setEnabled(true);
             ReportContent r = new ReportContent();
             r.setName(scanName);
             r.setDescription(probeNames.isEmpty() ? typed : typed + "  ·  probes: " + probeNames);
@@ -513,6 +524,7 @@ public class ScanPanel extends JPanel {
                 .title("Scan Results")
                 .label(ReportContent::getName)
                 .sublabel(ScanPanel::stampOf)
+                .action(new ListSection.RowAction<>(new IconUtil.CopyIcon(16), "Copy", s -> () -> onCopyScanResult(s)))
                 .action(new ListSection.RowAction<>(new IconUtil.NextIcon(16), "Send to chat", s -> () -> onSendScanResult(s)))
                 .action(new ListSection.RowAction<>(new IconUtil.VisibleIcon(16), "View", s -> () -> onViewScanResult(s)))
                 .onRemove(s -> () -> onRemoveScanResult(s))
@@ -521,6 +533,25 @@ public class ScanPanel extends JPanel {
                 .build();
 
         return resultList;
+    }
+
+    /** Row action: copy the stored report. Rows are projections without content, so re-fetch first. */
+    private void onCopyScanResult(ReportContent row) {
+        if (row == null) return;
+        BackgroundTask.run(this, null, () -> ctx.session().getScanResult(row.getGUID()), full -> {
+            if (full == null) {
+                JOptionPane.showMessageDialog(this, "That scan result is no longer available.",
+                        "Not found", JOptionPane.WARNING_MESSAGE);
+                reloadScanResults();
+                return;
+            }
+            copyToClipboard(full.getContent());
+        });
+    }
+
+    private static void copyToClipboard(String text) {
+        if (SUS.isEmpty(text)) return;
+        Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(text), null);
     }
 
     private void onSendScanResult(ReportContent row) {
@@ -595,10 +626,8 @@ public class ScanPanel extends JPanel {
             JPanel body = new JPanel(new BorderLayout());
 
             JButton copy = new JButton(new IconUtil.CopyIcon(16));
-            copy.addActionListener(e -> {
-                StringSelection sel = new StringSelection(viewScanTextArea.getText());
-                Toolkit.getDefaultToolkit().getSystemClipboard().setContents(sel, null);
-            });
+            copy.setToolTipText("Copy the result to the clipboard");
+            copy.addActionListener(e -> copyToClipboard(viewScanTextArea.getText()));
             JButton sendButton = new JButton("Send to chat", new IconUtil.NextIcon(16));
             sendButton.setEnabled(sendToChat != null);
             sendButton.addActionListener(e -> {

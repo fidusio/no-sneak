@@ -14,7 +14,7 @@ checklist against v2*, not a work queue against v1 — do not "fix" v1 code.
 
 | Section | Disposition under v2 |
 |---|---|
-| **A1–A3** (races on the shared builder, watchdog, non-idempotent enumeration) | **Moot.** v2 has no `PQCScanCallback`; one `ProbeContext` per probe serialises every transition, and `ParallelJoin` is a one-shot barrier (covered by `runtime/FanoutTest`). |
+| **A1–A3** (races on the shared builder, watchdog, non-idempotent enumeration) | **Moot.** v2 has no `PQCScanCallback`; one `ProbeContext` per probe serialises every transition, and `CountdownMonitor` is a one-shot barrier (covered by `runtime/FanoutTest`). |
 | **A4–A6, A9–A10** (dead blocking enumerators, redundant capture, deprecated members) | **Moot** — not carried over. v2 enumerates via `analysis/{Cipher,Version}ProbeCallback` on NIO. |
 | **A7–A8** (blind cast, unpopulated key size) | **Moot / superseded**; v2 records `cert-public-key-size` from `OPSecUtil.analyzeCertificatePQC`. |
 | **A11** (no vulnerability scanning) | **Still open in v2** — the largest remaining gap. See *Pending Issues → item 1*, unchanged and still authoritative. |

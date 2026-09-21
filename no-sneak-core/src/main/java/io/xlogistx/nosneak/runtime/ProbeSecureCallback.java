@@ -15,7 +15,6 @@ import java.nio.Buffer;
 import java.nio.ByteBuffer;
 import java.security.KeyManagementException;
 import java.security.NoSuchAlgorithmException;
-import java.security.NoSuchProviderException;
 import java.security.SecureRandom;
 
 /**
@@ -31,25 +30,19 @@ import java.security.SecureRandom;
  * <b>RSA</b> key exchange and any/untrusted certificate complete the handshake — this is
  * service detection, not certificate validation.
  * <p>
- * <b>Which JSSE provider, and why it is named explicitly.</b> {@code SecUtil} registers BCJSSE at
- * provider position 2, so a bare {@code SSLContext.getInstance("TLS")} resolves to Bouncy Castle's
- * JSSE. The {@code bctls-jdk18on} 1.86 artifact is a multi-release jar whose
- * {@code META-INF/versions/9} copy of {@code SSLEngineUtil} declares {@code create(...)} returning
- * {@code ProvSSLEngine} while the base {@code ProvSSLContextSpi} (no versioned copy exists) still
- * calls it with the {@code javax.net.ssl.SSLEngine} descriptor — so on every JDK ≥ 9
- * {@code createSSLEngine(host, port)} throws {@code NoSuchMethodError} (sha1 of the cached jar
- * matches Maven Central; this is the artifact as published). This path only carries application
- * bytes — PQC classification lives on the Bouncy Castle <em>TLS API</em> path in
- * {@link ProbeTCPCallback}, which does not go through JSSE — so the engine is minted from the
- * JDK's own {@code SunJSSE} provider here. {@code BcjsseEngineCreationTest} is the canary: when
- * the bctls artifact is consistent again it fails, and this explicit provider choice can go.
+ * <b>Which JSSE provider.</b> Whichever the JCA resolves for {@code "TLS"} — with {@code SecUtil}'s
+ * registration that is BCJSSE at position 2. Between 2026-09-11 and 2026-09-20 the engine was
+ * pinned to the JDK's {@code SunJSSE} because the {@code bctls-jdk18on} 1.86 jar as published
+ * could not mint an {@code SSLEngine} on JDK ≥ 9 (inconsistent multi-release copies of
+ * {@code SSLEngineUtil}; PENDING-ISSUES P23). The classpath has since moved to a consistent
+ * {@code bctls}, the canary test that guarded the pin fired, and the pin was removed at the
+ * maintainer's request. This path only carries application bytes; PQC classification lives on
+ * the Bouncy Castle <em>TLS API</em> path in {@link ProbeTCPCallback} and never went through JSSE.
+ * {@code TlsConnectContextTest} pins that the default provider mints the engine this path uses.
  */
 public class ProbeSecureCallback extends TCPSessionCallback {
 
     public static final LogWrapper log = new LogWrapper(ProbeSecureCallback.class).setEnabled(false);
-
-    /** The JDK's JSSE provider; see the class javadoc for why it is named rather than defaulted. */
-    static final String JDK_JSSE_PROVIDER = "SunJSSE";
 
     private final ProbeContext context;
     private final int connectionIndex;
@@ -65,23 +58,18 @@ public class ProbeSecureCallback extends TCPSessionCallback {
         // IPAddress ctor resolves while retaining the hostname for SNI. Trust-all
         // (certValidationEnabled=false) so ordinary RSA + any/untrusted cert handshakes.
         setSSLContextInfo(new SSLContextInfo(
-                jdkTlsContext(certValidationEnabled),
+                tlsContext(certValidationEnabled),
                 new InetSocketAddress(address.getInetAddress(), address.getPort())));
     }
 
     /**
-     * An {@code SSLContext} from the JDK's own JSSE provider, trust-all unless
-     * {@code certValidationEnabled}. Package-private so the canary test builds exactly what
-     * production uses.
+     * The {@code SSLContext} this path talks through: the JCA's default {@code "TLS"} provider,
+     * trust-all unless {@code certValidationEnabled}. Package-private so the test builds exactly
+     * what production uses.
      */
-    static SSLContext jdkTlsContext(boolean certValidationEnabled)
+    static SSLContext tlsContext(boolean certValidationEnabled)
             throws NoSuchAlgorithmException, KeyManagementException {
-        SSLContext ctx;
-        try {
-            ctx = SSLContext.getInstance("TLS", JDK_JSSE_PROVIDER);
-        } catch (NoSuchProviderException e) {
-            throw new NoSuchAlgorithmException(JDK_JSSE_PROVIDER + " provider is not available", e);
-        }
+        SSLContext ctx = SSLContext.getInstance("TLS");
         ctx.init(null,
                  certValidationEnabled ? null : SSLCheckDisabler.SINGLETON.getTrustManagers(),
                  new SecureRandom());

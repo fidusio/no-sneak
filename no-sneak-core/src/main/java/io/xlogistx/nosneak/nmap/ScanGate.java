@@ -29,9 +29,15 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       modules paced differently. Now one rule: when the bucket says "not yet", the launch is
  *       held and re-offered by the injected scheduler at its send time. Nothing sleeps.</li>
  * </ul>
- * {@code RateController} paces in whole milliseconds, rounded up, so the effective rate is at or
- * under the cap: 2000/s becomes 1 ms per launch, i.e. 1000/s; 500/s is exactly 2 ms. Under the
- * cap is the only direction a safety limit may err in.
+ * {@code RateController} paces in whole milliseconds, rounded up, so on its own the effective
+ * rate is at or under the cap: 500/s is exactly 2 ms, but 2000/s becomes 1 ms per launch, i.e.
+ * 1000/s — and so does 10000/s, which silently made {@code -T4}/{@code -T5} the same speed as
+ * {@code -T3} (measured 2026-09-19: 990 launches/s at a 2000/s cap; a {@code /24} × 1024 ports is
+ * 21,500 connects, so that rounding alone was a 22 s floor). The gate therefore treats each
+ * pacer slot as a <em>quantum</em> of {@code maxPerSec × slotMs / 1000} launches: at 2000/s two
+ * launches may leave per 1 ms slot, at 10000/s ten. Still leaky — a slot's quantum is spent or
+ * lost, never carried into the next — so the cap is honoured exactly and nothing bursts beyond
+ * one millisecond's worth. Under the cap remains the only direction a safety limit may err in.
  * <p>
  * Draining runs launches on the calling or scheduler thread; a launch itself is non-blocking.
  * It is also the {@link ConnectionGate} the probe engine is paced by, so a {@code -sV} scan's
@@ -45,6 +51,8 @@ public final class ScanGate implements ConnectionGate {
     private final RateController pacer;     // null : unpaced
     private final ScheduledExecutorService scheduler;
     private final Queue<Runnable> pending = new ConcurrentLinkedQueue<>();
+    /** Launches from {@link #submitFirst}: drained before {@link #pending}. */
+    private final Queue<Runnable> priority = new ConcurrentLinkedQueue<>();
     private final AtomicInteger inFlight = new AtomicInteger(0);
     private final Object lock = new Object();
     /**
@@ -62,6 +70,10 @@ public final class ScanGate implements ConnectionGate {
      */
     private Runnable held;
     private volatile ScheduledFuture<?> timer;
+    /** Launches allowed per pacer slot (see the class comment); 1 when unpaced or ≤ 1000/s. */
+    private final int perSlot;
+    /** Launches still allowed in the current slot without asking the pacer. Guarded by {@link #lock}. */
+    private int slotLeft;
 
     /**
      * @param scheduler   the scheduler a held launch is re-offered on — injected rather than
@@ -77,6 +89,15 @@ public final class ScanGate implements ConnectionGate {
                 ? new RateController("scan-gate", (float) maxPerSec, TimeUnit.SECONDS)
                         .setRCType(RateController.RCType.TIME)
                 : null;
+        // The pacer's slot is whole milliseconds (rounded up); how many launches the cap allows
+        // in one such slot. 2000/s → 1 ms slots → 2 per slot; 500/s → 2 ms slots → 1 per slot.
+        this.perSlot = pacer == null ? 1
+                : Math.max(1, Math.round(maxPerSec * pacer.getDeltaInMillis() / 1000f));
+    }
+
+    /** @return launches the pacer admits per slot; 1 unless the cap exceeds 1000/s. */
+    int perSlot() {
+        return perSlot;
     }
 
     /** Queue a launch; it runs when a slot is free and the bucket says its time has come. */
@@ -84,6 +105,22 @@ public final class ScanGate implements ConnectionGate {
     public void submit(Runnable launch) {
         pending.add(launch);
         drain();
+    }
+
+    /**
+     * Queue a launch ahead of every plain {@link #submit}: the probe lane. The window and the
+     * pacer apply exactly as to any other launch — a priority launch still needs a free slot and
+     * its turn in the bucket — it just takes the next one. See {@link ConnectionGate#submitFirst}.
+     */
+    @Override
+    public void submitFirst(Runnable launch) {
+        priority.add(launch);
+        drain();
+    }
+
+    /** @return launches queued and not yet admitted, both lanes. */
+    public int queued() {
+        return priority.size() + pending.size();
     }
 
     /**
@@ -144,20 +181,32 @@ public final class ScanGate implements ConnectionGate {
             Runnable r;
             long delayMs;
             synchronized (lock) {
-                if (held != null || pending.isEmpty()) {
+                if (held != null || (priority.isEmpty() && pending.isEmpty())) {
                     return;
                 }
                 if (maxInFlight > 0 && inFlight.get() >= maxInFlight) {
                     return;
                 }
-                r = pending.poll();
+                r = priority.poll();          // the probe lane first
+                if (r == null) {
+                    r = pending.poll();
+                }
                 if (r == null) {
                     return;
                 }
                 inFlight.incrementAndGet();
-                delayMs = pacer == null ? 0 : pacer.nextWait();
-                if (delayMs > 0) {
-                    held = r;
+                if (pacer == null) {
+                    delayMs = 0;
+                } else if (slotLeft > 0) {
+                    slotLeft--;          // the current slot's quantum is not spent yet
+                    delayMs = 0;
+                } else {
+                    delayMs = pacer.nextWait();
+                    if (delayMs > 0) {
+                        held = r;        // opens the next slot when its timer fires
+                    } else {
+                        slotLeft = perSlot - 1; // a fresh slot: this launch plus perSlot-1 more
+                    }
                 }
             }
             if (delayMs > 0) {
@@ -175,6 +224,9 @@ public final class ScanGate implements ConnectionGate {
         synchronized (lock) {
             h = held;
             held = null;
+            if (h != null) {
+                slotLeft = perSlot - 1; // the held launch opens its slot; the rest of the quantum follows
+            }
         }
         timer = null;
         if (h != null) {

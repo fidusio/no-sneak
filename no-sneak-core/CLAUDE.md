@@ -11,6 +11,14 @@ this module.
 > `io.xlogistx.nosneak`. Everything the deleted generation had was carried across first —
 > `V1-V2-MERGE-ANALYSIS.md` records what, and how. `ACTION-PLAN.md` is pre-merge history; its
 > only live part is the vulnerability-scanning checklist.
+>
+> **Status (2026-09-20): the scan pipeline is fast and `-sV` is honest.** Adaptive deadlines,
+> streamed probes on a priority lane, a gate that honours its caps, first-positive discovery,
+> `--up-only`; `ParallelJoin` is now `CountdownMonitor`; the BCJSSE pin is gone; gated probes run
+> OCSP/CRL again (they silently never had); `postgres-db` no longer claims SSH servers;
+> `https-scan` also reads the `Server:` header. 399 tests / 36 classes green. Design: *The scan
+> pipeline* below; record: `PLAN.md` 2026-09-19/20; open items: repo-root `PENDING-ISSUES.md` →
+> *Status check (2026-09-20)*.
 
 ---
 
@@ -59,11 +67,52 @@ Three concurrency layers, all on the shared pools:
 
 - **Sequential** — `publishSync` on an inline executor, so a probe's steps stay on the selector or
   scheduler thread that `ProbeContext` already serialises with `synchronized`.
-- **Fan-out** — `Fanout` + `ParallelJoin`: a second `StateMachine` whose executor is
+- **Fan-out** — `Fanout` + `CountdownMonitor`: a second `StateMachine` whose executor is
   `TaskUtil.defaultTaskProcessor()`, one `TriggerConsumer` per child, published in parallel. This
   is how version/cipher enumeration runs one connection per candidate.
 - **Candidate sweep** — `ProbeChecker` launches every candidate probe at once and elects the
   highest-priority completion as soon as no better candidate can still win, then cancels the rest.
+
+### The scan pipeline (`nmap/NMapScanner`, reworked 2026-09-20)
+
+One scan is a chain of callback-linked stages on the caller's `NIOSocket` pools — discovery
+(`no-sneak-net` `HostScanner` sweep for on-link CIDRs, TCP-ping/ICMP/ARP per host otherwise) →
+reverse DNS → TCP connect scan → UDP scan → probes → one `finish`. Every stage boundary is a
+`CountdownMonitor`, which is an atomic countdown, not a thread join: the last child to report runs the
+continuation on its own thread. Nothing parks. What the 2026-09-20 pass changed, and why (the
+measured record is `PLAN.md` → 2026-09-19/20; a `/24 × 1024 ports` went 136 s → 6 s):
+
+- **Adaptive connect deadline.** `connectTimeoutMs` = 10 × the host's discovery RTT, clamped to
+  [`--min-rtt-timeout` (500 ms default), `-t`]. A silently dropped port used to hold a slot for the
+  full `-t`; on a LAN that *was* the scan. A swept host with no RTT (own address, passive-only
+  neighbour) inherits the segment's median. No RTT at all (`-Pn`) keeps `-t`.
+- **Probes streamed from the connect.** With `-sV` the `ProbeChecker` is built before the first
+  connect and a port's sweep is launched from its connect callback as a further child of the host's
+  barrier (`CountdownMonitor.addChild`: register, release the connect's gate slot, then launch), so
+  identification overlaps the filtered-port timeouts. `probeStage` itself now covers only UDP.
+  Candidate starts are admitted on the gate's **priority lane** (`ConnectionGate.submitFirst`):
+  same window and pacer, but ahead of the queued port connects — without it the first `-sV` run
+  showed every probe waiting 30–58 s behind ~20k queued connects.
+- **`ScanGate` honours caps above 1000/s.** zoxweb `RateController` paces in whole milliseconds, so
+  every cap ≥ 1000/s had collapsed to one launch per ms (`-T4`/`-T5` were no faster than `-T3`).
+  The gate now spends a quantum of `maxPerSec/1000` launches per slot — still leaky, still
+  `RateController`. `ScanGateThroughputTest` measures it (≈1990/s at 2000, ≈9900/s at 10000).
+- **NIOSocket's connect monitor is released.** `addClientSocket` arms an `NIOChannelMonitor` that
+  only a *successful* connect cancels; the port callback's shorter deadline fires first, so it
+  hands `nio.abortClientSocket(key)` in via `PortScanCallback.releaseWith`. Two timers by design:
+  the monitor is deliberately coarse (whole seconds — it is armed *before* `connect()` is
+  initiated, so a millisecond monitor could race the connect itself), the callback's is the
+  precise one. The probe path already did this through `ProbeTransport.abort`.
+- **`--up-only`** lists only live hosts in every formatter (`ScanReport.hostsToRender()`); the
+  run-level up/down/total counts still cover the range.
+- **Per-host discovery decides at the first positive.** A non-CIDR target runs ARP, ICMP and the
+  TCP-pings in parallel; the host is handed to the next stage the moment any of them says up (the
+  outstanding TCP-pings are aborted), not when the slowest has timed out. A down verdict still
+  waits for every unit. With `-sV`, a port that no tier-1 probe declares (53/tcp, say) still costs
+  one full `-t` while every fallback candidate waits its `expect` timeout — inherent, `-t 2` on a LAN.
+
+Recommended shape on a wired LAN: `10.0.0.0/24 -T5 --min-rtt-timeout 200 --max-inflight 4096
+--up-only --open`, and `-sV` when identification is wanted.
 
 Three distinct TLS paths — pick deliberately when writing a probe:
 
@@ -97,20 +146,23 @@ Only the BC path can classify PQC — JSSE does not surface the negotiated key-e
 io.xlogistx.nosneak
 ├── ProbeChecker            library API + CLI: two-tier candidate selection, concurrent sweep
 ├── model/                  ProbeDefinition · ProbeState · PatternRule · ProbeDefinitionLoader (validates)
-├── runtime/                ProbeContext (the engine's config object) · ProbeEngine · Fanout · ParallelJoin
+├── runtime/                ProbeContext (the engine's config object) · ProbeEngine · Fanout · CountdownMonitor (the countdown barrier, formerly ParallelJoin)
 │                           ProbeTCPCallback (raw) · ProbeSecureCallback (JSSE) · ProbeUDPCallback
 ├── action/                 the fixed action library + ActionRegistry (name → singleton)
 ├── tls/                    PQCHandshakeStateMachine · PQCSessionConfig · PQCTlsClient (BC, ML-KEM groups)
 ├── analysis/               TLSProbeCallback base · Cipher/VersionProbeCallback · RevocationChecker
 ├── grade/                  Grade — letter, PQC readiness, TrustVerdict, advisories
 ├── result/                 ProbeResult (+ CertInfo, ConnectionTrace)
-├── nmap/                   NMapScanner (staged) · NMap CLI · PortScanCallback · ScanGate · output/
+├── nmap/                   NMapScanner (staged; adaptive deadline, streamed probes) · NMap CLI · PortScanCallback (ms deadline
+│                           + releaseWith) · UdpScanCallback · ReverseDnsCallback · ScanGate (window + per-slot quantum) · output/
 ├── service/                Checker — REST /check-qdz/{domain}/{detailed}
 └── tools/                  DMTool · NoSneakUtil
 
 src/main/resources/probes/   18 bundled + 2 unbundled probe definitions
-src/test/java/io/xlogistx/nosneak/   368 pure, no-network tests in 32 classes (2026-09-12) + NoSneakNIOHTTPServer harness;
-                                    model/ProbeDefinitionGuideTest pins PROBE-DEFINITION.md to the loader
+src/test/java/io/xlogistx/nosneak/   399 tests in 36 classes, all green (2026-09-20) + NoSneakNIOHTTPServer harness. Pure and socket-free except
+                                    nmap/NMapScannerEndToEndTest (a loopback listener) and nmap/ScanGateThroughputTest
+                                    (measures the gate on real pools); model/ProbeDefinitionGuideTest pins
+                                    PROBE-DEFINITION.md to the loader
 ```
 
 ## Build, test, verify
@@ -133,8 +185,30 @@ Neither is a code defect. Import the proxy's root into a copy of the JDK `cacert
 `javax.net.ssl.trustStore` at it (`MAVEN_OPTS` for Maven, `-D` for a CLI run) — that also lets you
 exercise the `TRUSTED` path.
 
+**The same product's mail shield fakes open ports.** Seen 2026-09-20: ports 25 110 119 143 465
+563 587 993 995 reported `open` at 0 ms on *every* live host of a `/24`, printer and routers
+included, because the shield completes the TCP handshake locally before any packet leaves the
+box. The scanner reported what it observed — a completed handshake — and that is where it stays:
+a heuristic to flag the pattern was proposed and **declined by the maintainer** (antivirus
+problem, product-specific, more false positives; do not reopen). Scan with the shield off, or
+from a box without one. Turning it off on Windows hands the box to Windows Firewall, whose stealth
+mode drops rather than resets, so the scanning host's own closed ports then read `filtered`.
+
+**BCJSSE (2026-09-20):** the P23 workaround — `tls-connect` minting its engine from `SunJSSE` by
+name because the published `bctls-jdk18on` 1.86 could not create an `SSLEngine` on JDK ≥ 9 — is
+**removed**, with its canary, at the maintainer's request after the canary fired on the local
+repository's `bctls` 1.85. `ProbeSecureCallback.tlsContext` takes the JCA default (BCJSSE under
+`SecUtil`'s registration); `TlsConnectContextTest` pins that it mints an engine and names the
+provider on failure. If a broken `bctls` ever returns to the classpath, that test is where it shows.
+
+**Running the suite on the Windows box:** `mvn test` cannot (no surefire provider cached). Either
+IntelliJ per class, or the hand-rolled JUnit launcher in `.claude/tools/` (`RunTests.java` +
+`cp.txt`; whole suite ≈ 15 s). `cp.txt` is a snapshot and drifts — the launcher jar and the Bouncy
+Castle versions both had to be repointed on 2026-09-19/20; a wave of `NoClassDefFoundError` from
+the launcher means the snapshot, not the code.
+
 Live verification is the primary gate for anything touching the network; the unit tests
-deliberately touch no sockets.
+deliberately touch no sockets, save the two named above (loopback and local pools only).
 
 ## Next up
 

@@ -26,11 +26,11 @@
       "action": "expect",
       "patterns": [
         {
-          "regex": "^S",
+          "regex": "^S$",
           "outcome": "ssl"
         },
         {
-          "regex": "^N",
+          "regex": "^N$",
           "outcome": "postgres"
         }
       ],
@@ -47,8 +47,8 @@
       "mode": "pqc",
       "on": {
         "handshaked": "pqc",
-        "error": "recordTlsFailed",
-        "timeout": "recordTlsFailed"
+        "error": "fail",
+        "timeout": "fail"
       }
     },
     "pqc": {
@@ -67,13 +67,6 @@
     "recordPlain": {
       "action": "record",
       "note": "postgresql-no-tls",
-      "on": {
-        "done": "done"
-      }
-    },
-    "recordTlsFailed": {
-      "action": "record",
-      "note": "postgresql-tls-handshake-failed",
       "on": {
         "done": "done"
       }

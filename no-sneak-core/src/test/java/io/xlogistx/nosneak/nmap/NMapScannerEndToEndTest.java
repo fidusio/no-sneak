@@ -152,4 +152,41 @@ public class NMapScannerEndToEndTest {
         Object up = json.getValue("up"); // through Object: getValue is generic and String.valueOf has a char[] overload
         assertEquals("1", up.toString());
     }
+
+    /**
+     * {@code -sV --probes ssh}: the open port is identified by the probe launched <em>from its
+     * connect callback</em>. The probe stage proper now handles UDP only, so a non-null
+     * {@code probe} on a TCP port is proof the streamed path ran and the host barrier waited
+     * for it; the closed port is never probed.
+     */
+    @Test
+    public void anOpenPortIsProbedAsItConnectsNotAfterTheStage() throws Exception {
+        NMapConfig cfg = new NMapConfig()
+                .target("127.0.0.1")
+                .discovery(false)
+                .reverseDns(NMapConfig.ReverseDns.NEVER)
+                .ports(new int[]{openPort, closedPort})
+                .probeScan(true)
+                .probe("ssh")
+                .timeoutInSec(3);
+
+        CompletableFuture<ScanReport> done = new CompletableFuture<>();
+        NMapScanner.scan(nio, cfg, new CallableConsumerTask<ScanReport>().setConsumer(done::complete));
+        ScanReport report = done.get(10, TimeUnit.SECONDS);
+        assertFalse(report.cancelled);
+        assertTrue(report.warnings.isEmpty(), report.warnings.toString());
+
+        HostReport h = report.hosts.getFirst();
+        PortReport open = h.ports.stream().filter(p -> p.port == openPort).findFirst().orElseThrow();
+        assertEquals(PortState.OPEN, open.state);
+        assertNotNull(open.probe, "the streamed probe must have delivered before the report");
+        assertTrue(open.probe.isComplete(), "ssh probe: " + open.probe);
+        assertEquals("ssh", open.probe.getService());
+        assertEquals("ssh", open.serviceName());
+
+        PortReport closed = h.ports.stream().filter(p -> p.port == closedPort).findFirst().orElseThrow();
+        assertEquals(PortState.CLOSED, closed.state);
+        assertNull(closed.probe, "a closed port is not probeable");
+        assertTrue(accepted.size() >= 2, "the connect and the probe each opened a connection: " + accepted.size());
+    }
 }

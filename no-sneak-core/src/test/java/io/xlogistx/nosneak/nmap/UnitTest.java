@@ -1,6 +1,6 @@
 package io.xlogistx.nosneak.nmap;
 
-import io.xlogistx.nosneak.runtime.ParallelJoin;
+import io.xlogistx.nosneak.runtime.CountdownMonitor;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -29,7 +29,7 @@ public class UnitTest {
     public void completesExactlyOnceAndReleasesTheLimiterOnce() {
         ScanGate limiter = new ScanGate(scheduler, 1, 0);
         AtomicInteger fired = new AtomicInteger();
-        ParallelJoin join = new ParallelJoin(1, fired::incrementAndGet);
+        CountdownMonitor join = new CountdownMonitor(1, fired::incrementAndGet);
         NMapScanner.Unit unit = new NMapScanner.Unit(limiter, join);
 
         limiter.submit(() -> { });
@@ -49,7 +49,7 @@ public class UnitTest {
     public void aBarrierWaitsForEveryUnit() {
         ScanGate limiter = new ScanGate(scheduler, 0, 0);
         AtomicInteger fired = new AtomicInteger();
-        ParallelJoin join = new ParallelJoin(2, fired::incrementAndGet);
+        CountdownMonitor join = new CountdownMonitor(2, fired::incrementAndGet);
         NMapScanner.Unit a = new NMapScanner.Unit(limiter, join);
         NMapScanner.Unit b = new NMapScanner.Unit(limiter, join);
 

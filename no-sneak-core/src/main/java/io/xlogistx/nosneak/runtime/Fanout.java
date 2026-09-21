@@ -17,10 +17,10 @@ import java.util.function.Consumer;
  * with one {@code TriggerConsumer} per child; publishing each child's trigger dispatches it
  * to a pool thread, so the children run in parallel (no {@code MonoStateMachine}).
  * <p>
- * Each child is a {@code Consumer<ParallelJoin>}: it kicks off its (possibly async) work and
- * <b>must</b> call {@link ParallelJoin#childDone()} exactly once when finished — synchronously
+ * Each child is a {@code Consumer<CountdownMonitor>}: it kicks off its (possibly async) work and
+ * <b>must</b> call {@link CountdownMonitor#childDone()} exactly once when finished — synchronously
  * or later from a NIO/scheduler callback. This is the fan-out primitive the scanner's Phase-2
- * (cipher / version / revocation) rides on; the {@link ParallelJoin} barrier fires
+ * (cipher / version / revocation) rides on; the {@link CountdownMonitor} barrier fires
  * {@code onAllDone} at zero.
  */
 public final class Fanout {
@@ -35,7 +35,7 @@ public final class Fanout {
      * dispatch on the supplied executor, with <b>no</b> join barrier.
      * Callers that coordinate completion themselves — e.g. a match-first sweep that delivers on the
      * highest-priority completion and cancels the rest — use this to get the parallel {@code
-     * publish} dispatch without a {@link ParallelJoin} counting the finishes.
+     * publish} dispatch without a {@link CountdownMonitor} counting the finishes.
      */
     @SuppressWarnings({"rawtypes", "unchecked"})
     public static void dispatch(List<Runnable> tasks, Executor executor) {
@@ -70,16 +70,16 @@ public final class Fanout {
      * simultaneous handshakes at one peer bounded without any thread ever waiting for a slot.
      * A {@code maxInFlight <= 0} means no window (plain {@code run}).
      */
-    public static void runBounded(List<Consumer<ParallelJoin>> children, int maxInFlight,
+    public static void runBounded(List<Consumer<CountdownMonitor>> children, int maxInFlight,
                                   Runnable onAllDone, Executor executor) {
         int n = children == null ? 0 : children.size();
         if (maxInFlight <= 0 || maxInFlight >= n) {
             run(children, onAllDone, executor);
             return;
         }
-        ParallelJoin all = new ParallelJoin(n, onAllDone);
+        CountdownMonitor all = new CountdownMonitor(n, onAllDone);
         AtomicInteger next = new AtomicInteger(maxInFlight);
-        List<Consumer<ParallelJoin>> window = new java.util.ArrayList<>(maxInFlight);
+        List<Consumer<CountdownMonitor>> window = new java.util.ArrayList<>(maxInFlight);
         for (int i = 0; i < maxInFlight; i++) {
             window.add(admitting(children, i, next, all, executor));
         }
@@ -91,10 +91,10 @@ public final class Fanout {
      * dispatches the next unstarted child. Each wrapped child gets its own one-shot join, so a
      * child that (wrongly) reports done twice still admits exactly one successor.
      */
-    private static Consumer<ParallelJoin> admitting(List<Consumer<ParallelJoin>> children, int i,
-                                                    AtomicInteger next, ParallelJoin all, Executor executor) {
+    private static Consumer<CountdownMonitor> admitting(List<Consumer<CountdownMonitor>> children, int i,
+                                                        AtomicInteger next, CountdownMonitor all, Executor executor) {
         return ignored -> {
-            ParallelJoin one = new ParallelJoin(1, () -> {
+            CountdownMonitor one = new CountdownMonitor(1, () -> {
                 all.childDone();
                 int j = next.getAndIncrement();
                 if (j < children.size()) {
@@ -110,22 +110,22 @@ public final class Fanout {
     }
 
     @SuppressWarnings({"rawtypes", "unchecked"})
-    public static void run(List<Consumer<ParallelJoin>> children, Runnable onAllDone,
+    public static void run(List<Consumer<CountdownMonitor>> children, Runnable onAllDone,
                            Executor executor) {
         int n = children == null ? 0 : children.size();
-        ParallelJoin join = new ParallelJoin(n, onAllDone);
+        CountdownMonitor join = new CountdownMonitor(n, onAllDone);
         if (n == 0) {
             return; // barrier already fired
         }
         // Parallel dispatch: publish() runs consumers on the pool executor.
-        StateMachine<ParallelJoin> sm = new StateMachine<>(
+        StateMachine<CountdownMonitor> sm = new StateMachine<>(
                 "fanout-" + COUNTER.incrementAndGet(), executor);
         State st = new State("fan");
         for (int i = 0; i < n; i++) {
-            final Consumer<ParallelJoin> child = children.get(i);
-            st.register(new TriggerConsumer<ParallelJoin>("go-" + i) {
+            final Consumer<CountdownMonitor> child = children.get(i);
+            st.register(new TriggerConsumer<CountdownMonitor>("go-" + i) {
                 @Override
-                public void accept(ParallelJoin j) {
+                public void accept(CountdownMonitor j) {
                     child.accept(j);
                 }
             });
@@ -133,7 +133,7 @@ public final class Fanout {
         sm.register(st);
         sm.setConfig(join);
         for (int i = 0; i < n; i++) {
-            sm.publish(new Trigger<ParallelJoin>(sm, "go-" + i, st, join));
+            sm.publish(new Trigger<CountdownMonitor>(sm, "go-" + i, st, join));
         }
     }
 }

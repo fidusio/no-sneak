@@ -1,5 +1,174 @@
 # no-sneak-core v2 — Plan of Action
 
+> ## 2026-09-19 — Faster port + probe scan: adaptive connect timeout, probes streamed from the connect
+>
+> Two changes to `NMapScanner`, prompted by "how can we make the port and probe scan faster".
+> Where the time went: a silently dropped port (host firewall) held its in-flight slot for the
+> full `-t` (5 s) — 21 LAN hosts × 1024 ports sharing 256 slots — and identification could not
+> start until the last of those had timed out on the last host.
+>
+> **Adaptive connect timeout.** `NMapScanner.connectTimeoutMs(hr, cfg)` = `RTT_MULTIPLIER` (10) ×
+> the host's discovery RTT (`HostReport.latencyMs`, from ARP/ICMP), clamped between the new
+> `--min-rtt-timeout <ms>` (`NMapConfig.minRttTimeoutMs`, default 500 — below that a lost SYN on
+> Wi-Fi reads as filtered) and `-t` (still the ceiling). No measured RTT (`-Pn`, TCP-ping-only)
+> keeps the full `-t`, as before. `PortScanCallback` gained a millisecond constructor; the
+> second-based ones delegate to it. On a 10 ms segment a filtered port now costs 0.5 s, not 5.
+>
+> **Probes streamed from the connect callback.** The `ProbeChecker` is built in `scan()` before
+> the first connect (cancel wired once there), and `scanHostPorts` launches a port's probe sweep
+> the moment that port reports open — as a further child of the host's own barrier via the new
+> `CountdownMonitor.addChild()` (register before the port's `childDone`, release the connect's gate
+> slot, then launch, so the sweep never queues behind a slot the port still holds). A host is
+> done when its ports *and* their probes are; `probeStage` now handles only the UDP ports that
+> answered (no connect event to stream from). Still nothing blocks: `CountdownMonitor` is an atomic
+> countdown whose last child runs the continuation, and `addChild` is the same primitive with a
+> dynamic count. Pacing is unchanged — probe sockets still admit through the same `ScanGate`.
+>
+> Pinned: `CountdownMonitorTest` (4, new), `PortScanCallbackTest.aMillisecondDeadline…`,
+> `NMapScannerTest.connectTimeout…` (3), `NMapParseCommandTest.minRttTimeout…`, and
+> `NMapScannerEndToEndTest.anOpenPortIsProbedAsItConnectsNotAfterTheStage` — `-sV --probes ssh`
+> against the loopback listener identifies the open port through the streamed path (the probe
+> stage proper no longer touches TCP, so a non-null `probe` there is the proof). 108 tests across
+> the seven touched classes green through IntelliJ. Live check on the `/24` is the maintainer's.
+>
+> **Later the same day — the gate was capped at 1000/s whatever the flag said.** The maintainer's
+> `/24 --up-only --open` still took 136 s, so the gate was *measured* (`ScanGateThroughputTest`,
+> new: no-op launches on the app's `TaskSchedulerProcessor`): **990 launches/s at the 2000/s
+> default, and the same at `-T5`'s 10000/s.** Cause: zoxweb `RateController` paces in whole
+> milliseconds rounded up, so every cap ≥ 1000/s is one launch per 1 ms slot — the class comment
+> had said so and called it acceptable; on 21,500 connects it is a 22 s floor and made `-T4`/`-T5`
+> no faster than `-T3`. Fix: `ScanGate` treats each pacer slot as a quantum of
+> `maxPerSec × slotMs / 1000` launches (`perSlot()`: 2 at 2000/s, 10 at 10000/s, 1 at ≤ 1000/s),
+> spent within the slot or lost — still leaky, still `RateController` TIME mode, never a token
+> bucket. Measured after: 1992/s at 2000, 9888/s at 10000; the existing `ScanGateTest` contract
+> (leaky, non-parking, held launch counts against the window, close runs it) unchanged. With the
+> rate no longer the bottleneck, the in-flight window is (256 slots × a 500 ms filtered-port
+> deadline = 512 timeouts/s): on a LAN use `-T4` (512 in flight, 5000/s, 3 s ceiling) or `-T5`.
+>
+> **And NIOSocket's own connect timeout was being left behind.** The maintainer asked whether the
+> scanner knows about `NIOSocket.addClientSocket`'s built-in timeout — an `NIOChannelMonitor`
+> appointment on the scheduler that closes the channel and delivers
+> `exception(IOException("Connection timed out"))`. It did, half-way: the port scan passes
+> `to + 2` so the monitor is a backstop behind the callback's own (now adaptive) deadline, and
+> the probe path already released it (`ProbeContext.closeCurrent` → `transport.abort(key)` →
+> `NIOSocket.abortClientSocket`). The port scan did **not**: `PortScanCallback.finish` closed the
+> channel, which — as `abortClientSocket`'s own javadoc warns — does not cancel the appointment
+> (only a successful connect does). Every filtered port therefore left a monitor in the scheduler
+> for 7 s that later woke to close a closed channel and report a timeout nobody was listening for:
+> ~21,000 of them on the `/24`. Fixed: `PortScanCallback.releaseWith(Runnable)` — the scanner
+> hands in `() -> nio.abortClientSocket(key)` for both connect sites (discovery TCP-ping and the
+> port scan), run exactly once on finish, or immediately if the probe finished inside
+> `addClientSocket` (loopback). And `classify` now maps "timed out" to `FILTERED/timeout` rather
+> than `error:IOException`, for the case where the monitor wins the race. Pinned:
+> `PortScanCallbackTest` `nioSocketsConnectionTimedOutIsFilteredTimeout`,
+> `theReleaserRunsExactlyOnceWhenTheProbeFinishes`, `aReleaserSetAfterAnInstantFinishRunsImmediately`.
+>
+> **2026-09-20 — measured on the maintainer's `/24`: 136 s → 39.8 s → 13.9 s.** The 39.8 s run
+> (25 hosts up, ~23,300 filtered ports) also showed the same nine ports — 25 110 119 143 465 563
+> 587 993 995 — "open" at 0 ms on *every* host, printer and dropbear routers included: the local
+> antivirus mail shield completing the handshake before any packet left the box. With it disabled
+> the run took 13.9 s and those ports vanished except on the gateway, which really runs JAMES.
+> Not a scanner defect (a completed handshake *was* observed). An interception-pattern warning
+> was proposed and **declined by the maintainer (2026-09-20): an antivirus issue, not a scanner
+> one; heuristics keyed to whichever product is installed would add false positives, and the
+> project is complex enough.** Do not reopen; the operator's remedy is to scan with the shield
+> off or from another box. Last tail found in that run: four swept hosts (own address,
+> passive-only neighbours) had no `latencyMs`, so each of their 1024 filtered ports waited the
+> full ceiling; `inheritSegmentRtt` now gives an unmeasured on-link host the segment's measured
+> RTT (`NMapScannerTest` ×3). First cut took the *slowest* measurement; the very next run showed
+> why not — one Wi-Fi client answered ARP in 81 ms on a 9 ms segment and seven unmeasured hosts
+> inherited an 810 ms deadline — so it is the upper median. Final figures on the maintainer's
+> `/24`, 25 up, ~24,500 filtered ports: `-T5 --min-rtt-timeout 200` 8.25 s; plus
+> `--max-inflight 4096` 6.17 s. Every host on that segment drops rather than resets (Windows
+> Firewall stealth on the scanning box, ufw/IoT elsewhere), so nearly every port pays the full
+> deadline; a segment that resets closed ports would finish in ~3 s.
+>
+> **Rename (2026-09-20, maintainer's request): `runtime.ParallelJoin` → `runtime.CountdownMonitor`.**
+> The old name read as a thread join and prompted "is it fully async?"; the class is an atomic
+> countdown whose last child runs the continuation, and now says so. IntelliJ rename refactoring,
+> 95 usages; `ParallelJoinTest` → `CountdownMonitorTest`; docs and comments swept. No behaviour change.
+>
+> **First `-sV` run on the /24 (2026-09-20, 68.9 s, default -T3) — two defects, one design question.**
+> (1) *Streamed probes were starved.* Every probe's `duration-ms` was 30–58 s while its port had
+> connected in 0–3 ms: probe starts were admitted through the gate's single FIFO queue, behind
+> ~20,000 not-yet-launched port connects, so identification began only as the port stage drained.
+> Fix: `ConnectionGate.submitFirst` (default = `submit`) and a priority lane in `ScanGate`,
+> drained before the plain queue under the same window and pacer; `GatedProbeTransport.Registry
+> .start` admits candidate starts on it. `ScanGateTest.aPriorityLaunchTakesTheNextSlotAheadOfTheQueue`.
+> (2) *SSH read as PostgreSQL* on 10.0.0.8 and .12: `postgres-db` expected `^S`/`^N` for the
+> one-byte SSLRequest answer, and an SSH banner starts with `S`; it then failed the TLS handshake
+> and still reached `done` via `recordTlsFailed` with `success: true`. Fixed in the JSON: `^S$`/`^N$`
+> (the reply is exactly one byte), and a failed handshake is `fail`, never an identification.
+> (3) *Open:* the tier-1 `ssh` probe must have failed on those two hosts for the tier-2 fallback
+> to win at all, while the port scan's own banner grab succeeded. Every candidate is launched at
+> once — ~18 simultaneous connections to one sshd, plus the banner grab — and OpenSSH's
+> `MaxStartups 10:30:100` drops connections at random past ten unauthenticated ones. Candidate
+> for the maintainer: run tier 2 only if tier 1 yields nothing (fewer connections per service,
+> deterministic on SSH; costs one round of timeouts on a service on a non-standard port).
+>
+> **Single-host discovery no longer waits for its slowest unit (2026-09-20).** `10.0.0.1 -p
+> T:53,U:53 -sV` took 7.9 s in the app. Per-host discovery (the path every non-CIDR target takes)
+> ran ARP, ICMP and five TCP-pings and handed the verdict on only when the *last* unit reported —
+> so a gateway that answered ARP in 8 ms still waited the full `-t` for the one discovery port it
+> silently drops (3389). `discoverHost` now decides at the first positive from any unit, aborts the
+> outstanding TCP-pings to free their slots, and lets the rest drain; a down verdict still needs
+> every unit to give up. Measured after, same host: no probes 1.25 s; `-sV` 6.8 s; `-sV -t 2`
+> 3.3 s; `-p U:53 -sV` 0.75 s. The remaining `-sV` cost is one full `-t` for **53/tcp**: no tier-1
+> TCP probe declares port 53, so every fallback candidate connects and waits its `expect` timeout
+> before "none identified" — the inherent price of match-first-with-fallback on a port nothing
+> matches (nmap pays the same). `-t 2` on a LAN halves it; the tier-2-only-after-tier-1 question
+> above would not change this case, since there is no tier 1 to succeed.
+>
+> **`https-scan` now reads the `Server:` header too (2026-09-20, maintainer's request).** After
+> `enumerate-groups` the probe opens a JSSE session (`tls-connect`, a fresh connection index),
+> sends `GET / HTTP/1.0` and captures `Server:` as `service-version` — the same three states
+> `https-version` is made of. Every failure on that tail (`tls-connect` error/timeout, send error,
+> no header, `nomatch`, `timeout`) lands on `recordNoServer` (`https-scan; no-server-header`), so
+> the TLS/PQC posture already gathered is always delivered and the header is a bonus, never a
+> gate. Priority and `portScoped` unchanged, so the election is unchanged; `https-version` stays
+> bundled for ports where only the header is wanted.
+>
+> **Gated probes never ran the network revocation check (2026-09-20).** Comparing the app's
+> `https-scan` of xlogistx.io (`revocation-status: UNKNOWN`, method `none`) with the direct
+> `ProbeChecker` run minutes apart (`GOOD` via `crl`) exposed it: `GatedProbeTransport.Registry
+> .create(NIOSocket, …)` routed through the socket-less seam constructor, so `ProbeContext.httpNio()`
+> had nothing to wrap and `NetworkRevocationChecker` answered "no HTTP transport available". Every
+> scanner and app probe since P14 (2026-09-11) skipped OCSP/CRL this way; only the ungated CLI ran
+> it, which is where P14 was verified. Fix: a `ProbeContext(ProbeTransport, NIOSocket, …)`
+> constructor that keeps the socket (HTTP client still built lazily, only by `revocation-check`),
+> used by the registry's production `create`; the scripted seam stays socket-less by design.
+> `GatedContextRevocationTest` (3) pins both production constructors to a usable client and the
+> seam to none. Live after the fix: `NMap xlogistx.io -p 443 -sV --probes https-scan` →
+> `revocation-status: GOOD`, `revocation-method: crl`, grade A, 4.0 s (was `UNKNOWN`/`none`
+> minutes earlier on the same host). Suite 399 / 399.
+>
+> **BCJSSE workaround removed (2026-09-20, maintainer's request).** P23's pin —
+> `ProbeSecureCallback` minting the `tls-connect` engine from `SunJSSE` by name because the
+> published `bctls-jdk18on` 1.86 could not create an `SSLEngine` on JDK ≥ 9 — is gone, along with
+> its canary `BcjsseEngineCreationTest`, which fired today on the local repository's `bctls` 1.85
+> (a full-suite run: 396 found, 395 green, the canary the one red). `tlsContext()` now takes the
+> JCA's default `"TLS"` provider, BCJSSE under `SecUtil`'s registration. Replacement pin:
+> `TlsConnectContextTest` (2) — the default context mints a client engine in both trust modes and
+> names the provider on failure, so a broken jar is recognised at once rather than half-way through
+> a probe. Live gate passed the same day: `ProbeChecker xlogistx.io 443 --all https-version.json`
+> through the default provider → `service-version: NOYFB` (the `Server:` header), TLSv1.3,
+> `TLS_CHACHA20_POLY1305_SHA256`, complete, 921 ms. Full suite after removal: **395 / 395 green**.
+>
+> ## 2026-09-19 — `--up-only`: list only live hosts, keep the range counts
+>
+> Prompted by a `10.0.0.0/24 -sn` run in the app: 254 host entries, 233 of them
+> `"up": false, "reason": "no-response"`, around the 21 that mattered. The scan was right — the
+> JSON lists every target the way nmap's XML does — but nothing let a reader ask for the live
+> ones. `--up-only` (`NMapConfig.upOnly`) is the host-level twin of `--open`: a rendering
+> preference, honoured by **one rule for all five formatters**, `ScanReport.hostsToRender()`.
+> The run-level counts (`targets` / `up` / `hostsDown`, XML `<hosts up down total/>`, the Normal
+> "N target(s), M up" line) are deliberately *not* filtered, so "233 silent" stays
+> distinguishable from "233 never scanned". The Normal summary stats and the XML `scaninfo` port
+> union still iterate every host, since they are aggregates. Pinned by
+> `FormattersTest.upOnlyListsOnlyLiveHostsButTheCountsStillCoverTheRange` and
+> `NMapParseCommandTest.upOnlyFlagIsRecorded`; both classes green through IntelliJ (20 + 46).
+> In the app the flag is typed into the command box like any other.
+>
 > ## 2026-09-12 — C1 closed: `DMTool` has no datastore default
 >
 > The stale `mongodb://localhost:27017/xlog_datastore_test?replicaSet=rs0` constant is gone.
@@ -305,12 +474,12 @@
 > the candidate fan-out uses the same mechanism as the rest of v2 — a single `StateMachine`
 > configured with an `Executor` supports `publishSync` (inline/sequential) and `publish`
 > (executor-threaded/parallel) per call. `AllSweep` = `Fanout.run(children, onAllDone)` (parallel
-> `publish` + `ParallelJoin` barrier); `FirstSweep` constructs all contexts then launches their
+> `publish` + `CountdownMonitor` barrier); `FirstSweep` constructs all contexts then launches their
 > starts via `Fanout.dispatch(...)` (barrier-free parallel `publish`) with the match-first election
 > kept as a small `synchronized` block — the one genuine correctness necessity (concurrent
 > completions race to elect the highest-priority winner; the mandated multi-threaded
 > `defaultTaskProcessor` means `publishSync` can't serialize them). Deep-analysis-verified against
-> zoxweb `StateMachine`/`TriggerConsumerHolder`/`ParallelJoin` sources; results are deterministic
+> zoxweb `StateMachine`/`TriggerConsumerHolder`/`CountdownMonitor` sources; results are deterministic
 > across repeats (443→https/PQC, 80→http, 27017→mongodb every time).
 >
 > **Superseded-probe connection reclamation (embedded path fixed):** empirically (logs + polling
@@ -363,7 +532,7 @@
 > limits, probe subset), `RateLimiter` (non-blocking throttle: max-in-flight + per-second token
 > bucket on `defaultTaskScheduler`), `NMapScanner` (staged pipeline: expand targets → discover
 > (TCP-ping via `PortScanCallback`, up if OPEN|CLOSED, + optional executor-run ICMP) → per-host
-> port scan → optional probe scan on open ports, all `ParallelJoin`-barriered and rate-limited),
+> port scan → optional probe scan on open ports, all `CountdownMonitor`-barriered and rate-limited),
 > `ScanReport`/`HostReport`/`PortReport`, and a flag-driven `NMap` CLI (`-p -sV --probes -Pn -sn
 > --no-icmp --max-inflight --max-rate -t`). Embed via `NMapScanner.scan(nio, cfg, cb)`. Verified:
 > single-host `-sV` (mongodb/http/https-with-TLS-line), discovery-only over a range, CIDR
@@ -408,7 +577,7 @@
 > smtp.gmail.com:587 → smtp/STARTTLS_UPGRADED/PQC + banner; lax-2.xlogistx.io:5432 →
 > postgresql/DIRECT_TLS/CLASSICAL.
 >
-> **Phase 5 complete and green:** parallel fan-out + join primitive (`Fanout` + `ParallelJoin`)
+> **Phase 5 complete and green:** parallel fan-out + join primitive (`Fanout` + `CountdownMonitor`)
 > on native `StateMachine` parallel dispatch (`TaskUtil.defaultTaskProcessor()`). Proven: 6
 > children ran on 6 distinct pool threads concurrently (CyclicBarrier gate), join fired
 > exactly once.
@@ -433,7 +602,7 @@
 >
 > **Phase 8 core done:** NIO-native TCP-connect port scanner (`v2/nmap`: `PortScanCallback`,
 > `NMapScanner`, `NMap` — there is no `PortScanner` class; the staged scanner is `NMapScanner`)
-> — concurrent connect scan gated by `RateLimiter`/`ParallelJoin`, then the probe engine
+> — concurrent connect scan gated by `RateLimiter`/`CountdownMonitor`, then the probe engine
 > identifies service+version on each OPEN port (the nmap→probe seam). Verified: scanme.nmap.org
 > → 22 ssh OpenSSH_6.6.1p1, 80 http Apache/2.4.7; github.com → 22/80/443. **Deferred (polish):**
 > output formatters (JSON/XML/CSV/grepable), host discovery, top-ports/`--open`/UDP-scan flags,
@@ -572,7 +741,7 @@ src/main/resources/probes/   (all 17 JSON copied verbatim; + parallel/full-scan 
 | **2** ✅ | **Handshake → trigger StateMachine**: `tls/*` (copied glue + new `PQCHandshakeStateMachine`), `TLSHandshake/PQCCheck/TLSFacts` | scanners TLS glue | **DONE** — google/cloudflare/github:443 → X25519MLKEM768 / TLSv1.3 / PQC, cert facts, v1-parity |
 | **3** ✅ | JSSE secure app-data: `ProbeSecureCallback` + `TLSConnect` | new | **DONE** — HTTPS `Server:` header over TLS (github/cloudflare); match-all = PQC + version; clean failure on plaintext ports |
 | **4** ✅ | `StartTLS` mid-session upgrade + Postgres SSLRequest | new | **DONE** — gmail:587 smtp/STARTTLS_UPGRADED/PQC + banner; lax-2:5432 postgresql/DIRECT_TLS |
-| **5** ✅ | **Parallel** fan-out + join (`Fanout`+`ParallelJoin`) on native StateMachine pool-executor dispatch | new | **DONE** — 6 children on 6 distinct threads concurrently (barrier-gated), join exactly-once |
+| **5** ✅ | **Parallel** fan-out + join (`Fanout`+`CountdownMonitor`) on native StateMachine pool-executor dispatch | new | **DONE** — 6 children on 6 distinct threads concurrently (barrier-gated), join exactly-once |
 | **6** ✅ | Scanner analysis as actions: `CertChain`(opsec), `Revocation`(stapled OCSP), `VersionEnum` + `CipherEnum` (parallel via Fanout, `v2/analysis`) | scanners copied | **DONE** — https-scan on cloudflare:443 → full fact set (pqc, cert-chain-trust, revocation, versions, ciphers); enumeration discriminates. Active OCSP+CRL deferred to Phase 9 (HTTP stack) |
 | **7** ✅ | UDP: `ProbeUDPCallback` + udp connect/send/expect, `--udp` CLI, `dns.json` | new (uses zoxweb UDP) | **DONE** — DNS-over-UDP on 8.8.8.8 / 1.1.1.1 / 9.9.9.9:53; QUIC/DTLS-ready seam |
 | **8** ◑ | **nmap** core: NIO TCP-connect scanner (`PortScanCallback`/`NMapScanner`/`NMap`) + port-scan → ProbeEngine seam. Since shipped: output formatters, discovery, `--top-ports`/`T:`/`U:`/`--open`/`-T0..T5`, raw-scan rejection. Deferred: UDP scan | new (dead v1 nmap dropped) | **DONE** — scanme.nmap.org → 22 ssh OpenSSH_6.6.1p1, 80 http Apache/2.4.7; github 22/80/443 |

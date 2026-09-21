@@ -2,7 +2,10 @@
 
 > **Picking this project up?** `PENDING-ISSUES.md` at the repo root is the handoff index of open
 > work — it points at every per-module open-items list and records the 2026-08-13 code-review
-> findings against the then-uncommitted scan-panel and AI-assistant changes.
+> findings against the then-uncommitted scan-panel and AI-assistant changes. **Its latest section
+> is *Status check (2026-09-20)*: read that first** — what the scan-pipeline session changed and
+> measured, the five items left open (two parked by the maintainer), and the fact that all of it
+> was uncommitted when written.
 
 Assessment tooling for what a network endpoint exposes — TLS posture, **post-quantum
 readiness**, and running services — plus a Swing front-end and an AI-assistant layer.
@@ -77,6 +80,13 @@ is the record of what the deleted generation had, and how each of those things w
 before deletion; `no-sneak-core/ACTION-PLAN.md` is pre-merge history. Read `no-sneak-core/CLAUDE.md`
 first; it routes to the plan log, the probe reference, and the open-work list.
 
+**2026-09-20 — the scan pipeline was made fast on a LAN.** Adaptive per-host connect deadline
+(`--min-rtt-timeout` floor, `-t` ceiling), probes streamed from the connect callback under `-sV`,
+a `ScanGate` that honours rate caps above 1000/s, NIOSocket's connect monitor released when the
+scanner's own deadline wins, and `--up-only` to list live hosts only. A `/24 × 1024 ports` on the
+maintainer's segment went from 136 s to 6 s; the measured record is `no-sneak-core/PLAN.md` →
+2026-09-19/20, the design is `no-sneak-core/CLAUDE.md` → *The scan pipeline*.
+
 ## Build and test
 
 ```bash
@@ -92,5 +102,6 @@ External dependencies are zoxweb (`org.zoxweb.*`) and the `io-xlogistx` modules 
 reusable crypto/utility helpers belong in `opsec/OPSecUtil`, not in this repo.
 
 If a TLS-intercepting proxy is installed locally, Maven can't reach central and every scanned
-certificate reads `UNTRUSTED_ROOT` — neither is a code defect. See `no-sneak-core/CLAUDE.md` →
-*Build, test, verify*.
+certificate reads `UNTRUSTED_ROOT` — neither is a code defect. Its mail shield also completes TCP
+handshakes on the mail ports locally, so those read `open` on every host. Scan with it off. See
+`no-sneak-core/CLAUDE.md` → *Build, test, verify*.

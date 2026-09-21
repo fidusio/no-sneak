@@ -45,6 +45,26 @@ public class PortScanCallbackTest {
         });
     }
 
+    private PortScanCallback probeMs(long timeoutMs) {
+        return new PortScanCallback(scheduler, ADDR, timeoutMs, true, r -> {
+            synchronized (results) {
+                results.add(r);
+            }
+        });
+    }
+
+    @Test
+    public void aMillisecondDeadlineIsFilteredTimeoutWellUnderASecond() throws Exception {
+        long start = System.nanoTime();
+        probeMs(150);
+        awaitOne(2_000);
+        long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+        PortScanCallback.Result r = only();
+        assertEquals(PortState.FILTERED, r.state());
+        assertEquals("timeout", r.reason());
+        assertTrue(elapsedMs < 1_000, "the adaptive deadline must not round up to a second: " + elapsedMs + " ms");
+    }
+
     private PortScanCallback.Result only() {
         synchronized (results) {
             assertEquals(1, results.size(), "expected exactly one report, got " + results);
@@ -78,6 +98,35 @@ public class PortScanCallbackTest {
         probe(5, false).exception(new IOException("connection refused by peer"));
         assertEquals(PortState.CLOSED, only().state());
         assertEquals("conn-refused", only().reason());
+    }
+
+    /** NIOSocket's own connect monitor reports {@code IOException("Connection timed out")}. */
+    @Test
+    public void nioSocketsConnectionTimedOutIsFilteredTimeout() {
+        probe(5, false).exception(new IOException("Connection timed out"));
+        assertEquals(PortState.FILTERED, only().state());
+        assertEquals("timeout", only().reason());
+    }
+
+    @Test
+    public void theReleaserRunsExactlyOnceWhenTheProbeFinishes() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger released = new java.util.concurrent.atomic.AtomicInteger();
+        PortScanCallback p = probeMs(100);
+        p.releaseWith(released::incrementAndGet);
+        assertEquals(0, released.get(), "not before the probe finishes");
+        awaitOne(2_000);
+        assertEquals(1, released.get(), "the deadline finished the probe: the NIO appointment is released");
+        p.exception(new IOException("late"));            // a second completion is a no-op
+        assertEquals(1, released.get());
+    }
+
+    @Test
+    public void aReleaserSetAfterAnInstantFinishRunsImmediately() {
+        java.util.concurrent.atomic.AtomicInteger released = new java.util.concurrent.atomic.AtomicInteger();
+        PortScanCallback p = probe(5, false);
+        p.exception(new ConnectException("Connection refused"));   // finished before the key came back
+        p.releaseWith(released::incrementAndGet);
+        assertEquals(1, released.get(), "loopback shape: finish inside addClientSocket, release on return");
     }
 
     @Test

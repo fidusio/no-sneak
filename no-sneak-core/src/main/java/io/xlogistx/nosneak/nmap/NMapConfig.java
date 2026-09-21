@@ -24,6 +24,8 @@ public final class NMapConfig {
     public static final int DEFAULT_MAX_PER_SEC = 2000;
     /** Default per-connection timeout in seconds. */
     public static final int DEFAULT_TIMEOUT_SEC = 5;
+    /** Floor of the adaptive connect timeout: below this a lost SYN on Wi-Fi reads as filtered. */
+    public static final int DEFAULT_MIN_RTT_TIMEOUT_MS = 500;
 
     /** Targets: hostnames, IPs, CIDR ({@code 10.0.0.0/24}), or ranges ({@code 10.0.0.1-50}). */
     public final List<String> targets = new ArrayList<>();
@@ -55,6 +57,15 @@ public final class NMapConfig {
      */
     public boolean openOnly = false;
 
+    /**
+     * {@code --up-only}: the host-level twin of {@link #openOnly}. Only hosts that were found up
+     * are listed; the run-level counts ({@code targets}, {@code up}, {@code hostsDown}) still
+     * describe the whole range, so a consumer can tell "233 silent" from "233 never scanned".
+     * A rendering preference: the scanner still probes every target. Every formatter goes
+     * through {@link ScanReport#hostsToRender()}, so the flag means the same thing in all of them.
+     */
+    public boolean upOnly = false;
+
     /** Stage 0: host discovery. When false, every target is treated as up. */
     public boolean discovery = true;
     /** Discovery via TCP-connect ping (up if a discovery port connects or is refused). */
@@ -83,8 +94,18 @@ public final class NMapConfig {
     /** Rate limit: max new connections per second ({@code <=0} = unpaced). Default 2000. */
     public int maxPerSec = DEFAULT_MAX_PER_SEC;
 
-    /** Per-connection timeout (seconds). */
+    /** Per-connection timeout (seconds). The <em>ceiling</em> of the adaptive connect timeout. */
     public int timeoutSec = DEFAULT_TIMEOUT_SEC;
+
+    /**
+     * {@code --min-rtt-timeout <ms>}: the floor of the adaptive TCP connect timeout. The port
+     * scan derives each host's connect deadline from the round trip discovery measured
+     * ({@code NMapScanner.connectTimeoutMs}: {@link NMapScanner#RTT_MULTIPLIER} × RTT, no lower
+     * than this, no higher than {@link #timeoutSec}), so on a LAN a silently dropped port costs
+     * half a second rather than five. A host with no measured RTT ({@code -Pn}, TCP-ping-only
+     * discovery) keeps the full {@link #timeoutSec}. Same name and meaning as nmap's flag.
+     */
+    public int minRttTimeoutMs = DEFAULT_MIN_RTT_TIMEOUT_MS;
 
     /**
      * {@code -v} / {@code --verbose}: a rendering preference, like {@link #openOnly}. The Normal
@@ -148,6 +169,8 @@ public final class NMapConfig {
     public NMapConfig udpPorts(int[] p) { this.udpPorts = p; return this; }
     public NMapConfig udpScan(boolean b) { this.udpScan = b; return this; }
     public NMapConfig openOnly(boolean b) { this.openOnly = b; return this; }
+    public NMapConfig upOnly(boolean b) { this.upOnly = b; return this; }
+    public NMapConfig minRttTimeoutMs(int ms) { this.minRttTimeoutMs = Math.max(ms, 1); return this; }
     public NMapConfig discovery(boolean b) { this.discovery = b; return this; }
     public NMapConfig discoveryTcp(boolean b) { this.discoveryTcp = b; return this; }
     public NMapConfig discoveryIcmp(boolean b) { this.discoveryIcmp = b; return this; }

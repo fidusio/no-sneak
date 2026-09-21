@@ -27,7 +27,7 @@ public class FanoutTest {
     @Test
     public void joinFiresOnceWhenTheLastChildCompletes() throws Exception {
         AtomicInteger fired = new AtomicInteger();
-        ParallelJoin join = new ParallelJoin(3, fired::incrementAndGet);
+        CountdownMonitor join = new CountdownMonitor(3, fired::incrementAndGet);
         assertEquals(3, join.remaining());
 
         join.childDone();
@@ -42,7 +42,7 @@ public class FanoutTest {
     @Test
     public void joinIsIdempotentUnderExtraCompletions() {
         AtomicInteger fired = new AtomicInteger();
-        ParallelJoin join = new ParallelJoin(1, fired::incrementAndGet);
+        CountdownMonitor join = new CountdownMonitor(1, fired::incrementAndGet);
         join.childDone();
         join.childDone();
         join.childDone();
@@ -52,13 +52,13 @@ public class FanoutTest {
     @Test
     public void zeroChildrenFiresImmediately() {
         AtomicInteger fired = new AtomicInteger();
-        new ParallelJoin(0, fired::incrementAndGet);
+        new CountdownMonitor(0, fired::incrementAndGet);
         assertEquals(1, fired.get());
     }
 
     @Test
     public void joinSurvivesAThrowingCompletionHandler() {
-        ParallelJoin join = new ParallelJoin(1, () -> {
+        CountdownMonitor join = new CountdownMonitor(1, () -> {
             throw new RuntimeException("boom");
         });
         join.childDone(); // must not propagate out of the barrier
@@ -68,7 +68,7 @@ public class FanoutTest {
     public void joinIsThreadSafeUnderConcurrentCompletions() throws Exception {
         final int n = 64;
         AtomicInteger fired = new AtomicInteger();
-        ParallelJoin join = new ParallelJoin(n, fired::incrementAndGet);
+        CountdownMonitor join = new CountdownMonitor(n, fired::incrementAndGet);
         CountDownLatch start = new CountDownLatch(1);
         CountDownLatch done = new CountDownLatch(n);
         for (int i = 0; i < n; i++) {
@@ -93,7 +93,7 @@ public class FanoutTest {
         final int n = 6;
         AtomicInteger completions = new AtomicInteger();
         CountDownLatch joined = new CountDownLatch(1);
-        List<Consumer<ParallelJoin>> children = new ArrayList<>();
+        List<Consumer<CountdownMonitor>> children = new ArrayList<>();
         for (int i = 0; i < n; i++) {
             children.add(join -> {
                 completions.incrementAndGet();
@@ -115,7 +115,7 @@ public class FanoutTest {
         Set<String> threads = ConcurrentHashMap.newKeySet();
         CountDownLatch allArrived = new CountDownLatch(n);
         CountDownLatch joined = new CountDownLatch(1);
-        List<Consumer<ParallelJoin>> children = new ArrayList<>();
+        List<Consumer<CountdownMonitor>> children = new ArrayList<>();
         for (int i = 0; i < n; i++) {
             children.add(join -> {
                 threads.add(Thread.currentThread().getName());
@@ -139,7 +139,7 @@ public class FanoutTest {
     @Test
     public void fanoutStillJoinsWhenAChildReportsFromItsFailurePath() throws Exception {
         CountDownLatch joined = new CountDownLatch(1);
-        List<Consumer<ParallelJoin>> children = new ArrayList<>();
+        List<Consumer<CountdownMonitor>> children = new ArrayList<>();
         children.add(join -> {
             try {
                 throw new IllegalStateException("probe launch failed");
@@ -147,7 +147,7 @@ public class FanoutTest {
                 join.childDone(); // the pattern every analysis child uses
             }
         });
-        children.add(ParallelJoin::childDone);
+        children.add(CountdownMonitor::childDone);
         Fanout.run(children, joined::countDown, TaskUtil.defaultTaskProcessor());
         assertTrue(joined.await(15, TimeUnit.SECONDS));
     }
@@ -187,8 +187,8 @@ public class FanoutTest {
     public void runBoundedNeverStartsMoreThanTheWindowAndAdmitsOnePerCompletion() {
         final int n = 12;
         final int cap = 3;
-        List<ParallelJoin> parked = new ArrayList<>();
-        List<Consumer<ParallelJoin>> children = new ArrayList<>();
+        List<CountdownMonitor> parked = new ArrayList<>();
+        List<Consumer<CountdownMonitor>> children = new ArrayList<>();
         for (int i = 0; i < n; i++) {
             children.add(parked::add);
         }
@@ -210,7 +210,7 @@ public class FanoutTest {
     @Test
     public void runBoundedWithAWindowAtLeastTheChildCountIsPlainRun() {
         AtomicInteger started = new AtomicInteger();
-        List<Consumer<ParallelJoin>> children = new ArrayList<>();
+        List<Consumer<CountdownMonitor>> children = new ArrayList<>();
         for (int i = 0; i < 4; i++) {
             children.add(j -> { started.incrementAndGet(); j.childDone(); });
         }
@@ -225,7 +225,7 @@ public class FanoutTest {
 
     @Test
     public void runBoundedToleratesSynchronousCompletionsDoubleDoneAndThrowingChildren() {
-        List<Consumer<ParallelJoin>> children = new ArrayList<>();
+        List<Consumer<CountdownMonitor>> children = new ArrayList<>();
         AtomicInteger ran = new AtomicInteger();
         for (int i = 0; i < 20; i++) {
             final int k = i;

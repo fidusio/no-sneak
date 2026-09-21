@@ -11,7 +11,7 @@ import io.xlogistx.nosneak.net.common.HostRecord;
 import io.xlogistx.nosneak.net.common.SweepOptions;
 import io.xlogistx.nosneak.net.tools.HostScanner;
 import io.xlogistx.nosneak.result.ProbeResult;
-import io.xlogistx.nosneak.runtime.ParallelJoin;
+import io.xlogistx.nosneak.runtime.CountdownMonitor;
 import org.zoxweb.server.net.NIOSocket;
 import org.zoxweb.shared.net.IPAddress;
 import org.zoxweb.shared.task.CallableConsumer;
@@ -43,12 +43,17 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *   <li><b>host discovery</b> (optional) over the target range — TCP-ping + optional ICMP;</li>
  *   <li><b>reverse DNS</b> (unless {@code -n}) — one PTR datagram per live host (every host
  *       with {@code -R}) through the same gate, filling {@code HostReport.hostname};</li>
- *   <li><b>port scan</b> of the selected TCP ports on each live host;</li>
+ *   <li><b>port scan</b> of the selected TCP ports on each live host, each connect under an
+ *       adaptive deadline derived from the host's discovery RTT ({@link #connectTimeoutMs});
+ *       with {@code -sV} every port that connects is <b>probed at once</b> — the sweep is a
+ *       further child of the host's barrier, not a later stage — so identification overlaps
+ *       the filtered-port timeouts instead of waiting for them;</li>
  *   <li><b>UDP scan</b> (when UDP ports were named) — one datagram, one retransmit, per port;</li>
- *   <li><b>probe scan</b> (optional) — run the probe engine on open ports to identify
- *       service / version / TLS / PQC (all bundled probes, or a named subset).</li>
+ *   <li><b>probe scan</b> (optional) — the probe engine on the UDP ports that answered (TCP
+ *       ports were already probed in stage 3), identifying service / version / TLS / PQC
+ *       (all bundled probes, or a named subset).</li>
  * </ol>
- * Everything rides the shared {@link NIOSocket} and {@link ParallelJoin} barriers, paced by a
+ * Everything rides the shared {@link NIOSocket} and {@link CountdownMonitor} barriers, paced by a
  * {@link ScanGate} (max in-flight + per-second) that <em>every</em> socket goes through —
  * the port scans directly, the probe stage through {@link ProbeChecker}'s connection gate. No
  * blocking sockets, no per-target threads.
@@ -69,16 +74,16 @@ public final class NMapScanner {
      * then rethrows</em>, and the callback's own deadline can fire for a launch that never
      * registered. Counting such a unit twice releases the {@link ScanGate} twice (driving
      * its in-flight counter negative, which disables {@code --max-inflight} entirely) and
-     * decrements the {@link ParallelJoin} twice, firing the stage barrier before the remaining
+     * decrements the {@link CountdownMonitor} twice, firing the stage barrier before the remaining
      * units have answered — so the report is rendered mid-scan with ports and hosts still
      * outstanding. This guard makes the completion happen exactly once.
      */
     static final class Unit {   // package-private so UnitTest can pin the exactly-once guard
         private final AtomicBoolean fired = new AtomicBoolean(false);
         private final ScanGate limiter;
-        private final ParallelJoin join;
+        private final CountdownMonitor join;
 
-        Unit(ScanGate limiter, ParallelJoin join) {
+        Unit(ScanGate limiter, CountdownMonitor join) {
             this.limiter = limiter;
             this.join = join;
         }
@@ -89,7 +94,7 @@ public final class NMapScanner {
          * let the per-port units fill the cap and leave no room for the connections they wait
          * on — a deadlock broken only by the connect timeouts.
          */
-        Unit(ParallelJoin join) {
+        Unit(CountdownMonitor join) {
             this(null, join);
         }
 
@@ -237,6 +242,16 @@ public final class NMapScanner {
             handle.onCancel(() -> { try { hostScanner.close(); } catch (Exception ignored) { } });
         }
 
+        // The probe catalog is built before the first connect so that a port can be probed the
+        // moment it answers (streamed from the connect callback) instead of after the last
+        // filtered port on the last host has timed out. Null when -sV is off.
+        final ProbeChecker checker = cfg.probeScan ? buildChecker(nio, cfg, to, report, limiter) : null;
+        if (checker != null) {
+            // A cancel tears every sweep down; each delivers a "cancelled" result, so the
+            // barrier children below complete and the stage drains.
+            handle.onCancel(checker::cancelAll);
+        }
+
         final AtomicBoolean finished = new AtomicBoolean(false);
         final Runnable finish = () -> {
             if (!finished.compareAndSet(false, true)) {
@@ -261,9 +276,9 @@ public final class NMapScanner {
         };
         final Runnable afterDiscovery =
                 () -> reverseDnsStage(nio, limiter, report, cfg, handle,
-                        () -> portScanStage(nio, limiter, report, ports, cfg, to, handle,
+                        () -> portScanStage(nio, limiter, report, ports, cfg, to, handle, checker,
                                 () -> udpScanStage(nio, limiter, report, cfg, to, handle,
-                                        () -> probeStage(nio, limiter, report, cfg, to, handle, finish))));
+                                        () -> probeStage(report, handle, checker, finish))));
 
         if (handle.isCancelled()) {
             // Cancelled before the first packet: nothing was learned, say so, deliver once.
@@ -304,8 +319,8 @@ public final class NMapScanner {
                 }
             }
 
-            ParallelJoin hostsJoin =
-                    new ParallelJoin(covered.size() + perHost.size(), afterDiscovery);
+            CountdownMonitor hostsJoin =
+                    new CountdownMonitor(covered.size() + perHost.size(), afterDiscovery);
             for (Map.Entry<String, List<HostReport>> e : covered.entrySet()) {
                 sweepRange(hostScanner, e.getKey(), e.getValue(), cfg, report, hostsJoin::childDone);
             }
@@ -420,6 +435,7 @@ public final class NMapScanner {
                     hr.reason = "no-response";
                 }
             }
+            inheritSegmentRtt(covered);
             done.run();
         };
         try {
@@ -433,6 +449,38 @@ public final class NMapScanner {
         } catch (Exception e) {
             report.warnings.add("sweep of " + cidr + " failed: " + e);
             finishSweep.run();
+        }
+    }
+
+    /**
+     * A swept host that is up but has no measured round trip — our own address (the local
+     * interface short-circuit), or a neighbour known only from passive ARP learning — would fall
+     * back to the full {@code -t} on every filtered port ({@link #connectTimeoutMs}), while its
+     * siblings on the same wire use the adaptive deadline. On the 2026-09-20 run four such hosts
+     * accounted for most of the remaining tail: 4 × 1024 ports × the 2 s ceiling. They are on the
+     * same segment as the hosts that <em>were</em> measured, so they inherit the segment's
+     * <b>median</b> measured RTT (upper median). Not the slowest: on the next run one Wi-Fi host
+     * answered ARP in 81 ms on a 9 ms segment and seven unmeasured hosts inherited an 810 ms
+     * deadline from it. The median is what the wire typically does; a host that is genuinely
+     * slower is still protected by {@code --min-rtt-timeout}'s floor. With nothing measured at
+     * all, nothing changes. Pure.
+     */
+    static void inheritSegmentRtt(List<HostReport> swept) {
+        List<Long> measured = new ArrayList<>();
+        for (HostReport hr : swept) {
+            if (hr.up && hr.latencyMs >= 0) {
+                measured.add(hr.latencyMs);
+            }
+        }
+        if (measured.isEmpty()) {
+            return;
+        }
+        Collections.sort(measured);
+        long median = measured.get(measured.size() / 2);
+        for (HostReport hr : swept) {
+            if (hr.up && hr.latencyMs < 0) {
+                hr.latencyMs = median;
+            }
         }
     }
 
@@ -513,7 +561,28 @@ public final class NMapScanner {
             hostDone.run();
             return;
         }
-        final ParallelJoin j = new ParallelJoin(unitCount, () -> {
+        // The verdict is handed on ONCE: at the first positive (any unit — an ARP reply in 10 ms
+        // is proof enough), or, if none comes, when the last unit has given up. Before 2026-09-20
+        // the host waited for every unit, so a gateway that answered ARP at once still sat for
+        // the full -t because one TCP-ping discovery port (3389) was silently dropped: 5 s of
+        // nothing on a single-host scan. Units that are still in flight when the verdict lands
+        // only release their gate slots; the TCP-pings are aborted outright to free theirs now.
+        final AtomicBoolean decided = new AtomicBoolean(false);
+        final List<Runnable> pingAborts = new CopyOnWriteArrayList<>();
+        final Runnable onUp = () -> {
+            if (decided.compareAndSet(false, true)) {
+                hr.up = true;
+                hr.reason = reason.get();
+                for (Runnable a : pingAborts) {
+                    try { a.run(); } catch (Exception ignored) { }
+                }
+                hostDone.run();
+            }
+        };
+        final CountdownMonitor j = new CountdownMonitor(unitCount, () -> {
+            if (!decided.compareAndSet(false, true)) {
+                return; // already handed on at the first positive; this was the slots draining
+            }
             hr.up = up.get();
             hr.reason = up.get() ? reason.get() : "no-response";
             if (!hr.up) {
@@ -523,10 +592,10 @@ public final class NMapScanner {
         });
 
         if (icmp) {
-            icmpPing(limiter, hr, cfg, hostScanner, up, reason, j);
+            icmpPing(limiter, hr, cfg, hostScanner, up, reason, onUp, j);
         }
         if (arp) {
-            arpResolve(limiter, hr, hostScanner, up, reason, j);
+            arpResolve(limiter, hr, hostScanner, up, reason, onUp, j);
         }
         if (cfg.discoveryTcp) {
             // TCP-ping: reachable if a discovery port connects (OPEN) or is refused (CLOSED).
@@ -548,6 +617,7 @@ public final class NMapScanner {
                             if (st == PortState.OPEN || st == PortState.CLOSED) {
                                 up.set(true);
                                 reason.compareAndSet(null, "tcp-ping");
+                                onUp.run();
                             }
                             unit.complete();
                         });
@@ -556,7 +626,12 @@ public final class NMapScanner {
                         }
                         abort[0] = cb::abort;
                         handle.track(abort[0]);
-                        nio.addClientSocket(cb, to + 2);
+                        pingAborts.add(abort[0]);
+                        // NIOSocket arms its own connect timeout (NIOChannelMonitor, cancelled only
+                        // by a successful connect); the callback's shorter deadline fires first, so
+                        // hand it the release or a silent port leaves an appointment behind for to+2 s.
+                        final java.nio.channels.SelectionKey key = nio.addClientSocket(cb, to + 2);
+                        cb.releaseWith(() -> nio.abortClientSocket(key));
                     } catch (Exception e) {
                         unit.complete();
                     }
@@ -574,7 +649,7 @@ public final class NMapScanner {
     private static void icmpPing(ScanGate limiter, HostReport hr, NMapConfig cfg,
                                  HostScanner hostScanner, AtomicBoolean up,
                                  java.util.concurrent.atomic.AtomicReference<String> reason,
-                                 ParallelJoin j) {
+                                 Runnable onUp, CountdownMonitor j) {
         final Unit unit = new Unit(limiter, j);
         limiter.submit(() -> {
             try {
@@ -585,14 +660,17 @@ public final class NMapScanner {
                                 // observedOnWire(), not reachable(): pinging one of our own
                                 // addresses answers from local configuration without a packet.
                                 if (res != null && res.observedOnWire()) {
-                                    up.set(true);
-                                    reason.compareAndSet(null, "icmp-echo");
+                                    // Facts first, verdict last: onUp may hand the host to the
+                                    // port stage at once, which reads latencyMs for its deadline.
                                     if (res.measured()) {
                                         hr.latencyMs = res.avgRtt().toMillis();
                                     }
                                     if (hr.ip == null) {
                                         hr.ip = res.target().getHostAddress();
                                     }
+                                    up.set(true);
+                                    reason.compareAndSet(null, "icmp-echo");
+                                    onUp.run();
                                 }
                             } finally {
                                 unit.complete();
@@ -614,7 +692,7 @@ public final class NMapScanner {
     private static void arpResolve(ScanGate limiter, HostReport hr, HostScanner hostScanner,
                                    AtomicBoolean up,
                                    java.util.concurrent.atomic.AtomicReference<String> reason,
-                                   ParallelJoin j) {
+                                   Runnable onUp, CountdownMonitor j) {
         final Unit unit = new Unit(limiter, j);
         limiter.submit(() -> {
             try {
@@ -633,6 +711,7 @@ public final class NMapScanner {
                                     hr.mac = rr.mac().get().toString();
                                     up.set(true);
                                     reason.compareAndSet(null, "arp-reply");
+                                    onUp.run();
                                 }
                             } finally {
                                 unit.complete();
@@ -674,7 +753,7 @@ public final class NMapScanner {
             return;
         }
         final InetSocketAddress server = ReverseDnsCallback.resolverAddress(cfg.dnsServer, report.warnings);
-        final ParallelJoin j = new ParallelJoin(wanted.size(), onDone);
+        final CountdownMonitor j = new CountdownMonitor(wanted.size(), onDone);
         for (Map.Entry<HostReport, InetAddress> e : wanted.entrySet()) {
             final HostReport hr = e.getKey();
             final InetAddress addr = e.getValue();
@@ -724,9 +803,32 @@ public final class NMapScanner {
 
     // ==================== Stage 1: port scan ====================
 
+    /**
+     * The adaptive TCP connect timeout for one host, in milliseconds. A silently dropped port
+     * (host firewall) is the only kind that waits the whole timeout, and on a LAN with 21 live
+     * hosts behind Windows firewalls that wait <em>is</em> the scan: 1024 ports × 5 s each,
+     * sharing 256 slots. Discovery already measured the host's round trip, so the deadline is
+     * {@link #RTT_MULTIPLIER} × that RTT, clamped between {@link NMapConfig#minRttTimeoutMs}
+     * (a lost SYN on Wi-Fi must not read as filtered) and {@link NMapConfig#timeoutSec} (the
+     * caller's {@code -t} stays the ceiling). No RTT — {@code -Pn}, or a host proved up by
+     * TCP-ping only — means the full configured timeout, as before. Pure.
+     */
+    static long connectTimeoutMs(HostReport hr, NMapConfig cfg) {
+        long ceiling = Math.max(cfg.timeoutSec, 1) * 1_000L;
+        if (hr == null || hr.latencyMs < 0) {
+            return ceiling;
+        }
+        long floor = Math.max(cfg.minRttTimeoutMs, 1);
+        long adaptive = Math.max(hr.latencyMs, 1) * RTT_MULTIPLIER;
+        return Math.min(ceiling, Math.max(floor, adaptive));
+    }
+
+    /** How many measured round trips a connect may take before the port reads as filtered. */
+    static final int RTT_MULTIPLIER = 10;
+
     private static void portScanStage(NIOSocket nio, ScanGate limiter, ScanReport report,
                                       int[] ports, NMapConfig cfg, int to, ScanHandle handle,
-                                      Runnable onDone) {
+                                      ProbeChecker checker, Runnable onDone) {
         if (handle.isCancelled()) {
             onDone.run();
             return;
@@ -741,21 +843,30 @@ public final class NMapScanner {
             onDone.run();
             return;
         }
-        final ParallelJoin hostsJoin = new ParallelJoin(live.size(), onDone);
+        final CountdownMonitor hostsJoin = new CountdownMonitor(live.size(), onDone);
         for (HostReport hr : live) {
-            scanHostPorts(nio, limiter, hr, ports, to, handle, hostsJoin::childDone);
+            scanHostPorts(nio, limiter, hr, ports, cfg, to, handle, checker, hostsJoin::childDone);
         }
     }
 
+    /**
+     * Every TCP port of one host, launched at once through the gate. With a {@code checker}
+     * (-sV) an open port's probe sweep is <b>streamed</b>: launched from the connect callback
+     * as a further child of this host's barrier ({@link CountdownMonitor#addChild}), so identification
+     * starts while sibling ports are still timing out and the host is done only when its ports
+     * <em>and</em> their probes are. No second barrier, no waiting on the last filtered port.
+     */
     private static void scanHostPorts(NIOSocket nio, ScanGate limiter, HostReport hr,
-                                      int[] ports, int to, ScanHandle handle, Runnable hostDone) {
+                                      int[] ports, NMapConfig cfg, int to, ScanHandle handle,
+                                      ProbeChecker checker, Runnable hostDone) {
         final List<PortReport> prs = new ArrayList<>();
         for (int p : ports) {
             PortReport pr = new PortReport(p, PortState.FILTERED);
             hr.ports.add(pr);
             prs.add(pr);
         }
-        final ParallelJoin j = new ParallelJoin(prs.size(), hostDone);
+        final long timeoutMs = connectTimeoutMs(hr, cfg);
+        final CountdownMonitor j = new CountdownMonitor(prs.size(), hostDone);
         for (PortReport pr : prs) {
             final PortReport target = pr;
             final Unit unit = new Unit(limiter, j);
@@ -773,7 +884,7 @@ public final class NMapScanner {
                     // handshake, not a SYN/ACK. RTT and a volunteered banner ride the same
                     // connection (PortScanCallback javadoc); TTL is unobservable here.
                     PortScanCallback cb = new PortScanCallback(
-                            nio.getScheduler(), new IPAddress(hr.host, target.port), to, true, r -> {
+                            nio.getScheduler(), new IPAddress(hr.host, target.port), timeoutMs, true, r -> {
                         if (abort[0] != null) {
                             handle.untrack(abort[0]);
                         }
@@ -781,14 +892,27 @@ public final class NMapScanner {
                         target.reason = r.reason();
                         target.rttMs = r.rttMs();
                         target.banner = r.banner();
+                        // Register the probe BEFORE this port's childDone (the count must never
+                        // touch zero in between), release the connect's gate slot, THEN launch:
+                        // the sweep admits its own sockets through the gate and must not queue
+                        // behind a slot this port is still holding.
+                        boolean stream = checker != null && probeable(target)
+                                && !handle.isCancelled() && j.addChild();
                         unit.complete();
+                        if (stream) {
+                            launchProbe(checker, hr.host, target, j);
+                        }
                     });
                     if (hr.ip == null) {
                         hr.ip = cb.remoteIp(); // -Pn: no discovery unit ran, so this is the first to know
                     }
                     abort[0] = cb::abort;
                     handle.track(abort[0]);
-                    nio.addClientSocket(cb, to + 2);
+                    // NIOSocket arms its own connect timeout (NIOChannelMonitor, cancelled only by
+                    // a successful connect); the callback's shorter deadline fires first, so hand it
+                    // the release or every filtered port leaves an appointment behind for to+2 s.
+                    final java.nio.channels.SelectionKey key = nio.addClientSocket(cb, to + 2);
+                    cb.releaseWith(() -> nio.abortClientSocket(key));
                 } catch (Exception e) {
                     // Only classify here if the callback never got to: NIOSocket delivers
                     // exception() before rethrowing, and that path has already derived the
@@ -827,7 +951,7 @@ public final class NMapScanner {
             onDone.run();
             return;
         }
-        final ParallelJoin hostsJoin = new ParallelJoin(live.size(), onDone);
+        final CountdownMonitor hostsJoin = new CountdownMonitor(live.size(), onDone);
         for (HostReport hr : live) {
             scanHostUdpPorts(nio, limiter, hr, udpPorts, to, handle, hostsJoin::childDone);
         }
@@ -844,7 +968,7 @@ public final class NMapScanner {
             hr.ports.add(pr);
             prs.add(pr);
         }
-        final ParallelJoin j = new ParallelJoin(prs.size(), hostDone);
+        final CountdownMonitor j = new CountdownMonitor(prs.size(), hostDone);
         for (PortReport pr : prs) {
             final PortReport target = pr;
             final Unit unit = new Unit(limiter, j);
@@ -912,18 +1036,23 @@ public final class NMapScanner {
         return pr.state.isPotentiallyOpen();
     }
 
-    private static void probeStage(NIOSocket nio, ScanGate limiter, ScanReport report,
-                                   NMapConfig cfg, int to, ScanHandle handle, Runnable onDone) {
-        if (!cfg.probeScan || handle.isCancelled()) {
+    /**
+     * The UDP half of identification. TCP ports were probed as they connected (streamed from
+     * {@link #scanHostPorts}); the UDP scan has no connect event to stream from — an answer is a
+     * datagram that arrives after a retransmit budget — so its open ports are probed here, once
+     * that stage has delivered. Runs only with {@code -sV} and only over UDP ports that answered.
+     */
+    private static void probeStage(ScanReport report, ScanHandle handle, ProbeChecker checker,
+                                   Runnable onDone) {
+        if (checker == null || handle.isCancelled()) {
             onDone.run();
             return;
         }
-        // Collect all open host:ports.
         final List<HostReport> hostsOf = new ArrayList<>();
         final List<PortReport> openPorts = new ArrayList<>();
         for (HostReport hr : report.hosts) {
             for (PortReport pr : hr.ports) {
-                if (probeable(pr)) {
+                if ("udp".equalsIgnoreCase(pr.protocol) && probeable(pr)) {
                     hostsOf.add(hr);
                     openPorts.add(pr);
                 }
@@ -933,34 +1062,32 @@ public final class NMapScanner {
             onDone.run();
             return;
         }
-        // The checker admits every socket it opens — each candidate's connection and the
-        // enumeration children of a deep TLS probe — through the scan's limiter (P4). The
-        // per-port unit below is therefore a barrier only; it must NOT hold a limiter slot of
-        // its own, or the ports would fill the cap and starve the connections they wait for.
-        final ProbeChecker checker = buildChecker(nio, cfg, to, report, limiter);
-        // A cancel tears every sweep down; each delivers a "cancelled" result, so the units
-        // below complete and the barrier drains.
-        handle.onCancel(checker::cancelAll);
-        final ParallelJoin j = new ParallelJoin(openPorts.size(), onDone);
+        final CountdownMonitor j = new CountdownMonitor(openPorts.size(), onDone);
         for (int i = 0; i < openPorts.size(); i++) {
-            final String host = hostsOf.get(i).host;
-            final PortReport pr = openPorts.get(i);
-            final String transport = "udp".equalsIgnoreCase(pr.protocol) ? "udp" : "tcp";
-            final Unit unit = new Unit(j);
-            if (handle.isCancelled()) {
-                unit.complete();
-                continue;
-            }
-            try {
-                checker.check(host, pr.port, transport, new CallableConsumerTask<ProbeResult>()
-                        .setConsumer(r -> {
-                            pr.probe = r;
-                            unit.complete();
-                        })
-                        .setExceptionCallback(t -> unit.complete()));
-            } catch (Exception e) {
-                unit.complete();
-            }
+            launchProbe(checker, hostsOf.get(i).host, openPorts.get(i), j);
+        }
+    }
+
+    /**
+     * One probe sweep for one open port, as a child of {@code j}. The checker admits every
+     * socket it opens — each candidate's connection and the enumeration children of a deep TLS
+     * probe — through the scan's limiter (P4). The unit here is therefore a barrier only; it
+     * must NOT hold a limiter slot of its own, or the ports would fill the cap and starve the
+     * connections they wait for. Completes exactly once: on delivery, on the checker's
+     * exception path, or on a launch that threw.
+     */
+    private static void launchProbe(ProbeChecker checker, String host, PortReport pr, CountdownMonitor j) {
+        final String transport = "udp".equalsIgnoreCase(pr.protocol) ? "udp" : "tcp";
+        final Unit unit = new Unit(j);
+        try {
+            checker.check(host, pr.port, transport, new CallableConsumerTask<ProbeResult>()
+                    .setConsumer(r -> {
+                        pr.probe = r;
+                        unit.complete();
+                    })
+                    .setExceptionCallback(t -> unit.complete()));
+        } catch (Exception e) {
+            unit.complete();
         }
     }
 

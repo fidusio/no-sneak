@@ -28,7 +28,7 @@ public final class CSVFormatter implements OutputFormatter {
     public String render(ScanReport r) {
         StringBuilder sb = new StringBuilder();
         sb.append(HEADER).append('\n');
-        for (HostReport h : r.hosts) {
+        for (HostReport h : r.hostsToRender()) {
             if (!h.up) {
                 // A down host is a fact worth a row: host/ip/hostname/mac, every port column empty.
                 row(sb, h.host, nz(h.ip), nz(h.hostname), nz(h.mac),

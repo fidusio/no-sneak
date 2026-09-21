@@ -15,8 +15,19 @@
     "revocation": { "action": "revocation-check", "on": { "done": "versions" } },
     "versions":   { "action": "enumerate-versions", "includeSSLv3": true, "includeTLS10": true, "includeTLS11": true, "maxInFlight": 8, "on": { "done": "ciphers" } },
     "ciphers":    { "action": "enumerate-ciphers", "includeWeak": true, "includeInsecure": true, "rankServerPreference": false, "maxInFlight": 8, "on": { "done": "groups" } },
-    "groups":     { "action": "enumerate-groups", "maxInFlight": 8, "on": { "done": "record" } },
+    "groups":     { "action": "enumerate-groups", "maxInFlight": 8, "on": { "done": "header" } },
+    "header":     { "action": "tls-connect", "on": { "connected": "get", "error": "recordNoServer", "timeout": "recordNoServer" } },
+    "get":        { "action": "send",
+                    "data": "text:GET / HTTP/1.0\r\nHost: {probe.hostname}\r\nUser-Agent: no-sneak\r\nConnection: close\r\nAccept: */*\r\n\r\n",
+                    "on": { "sent": "resp", "error": "recordNoServer" } },
+    "resp":       { "action": "expect",
+                    "patterns": [
+                      { "regex": "(?i)Server:\\s*([^\\r\\n]+)", "outcome": "server", "capture": "version" },
+                      { "regex": "^HTTP/.*?\\r\\n\\r\\n", "outcome": "noserver" }
+                    ],
+                    "on": { "server": "record", "noserver": "recordNoServer", "nomatch": "recordNoServer", "timeout": "recordNoServer", "error": "recordNoServer" } },
     "record":     { "action": "record", "note": "https-scan", "on": { "done": "done" } },
+    "recordNoServer": { "action": "record", "note": "https-scan; no-server-header", "on": { "done": "done" } },
     "done":      { "action": "done" },
     "fail":      { "action": "fail" }
   }

@@ -122,7 +122,7 @@ no reachable terminal (`done`/`fail`) is rejected at load time.
 
 | Probe | Service | Ports | Prio | portScoped | Purpose |
 |---|---|---|---|---|---|
-| `https-scan` | https | 443,8443 | 72 | yes | **Primary TLS assessment**: PQC + cert-chain + validity + version/cipher enumeration |
+| `https-scan` | https | 443,8443 | 72 | yes | **Primary TLS assessment**: PQC + cert-chain + validity + revocation + version/cipher/group enumeration, then (2026-09-20) a JSSE `tls-connect` + `GET /` to capture the `Server:` header as `service-version`; a missing or unreadable header records `https-scan; no-server-header` and never fails the probe |
 | `tls-scan` | **tls** | [] (fallback) | 71 | no | Deep TLS assessment on **any** port (nonstandard TLS); labels `tls` to avoid mislabelling non-HTTP TLS |
 | `https-pqc` | https | 443,8443 | 70 | yes | PQC + cert facts; graceful TLS-handshake-failure fallback |
 | `https-version` | https | 443,8443 | 68 | no | Shallow HTTPS `Server:` header over JSSE; nonstandard-port HTTPS detection |
@@ -130,7 +130,7 @@ no reachable terminal (`done`/`fail`) is rejected at load time.
 | `smtp-starttls-pqc` | smtp | 25,587 | 60 | — | SMTP STARTTLS → PQC |
 | `imap-starttls-pqc` | imap | 143 | 60 | — | IMAP STARTTLS → PQC |
 | `postgres-tls` | postgresql | 5432 | — | — | PostgreSQL SSLRequest → TLS/PQC posture |
-| `postgres-db` | postgresql | 5432 | 66 | — | PostgreSQL SSL/PQC posture (probe **name** matches the filename, as `--probes` selects by name) |
+| `postgres-db` | postgresql | 5432 | 66 | — | PostgreSQL SSL/PQC posture (probe **name** matches the filename, as `--probes` selects by name). The SSLRequest answer is exactly one byte, so the patterns are `^S$`/`^N$` (2026-09-20: `^S` matched an SSH banner's first byte), and a failed TLS handshake is `fail`, not an identification |
 | `postgres-version` | postgresql | 5432 | — | — | PostgreSQL plaintext StartupMessage version (trust-auth) |
 | `ssh` | ssh | 22 | — | — | SSH banner (`SSH-2.0-…`) |
 | `ftp` | ftp | 21 | — | — | FTP `220` banner |
@@ -268,7 +268,7 @@ sequential path. No `MonoStateMachine`, no hand-rolled threads (`new Thread` / `
 appear nowhere in v2). Superseded probes are aborted immediately
 (`NIOSocket.abortClientSocket`) so no connection or scheduler appointment lingers.
 
-**`ParallelJoin` is the completion barrier for callback-driven fan-outs** — the children of
+**`CountdownMonitor` is the completion barrier for callback-driven fan-outs** — the children of
 `Fanout.run` are `TriggerConsumer`s that report from a NIO/selector/scheduler callback and have no
 future to compose on, so a one-shot counting barrier is the right primitive. That covers
 `ProbeContext`'s version/cipher enumeration, `ProbeChecker`'s `AllSweep`, and the nmap stages,
@@ -386,7 +386,14 @@ recorded in `ScanReport.warnings` so a silently ICMP-less or MAC-less scan is vi
 looking like a clean result.
 
 The port and probe stages are paced by a non-blocking `ScanGate` (`--max-inflight` concurrency
-cap + `--max-rate` per-second). Targets accept host / IP / CIDR (`10.0.0.0/24`) / range
+cap + `--max-rate` per-second; the pacer's millisecond slots carry a quantum of
+`maxPerSec / 1000` launches, so 2000/s and 10000/s are honoured rather than both collapsing to
+1000/s — `ScanGateThroughputTest` measures it). Since 2026-09-19 each TCP connect runs under an **adaptive
+deadline** — 10 × the host's discovery RTT, clamped between `--min-rtt-timeout <ms>` (default
+500) and `-t` — and with `-sV` an open port is **probed from its connect callback** as a further
+child of the host's barrier (`CountdownMonitor.addChild`), so identification overlaps the
+filtered-port timeouts; `probeStage` itself now covers only the UDP ports that answered. See
+`PLAN.md` → 2026-09-19. Targets accept host / IP / CIDR (`10.0.0.0/24`) / range
 (`10.0.0.1-50`, `10.0.0.1-10.0.1.9`, per-octet `192.168.1-5.1-254`) / comma-separated lists in
 one token (`10.0.0.1,10.0.0.5,example.com`); a spec that expands past 65536 addresses is cut
 short and the report carries `target expansion capped at 65536 addresses for '<spec>'`. CLI
@@ -485,7 +492,9 @@ rule for all five**, `HostReport.portsToRender(cfg)`: with `--open` only potenti
 otherwise nmap's habit — a non-open state is listed port by port up to
 `RenderSelection.COLLAPSE_THRESHOLD` (10) entries, which is where `conn-refused` versus
 `no-route` versus `timeout` is worth reading, and collapsed into the "Not shown: N closed, M
-filtered" count beyond that. Potentially-open states are never collapsed. Pinned by
+filtered" count beyond that. Potentially-open states are never collapsed. **Which hosts are
+listed is likewise one rule**, `ScanReport.hostsToRender()`: with `--up-only` (2026-09-19) only
+hosts found up, while the run-level up/down/total counts keep describing the whole range. Pinned by
 `FormattersTest`.
 
 **Probe catalog: one definition per name.** `NMapScanner.buildChecker` merges bundled and
@@ -627,8 +636,8 @@ the Bouncy Castle handshake bytes themselves and `tls-connect` over JSSE.
   `--max-inflight`/`--max-rate`/`-t` after the template overrides that one knob.
 - ~~**Port-spec richness** — `T:`/`U:` protocol prefixes, `--top-ports`.~~ **Done 2026-09-11**:
   `NMap.parsePortSpec`, `--top-ports N` over `WellKnownPorts.topTcp`, `--open` recorded on
-  `NMapConfig.openOnly` (the formatters do not honour it yet — rendering gap, tracked in
-  `PENDING-ISSUES.md`).
+  `NMapConfig.openOnly` (honoured by every formatter since P21); `--up-only` on
+  `NMapConfig.upOnly` added 2026-09-19, same shape at host level.
 - ~~**Raw-scan rejection** wiring.~~ **Done 2026-09-11**: `-sS -sF -sX -sN -sA -sW -sM -O --stealth`
   are refused with `NMap.rejectionMessage(flag)`, which names the flag and the operating-scope
   rule; `NMapParseCommandTest` walks every one.

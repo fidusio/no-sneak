@@ -7,7 +7,7 @@ import io.xlogistx.nosneak.result.ProbeResult;
 import io.xlogistx.nosneak.runtime.ConnectionGate;
 import io.xlogistx.nosneak.runtime.Fanout;
 import io.xlogistx.nosneak.runtime.GatedProbeTransport;
-import io.xlogistx.nosneak.runtime.ParallelJoin;
+import io.xlogistx.nosneak.runtime.CountdownMonitor;
 import io.xlogistx.nosneak.runtime.ProbeContext;
 import org.zoxweb.server.logging.LogWrapper;
 import org.zoxweb.server.net.NIOSocket;
@@ -426,8 +426,8 @@ public class ProbeChecker {
         void start() {
             live.add(this);
             // One concurrent child per candidate on the native StateMachine parallel dispatch;
-            // the ParallelJoin barrier fires deliverAll() once every child has resolved.
-            List<Consumer<ParallelJoin>> children = new ArrayList<>(candidates.size());
+            // the CountdownMonitor barrier fires deliverAll() once every child has resolved.
+            List<Consumer<CountdownMonitor>> children = new ArrayList<>(candidates.size());
             for (int i = 0; i < candidates.size(); i++) {
                 final int idx = i;
                 children.add(join -> {

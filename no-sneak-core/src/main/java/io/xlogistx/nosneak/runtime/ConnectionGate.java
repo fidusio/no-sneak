@@ -15,6 +15,20 @@ public interface ConnectionGate {
     void submit(Runnable launch);
 
     /**
+     * Like {@link #submit}, but ahead of everything queued by {@code submit}. For a launch that
+     * is worth more than the next queued connect: a probe sweep for a port that has <em>just
+     * proved open</em>. Without this, a probe streamed from a connect callback queues behind the
+     * tens of thousands of not-yet-launched port connects of the same scan (measured 2026-09-20:
+     * 30–58 s of queueing per probe on a /24 × 1024 ports, while the ports themselves connected
+     * in milliseconds), and identification only starts once the port stage has drained — which
+     * is exactly the serialisation streaming was meant to remove. Same caps, same pacing; only
+     * the order of admission differs. Default: no priority lane, plain {@code submit}.
+     */
+    default void submitFirst(Runnable launch) {
+        submit(launch);
+    }
+
+    /**
      * Runs {@code launch} at once and counts it, even when the cap is full. For a socket that a
      * launched unit opens <em>for itself</em> — a deep TLS probe's version and cipher children —
      * and could not otherwise obtain while it holds its own slot: with a cap of two and two deep
