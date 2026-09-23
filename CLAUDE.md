@@ -3,9 +3,9 @@
 > **Picking this project up?** `PENDING-ISSUES.md` at the repo root is the handoff index of open
 > work — it points at every per-module open-items list and records the 2026-08-13 code-review
 > findings against the then-uncommitted scan-panel and AI-assistant changes. **Its latest section
-> is *Status check (2026-09-20)*: read that first** — what the scan-pipeline session changed and
-> measured, the five items left open (two parked by the maintainer), and the fact that all of it
-> was uncommitted when written.
+> is *Status check (2026-09-22)*: read that first** — it closes item 3 of the 2026-09-20 check
+> (the `tls-connect` tail was paying a reverse DNS lookup inside its own deadline, not a TLS 1.2
+> problem), lists what stays open, and carries a one-line upstream note for zoxweb-core.
 
 Assessment tooling for what a network endpoint exposes — TLS posture, **post-quantum
 readiness**, and running services — plus a Swing front-end and an AI-assistant layer.

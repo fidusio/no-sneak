@@ -237,11 +237,17 @@ public class PortScanCallbackTest {
         java.util.Arrays.fill(big, (byte) 'A');
         big[0] = '\r';
         big[1] = '\n';
-        big[2] = 0x01;
+        big[PortScanCallback.BANNER_CAP + 100] = 0x01; // binary starts past the cap: never even stored
         cb.accept(ByteBuffer.wrap(big));
         String banner = only().banner();
-        assertTrue(banner.length() <= PortScanCallback.BANNER_CAP, "banner over cap: " + banner.length());
-        assertTrue(banner.chars().allMatch(c -> c == 'A'), "control bytes must be stripped");
+        assertEquals(PortScanCallback.BANNER_CAP - 2, banner.length(), "cap applies, leading CR/LF trimmed");
+        assertTrue(banner.chars().allMatch(c -> c == 'A'));
+
+        // binary inside the cap ends the greeting there (2026-09-22; see cleanBannerEndsAtTheFirstBinaryByte)
+        PortScanCallback cb2 = probe(5, true);
+        cb2.connectedFinished();
+        cb2.accept(ByteBuffer.wrap("hello\r\n\u0001AAAA".getBytes(StandardCharsets.ISO_8859_1)));
+        assertEquals("hello", results.get(1).banner());
     }
 
     @Test
@@ -277,5 +283,17 @@ public class PortScanCallbackTest {
     public void cleanBannerCollapsesLineBreaksAndDropsEmpty() {
         assertEquals("220 mail ready ESMTP", PortScanCallback.cleanBanner("220 mail ready\r\nESMTP\r\n"));
         assertNull(PortScanCallback.cleanBanner("\r\n\r\n"));
+    }
+
+    // 2026-09-22: dropbear sends its binary KEXINIT in the same read as its greeting; the banner
+    // ends where the binary starts, so the packet's printable fragments never reach the report.
+    @Test
+    public void cleanBannerEndsAtTheFirstBinaryByte() {
+        String kexinit = "\u0000\u0000\u00043\u0006\u0014" + "sntrup761x25519-sha512,curve25519-sha256" + "\u0000\u0000";
+        assertEquals("SSH-2.0-dropbear", PortScanCallback.cleanBanner("SSH-2.0-dropbear\r\n" + kexinit));
+        assertNull(PortScanCallback.cleanBanner(kexinit), "a purely binary greeting is no banner");
+        assertEquals("a b", PortScanCallback.cleanBanner("a\tb"), "a tab is text, collapsed like a line break");
+        assertEquals("SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13.19",
+                PortScanCallback.cleanBanner("SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13.19\r\n"));
     }
 }

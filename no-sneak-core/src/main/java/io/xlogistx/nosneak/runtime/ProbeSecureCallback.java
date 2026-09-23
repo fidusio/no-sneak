@@ -10,7 +10,9 @@ import org.zoxweb.shared.net.IPAddress;
 
 import javax.net.ssl.SSLContext;
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.UnknownHostException;
 import java.nio.Buffer;
 import java.nio.ByteBuffer;
 import java.security.KeyManagementException;
@@ -54,12 +56,40 @@ public class ProbeSecureCallback extends TCPSessionCallback {
         this.context = context;
         this.connectionIndex = connectionIndex;
         // The framework uses the SSLContextInfo address as the connect target, so it must be
-        // resolvable (an unresolved address throws UnresolvedAddressException at connect). The
-        // IPAddress ctor resolves while retaining the hostname for SNI. Trust-all
-        // (certValidationEnabled=false) so ordinary RSA + any/untrusted cert handshakes.
+        // resolved (an unresolved address throws UnresolvedAddressException at connect) — and it
+        // must carry a host name, see namedAddress(). Trust-all (certValidationEnabled=false) so
+        // ordinary RSA + any/untrusted cert handshakes.
         setSSLContextInfo(new SSLContextInfo(
                 tlsContext(certValidationEnabled),
-                new InetSocketAddress(address.getInetAddress(), address.getPort())));
+                namedAddress(address.getInetAddress(), address.getPort())));
+    }
+
+    /**
+     * The connect address for the framework: resolved once, with {@code host} pinned as the
+     * {@link InetAddress}'s host name.
+     * <p>
+     * zoxweb mints the engine with {@code createSSLEngine(clientAddress.getHostName(), port)}
+     * ({@code SSLContextInfo.newInstance()}). On an {@code InetAddress} that was resolved from
+     * an IP literal, {@code getHostName()} is a <b>reverse DNS lookup</b> — on the maintainer's
+     * segment that costs 4.6 s for an address without a PTR record, spent between the TCP
+     * connect and the ClientHello, inside this probe's single {@code timeoutSec} window. Against
+     * 10.0.0.8 (TLS 1.2, 22 KB server flight) the handshake then reached ServerKeyExchange
+     * exactly as the 5 s deadline closed the engine, and {@code https-scan} recorded
+     * {@code no-server-header} on a host that answers in 0.5 s (2026-09-22). A name-resolved
+     * target never pays it because the resolver already stored the name on the address.
+     * {@link InetAddress#getByAddress(String, byte[])} stores {@code host} the same way, so
+     * {@code getHostName()} answers from memory for literals and names alike, and the SNI the
+     * engine sends is unchanged (a literal was never a valid server name; a name is kept).
+     * An unresolvable {@code host} yields the same unresolved address the plain constructor
+     * used to, so the connect still fails the same way.
+     */
+    static InetSocketAddress namedAddress(String host, int port) {
+        try {
+            InetAddress resolved = InetAddress.getByName(host);
+            return new InetSocketAddress(InetAddress.getByAddress(host, resolved.getAddress()), port);
+        } catch (UnknownHostException e) {
+            return InetSocketAddress.createUnresolved(host, port);
+        }
     }
 
     /**

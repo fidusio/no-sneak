@@ -1,5 +1,103 @@
 # no-sneak-core v2 — Plan of Action
 
+> ## 2026-09-22 — `tls-connect` paid a reverse DNS lookup inside its own deadline (open item 3 closed)
+>
+> **Symptom (2026-09-20, PENDING-ISSUES item 3):** `https-scan` against 10.0.0.8 recorded
+> `no-server-header` in 9.5 s where every other host took 5.0 s; the host was written up as
+> "TLS-1.2-only", cause not investigated. Reproduced today: deterministic, 9.4–10.1 s, and the
+> tail-only `https-version` probe fails outright on that host (`tls=NONE`, one 5 s timeout) under
+> **both** SunJSSE and BCJSSE, while a plain blocking `SSLSocket` completes the same handshake and
+> `GET` in 0.5 s. TLS 1.2 was a red herring; so was the provider.
+>
+> **Cause, from zoxweb's own driver logs with timestamps kept** (`SSLUtil`, `TCPSessionCallback`,
+> `NIOSocket` loggers on, plus `-Djavax.net.debug=ssl:handshake`): TCP connected at t = 0, "SSL
+> upgrade started" at t = 0, the ClientHello left at **t = 4.7 s**, the server's flight (22 KB —
+> that host requests a client certificate and lists its CAs) was consumed to ServerKeyExchange by
+> t = 5.09 s, and at t = 5.09 s the probe's own `arm()` deadline closed the engine (`Closing
+> outbound of SSLEngine`, the close_notify then reads as `NEED_WRAP` to the worker one step from
+> finishing). The 4.7 s is `SSLContextInfo.newInstance()` → `createSSLEngine(clientAddress
+> .getHostName(), port)`: on an `InetSocketAddress` built from an IP literal, `getHostName()` is a
+> **reverse DNS lookup**, and on this segment an address without a PTR record costs 4.6 s
+> (measured: 10.0.0.8 4613 ms, 10.0.0.1 2566 ms → `XLOGISTX`, xlogistx.io 0 ms because the
+> resolver stored the name on the address). Not a thread race — `NIOSocket` zeroes the key's
+> interest before every dispatch and only the finishing worker restores it, exactly as the
+> maintainer described; the first reading of the log (a second worker) was wrong and is withdrawn.
+> The Bouncy Castle path never paid it: `ProbeContext` hands `PQCSessionConfig` an
+> `InetSocketAddress.createUnresolved(hostname(), port)`, whose `getHostName()` is the string.
+>
+> **Fix (this repo):** `ProbeSecureCallback.namedAddress(host, port)` resolves once and pins the
+> host string as the `InetAddress`'s name via `InetAddress.getByAddress(host, bytes)`, so the
+> framework's `getHostName()` answers from memory for literals and names alike (SNI unchanged: a
+> literal never was a valid server name, a name is kept); an unresolvable host yields the same
+> unresolved address as before. `TlsConnectContextTest` +3: the production constructor's address
+> for `192.0.2.1` (TEST-NET-1, never a PTR) resolves, names itself and answers `getHostName()`
+> inside 1 s — the time bound *is* the pin; a name is kept; an unresolvable host stays unresolved.
+> **Upstream, for the maintainer:** the one-line zoxweb fix is `clientAddress.getHostString()` in
+> `SSLContextInfo.newInstance()` (line 436, zoxweb-core 2.4.0) — same value, no lookup, and it
+> would cover every other client of that constructor. **Applied by the maintainer the same day**
+> and verified against the rebuilt jar: `newInstance()` on an *unpinned* 10.0.0.8 address 4604 ms
+> → 23 ms, 10.0.0.1 → 0 ms; suite 402 / 402; `https-scan` 10.0.0.8 4.4–4.7 s, xlogistx.io 4.1 s.
+> The no-sneak pin stays — it costs nothing and guards the probe against any other caller of
+> `getHostName()`.
+>
+> **The header `GET` is HTTP/1.1 now (maintainer's request, same day).** `https-scan` and
+> `https-version` sent `GET / HTTP/1.0`; 1.0 had been chosen only for a self-delimiting response,
+> which `Connection: close` already gives on 1.1, and 1.1 is what every real client sends — a
+> front-end that treats a 1.0 request differently would have answered unrepresentatively. Both
+> probes and the `PROBE-DEFINITION.md` recipe now send `GET / HTTP/1.1` with the same headers;
+> the two `expect` patterns are unchanged (they match the header block, not the status line).
+> Verified: xlogistx.io `https-server-header` (`NOYFB`) 1.9 s; dbs.xlogistx.io and
+> lax-2.xlogistx.io `https-no-server-header` 1.9–2.0 s — genuine, a raw `curl` shows no `Server:`
+> on either; 10.0.0.8 `https-scan` 4.6 s. Suite 402 / 402.
+>
+> **`/24 -sV` run and one banner fix (same day).** `10.0.0.0/24 -sV -T5 --min-rtt-timeout 200
+> --max-inflight 4096 --up-only --open`: 254 targets, 20 up, **23.5 s** wall (the 2026-09-20
+> `-sV` run was 68.9 s at `-T3`). Real identifications: eleven `OpenSSH_x`/`dropbear` versions,
+> `Microsoft-IIS/10.0`, two VMware authentication daemons (902/912), `NOYFB` on the two xlogistx
+> fronts, HTTPS posture on eight hosts (10.0.0.35's certificate `EXPIRED`), STARTTLS+PQC on the
+> gateway's 25/tcp. The Web Shield was **on** for this run and it shows twice: the nine mail ports
+> read `open` on every host as documented, and — new evidence — the shield's own proxy answered
+> the banner grabs with `421 concurrent connection limit in Avast exceeded (processes:
+> java.exe[100])`, so it also caps this process at 100 concurrent connections; that, plus the
+> all-at-once candidate sweep (open item 2), is the likely reason the `ssh` probe lost on
+> 10.0.0.170 during the scan while identifying `dropbear` every time on its own. Five
+> `ClosedChannelException` traces on stderr are open item 1, unchanged. Report saved outside the
+> repo. One defect it surfaced: dropbear sends its binary KEXINIT in the same read as
+> `SSH-2.0-dropbear`, and `PortScanCallback.cleanBanner` stripped only the unprintable bytes, so
+> the packet's printable fragments (algorithm names, key material) were glued onto the row. The
+> rule is now *the greeting ends at the first binary byte* (CR/LF/TAB stay text); the old test
+> that asserted a mid-greeting control byte is skipped over was asserting the defect and was
+> rewritten. `PortScanCallbackTest` +1 (`cleanBannerEndsAtTheFirstBinaryByte`). Rescan of
+> 10.0.0.170:22 → `ssh  dropbear`. Suite **403 / 403**.
+>
+> **The same `/24 -sV` with the shields off (same day, maintainer switched them off; a watcher
+> fired the scan the moment xlogistx.io presented its Let's Encrypt chain and a printer's 25/tcp
+> refused).** 254 targets, 19 up, **20.3 s**. The difference to the shields-on run is the whole
+> antivirus footprint and nothing else: the nine mail ports are gone from every host but the
+> gateway (10.0.0.1 keeps 25/465/993/995 — a real mail server, its 465 and 995 now grade **B** on
+> a Let's-Encrypt chain, `TRUSTED`); every public chain reads `TRUSTED` with grade **A** (.1, .6,
+> .8, .39, .45); .9 and .12 are `SELF_SIGNED`, .35 `EXPIRED`; `10.0.0.107` no longer answers ARP
+> (19 up, was 20). One thing the shields-on run had **wrong that only the diff reveals**: the
+> gateway's 25/tcp read `STARTTLS_UPGRADED pqc=PQC` — that was the Mail Shield's proxy completing
+> a PQC-hybrid handshake with us, not the server, which negotiates classical and now reads
+> `PQC_CAPABLE`. Rows that changed for a product reason: 10.0.0.170 → `ssh  dropbear` (the banner
+> fix). Rows the sweep still lost under load: 10.0.0.9 (banner fallback, `OpenSSH_7.9p1`) and
+> 10.0.0.12 (nothing) — both identify on every standalone run (`dropbear_2016.74`,
+> `OpenSSH_7.9p1`, sweep and `ssh`-only alike), so this is open item 2 (all candidates at once
+> vs. the daemon's unauthenticated-connection cap), now with a clean measurement: 2 of 13 SSH
+> hosts missed with the shields off, 1 of 13 with them on. Four `ClosedChannelException` traces
+> (item 1). Both reports are in the session scratchpad, not the repo.
+>
+> **Measured after, 10.0.0.8:** `https-version` 2.3–3.0 s ×5 (JVM start included), all
+> `https-no-server-header; done`, complete — that server sends no `Server:` header at all, so the
+> "missing" header was never recoverable; `https-scan` 4.8–5.3 s ×3 (was 9.4–10.1), grade A,
+> `GOOD`/`crl`. xlogistx.io unchanged (`NOYFB`, 4.7 s). Suite **402 / 402 in 36 classes**.
+>
+> **Also seen, not chased:** (a) one CLI run and one `curl` on 10.0.0.8 stalled ~8 s in the
+> handshake before any of this — that server occasionally sits on a ClientHello; (b) BCJSSE 1.0.24
+> on a plain blocking `SSLSocket` times out against xlogistx.io's TLS 1.3 while SunJSSE completes
+> it — the probe path is fine there under both, so it is only an observation.
+
 > ## 2026-09-19 — Faster port + probe scan: adaptive connect timeout, probes streamed from the connect
 >
 > Two changes to `NMapScanner`, prompted by "how can we make the port and probe scan faster".

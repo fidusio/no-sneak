@@ -122,7 +122,7 @@ no reachable terminal (`done`/`fail`) is rejected at load time.
 
 | Probe | Service | Ports | Prio | portScoped | Purpose |
 |---|---|---|---|---|---|
-| `https-scan` | https | 443,8443 | 72 | yes | **Primary TLS assessment**: PQC + cert-chain + validity + revocation + version/cipher/group enumeration, then (2026-09-20) a JSSE `tls-connect` + `GET /` to capture the `Server:` header as `service-version`; a missing or unreadable header records `https-scan; no-server-header` and never fails the probe |
+| `https-scan` | https | 443,8443 | 72 | yes | **Primary TLS assessment**: PQC + cert-chain + validity + revocation + version/cipher/group enumeration, then (2026-09-20) a JSSE `tls-connect` + `GET / HTTP/1.1` (`Connection: close`; was HTTP/1.0 until 2026-09-22) to capture the `Server:` header as `service-version`; a missing or unreadable header records `https-scan; no-server-header` and never fails the probe |
 | `tls-scan` | **tls** | [] (fallback) | 71 | no | Deep TLS assessment on **any** port (nonstandard TLS); labels `tls` to avoid mislabelling non-HTTP TLS |
 | `https-pqc` | https | 443,8443 | 70 | yes | PQC + cert facts; graceful TLS-handshake-failure fallback |
 | `https-version` | https | 443,8443 | 68 | no | Shallow HTTPS `Server:` header over JSSE; nonstandard-port HTTPS detection |

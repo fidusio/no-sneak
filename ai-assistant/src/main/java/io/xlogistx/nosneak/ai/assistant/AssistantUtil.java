@@ -9,16 +9,24 @@ import java.awt.*;
 
 public class AssistantUtil {
 
-    public static JComponent chatBubble(NVGenericMap response, boolean user, Integer latency, Integer tokens) {
-        return chatBubble(AssistantMDDecoder.SINGLETON.decode(response), user, latency, tokens);
+    public static JComponent chatBubble(NVGenericMap response, boolean user, Integer latency,
+                                        Integer inTokens, Integer outTokens) {
+        return chatBubble(AssistantMDDecoder.SINGLETON.decode(response), user, latency, inTokens, outTokens);
     }
 
-    public static JComponent chatBubble(String markdown, boolean user, Integer latency, Integer tokens) {
-        return chatBubble(markdown, user, latency, tokens, null);
+    public static JComponent chatBubble(String markdown, boolean user, Integer latency,
+                                        Integer inTokens, Integer outTokens) {
+        return chatBubble(markdown, user, latency, inTokens, outTokens, null);
     }
 
-    public static JComponent chatBubble(String markdown, boolean user, Integer latency, Integer tokens,
-                                        Runnable onSaveAsSkill) {
+    /**
+     * @param latency   milliseconds, or null / 0 to omit
+     * @param inTokens  prompt tokens the provider reported, or null / 0 to omit
+     * @param outTokens completion tokens the provider reported, or null / 0 to omit
+     *                  (2026-09-23: the detail line shows in and out separately, no total)
+     */
+    public static JComponent chatBubble(String markdown, boolean user, Integer latency,
+                                        Integer inTokens, Integer outTokens, Runnable onSaveAsSkill) {
 
         MDViewerPanel mdViewerPanel = new MDViewerPanel();
         mdViewerPanel.setMarkdown(markdown);
@@ -37,7 +45,7 @@ public class AssistantUtil {
 
         Bubble bubble = new Bubble(bg);
         bubble.add(pane, BorderLayout.CENTER);
-        String detail = user ? null : detailLine(latency, tokens);
+        String detail = user ? null : detailLine(latency, inTokens, outTokens);
         if (detail != null || (!user && onSaveAsSkill != null)) {
             JPanel south = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
             south.setOpaque(false);
@@ -91,12 +99,18 @@ public class AssistantUtil {
         if (!selected) pane.select(0, 0);
     }
 
-    private static String detailLine(Integer latency, Integer tokens) {
+    /** {@code 120 ms · 57 in / 203 out tokens}; a missing or zero part is left out, all missing → null. */
+    static String detailLine(Integer latency, Integer inTokens, Integer outTokens) {
         StringBuilder sb = new StringBuilder();
         if (latency != null && latency > 0) sb.append(latency).append(" ms");
-        if (tokens != null && tokens > 0) {
+        boolean in = inTokens != null && inTokens > 0;
+        boolean out = outTokens != null && outTokens > 0;
+        if (in || out) {
             if (!sb.isEmpty()) sb.append(" · ");
-            sb.append(tokens).append(" tokens");
+            if (in) sb.append(inTokens).append(" in");
+            if (in && out) sb.append(" / ");
+            if (out) sb.append(outTokens).append(" out");
+            sb.append(" tokens");
         }
         return sb.isEmpty() ? null : sb.toString();
     }

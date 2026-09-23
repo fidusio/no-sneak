@@ -14,6 +14,8 @@ import org.zoxweb.server.task.TaskUtil;
 import org.zoxweb.shared.security.APIKey;
 import org.zoxweb.shared.task.ConsumerCallback;
 import org.zoxweb.shared.util.NVGenericMap;
+import org.zoxweb.shared.filters.ReplacementFilter;
+import org.zoxweb.shared.filters.ValueFilter;
 import org.zoxweb.shared.util.SUS;
 
 import java.io.IOException;
@@ -30,6 +32,23 @@ public class AIAPIProvider implements AIProvider {
     private final AIAPIBuilder.AIAPIType type;
     private AIAPI api;
     private final ModelCatalog modelCatalog;
+
+    /**
+     * The model name the wire wants. Gemini's OpenAI-compatible model listing returns ids as
+     * {@code models/gemini-2.0-flash} while its chat calls take the bare name, so a catalog entry
+     * picked in a combo went out as {@code models/…} and failed (found 2026-09-22: the first
+     * pick in a session happened to be a bare id, every later one carried the prefix). zoxweb's
+     * {@link ReplacementFilter} strips it; every other provider's ids have no prefix and pass
+     * through unchanged. Applied where the catalog is stored (so combos, counts and the default
+     * model all see bare names) <b>and</b> where a request leaves for the wire, so a chat saved
+     * with a prefixed model before this fix still sends correctly.
+     */
+    public static final ValueFilter<String, String> MODEL_NAME = new ReplacementFilter("models/", "");
+
+    /** {@link #MODEL_NAME} applied null-safely: a blank id stays as it is. */
+    public static String modelName(String modelID) {
+        return SUS.isEmpty(modelID) ? modelID : MODEL_NAME.validate(modelID);
+    }
 
     public AIAPIProvider(AIProviderConfig config, APIKey<String> key, AIAPIBuilder.AIAPIType type) {
         this.config = config;
@@ -108,7 +127,7 @@ public class AIAPIProvider implements AIProvider {
         try {
             int maxTokens = (req.getMaxTokens() != null) ? req.getMaxTokens() : 1024;
 
-            String res = bound().completion(req.getModel(), req.getContent(), maxTokens, skill);
+            String res = bound().completion(modelName(req.getModel()), req.getContent(), maxTokens, skill);
             response.setContent(res);
 
         } catch (IOException e) {
@@ -121,14 +140,14 @@ public class AIAPIProvider implements AIProvider {
     @Override
     public void asyncSend(AIRequest req, String skill, ConsumerCallback<NVGenericMap> callback) throws AIException {
         int maxTokens = (req.getMaxTokens() != null) ? req.getMaxTokens() : 1024;
-        bound().asyncCompletion(callback, req.getModel(), req.getContent(), maxTokens, skill);
+        bound().asyncCompletion(callback, modelName(req.getModel()), req.getContent(), maxTokens, skill);
     }
 
     @Override
     public void asyncImageSend(AIRequest req, String skill, ConsumerCallback<NVGenericMap> callback, UByteArrayInputStream... images) throws AIException {
         int maxTokens = (req.getMaxTokens() != null) ? req.getMaxTokens() : 1024;
 
-        bound().asyncVisionCompletion(callback, req.getModel(), AIAPI.toSkillPrompt(req.getContent(), skill),
+        bound().asyncVisionCompletion(callback, modelName(req.getModel()), AIAPI.toSkillPrompt(req.getContent(), skill),
                 maxTokens, IMAGE_TYPE, images);
     }
 
@@ -195,6 +214,10 @@ public class AIAPIProvider implements AIProvider {
                 throw new AIException(AIException.Kind.PROVIDER, e);
             }
 
+            // bare names only: see MODEL_NAME
+            if (newList != null) {
+                for (int i = 0; i < newList.length; i++) newList[i] = modelName(newList[i]);
+            }
             this.models = newList;
             return newList;
         }

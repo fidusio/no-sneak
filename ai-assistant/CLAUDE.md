@@ -56,6 +56,16 @@ has chosen to use.
 >   `selectProvider` resolves a legacy provider *name* on an older chat back to an id.
 >   `fillModels` filters the catalog through **`ModelFilter`** (root package, Swing-free), which
 >   is where the old `PanelSupport.isChatModel` marker list moved.
+> - **Model ids are stored and sent as bare names (2026-09-22).** Gemini's OpenAI-compatible
+>   `/models` listing returns `models/gemini-2.0-flash` while its chat calls take
+>   `gemini-2.0-flash`, so a catalog entry picked in any combo went to the wire with the prefix
+>   and failed — the maintainer saw it as "the first selection works, every other one is null".
+>   `AIAPIProvider.MODEL_NAME` is a zoxweb `ReplacementFilter("models/", "")`, applied by
+>   `modelName(id)` in **two** places: `ModelCatalog.refresh()` strips every discovered id (so
+>   combos, the row's model count and the provider's default model all see bare names), and the
+>   three send paths (`send` / `asyncSend` / `asyncImageSend`) strip `req.getModel()` again so a
+>   chat saved with a prefixed model before the fix still sends. Every other provider's ids carry
+>   no prefix and pass through untouched. Pinned by `ModelNameTest` (4).
 > - **The model list has a user filter, in the chat header.** `ModelFilter` wraps two zoxweb
 >   `TokenMatcher`s (case-insensitive) — includes and excludes — over a free-text pattern list the
 >   subject types into `modelFilterField`, the small search box beside the chat's model combo.
@@ -478,7 +488,7 @@ Header shows the prompt title plus a compact binding:
 
 A prompt may be bound to one model or several (see New prompt). One question, one turn:
 
-- **One model** → the answer renders inline under the assistant avatar, with `latency · tokens`
+- **One model** → the answer renders inline under the assistant avatar, with `latency · in / out tokens` (2026-09-23: `120 ms · 57 in / 203 out tokens`)
   beneath it.
 - **Several models** → do **not** cram side-by-side columns. Instead:
   1. A small **comparison strip**: one compact card per model showing only `model name` and
@@ -866,7 +876,10 @@ wire formats. `decode(payload)` runs, in order:
 `totalTokenCount`, else summing the prompt/input/completion/output/candidates spellings; `0`
 when absent.
 
-**Tests.** The module runs **60 green tests**: `AssistantMDDecoderTest` (29) renders through
+**Tests.** The module runs **68 green tests** (2026-09-23, through the hand-rolled launcher in
+`.claude/tools/` with the toolkit jars added to its classpath — surefire's JUnit provider is not
+cached on the Windows box, and the Swing tests need a display, so no `-Djava.awt.headless`):
+`ModelNameTest` (4) pins the `models/` prefix strip; `DetailLineTest` (3) the bubble's `latency · in / out tokens` line; `AssistantMDDecoderTest` (29) renders through
 commonmark and asserts on the resulting HTML rather than on strings, so it checks the fix actually
 renders — plus fence fixtures in `src/test/resources/fence/`; `MDFileViewerTest` (7) covers the
 editor's commit/revert/dirty contract; `AssistantContextTest` (7) guards the canonical caches, the

@@ -29,7 +29,7 @@ public class ChatBubbleSaveAsSkillTest {
     @Test
     public void assistantBubbleWithHandlerCarriesClickableAction() {
         AtomicInteger runs = new AtomicInteger();
-        JComponent bubble = AssistantUtil.chatBubble("**answer**", false, 120, 42, runs::incrementAndGet);
+        JComponent bubble = AssistantUtil.chatBubble("**answer**", false, 120, 10, 32, runs::incrementAndGet);
 
         JButton action = findSaveAsSkill(bubble);
         assertNotNull(action, "an assistant bubble built with a handler must carry the action");
@@ -40,20 +40,20 @@ public class ChatBubbleSaveAsSkillTest {
 
     @Test
     public void assistantBubbleWithoutHandlerHasNoAction() {
-        JComponent bubble = AssistantUtil.chatBubble("**answer**", false, 120, 42);
+        JComponent bubble = AssistantUtil.chatBubble("**answer**", false, 120, 10, 32);
         assertNull(findSaveAsSkill(bubble));
     }
 
     @Test
     public void userBubbleNeverCarriesTheAction() {
-        JComponent bubble = AssistantUtil.chatBubble("my prompt", true, null, null, () -> {
+        JComponent bubble = AssistantUtil.chatBubble("my prompt", true, null, null, null, () -> {
         });
         assertNull(findSaveAsSkill(bubble), "user bubbles must not offer save-as-skill");
     }
 
     @Test
     public void actionAppearsEvenWithoutLatencyAndTokens() {
-        JComponent bubble = AssistantUtil.chatBubble("**answer**", false, null, null, () -> {
+        JComponent bubble = AssistantUtil.chatBubble("**answer**", false, null, null, null, () -> {
         });
         assertNotNull(findSaveAsSkill(bubble),
                 "a response with no latency/token detail still needs the action row");

@@ -237,7 +237,7 @@ public class ChatBubbleTest {
     private static JComponent buildTranscript() {
         JPanel transcript = new JPanel(new MigLayout("wrap 1, insets 14, gapy 10", "[grow]"));
 
-        transcript.add(AssistantUtil.chatBubble(PROMPT, true, null, null), "growx, wmax 78%, alignx trailing");
+        transcript.add(AssistantUtil.chatBubble(PROMPT, true, null, null, null), "growx, wmax 78%, alignx trailing");
         transcript.add(renderResponse(), "growx, wmax 92%, alignx leading");
 
         JScrollPane scroll = new JScrollPane(transcript,
@@ -248,6 +248,6 @@ public class ChatBubbleTest {
     }
 
     private static JComponent renderResponse() {
-        return AssistantUtil.chatBubble(raw ? RESPONSE : AssistantMDDecoder.toMarkdown(RESPONSE), false, null, null);
+        return AssistantUtil.chatBubble(raw ? RESPONSE : AssistantMDDecoder.toMarkdown(RESPONSE), false, null, null, null);
     }
 }

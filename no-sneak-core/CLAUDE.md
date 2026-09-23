@@ -16,9 +16,15 @@ this module.
 > streamed probes on a priority lane, a gate that honours its caps, first-positive discovery,
 > `--up-only`; `ParallelJoin` is now `CountdownMonitor`; the BCJSSE pin is gone; gated probes run
 > OCSP/CRL again (they silently never had); `postgres-db` no longer claims SSH servers;
-> `https-scan` also reads the `Server:` header. 399 tests / 36 classes green. Design: *The scan
-> pipeline* below; record: `PLAN.md` 2026-09-19/20; open items: repo-root `PENDING-ISSUES.md` →
-> *Status check (2026-09-20)*.
+> `https-scan` also reads the `Server:` header. Design: *The scan pipeline* below; record:
+> `PLAN.md` 2026-09-19/20; open items: repo-root `PENDING-ISSUES.md` → *Status check (2026-09-20)*.
+>
+> **Status (2026-09-22): the `tls-connect` tail no longer reverse-resolves its target.** The
+> 2026-09-20 "TLS-1.2-only host" timeout was a 4.6 s reverse DNS lookup inside the probe's own
+> deadline (zoxweb's `SSLContextInfo.newInstance()` calls `getHostName()` on the connect address);
+> `ProbeSecureCallback.namedAddress` pins the host string on the resolved address so the lookup
+> never happens. `https-scan` on that host 9.4–10.1 s → 4.8–5.3 s; the header `GET` is HTTP/1.1; a banner ends at its first binary byte (dropbear). 403 tests / 36 classes green.
+> Record: `PLAN.md` 2026-09-22; open items: `PENDING-ISSUES.md` → *Status check (2026-09-22)*.
 
 ---
 
@@ -159,7 +165,7 @@ io.xlogistx.nosneak
 └── tools/                  DMTool · NoSneakUtil
 
 src/main/resources/probes/   18 bundled + 2 unbundled probe definitions
-src/test/java/io/xlogistx/nosneak/   399 tests in 36 classes, all green (2026-09-20) + NoSneakNIOHTTPServer harness. Pure and socket-free except
+src/test/java/io/xlogistx/nosneak/   403 tests in 36 classes, all green (2026-09-22) + NoSneakNIOHTTPServer harness. Pure and socket-free except
                                     nmap/NMapScannerEndToEndTest (a loopback listener) and nmap/ScanGateThroughputTest
                                     (measures the gate on real pools); model/ProbeDefinitionGuideTest pins
                                     PROBE-DEFINITION.md to the loader
@@ -200,6 +206,10 @@ name because the published `bctls-jdk18on` 1.86 could not create an `SSLEngine` 
 repository's `bctls` 1.85. `ProbeSecureCallback.tlsContext` takes the JCA default (BCJSSE under
 `SecUtil`'s registration); `TlsConnectContextTest` pins that it mints an engine and names the
 provider on failure. If a broken `bctls` ever returns to the classpath, that test is where it shows.
+The same test pins (2026-09-22) that the connect address the callback hands the framework carries
+its host name — zoxweb mints the engine from `getHostName()`, which on a bare IP literal is a
+reverse DNS lookup that cost this probe its whole deadline on the maintainer's segment. Never
+build that address from `new InetSocketAddress(String, int)` again; go through `namedAddress`.
 
 **Running the suite on the Windows box:** `mvn test` cannot (no surefire provider cached). Either
 IntelliJ per class, or the hand-rolled JUnit launcher in `.claude/tools/` (`RunTests.java` +

@@ -259,9 +259,25 @@ public class PortScanCallback extends TCPSessionCallback {
         }
     }
 
-    /** Trim, collapse CR/LF runs to a single space, drop anything unprintable. */
+    /**
+     * The greeting is the printable prefix: cut at the first byte that is not printable ASCII,
+     * CR, LF or TAB, then collapse CR/LF runs to one space and trim. A server that follows its
+     * text greeting with a binary packet in the same read — dropbear sends its KEXINIT right
+     * behind {@code SSH-2.0-dropbear}, OpenSSH waits — used to leave the packet's printable
+     * fragments (algorithm names, key material) glued onto the banner (seen 2026-09-22 on a
+     * {@code /24 -sV}). Dropping only the unprintable bytes kept those fragments; the greeting
+     * is over once binary starts.
+     */
     static String cleanBanner(String raw) {
-        String s = raw.replaceAll("[\\r\\n]+", " ").replaceAll("[^\\x20-\\x7E]", "").trim();
+        int end = raw.length();
+        for (int i = 0; i < raw.length(); i++) {
+            char c = raw.charAt(i);
+            if ((c < 0x20 || c > 0x7E) && c != '\r' && c != '\n' && c != '\t') {
+                end = i;
+                break;
+            }
+        }
+        String s = raw.substring(0, end).replaceAll("[\\r\\n\\t]+", " ").trim();
         return s.isEmpty() ? null : s;
     }
 }

@@ -512,7 +512,7 @@ while keeping the result).
   "states": {
     "connect": { "action": "tls-connect", "on": { "connected": "get", "error": "fail", "timeout": "fail" } },
     "get":     { "action": "send",
-                 "data": "text:GET / HTTP/1.0\r\nHost: {probe.hostname}\r\nUser-Agent: no-sneak\r\nConnection: close\r\n\r\n",
+                 "data": "text:GET / HTTP/1.1\r\nHost: {probe.hostname}\r\nUser-Agent: no-sneak\r\nConnection: close\r\n\r\n",
                  "on": { "sent": "resp", "error": "fail" } },
     "resp":    { "action": "expect",
                  "patterns": [

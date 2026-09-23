@@ -37,7 +37,8 @@ public class AIChatRoundTripTest {
         AIResponse resp = new AIResponse();
         resp.setModel(MODEL);
         resp.setContent("4");
-        resp.setTokens(3);
+        resp.setInTokens(1);
+        resp.setOutTokens(2);
         resp.setLatency(120L);
         turn.setAIResponse(resp);
 
@@ -160,14 +161,18 @@ public class AIChatRoundTripTest {
         resp.setContent("hello");
         resp.setCorrelationID("corr-1");
         resp.setProviderSessionID("sess-9");
-        resp.setTokens(7);
+        resp.setInTokens(2);
+        resp.setOutTokens(3);
+//        resp.setTokens(7);
         resp.setLatency(88L);
 
         AIResponse rResp = GSONUtil.fromJSONDefault(GSONUtil.toJSONDefault(resp, false), AIResponse.class);
         assertEquals("hello", rResp.getContent());
         assertEquals("corr-1", rResp.getCorrelationID());
         assertEquals("sess-9", rResp.getProviderSessionID());
-        assertEquals(7, rResp.getTokens());
+        assertEquals(2, rResp.getInTokens());
+        assertEquals(3, rResp.getOutTokens());
+        assertEquals(5, rResp.getTokens(), "total is in + out since 2026-09-23");
         assertEquals(88L, rResp.getLatency());
     }
 

@@ -64,10 +64,14 @@ AIChat  ──has many──▶  AIMessage  ──is──▶  { AIRequest, AIRe
   `providerSessionID`. There is **no `skillsPrompt` field** — the skill text travels as the
   separate `String skill` argument on `AIProvider.send`/`asyncSend`, so it is never persisted
   with the request. Per-call tuning can ride the inherited `properties` bag.
-- **`AIResponse`** — `model`, `content`, `correlationID`, `providerSessionID`, `tokens`,
-  `latency`. `getTokens()` / `getLatency()` are **null-safe**: an unset field reads `0` rather
-  than throwing on unbox, which is what makes a response persisted before those were populated
-  still readable.
+- **`AIResponse`** — `model`, `content`, `correlationID`, `providerSessionID`, **`inTokens`,
+  `outTokens`** (2026-09-23: the single `tokens` param is gone; `getTokens()` is now their sum,
+  `AssistantCallback` fills them from the payload's `prompt_tokens` / `completion_tokens` or
+  their Anthropic / Gemini spellings), `latency`. The getters are **null-safe by construction**:
+  an integer param the row never carried reads its attribute default, `0`, so a response
+  persisted before a field existed stays readable (verified against a JSON row holding only the
+  legacy `tokens` key: in 0, out 0, no throw). A legacy `tokens` value is not migrated — old
+  turns show 0 tokens.
 - **`AISkill`** — `content` (the instruction text) plus **`skillType`**; `name` and
   `description` are the inherited `NVEntity` fields. `SkillType` is a `GetName` enum —
   `MD_SKILL` ("md skill") / `PROMPT_SKILL` ("prompt skill") — and the two mean different things
@@ -117,14 +121,17 @@ drops the nested entity on JSON round-trip.
 
 ### Two things to know before adding a field or reading a timestamp
 
-- **Adding a param breaks existing stores.** H2P's `ensureTable` is `CREATE TABLE IF NOT
-  EXISTS` with no `ALTER TABLE … ADD COLUMN` anywhere, so a table created before a param
-  existed never gains its column, while the generated INSERT/UPDATE names it — saves fail
-  against the old store. `AISkill.skillType` hit exactly this. Adding a param means deleting
-  the dev store (or adding the column by hand); a fresh `@TempDir` store hides the problem in
-  tests. A whole **new entity** is fine — `AIProviderConfig` got its own table, which
-  `CREATE TABLE IF NOT EXISTS` creates on first use against an existing store. It is only
-  *new params on an existing entity* that break.
+- **Adding a param no longer breaks existing stores (re-checked 2026-09-23).** `h2p-datastore`
+  now runs an additive schema sync on first touch of each type (`H2PDataStore.ensureTable` →
+  `syncExistingTable`): an **added** attribute gets `ALTER TABLE ADD COLUMN IF NOT EXISTS`
+  (nullable, so old rows read the attribute default); a **deleted** attribute leaves its column
+  behind as dead weight, never dropped, ignored on read and write; a **type change** of an
+  existing column is rejected with an exception (migrate via dump/restore or revert). The jar
+  on the app's classpath (`org.zoxweb:h2p-datastore:1.0.0`, installed 2026-09-23) carries it.
+  The `AIResponse` `tokens` → `inTokens`/`outTokens` change is exactly the added-plus-deleted
+  case and needs no store reset. What is still true: a fresh `@TempDir` store in tests never
+  exercises the sync path, and a type change is a migration, not an edit. (History: before the
+  sync existed, `AISkill.skillType` did break the dev store this way.)
   > **This is a property of the H2P store, not of this module**, so it governs every
   > `PropertyDAO` the app persists — including `no-sneak-core`'s `ProbeContent` / `ReportContent`
   > (`io.xlogistx.nosneak.data`), which `no-sneak-app`'s `Session` writes to the same store.

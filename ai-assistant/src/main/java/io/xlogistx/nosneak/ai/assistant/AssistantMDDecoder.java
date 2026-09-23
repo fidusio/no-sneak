@@ -368,6 +368,35 @@ public class AssistantMDDecoder implements DataDecoder<NVGenericMap, String> {
         return (in == null ? 0 : in) + (out == null ? 0 : out);
     }
 
+
+    static int inTokens(NVGenericMap payload) {
+        if (payload == null)
+            return 0;
+
+        NVGenericMap usage = (payload.get("usage") instanceof NVGenericMap u) ? u
+                : (payload.get("usageMetadata") instanceof NVGenericMap m) ? m
+                : null;
+        if (usage == null)
+            return 0;
+
+        Integer in = intValue(usage, "prompt_tokens", "input_tokens", "promptTokenCount");
+        return (in == null ? 0 : in);
+    }
+
+    static int outTokens(NVGenericMap payload) {
+        if (payload == null)
+            return 0;
+
+        NVGenericMap usage = (payload.get("usage") instanceof NVGenericMap u) ? u
+                : (payload.get("usageMetadata") instanceof NVGenericMap m) ? m
+                : null;
+        if (usage == null)
+            return 0;
+
+        Integer out = intValue(usage, "completion_tokens", "output_tokens", "candidatesTokenCount");
+        return (out == null ? 0 : out);
+    }
+
     private static Integer intValue(NVGenericMap map, String... names) {
         for (String name : names) {
             GetNameValue<?> gnv = map.get(name);

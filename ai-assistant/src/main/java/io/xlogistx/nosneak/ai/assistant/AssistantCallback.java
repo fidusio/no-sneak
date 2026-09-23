@@ -34,7 +34,8 @@ public class AssistantCallback implements ConsumerCallback<NVGenericMap> {
             response = new AIResponse();
             response.setContent(AssistantMDDecoder.SINGLETON.decode(payload));
             response.setModel(message.getAIRequest().getModel());
-            response.setTokens(AssistantMDDecoder.tokens(payload));
+            response.setInTokens(AssistantMDDecoder.inTokens(payload));
+            response.setOutTokens(AssistantMDDecoder.outTokens(payload));
             response.setLatency(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start));
             message.setAIResponse(response);
         } catch (Exception e) {

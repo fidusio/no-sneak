@@ -13,7 +13,9 @@ public class AIResponse extends PropertyDAO {
         CONTENT(NVConfigManager.createNVConfig("content", "the content the ai sends back", "Content", false, true, String.class)),
         CORRELATION_ID(NVConfigManager.createNVConfig("correlation_id", "id to connect response with request", "CorrelationID", false, true, String.class)),
         PROVIDER_SESSION_ID(NVConfigManager.createNVConfig("provider_session_id", "id for stateful ai for context", "ProviderSessionID", false, true, String.class)),
-        TOKENS(NVConfigManager.createNVConfig("tokens", "number of tokens used", "Tokens", false, true, Integer.class)),
+        //TOKENS(NVConfigManager.createNVConfig("tokens", "number of tokens used", "Tokens", false, true, Integer.class)),
+        IN_TOKENS(NVConfigManager.createNVConfig("in_tokens", "number of input tokens", "InTokens", false, true, Integer.class)),
+        OUT_TOKENS(NVConfigManager.createNVConfig("out_tokens", "number of output tokens", "OutTokens", false, true, Integer.class)),
         LATENCY(NVConfigManager.createNVConfig("latency", "the time taken for the request", "Latency", false, true, Long.class));
 
         private final NVConfig nvc;
@@ -77,13 +79,26 @@ public class AIResponse extends PropertyDAO {
      * usage block.
      */
     public int getTokens() {
-        Integer tokens = lookupValue(Param.TOKENS);
-        return tokens == null ? 0 : tokens;
+
+        return getInTokens() + getOutTokens();
     }
 
-    public void setTokens(int tokens) {
-        setValue(Param.TOKENS, tokens);
+    public int getInTokens(){
+        return lookupValue(Param.IN_TOKENS);
     }
+    public int getOutTokens(){
+        return lookupValue(Param.OUT_TOKENS);
+    }
+    public void setInTokens(int tokens){
+        setValue(Param.IN_TOKENS, tokens);
+    }
+    public void setOutTokens(int tokens){
+        setValue(Param.OUT_TOKENS, tokens);
+    }
+
+//    public void setTokens(int tokens) {
+//        setValue(Param.TOKENS, tokens);
+//    }
 
     /**
      * Milliseconds from dispatch to reply, or 0 when unset (same null-safety as

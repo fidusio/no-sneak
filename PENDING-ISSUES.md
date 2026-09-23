@@ -315,8 +315,10 @@ changes have no tests.
    ~18 connections to one sshd plus the port scan's banner grab — and OpenSSH `MaxStartups 10:30:100`
    drops past ten, so the tier-1 `ssh` probe can lose to a fallback (seen on 10.0.0.8/.12 before the
    postgres fix). Proposal: run tier 2 only if tier 1 yields nothing. Not started.
-3. `https-scan`'s header tail hit its timeout on a TLS-1.2-only host (10.0.0.8: `no-server-header`
-   in 9.5 s vs 5.0 s elsewhere). Posture delivered, header missing; cause not investigated.
+3. ~~`https-scan`'s header tail hit its timeout on a TLS-1.2-only host (10.0.0.8: `no-server-header`
+   in 9.5 s vs 5.0 s elsewhere). Posture delivered, header missing; cause not investigated.~~
+   **Closed 2026-09-22** — a reverse DNS lookup inside the tail's deadline, not TLS 1.2; see the
+   *Status check (2026-09-22)* below.
 4. **Declined, do not reopen:** an antivirus/interception-proxy detection warning (Avast Mail Shield
    made 25/110/119/143/465/563/587/993/995 read `open` on every host). Scan with the shield off.
 5. Unchanged from the matrix below: CI runner (maintainer's), M1/M9 (need a Mac), N3 (IPv6 unicast
@@ -326,6 +328,72 @@ changes have no tests.
 its TLS proxy fakes `UNTRUSTED_ROOT`; with Avast off, Windows Firewall stealth mode turns the
 scanning host's own closed ports into `filtered`. Every host on the segment drops rather than
 resets, so nearly every port pays the full adaptive deadline.
+
+## Status check (2026-09-22, Windows dev box) — item 3 closed, one upstream note for zoxweb
+
+Short session on the same box; everything from 2026-09-20 was committed as `b327232` before it
+started. One code change, three new tests, uncommitted at the time of writing (maintainer commits).
+
+**Item 3 was never about TLS 1.2.** The `tls-connect` tail builds the framework's connect address
+from the target string, and zoxweb's `SSLContextInfo.newInstance()` mints the engine with
+`clientAddress.getHostName()` — a **reverse DNS lookup** when the address came from an IP literal.
+On this segment an address without a PTR record costs 4.6 s, paid between the TCP connect and
+the ClientHello, inside the probe's one 5 s `arm()` window; the handshake then ran out of time
+one step from finishing. Name targets never paid it (the resolver stores the name), which is why
+xlogistx.io was fine. Full record with the driver-log timeline: `no-sneak-core/PLAN.md` →
+2026-09-22. Fix: `ProbeSecureCallback.namedAddress` pins the host string on the resolved
+address (`InetAddress.getByAddress`), pinned by `TlsConnectContextTest` (+3). Measured:
+`https-scan` on 10.0.0.8 9.4–10.1 s → **4.8–5.3 s**, tail alone 2.3–3.0 s, all complete; the host
+sends no `Server:` header at all, so `no-server-header` is the *right* answer there. Suite
+**402 / 402**. A first reading of the log as a two-worker race in `NIOSocket` was wrong and was
+withdrawn after the maintainer pushed back — the key's interest is zeroed before every dispatch
+and only the finishing worker restores it; the "second thread" was the probe's own timeout.
+
+**Later the same day:** the header `GET` moved to HTTP/1.1 (maintainer's request); a `/24 -sV`
+run (20 up, 23.5 s at `-T5`) surfaced one banner defect, fixed — dropbear's binary KEXINIT arrives
+in the same read as its greeting and its printable fragments were glued onto the row; the greeting
+now ends at the first binary byte (`PortScanCallback.cleanBanner`, `PortScanCallbackTest` +1).
+Suite **403 / 403**. Record: `no-sneak-core/PLAN.md` → 2026-09-22. The Web Shield was on for that
+run and its proxy caps this process at **100 concurrent connections** (it says so in the mail-port
+banners: `421 concurrent connection limit in Avast exceeded`), which is a second reason, besides
+the fake open ports, to scan with it off.
+
+**ai-assistant, same day:** the maintainer found the model-selection defect ("the first selection
+is correct, any other selection is null"): Gemini's OpenAI-compatible model listing returns
+`models/<name>` ids, its chat calls take `<name>`, and the prefixed id went to the wire as picked.
+`AIAPIProvider.MODEL_NAME` (zoxweb `ReplacementFilter("models/", "")`) now strips it where the
+catalog is stored and on all three send paths, so chats saved with the prefix still work.
+`ModelNameTest` (+4); module suite **65 / 65**. Note zoxweb's `FilterType` has no such constant
+and `TokenFilter` keeps the part *before* a separator, so neither fitted; `ReplacementFilter`
+already existed and needed no zoxweb change.
+
+**Open, in full:**
+1. Unchanged — parked: the sibling TCP-ping aborts in `discoverHost` (harmless
+   `ClosedChannelException` noise; five traces on the `/24 -sV` run).
+2. Design question, now measured: tier 2 only after tier 1 fails. On the shields-off `/24 -sV`
+   (19 up, 20.3 s) the sweep lost the `ssh` verdict on 2 of 13 SSH hosts (10.0.0.9 fell back to
+   its banner, 10.0.0.12 got nothing); both identify on every standalone run, sweep or `ssh`
+   alone (`OpenSSH_7.9p1`, `dropbear_2016.74`). Load-only, every time. Still the maintainer's call.
+3. Closed (above).
+4. Unchanged — declined, do not reopen: AV interception heuristic.
+5. Unchanged: CI runner, M1/M9, N3, P17. App backlog in `no-sneak-app/CLAUDE.md`.
+6. **Upstream fix applied by the maintainer, same day, verified here:** zoxweb-core 2.4.0
+   `SSLContextInfo.newInstance()` line 436 now calls `clientAddress.getHostString()` (JDK 7+,
+   never a lookup). The rebuilt jar (installed 08:06) measured on *unpinned* bare-IP addresses:
+   `newInstance()` 10.0.0.8 4604 ms → **23 ms**, 10.0.0.1 → 0 ms; no-sneak suite 402 / 402 against
+   it; live `https-scan` on 10.0.0.8 4.4–4.7 s, xlogistx.io 4.1 s. The zoxweb change was
+   uncommitted in that repo when this was written. no-sneak's own `namedAddress` pin stays as
+   belt and braces. `NIOSocket` line 272 still calls `getHostName()` on a resolver path; not on
+   this probe's route, not measured.
+7. **Observations, not chased:** 10.0.0.8 sits on the *first* connection after a quiet spell
+   (seen from `curl` 8 s, and twice from the CLI as the first run of a series, before and after
+   the fix; back-to-back runs never stall). After a forced 120 s idle, a plain `openssl s_client`
+   handshake — no Java, no client-side lookup — took 2.4 s where a warm one is well under a
+   second, and the CLI right after it was clean. That points at the server doing its own
+   per-connection work (a reverse lookup of the client is the usual suspect); server-side, not
+   ours. And BCJSSE 1.0.24 on a plain blocking
+   `SSLSocket` times out against xlogistx.io's TLS 1.3 while SunJSSE completes it — the probe
+   path succeeds there under both providers, so nothing in the product is affected today.
 
 ## Priority matrix (2026-09-11) — discovery closed out; port detection and protocol identification next
 

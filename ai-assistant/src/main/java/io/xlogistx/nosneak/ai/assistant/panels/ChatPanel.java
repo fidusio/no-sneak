@@ -1,18 +1,13 @@
 package io.xlogistx.nosneak.ai.assistant.panels;
 
-import io.xlogistx.gui.BackgroundTask;
-import io.xlogistx.gui.CaptureArea;
-import io.xlogistx.gui.CardStack;
-import io.xlogistx.gui.GUIUtil;
-import io.xlogistx.gui.IconUtil;
-import io.xlogistx.gui.PanelBuilder;
+import io.xlogistx.gui.*;
 import io.xlogistx.nosneak.ai.AIProvider;
 import io.xlogistx.nosneak.ai.assistant.AssistantCallback;
 import io.xlogistx.nosneak.ai.assistant.AssistantContext;
 import io.xlogistx.nosneak.ai.model.*;
 import net.miginfocom.swing.MigLayout;
-import org.zoxweb.shared.security.AccessSecurityException;
 import org.zoxweb.server.io.UByteArrayInputStream;
+import org.zoxweb.shared.security.AccessSecurityException;
 import org.zoxweb.shared.util.NVEntity;
 
 import javax.imageio.ImageIO;
@@ -26,18 +21,13 @@ import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.awt.image.BufferedImage;
 import java.io.File;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.IdentityHashMap;
-import java.util.LinkedHashMap;
+import java.util.*;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 import java.util.function.Consumer;
 
 import static io.xlogistx.nosneak.ai.assistant.AssistantUtil.chatBubble;
 import static io.xlogistx.nosneak.ai.assistant.panels.PanelSupport.fillModels;
+import static io.xlogistx.nosneak.ai.assistant.panels.PanelSupport.showErrorDialog;
 
 public class ChatPanel extends JPanel {
 
@@ -340,12 +330,12 @@ public class ChatPanel extends JPanel {
                 AIMessage m = (AIMessage) e;
                 AIRequest req = m.getAIRequest();
                 if (req != null && req.getContent() != null) {
-                    addMessage(req.getContent(), true, null, null);
+                    addMessage(req.getContent(), true, null, null, null);
                     addAttachments(req);
                 }
                 AIResponse res = m.getAIResponse();
                 if (res != null && res.getContent() != null)
-                    addMessage(res.getContent(), false, latencyOf(res), tokensOf(res));
+                    addMessage(res.getContent(), false, latencyOf(res), inTokensOf(res), outTokensOf(res));
             }
         }
         transcript.revalidate();
@@ -398,7 +388,7 @@ public class ChatPanel extends JPanel {
         // Persist before dispatch: the response callback is the only other save point, so a turn
         // that never gets answered (provider down, logout while in flight) would otherwise vanish.
         BackgroundTask.runCatching(this, null, () -> ctx.saveChat(chat), null);
-        addMessage(text, true, null, null);
+        addMessage(text, true, null, null, null);
         addAttachments(sources);
 
         composer.setText("");
@@ -446,7 +436,7 @@ public class ChatPanel extends JPanel {
                 resp -> {
                     sendButton.setEnabled(true);
                     if (sending == ctx.currentChat() && resp.getContent() != null && !resp.getContent().isEmpty())
-                        addMessage(resp.getContent(), false, latencyOf(resp), tokensOf(resp));
+                        addMessage(resp.getContent(), false, latencyOf(resp), inTokensOf(resp), outTokensOf(resp));
                 }, err -> {
             sendButton.setEnabled(true);
             BackgroundTask.runCatching(this, null, () -> ctx.saveChat(sending), null);
@@ -454,7 +444,7 @@ public class ChatPanel extends JPanel {
                 refreshPrompt();
                 if (composer.getText().isBlank()) composer.setText(text);
             }
-            JOptionPane.showMessageDialog(this, "Send failed: " + err.getMessage(), "Send", JOptionPane.ERROR_MESSAGE);
+            showErrorDialog(this, "Send", "Send failed: " + err.getMessage(), err);
         });
 
         String skill = skillSb.toString();
@@ -530,12 +520,11 @@ public class ChatPanel extends JPanel {
             refreshPrompt();
             if (composer.getText().isBlank()) composer.setText(text);
         }
-        JOptionPane.showMessageDialog(this, "Send failed: " + e.getMessage(),
-                "Send", JOptionPane.ERROR_MESSAGE);
+        showErrorDialog(this, "Send", "Send failed: " + e.getMessage(), e);
     }
 
-    private void addMessage(String response, boolean user, Integer latency, Integer tokens) {
-        JComponent bubble = chatBubble(response, user, latency, tokens,
+    private void addMessage(String response, boolean user, Integer latency, Integer inTokens, Integer outTokens) {
+        JComponent bubble = chatBubble(response, user, latency, inTokens, outTokens,
                 user ? null : () -> {
                     if (onSaveAsSkill != null) onSaveAsSkill.accept(response);
                 });
@@ -608,8 +597,12 @@ public class ChatPanel extends JPanel {
         return (res != null && res.getLatency() > 0) ? (int) res.getLatency() : null;
     }
 
-    private static Integer tokensOf(AIResponse res) {
-        return (res != null && res.getTokens() > 0) ? res.getTokens() : null;
+    private static Integer inTokensOf(AIResponse res) {
+        return (res != null && res.getInTokens() > 0) ? res.getInTokens() : null;
+    }
+
+    private static Integer outTokensOf(AIResponse res) {
+        return (res != null && res.getOutTokens() > 0) ? res.getOutTokens() : null;
     }
 
     private void showAttachPopup() {

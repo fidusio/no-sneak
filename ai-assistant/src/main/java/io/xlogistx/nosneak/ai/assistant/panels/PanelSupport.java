@@ -5,6 +5,7 @@ import io.xlogistx.nosneak.ai.AIProvider;
 import io.xlogistx.nosneak.ai.assistant.AIAPIProvider;
 import io.xlogistx.nosneak.ai.assistant.AssistantContext;
 import io.xlogistx.nosneak.ai.assistant.ModelFilter;
+import org.zoxweb.server.util.ServerUtil;
 import org.zoxweb.shared.util.SUS;
 
 import javax.swing.*;
@@ -18,6 +19,29 @@ public final class PanelSupport {
     private static final DateTimeFormatter ROW_TIMESTAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
     private PanelSupport() {
+    }
+
+    /**
+     * An error dialog that can hold a whole stack trace: {@code summary} as a one-line label,
+     * the trace below it in a read-only mono text area inside a scroll pane of fixed size. A
+     * plain {@code showMessageDialog} with the trace in the message grows to the trace's height
+     * and can run off the screen (2026-09-23, the {@code Send failed} dialogs). Selectable, so
+     * the trace can be copied out.
+     */
+    public static void showErrorDialog(Component parent, String title, String summary, Throwable error) {
+        String trace = error == null ? "" : ServerUtil.throwableToString(error);
+        JTextArea area = new JTextArea(trace, 18, 80);
+        area.setEditable(false);
+        area.setLineWrap(false);
+        area.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+        area.setCaretPosition(0);
+        JScrollPane scroll = new JScrollPane(area);
+        scroll.setPreferredSize(new Dimension(720, 320));
+
+        JPanel body = new JPanel(new BorderLayout(0, 8));
+        body.add(new JLabel(summary), BorderLayout.NORTH);
+        body.add(scroll, BorderLayout.CENTER);
+        JOptionPane.showMessageDialog(parent, body, title, JOptionPane.ERROR_MESSAGE);
     }
 
     /**
