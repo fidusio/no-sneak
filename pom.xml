@@ -111,6 +111,13 @@
                 <version>${xlogistx.version}</version>
             </dependency>
 
+
+            <dependency>
+                <groupId>io.github.openhtmltopdf</groupId>
+                <artifactId>openhtmltopdf-pdfbox</artifactId>
+                <version>${openhtmltopdf.version}</version>
+            </dependency>
+
             <dependency>
                 <groupId>io.xlogistx</groupId>
                 <artifactId>xlogistx-opsec</artifactId>

@@ -118,6 +118,21 @@ has chosen to use.
 >   latency/token line (assistant bubbles only, never the user's). It routes to
 >   `onSaveSkillFromResponse`, which confirms first if the editor holds unsaved edits, then opens
 >   the skill editor seeded with that response. Guarded by `ChatBubbleSaveAsSkillTest`.
+> - **An assistant reply can be shown as a PDF (2026-09-23).** The file-icon button beside
+>   *Copy* on every assistant bubble runs `AssistantUtil.showAsPDF`: the bubble's markdown goes
+>   through the toolkit's `io.xlogistx.gui.MDToPDF` (commonmark with the same GFM extensions as
+>   the viewer, OpenHTMLtoPDF over PDFBox, Roboto embedded) **off the EDT** via `BackgroundTask`
+>   — the button is disabled while it renders and a failure lands in `BackgroundTask`'s own error
+>   dialog — and the bytes open in an `io.xlogistx.gui.PDFViewerPanel` inside a modeless
+>   `JDialog` (900 × 940, toolbar on; closing asks the viewer's `confirmDiscard()` when it has
+>   unsaved edits, disposal → `viewer.close()`). **Page editing is the toolkit's, not ours:** the
+>   viewer's toolbar carries *Insert* and *Delete* (pages: current, list or range; added to
+>   `PDFViewerPanel` in `io-xlogistx/gui-audio` on 2026-09-23 — a first cut of the deletion
+>   lived here as `ResponsePDFDialog` for an hour and was moved), plus *Save* and *Print*, so
+>   the trimmed document is the export; nothing is written unless the subject asks.
+>   The PDF libraries arrive transitively through `xlogistx-gui-audio`
+>   (`openhtmltopdf-pdfbox`, `pdfbox` 3.0.x, `graphics2d`, `xmpbox`, `jsoup`); a hand-built test
+>   classpath must pin **one** pdfbox version or `fontbox` throws `NoSuchMethodError`. And when the toolkit jar is reinstalled with new transitives, **reload the Maven projects in IntelliJ** — its imported module libraries do not follow the local repository on their own, and the app then dies with `NoClassDefFoundError: com/openhtmltopdf/pdfboxout/PdfRendererBuilder` while `mvn` resolves everything (seen 2026-09-23).
 > - **Chat send is wired for a single provider, async, and persists.** `onSend` validates
 >   (chat / model / provider — each missing piece gets a dialog, no more silent returns), builds
 >   an `AIRequest` (raw user text, maxTokens), attaches an `AIMessage` to `currentChat`, flattens
@@ -352,8 +367,8 @@ has chosen to use.
 >   taller than the viewport — routine once a scan report is attached — that lands past the end of
 >   the answer with the request scrolled off the top. Scrolling to the *top* of the new bubble
 >   would show where the answer begins with the request just above it.
-> - **`AssistantUtil`'s convert-to-PDF button has no action listener** (`addActionListener` is
->   commented out), so every assistant bubble renders a clickable control that does nothing.
+> - ~~**`AssistantUtil`'s convert-to-PDF button has no action listener**~~ — wired 2026-09-23,
+>   see the *response as PDF* bullet in the status block above.
 > - **A provider whose discovery failed still registers**, with an empty catalog — so sends
 >   against it fail, and `failSend` then removes the message (below). `reloadProviders` no longer
 >   swallows the reason: it collects a line per failure — a refresh exception, a `keyGUID` that no
@@ -406,7 +421,7 @@ split out of `AssistantPanel`, which is now just wiring:
 | `panels/CapturePanel` | The two-tab Capture page (see the status block) |
 | `panels/CaptureSupport` | Capture helpers: select/shootAndSave, png encode + jpeg thumbnail, icon scaling, sublabel/byte/time formatting |
 | `panels/RegionOverlay` | Blocking multi-monitor drag-select overlay; `select()` must run off the EDT |
-| `panels/PanelSupport` | Shared row/format helpers (`timestamp`, `deleteConfirm`, provider combos) |
+| `panels/PanelSupport` | Shared row/format helpers (`timestamp`, `deleteConfirm`, provider combos, `showErrorDialog`) |
 
 `MarkDownViewerPanel` used to live here and is **gone** — markdown rendering is
 `io.xlogistx.gui.MDViewerPanel` from `xlogistx-gui-audio`, which is also where commonmark now

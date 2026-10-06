@@ -31,7 +31,7 @@ public class AssistantStorage implements AIRepository {
 
     public AssistantStorage(Session session) {
         this.session = session;
-        this.ds = session.getDomainSecurityManager().getDataStore();
+        this.ds = session.getDataStore(); // the subject view: every call runs as the signed-in subject
     }
 
     private String owner() {

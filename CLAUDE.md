@@ -3,9 +3,10 @@
 > **Picking this project up?** `PENDING-ISSUES.md` at the repo root is the handoff index of open
 > work — it points at every per-module open-items list and records the 2026-08-13 code-review
 > findings against the then-uncommitted scan-panel and AI-assistant changes. **Its latest section
-> is *Status check (2026-09-22)*: read that first** — it closes item 3 of the 2026-09-20 check
-> (the `tls-connect` tail was paying a reverse DNS lookup inside its own deadline, not a TLS 1.2
-> problem), lists what stays open, and carries a one-line upstream note for zoxweb-core.
+> is *Status check (2026-10-05)*: read that first** — the app now opens its store through a vault
+> (`no-sneak-app/NoSneakStore`) on the Shiro manager, with an unbound subject login and a
+> per-call `SubjectSwap` view of the store; it lists the decisions taken on the maintainer's
+> behalf and what is still open (stale IntelliJ run config, old databases, the Mongo path).
 
 Assessment tooling for what a network endpoint exposes — TLS posture, **post-quantum
 readiness**, and running services — plus a Swing front-end and an AI-assistant layer.

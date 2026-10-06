@@ -4,14 +4,10 @@ import io.xlogistx.nosneak.app.ui.assistant.SessionAICredentialSource;
 import io.xlogistx.nosneak.app.ui.utility.Session;
 import org.junit.jupiter.api.Test;
 import org.zoxweb.shared.security.AccessSecurityException;
-import org.zoxweb.server.security.DomainSecurityManagerDefault;
 import org.zoxweb.server.security.HashUtil;
-import org.zoxweb.server.util.MockAPIDataStore;
-import org.zoxweb.shared.crypto.CIPassword;
 import org.zoxweb.shared.data.ReferenceIDDAO;
 import org.zoxweb.shared.security.APIKey;
-import org.zoxweb.shared.security.DomainSecurityManager;
-import org.zoxweb.shared.security.SubjectAPIKey;
+import io.xlogistx.shiro.ds.ShiroDSDomainSecurityManager;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -25,10 +21,8 @@ import static org.junit.jupiter.api.Assertions.*;
 public class SessionAICredentialSourceTest {
 
     private static Session loggedInSession() {
-        DomainSecurityManager dsm =
-                new DomainSecurityManagerDefault().setDataStore(new MockAPIDataStore())
-                        .addCredentialType(CIPassword.class)
-                        .addCredentialType(SubjectAPIKey.class);
+        ShiroDSDomainSecurityManager dsm =
+                TestSecurity.newManager();
         dsm.createSubjectID("kailen01", HashUtil.toBCryptPassword("Password1!"));
         Session s = new Session(dsm);
         s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
@@ -58,14 +52,17 @@ public class SessionAICredentialSourceTest {
     }
 
     @Test
-    public void addedKeyCanLogIn() {
+    public void addedKeyCannotLogIn() {
         Session s = loggedInSession();
         SessionAICredentialSource source = new SessionAICredentialSource(s);
         source.addAPIKey("k", "", "openai", "", "", "", "sk-login-me");
         s.logout();
 
-        assertDoesNotThrow(() -> s.loginAPIKey("sk-login-me".toCharArray()),
-                "a key added from the assistant is a full credential — API-key login included");
+        // a key added from the assistant is a third-party credential, never a login (user rule
+        // 2026-10-03): the session has no API-key login and the manager refuses one
+        assertThrows(AccessSecurityException.class, () -> s.getDomainSecurityManager().loginApiKey("sk-login-me"),
+                "an API key never logs in");
+        assertFalse(s.isAuthenticated());
     }
 
     @Test

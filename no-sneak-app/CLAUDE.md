@@ -5,20 +5,65 @@ and the **`ui`** package that wires together the screens, navigation, and the se
 layer. It began as a UX prototype but now runs a **real** session/access layer and a **working
 network scanner screen** over `no-sneak-core`; the PQC file-sharing screen is still a placeholder.
 
-> **Status.** The session layer (`ui.utility.Session`) is backed by zoxweb's
-> **`DomainSecurityManagerDefault`** — a real `DomainSecurityManager` over an **encrypted H2**
-> `H2PDataStore` (`jdbc:h2:file:<dir>/no-sneak;MODE=PostgreSQL;CIPHER=AES`, built by
-> `H2PDSCreator`). `Main` opens the store from either `ds.*` launch parameters or the first-run
-> **Data Store Setup** screen. The store **persists across restarts** and is **not seeded**, so
-> a fresh database has no accounts — register one before you can log in.
+> **2026-10-05 — the app runs on the Shiro manager, through a vault.** The upstream "major
+> code update" of that day (zoxweb-core deleted `DomainSecurityManagerDefault`; the Shiro manager,
+> realm and `SecuritySetup` moved from `zoxweb-datastore/xlogistx-shiro-ds` into io-xlogistx's
+> `shiro` module; the h2p store refuses every connection without a `SecurityController` **and** a
+> `KeyMaker` holding the master key) is absorbed here. What changed, in one place each:
+>
+> - **`NoSneakStore`** (new, beside `Main`) is how the store opens. An installation is a directory
+>   with `no-sneak.store` (an opsec `SecretStore` vault: AES master key `master-key` + `db.url` /
+>   `db.user` / `db.password` / `db.enc-password`) and the encrypted H2 file `no-sneak.mv.db`.
+>   `create(location, vaultPassword, dbUser, dbPassword, dbEncPassword)` is the first run (writes
+>   the vault, then opens); `open(location, vaultPassword)` is every later run — the vault password
+>   is the one secret the subject types. Both load the master key into `KeyMakerProvider.SINGLETON`,
+>   put the `ShiroSecurityController` + that key maker on the `APIConfigInfo` (`secure`), connect,
+>   and `bootstrap` the manager: catalog seeded, the app **`xlogistx.com-nosneak`** created when
+>   missing (its registrar + sealed key are left unused), Shiro session timeout set to never. No
+>   super-admin, no `super-admin-id` in the vault: a desktop store has one operator and permission
+>   enforcement stays off. `Main` takes `ds.location=` + `ds.store-password=`; the setup screen
+>   shows the three database fields only while the chosen directory has no vault.
+> - **`Session` logs in a Shiro `Subject`, unbound** (`loginUsernamePassword` builds the subject on
+>   the manager's security manager and logs it in with a `DomainUsernamePasswordToken` scoped to the
+>   no-sneak app; the manager has no password variant of `loginUnboundSubjectJWT`, so the four
+>   lines live here). The store checks every row against the *thread-bound* subject and the panels
+>   work on `SwingWorker` threads, so `Session.getDataStore()` is a **`Proxy` over the store that
+>   wraps each call in xlogistx-shiro's `SubjectSwap`** of the kept subject; `asSubject(...)` does
+>   the same for arbitrary work and `runAsSystem(...)` lifts the check for the backup/restore
+>   dump. `AssistantStorage` reads that view, never the manager's raw store. `logout` ends the
+>   subject. Manager calls need no binding (system view inside, enforcement off).
+> - **No API-key login anywhere.** `Session.loginAPIKey` and the login screen's API-key card are
+>   gone; the manager refuses `loginApiKey`. A third-party key's vendor domain/app is **metadata**
+>   (`APIKeyInfo.VENDOR_DOMAIN` / `VENDOR_APP`, read with `vendorDomainOf` / `vendorAppOf`): the
+>   key's own `app_id` is an app-model scope the Shiro manager resolves to an app record of this
+>   store, which a vendor's app never is — that closed the 3 failing `APIKeyRoundTripTest` cases. A
+>   key no-sneak issues keeps the `xlogistx.com-nosneak` scope, not editable.
+> - `registerUsernamePassword` says "already taken" only for a duplicate; any other failure
+>   carries the store's own reason (the principal filter wants ≥ 8 characters — `alice` is refused).
+> - Tests: `TestSecurity` (throw-away vault key, mock store configured like the real one,
+>   `NoSneakStore.bootstrap`) under the 7 round-trip suites, and **`DataStoreSetupFlowTest`** —
+>   the proof on a real vault + encrypted H2 file with the controller on: two users, rows and a
+>   sealed key saved and read from pool threads, the second user sees nothing, logout leaves no
+>   thread bound, wrong vault password = no store, reopen through the vault. **78 / 78** through
+>   the `.claude/tools` launcher (its `cp.txt` moved to JUnit 6.1.3). Plan and upstream log:
+>   `zoxweb-datastore/h2p-datastore/no-sneak-plan.md`.
+>
+> **Status.** The session layer (`ui.utility.Session`) is backed by io-xlogistx's
+> **`ShiroDSDomainSecurityManager`** over an **encrypted H2** `H2PDataStore`
+> (`jdbc:h2:file:<dir>/no-sneak;MODE=PostgreSQL;CIPHER=AES`, built by `H2PDSCreator`), opened
+> through the installation's vault (`NoSneakStore`). `Main` opens the store from either `ds.*`
+> launch parameters or the first-run **Data Store Setup** screen. The store **persists across
+> restarts**; the bootstrap seeds the catalog and the no-sneak app but creates **no accounts** —
+> register one before you can log in.
 >
 > Working end-to-end: username/password **register + login**, **change password**,
 > **add/remove identifiers**, **profile save/load** (name/DOB), a **multi-address book**, and the
-> **full API-key lifecycle** (generate or import → login → edit → rotate → delete). API keys are
-> stored **plain** (raw URL-Base64, no hashing), so `loginAPIKey` looks them up as-is; imported
-> keys also carry AI-assistant metadata (`provider`, `base-url`, `auth-type`, `header-name`) on
-> their property bag. All blocking `Session` calls run **off the EDT** via
-> `BackgroundTask.runCatching` (failures surface as a dialog from the thrown `SecurityException`).
+> **third-party API-key lifecycle** (generate or import → edit → rotate → delete; never a login).
+> API keys are **sealed at rest** by the store (an `ENCRYPT` field under the owner's key chain) and
+> served in clear to their logged-in owner; imported keys also carry AI-assistant metadata
+> (`provider`, `base-url`, `auth-type`, `header-name`, `vendor-domain`, `vendor-app`) on their
+> property bag. All blocking `Session` calls run **off the EDT** via `BackgroundTask.runCatching`
+> (failures surface as a dialog from the thrown `AccessSecurityException`).
 >
 > **The `SCAN` screen is real now.** `ScanPanel` fronts the `no-sneak-core` engine: the command
 > box takes the full `NMap` CLI surface through `NMap.parseCommand`, a probe selector ticks
@@ -59,11 +104,12 @@ when the subject attaches one to a chat themselves. Nothing here uploads, phones
 
 ```
 io.xlogistx.nosneak.app
-├── Main.java                      ← entry point; opens the H2P store (ds.* params or setup screen) + JFrame
+├── Main.java                      ← entry point; opens the installation (ds.location/ds.store-password or setup screen) + JFrame
+├── NoSneakStore.java              ← the vault + encrypted H2 store: create / open / secure / bootstrap (2026-10-05)
 └── ui/                            ← UI (screens, menu, session/access wiring)
     ├── AppShell.java              ← root content pane, CardLayout host (mounts ai-assistant's AssistantPanel)
-    ├── LoginPanel.java            ← login/register screen (method + mode toggle)
-    ├── DataStoreSetupPanel.java   ← first-run screen: choose location + DB/encryption credentials
+    ├── LoginPanel.java            ← login/register screen (password; passkey card hidden)
+    ├── DataStoreSetupPanel.java   ← first screen: choose location + vault password (+ DB credentials on a first run)
     ├── PQCRegistryPanel.java      ← PQC file-sharing registry view
     ├── SubjectPanel.java          ← subject account view (master–detail)
     ├── SubjectSecManagerPanel.java← ACL admin view (master–detail)
@@ -74,7 +120,7 @@ io.xlogistx.nosneak.app
     │   └── AssistantStorage.java  ← AIRepository impl (chats + skills + provider configs), GUID-keyed over the H2P APIDataStore
     └── utility/
         ├── AppContext.java        ← per-app service locator (Session + Navigator)
-        ├── Session.java           ← auth + identifiers + credentials + profile + addresses (over DomainSecurityManager)
+        ├── Session.java           ← auth (unbound Shiro subject) + identifiers + credentials + profile + addresses + the subject view of the store
         └── Navigator.java         ← top-level screen switching over a CardLayout
 
 (The `CardStack` / `PanelBuilder` / `ListSection` / `BackgroundTask` helpers live in the shared
@@ -85,20 +131,24 @@ io.xlogistx.nosneak.app
 
 ### `Main`
 Bootstraps the app. `main` first parses `ds.*` launch parameters (`ParamUtil.parse("=", args)`):
-`ds.user`, `ds.password`, `ds.enc-password`, `ds.location` (a directory). If **all four** are
-present it opens the encrypted H2 store directly — `createDataStore(...)` builds the JDBC URL via
-`H2PUtil.defaultH2JdbcURL(location, "no-sneak")`, creates the `H2PDataStore` through
-`H2PDSCreator`, connects, and wraps it in a `DomainSecurityManager` (`createDomainSecManager`:
-`OPSecUtil.singleton()` + a `DomainSecurityManagerDefault` with `CIPassword` and `SubjectAPIKey`
-registered). It then installs FlatLaf **FlatLightLaf** and launches on the EDT.
+`ds.location` (the installation directory) and `ds.store-password` (its vault password). If
+**both** are present it opens the installation directly — `NoSneakStore.open(location,
+password)` reads the vault, loads the master key, opens the encrypted H2 store with the Shiro
+controller + key maker, and returns the bootstrapped `ShiroDSDomainSecurityManager`; a failure
+prints the reason and exits with status 2. It then installs FlatLaf **FlatLightLaf** and launches
+on the EDT. (`createDomainSecManager(store)` is still there for a store opened elsewhere: it builds
+and bootstraps the manager, `OPSecUtil.singleton()` first.) The IntelliJ run configuration `Main`
+still carries the pre-2026-10-05 `ds.user=… ds.password=… ds.enc-password=… ds.location=…` line;
+those parameters are ignored now — change it to `ds.location=<dir> ds.store-password=<pw>`.
 
 Two entry paths, chosen by whether a manager was built from the params:
 - **Params present** → `launchApp(dsm)` goes straight to the app.
-- **No params** → `showSetup(...)` displays `DataStoreSetupPanel` (choose location + DB
-  username / password / encryption password); on completion it builds the store the same way and
-  then `launchApp(dsm)`.
+- **No params** → `showSetup(...)` displays `DataStoreSetupPanel` (choose the directory, type the
+  vault password; on a directory without a vault also the DB username / password / encryption
+  password); on completion it opens or creates the installation through `NoSneakStore` and then
+  `launchApp(dsm)`.
 
-`launchApp(DomainSecurityManager)` opens `Main.AppFrame` (a `JFrame` titled "NoSneak", sized
+`launchApp(ShiroDSDomainSecurityManager)` opens `Main.AppFrame` (a `JFrame` titled "NoSneak", sized
 **relative to the display** — 60 % of screen width × 70 % of screen height from
 `Toolkit.getDefaultToolkit().getScreenSize()`, then centred; the old fixed 800×600 is commented
 out just above it. `getScreenSize()` reports the **primary** display, so on a multi-monitor setup
@@ -106,15 +156,16 @@ the frame is sized off that one regardless of where it opens),
 which creates the single `AppContext` from the manager, builds the menu bar via `MenuBarFactory`,
 and installs `AppShell` as the content pane. The menu bar starts hidden and is toggled by
 `session().onAuthChange(...)` — it only appears once authenticated. `AppFrame` is `EXIT_ON_CLOSE`
-and adds a `windowClosing` handler that calls `ctx.session().closeNio()` and then
-`domainSecurityManager.getDataStore().close()`, so the
+and adds a `windowClosing` handler that calls `ctx.session().closeNio()`, `ctx.session().logout()`
+(ends the Shiro subject) and then `domainSecurityManager.getDataStore().close()`, so the
 encrypted H2 store is flushed/closed on exit rather than left to the JVM teardown. (The datastore is
 closed on **app close only**, not on logout — logout keeps it open for the next sign-in.)
 
-> Passing secrets via `ds.*` on the command line exposes them (process list, shell history,
-> run-config files), so treat that path as a dev convenience and prefer the setup screen.
-> Pointing the params at an existing store with the **wrong encryption password** fails
-> `connect()` (surfaced as the setup panel's error dialog).
+> Passing the vault password via `ds.store-password` on the command line exposes it (process list,
+> shell history, run-config files), so treat that path as a dev convenience and prefer the setup
+> screen. A **wrong vault password** fails the keystore's integrity check (`IOException` from
+> `SecretStore.open`, surfaced as the setup panel's error dialog); the database passwords never
+> leave the vault.
 
 ## `ui` — UI screens & wiring
 
@@ -149,8 +200,9 @@ chat/credential/model selection. This is the **only** coupling point — the dep
 The `LOGIN` card. A `GridBagLayout` with NoSneak branding above the credential area, and two
 orthogonal selectors:
 
-- **Method** (a `JToggleButton` group over a `CardStack`): `Subject / Password`, `API Key`,
-  `Passkey` — switches which credential card is shown.
+- **Method** (a `JToggleButton` group over a `CardStack`): `Subject / Password` and `Passkey` —
+  switches which credential card is shown. The `API Key` method was **removed on 2026-10-05**: an
+  API key is the subject's credential for a third-party API and never logs anyone in.
 - **Mode** (a toggle button): flips between **Login** and **Register**. It re-labels each
   method's action button and changes which `Session` call it makes (`login*` vs `register*`); it
   is not a separate set of cards.
@@ -159,8 +211,6 @@ orthogonal selectors:
 - In **Register** mode the password card reveals a **Confirm Password** field; submission
   compares it against the password and blocks (error dialog) on mismatch. Switching back to
   **Login** hides and clears it.
-- **API key is login-only**: the API Key selector is hidden in Register mode, and selecting it
-  while switching to Register falls back to the Password card.
 - **Passkey is hidden everywhere** (`passkeySelector.setVisible(false)`); its card is a
   "NOT IMPLEMENTED" placeholder.
 
@@ -173,9 +223,8 @@ action button is disabled while in flight). Failures throw a `SecurityException`
 the worker shows as an error dialog. Reporting: failed login → "Invalid Credentials"; register
 confirm-mismatch → "Passwords do not match" (an instant EDT check before the worker); register
 success → "Registered Successfully" (clears fields and flips to Login). Login success shows no
-dialog — the `"authenticated"` event navigates away. The **API-key** action calls
-`Session.loginAPIKey` (paste a key → sign in) via `runCatching`. The **passkey** action is wired
-to a `Session` stub that does nothing.
+dialog — the `"authenticated"` event navigates away. The **passkey** action is wired to a
+`Session` stub that does nothing.
 
 > `registerUsernamePassword` throws a `SecurityException` on failure, so a **taken username**
 > shows "That username is already taken" (distinct from the password-rules message).
@@ -385,53 +434,76 @@ The app uses **two independent navigation layers**, deliberately separate:
 The top menu chooses *which screen*; a panel's left selector chooses *which section*. They are
 separate `CardLayout`s (the in-panel ones wrapped by `CardStack`).
 
-### Access-control backend — `DomainSecurityManagerDefault` (zoxweb)
-`Main.createDomainSecManager(dataStore)` constructs
-`org.zoxweb.server.security.DomainSecurityManagerDefault` over the encrypted H2 `H2PDataStore`,
-registers `CIPassword` and `SubjectAPIKey` as credential types, and passes it to `AppContext` →
-`Session`. It implements the full access-control model — subject/principal/credential CRUD, the
-permission/role/role-group catalog, and grants — with the keying the code relies on:
-`login(principalID, credential)` resolves the principal to its subject and validates the
-`PASSWORD` `CIPassword` via `SecUtil.isPasswordValid` (throws `SecurityException` on mismatch);
-identifiers are keyed by **subjectGUID**, credentials by **principalID**.
+### Access-control backend — `ShiroDSDomainSecurityManager` (io-xlogistx `shiro`)
+`NoSneakStore.bootstrap(new ShiroDSDomainSecurityManager(store))` (also behind
+`Main.createDomainSecManager`) builds io-xlogistx's Shiro-backed `DomainSecurityManager` over the
+encrypted H2 `H2PDataStore` and passes it to `AppContext` → `Session`. It registers `CIPassword`
+and `SubjectAPIKey` itself, creates every subject **with its subject key** (so the store's
+configuration must carry the `KeyMaker` with the master key — `NoSneakStore.secure`), runs its own
+store access in the system context, and implements the full model — subject/principal/credential
+CRUD, the per-app permission/role/role-group catalog, grants, the app model. The keying the code
+relies on: a password login resolves the principal to its subject and verifies the `PASSWORD`
+`CIPassword`; identifiers are keyed by **subjectGUID**, credentials by **principalID** or
+**subjectGUID**. Its catalog rows belong to the common app `xlogistx.com-common`, which is why the
+bootstrap seeds the catalog before anything else; no-sneak's own app is `xlogistx.com-nosneak`.
+Its notes and session log: `zoxweb-datastore/h2p-datastore/SHIRO-DS.md`.
 
-- **Persistent, not seeded** — data lives in the encrypted H2 file store and survives restarts,
-  but a fresh database has no accounts.
-- **`createSubjectID` throws on a duplicate** principal; `registerUsernamePassword` catches this
-  and rethrows `SecurityException("That username is already taken")`.
+- **Persistent, bootstrapped, no accounts** — data lives in the encrypted H2 file store and
+  survives restarts; the catalog and the two apps exist from the first open, subjects do not.
+- **`createSubjectID` throws on a duplicate** principal (`"Principal ID already exists"`);
+  `registerUsernamePassword` maps that one to `"That username is already taken"` and lets any
+  other reason through as `"Registration failed: <root cause>"`.
+- **`loginApiKey` always refuses** (user rule 2026-10-03).
 
 > Profile fields (name/DOB) and the address book are stored in the `SubjectIdentifier`'s inherited
 > `PropertyDAO` property bag (`getProperties()` → `NVGenericMap`) — name/DOB as flat keys,
 > addresses as a nested `NVGenericMapList` — persisted via `updateSubjectID`; the schema itself
 > has no such fields.
 >
-> **Tests** (`src/test/...`, over an in-memory `MockAPIDataStore`; each registers the credential
-> types via `addCredentialType`, mirroring `Main`). Success paths assert `assertDoesNotThrow`,
-> failures assert the thrown `SecurityException` (message = the reason): `RegisterRoundTripTest`,
-> `ProfileRoundTripTest`, `APIKeyRoundTripTest` (generate → create → login, edit/clear, delete,
-> rotate, domain/app-id normalization + validation, external-flag + provider/base-url/auth-type/
-> header-name metadata), `ChangePasswordRoundTripTest`, `IdentifierRoundTripTest`,
-> `AddressRoundTripTest`, and `AppIDDefaultTest` (the domain + app-id filters directly).
-> Surefire is skipped by the parent POM — run with `-DskipTests=false -Dmaven.test.skip=false`.
+> **Tests** (`src/test/...`, over an in-memory `MockAPIDataStore` built by `TestSecurity`: a
+> throw-away vault's master key in the `KeyMakerProvider`, the controller + key maker on the mock's
+> configuration as `NoSneakStore.secure` sets them, `NoSneakStore.bootstrap` run). Success paths
+> assert `assertDoesNotThrow`, failures assert the thrown `AccessSecurityException` (message = the
+> reason): `RegisterRoundTripTest`, `ProfileRoundTripTest`, `APIKeyRoundTripTest` (generate →
+> create → read back as the owner, never a login; edit/clear; delete; rotate; vendor domain/app
+> normalization + validation on external keys, the fixed scope of internal ones; external-flag +
+> provider/base-url/auth-type/header-name metadata), `ChangePasswordRoundTripTest`,
+> `IdentifierRoundTripTest`, `AddressRoundTripTest`, `AssistantStorageTest`,
+> `SessionAICredentialSourceTest`, `AppIDDefaultTest` (the domain + app-id filters directly), and
+> **`DataStoreSetupFlowTest`** on a real vault + encrypted H2 file with the access check on (the
+> only suite where the subject binding is enforced). Surefire cannot fetch its provider offline
+> here; run them through the `.claude/tools` launcher with the app classpath (module output dirs +
+> the jars IntelliJ lists for `no-sneak-app`, JUnit 6.1.3), or per class in IntelliJ.
 
 ## `ui.utility` — application services
 
 ### `AppContext`
 Lightweight per-application service locator. Constructed in `Main.AppFrame` with the
-`DomainSecurityManager`, from which it builds the single `Session`; also holds the `Navigator`
+`ShiroDSDomainSecurityManager`, from which it builds the single `Session`; also holds the `Navigator`
 (injected by `AppShell` once the card host exists). Accessors: `session()`, `nav()`,
 `setNavigator(...)`. Passed down to screens and the menu factory so they share one session and one
 navigator.
 
 ### `Session`
 Authentication/session state built on `PropertyChangeSupport`, holding the shared
-`DomainSecurityManager`, the current `principalID` (the username, *not* the GUID; accessor
-`getPrincipalID()`) and its `subjectIdentifier`.
+`ShiroDSDomainSecurityManager`, the current `principalID` (the username, *not* the GUID; accessor
+`getPrincipalID()`), its `subjectIdentifier`, and — since 2026-10-05 — the logged-in Shiro
+`Subject`, **kept unbound**. Three things hang off that subject:
+- `getDataStore()` — a `java.lang.reflect.Proxy` over the store's interfaces whose every call
+  runs inside `try (SubjectSwap swap = new SubjectSwap(subject))`: the h2p store judges each row
+  against the subject bound to the *calling* thread, and the callers are `SwingWorker` pool
+  threads, so the binding is per call and the pool never keeps a subject. Every screen and
+  `AssistantStorage` use this view; the manager's `getDataStore()` is for system work only.
+- `asSubject(Supplier|Runnable)` — the same swap around arbitrary work.
+- `runAsSystem(Supplier)` — the store controller's system context, for the whole-store
+  dump/restore in `SubjectPanel` (the store refuses those from a subject).
+Signed out, `subject` is null, the swap binds nothing, and the store returns no rows.
 
-Result convention: the account/auth mutators return **`void`** and **throw `SecurityException`**
-on failure — the exception message is the human-readable reason the panel shows; success returns
-normally. This covers `loginUsernamePassword`, `registerUsernamePassword`, `loginAPIKey`,
-`addIdentifier`, `removeIdentifier`, `changePassword`, `storeAPIKey`, `changeAPIDetails`,
+Result convention: the account/auth mutators return **`void`** and **throw
+`AccessSecurityException`** on failure — the exception message is the human-readable reason the
+panel shows; success returns normally. This covers `loginUsernamePassword`,
+`registerUsernamePassword`, `addIdentifier`, `removeIdentifier`, `changePassword`, `storeAPIKey`,
+`changeAPIDetails`,
 `rotateAPIKey`, `deleteAPIKey`, `saveProfile`, and the address mutators. `SecurityException` is
 **unchecked**, so callers aren't forced to catch it — `BackgroundTask.runCatching` centralizes the
 error dialog off the EDT. Failure is thrown, never a broadcast event. Two exceptions:
@@ -441,40 +513,48 @@ error dialog off the EDT. Failure is thrown, never a broadcast event. Two except
   signed out (`"Not signed in"`) or on a crypto failure (`"Could not generate a key"`).
 
 Auth (username/password is real against the store):
-- `loginUsernamePassword` calls `login(principalID, new String(password))`, catching the backend
-  `SecurityException` and rethrowing `SecurityException("Invalid Credentials")`; on success it
-  stores the `principalID` and `subjectIdentifier`, flips `authenticated`, fires the event. Use
-  `new String(password)`, **not** `Arrays.toString`.
+- `loginUsernamePassword` builds `new Subject.Builder(dsm.getSecurityManager()).buildSubject()`
+  and logs it in with a `DomainUsernamePasswordToken(principal, password, false, null,
+  NO_SNEAK_DOMAIN_ID, NO_SNEAK_APP_ID)` — the login is scoped to `xlogistx.com-nosneak` (the realm
+  loads only the grants of that app; a scoped password login needs no grant to succeed). Any
+  failure (unknown or inactive principal, bad password, an invalid principal id from the manager)
+  becomes `AccessSecurityException("Invalid Credentials")`. On success it resolves the
+  `SubjectIdentifier` by the subject's GUID, keeps the Shiro subject (ending a previous one),
+  stores the `principalID` as the realm normalized it, flips `authenticated`, fires the event.
+  Nothing is bound to the calling thread. Use `new String(password)`, **not** `Arrays.toString`.
 - `registerUsernamePassword` gates on `FilterType.PASSWORD` (throws the rules message on failure),
-  persists a bcrypt `CIPassword` via `createSubjectID`, and catches the duplicate-principal
-  `SecurityException` → rethrows `"That username is already taken"`. It does **not** auto-login.
-- `loginAPIKey` passes the presented key **as-is** (no hashing) to
-  `DomainSecurityManager.loginApiKey(...)`, throwing `SecurityException("API Key Invalid")` on a
-  bad key, then resolves the signed-in principal from the returned subject's identifiers.
+  persists a bcrypt `CIPassword` via `createSubjectID` (the manager creates the subject key with
+  it) and maps the duplicate-principal failure to `"That username is already taken"`; every other
+  reason surfaces as `"Registration failed: <root cause>"`. It does **not** auto-login. Sign-up is
+  this direct creation, not the manager's registrar path, and grants nothing.
+- `logout` ends the kept Shiro subject and clears the state; `loginAPIKey` **no longer exists**.
 
-API-key lifecycle (failures throw `SecurityException`; the raw key is stored **plain**):
+API-key lifecycle (failures throw `AccessSecurityException`; the raw key is sealed by the store
+and read back in clear by its owner):
 - `generateAPIKey()` — a fresh AES-256 key, URL-Base64 encoded, wrapped in a `SubjectAPIKey`; no
   persistence. Throws `"Not signed in"` when signed out and `"Could not generate a key"` on a
   crypto failure.
 - `storeAPIKey(label, description, domainID, appID, rawKey, provider, baseURI, authScheme,
   headerName, external)` — stores the raw key verbatim (`setAPIKey(rawKey)`, no hashing) in a
   `SubjectAPIKey` (`STATUS` = ACTIVE) via `createCredential`. The `external` flag drives the
-  AppID: when **external** and **both** `domainID`/`appID` are non-blank it attaches an
-  `AppIDDefault` (run through `FilterType.DOMAIN` + `AppIDNameFilter`: normalizes case, strips
-  `www.`/subdomains) and sets the `external` property `true`; when **not** external it falls back
-  to the default `xlogistx.io/nosneak` AppID. An invalid domain/app id → `SecurityException(
-  "Invalid domain or app ID")`. AI-assistant metadata is written to the property bag via a
-  `putIfPresent` helper keyed by the `Session.APIKeyInfo` enum: `provider`, `base-url`,
-  `auth-type`, `header-name`, each only when non-blank. Guards: `"Not signed in"` /
-  `"Key cannot be empty"`. *(No key-format validation — a malformed paste is accepted and simply
-  never matches at login.)*
+  scope: when **external** it sets the `external` property `true` and, when **both**
+  `domainID`/`appID` are non-blank, records the **vendor's** domain and app as the properties
+  `vendor-domain` / `vendor-app` (normalized and validated through an `AppIDDefault`:
+  `FilterType.DOMAIN` + `AppIDNameFilter`, lower case) — never as the key's `app_id`, which the
+  Shiro manager resolves to an app record of this store; when **not** external it scopes the key
+  to `xlogistx.com-nosneak`. An invalid domain/app id → `AccessSecurityException("Invalid domain
+  or app ID")`. AI-assistant metadata is written to the property bag via a `putIfPresent` helper
+  keyed by the `Session.APIKeyInfo` enum: `provider`, `base-url`, `auth-type`, `header-name`,
+  each only when non-blank. Guards: `"Not signed in"` / `"Key cannot be empty"`. *(No key-format
+  validation — a malformed paste is accepted as a third-party secret.)*
 - `changeAPIDetails(key, label, description, domainID, appID, provider, baseURI, authScheme,
   headerName)` — updates the key in place via `updateCredential`. Unlike create it **sets**
   blanks (passing empty clears label/description) and **rewrites** the metadata properties every
-  save; when both `domainID`/`appID` are non-blank it re-attaches an `AppIDDefault` (invalid pair
-  → thrown).
+  save; when both `domainID`/`appID` are non-blank **and the key is external** it records them as
+  the vendor properties (invalid pair → thrown); an internal key's scope is not editable.
 - `isExternalKey(key)` / `providerOf(key)` / `baseUrlOf(key)` / `authTypeOf(key)` /
-  `headerNameOf(key)` — read the metadata back off the property bag via the `APIKeyInfo` enum.
+  `headerNameOf(key)` / `vendorDomainOf(key)` / `vendorAppOf(key)` — read the metadata back off
+  the property bag via the `APIKeyInfo` enum.
 - `rotateAPIKey(key)` — generates a fresh secret, replaces the stored one via `updateCredential`
   (old key stops working). Guards against persisting a `null` secret.
 - `deleteAPIKey(key)` — deletes the credential via `deleteCredential`. Guards: `"Not signed in"` /
@@ -563,8 +643,9 @@ one-way.
 The `io.xlogistx.nosneak.ai.AIRepository` implementation — persistence for chats, skills,
 **`AIProviderConfig` rows** (a configured provider: key GUID + type + base URL + default model +
 enabled label; see `ai-model/CLAUDE.md`), **and `AICapture` rows** (saved screenshots) —
-constructed from the `Session` and reading the H2P
-`APIDataStore` off it, owner-scoped by `subjectGUID`. `saveChat` / `saveSkill` /
+constructed from the `Session` and reading **`Session.getDataStore()`** off it (the subject view:
+each call binds the signed-in Shiro subject, which the store's access check and field encryption
+need on the assistant's own executor threads too), owner-scoped by `subjectGUID`. `saveChat` / `saveSkill` /
 `saveProviderConfig` / `saveCapture` all branch on **`getGUID()`**: non-empty → `ds.update`,
 empty → stamp the owner and `ds.insert` (the store assigns the GUID). This must be `getGUID()`,
 **not `getReferenceID()`** — `referenceID` is deprecated in zoxweb and the H2P store never sets
@@ -707,19 +788,17 @@ Intended per-type behaviour (today **Password** and the **full API-key lifecycle
 **passkey** is not):
 - **Password** — *write-only*: never shown or recovered; the only op is *replace*. Stored as a
   verifier.
-- **API key** — built: create → login → edit → rotate → delete. Stored **plain**, so the secret is
-  viewable on the `editAPI` card via reveal-on-demand and copyable at any time.
+- **API key** — built: create → edit → rotate → delete; **not a login** since 2026-10-05. The
+  store seals the secret at rest under the owner's key chain and serves it in clear to its
+  logged-in owner, so the `editAPI` card can still reveal/copy it on demand.
 - **Passkey** — only the *public key* is held; manage = view device + remove.
 
-> **API-key ↔ subject linkage.** In zoxweb-core 2.4.0 the backend `loginApiKey` finds the key by
-> its stored value (plain, no hash) and resolves the subject via **`sak.getSubjectGUID()`** — the
-> same subjectGUID keying password credentials. So an API key **survives identifier churn**:
-> removing the identifier it was minted under does not orphan it.
->
-> **Storage note.** Keys are persisted **plain** — a deliberate prototype choice so the `editAPI`
-> card can reveal/copy the secret on demand. For production you'd hash at rest (`storeAPIKey`
-> hashes on store, `loginAPIKey` hashes the presented key the same way), which makes reveal
-> impossible and shifts the UX to show-once + rotate-to-recover.
+> **API-key ↔ subject linkage.** A key is keyed by **`sak.getSubjectGUID()`** — the same
+> subjectGUID keying password credentials. So an API key **survives identifier churn**: removing
+> the identifier it was minted under does not orphan it. The keys no-sneak generates itself
+> (`generateAPIKey`, the hidden "Generate local" path, `rotateAPIKey`) existed for the API-key
+> login that is gone; they still work as plain stored secrets scoped to `xlogistx.com-nosneak`,
+> and whether to drop them or turn them into signing keys is decision D5 of the plan, open.
 
 ### Identifier & profile metadata
 All target-only, because the model has nowhere to store them: per-identifier **status**
@@ -824,12 +903,12 @@ ordered by priority.
   returns null, `AIAPIProvider.create` returns null, and `reloadProviders` skips the key while
   `assistant-enabled` stays `true`. The skip is now **reported** at login ("unrecognized provider
   type"), so the symptom is explained; writing `""` in the first place is the part still to fix.
-- **Every registration failure reads "That username is already taken"**
-  (`registerUsernamePassword` catches `SecurityException` broadly), so a store or IO failure is
-  misreported as a duplicate.
-- **`Main.main` does not handle a failed `connect()`** on the `ds.*` param path — a wrong
-  encryption password kills the app with a console stack trace and no window, unlike the setup
-  screen, which surfaces it in a dialog.
+- ~~**Every registration failure reads "That username is already taken"**~~ — **fixed 2026-10-05**:
+  only the duplicate-principal failure maps to it; anything else reads
+  `"Registration failed: <root cause>"` (which is how the ≥ 8-character principal rule showed up).
+- ~~**`Main.main` does not handle a failed `connect()`** on the `ds.*` param path~~ — the param
+  path now prints the reason and exits with status 2 (no stack trace, no window); the setup
+  screen still surfaces it in a dialog.
 - **`LoginPanel`'s Enter binding always runs `passwordAction()`** regardless of which card is
   showing (`WHEN_ANCESTOR_OF_FOCUSED_COMPONENT`). Harmless while the API-key and passkey
   selectors are hidden; wrong the moment the commented-out `applyMode()` lines are restored.

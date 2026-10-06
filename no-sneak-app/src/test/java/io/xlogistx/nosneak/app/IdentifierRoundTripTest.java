@@ -3,11 +3,8 @@ package io.xlogistx.nosneak.app;
 import io.xlogistx.nosneak.app.ui.utility.Session;
 import org.junit.jupiter.api.Test;
 import org.zoxweb.shared.security.AccessSecurityException;
-import org.zoxweb.server.security.DomainSecurityManagerDefault;
 import org.zoxweb.server.security.HashUtil;
-import org.zoxweb.server.util.MockAPIDataStore;
-import org.zoxweb.shared.crypto.CIPassword;
-import org.zoxweb.shared.security.DomainSecurityManager;
+import io.xlogistx.shiro.ds.ShiroDSDomainSecurityManager;
 import org.zoxweb.shared.security.PrincipalIdentifier;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -23,9 +20,8 @@ import static org.junit.jupiter.api.Assertions.*;
 public class IdentifierRoundTripTest {
 
     private static Session loggedInSession() {
-        DomainSecurityManager dsm =
-                new DomainSecurityManagerDefault().setDataStore(new MockAPIDataStore())
-                        .addCredentialType(CIPassword.class);
+        ShiroDSDomainSecurityManager dsm =
+                TestSecurity.newManager();
         dsm.createSubjectID("kailen01", HashUtil.toBCryptPassword("Password1!"));
         Session s = new Session(dsm);
         s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
@@ -52,8 +48,8 @@ public class IdentifierRoundTripTest {
     @Test
     public void addRejectsBlank() {
         Session s = loggedInSession();
-        assertEquals("Principal ID can't be empty",
-                assertThrows(AccessSecurityException.class, () -> s.addIdentifier("   ")).getMessage());
+        String message = assertThrows(AccessSecurityException.class, () -> s.addIdentifier("   ")).getMessage();
+        assertTrue(message.startsWith("Invalid principal ID"), message); // ShiroDSDomainSecurityManager's wording
         assertEquals(1, s.getAllPrincipalIDForLoggedInUser().size(), "no identifier should have been added");
     }
 

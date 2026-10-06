@@ -3,20 +3,16 @@ package io.xlogistx.nosneak.app;
 import com.formdev.flatlaf.FlatLaf;
 import com.formdev.flatlaf.FlatLightLaf;
 import com.formdev.flatlaf.fonts.roboto.FlatRobotoFont;
-import io.xlogistx.datastore.h2p.H2PDSCreator;
-import io.xlogistx.datastore.h2p.H2PUtil;
 import io.xlogistx.nosneak.app.ui.AppShell;
 import io.xlogistx.nosneak.app.ui.DataStoreSetupPanel;
 import io.xlogistx.nosneak.app.ui.MenuBarFactory;
 import io.xlogistx.nosneak.app.ui.utility.AppContext;
 import io.xlogistx.opsec.OPSecUtil;
-import org.zoxweb.server.security.DomainSecurityManagerDefault;
+import io.xlogistx.shiro.ds.ShiroDSDomainSecurityManager;
 import org.zoxweb.shared.api.APIDataStore;
 import org.zoxweb.shared.app.AppVersionDAO;
-import org.zoxweb.shared.crypto.CIPassword;
-import org.zoxweb.shared.security.DomainSecurityManager;
-import org.zoxweb.shared.security.SubjectAPIKey;
 import org.zoxweb.shared.util.ParamUtil;
+import org.zoxweb.shared.util.SUS;
 
 import javax.swing.*;
 import java.awt.*;
@@ -27,23 +23,33 @@ import java.util.function.Consumer;
 public class Main {
 
     public final static AppVersionDAO VERSION = new AppVersionDAO("NOSNEAK::1.0.0");
-    public static final String dbName = "no-sneak";
+    /** The H2 database name inside the installation directory; see {@link NoSneakStore}. */
+    public static final String dbName = NoSneakStore.DB_NAME;
 
+    /**
+     * Launch parameters: {@code ds.location=<dir>} and {@code ds.store-password=<vault password>}
+     * open an existing installation directly ({@link NoSneakStore#open}); without both, the
+     * setup screen asks for them (and creates the vault and the database on a first run).
+     * Passing the vault password on the command line exposes it (process list, shell history,
+     * run configurations): a development convenience, the setup screen is the normal path.
+     */
     public static void main(String... args) {
 
         ParamUtil.ParamMap params = ParamUtil.parse("=", args);
-        String dsUser = params.stringValue("ds.user", true);
-        String dsPassword = params.stringValue("ds.password", true);
-        String dsEncPassword = params.stringValue("ds.enc-password", true);
-        String dsLocation = params.stringValue("ds.location", true);
+        String location = params.stringValue("ds.location", true);
+        String storePassword = params.stringValue("ds.store-password", true);
 
-        DomainSecurityManager dsm = null;
-        if (dsUser != null && dsPassword != null && dsEncPassword != null && dsLocation != null) {
-            APIDataStore<?, ?> dataStore = createDataStore(dsUser, dsPassword, dsEncPassword, dsLocation);
-            dataStore.connect();
-            dsm = createDomainSecManager(dataStore);
+        ShiroDSDomainSecurityManager dsm = null;
+        if (!SUS.isEmpty(location) && storePassword != null) {
+            try {
+                dsm = NoSneakStore.open(location, storePassword.toCharArray());
+            } catch (Exception e) {
+                System.err.println("Could not open the no-sneak store at " + location + ": " + e.getMessage());
+                System.exit(2);
+                return;
+            }
         }
-        final DomainSecurityManager domainSecurityManager = dsm;
+        final ShiroDSDomainSecurityManager domainSecurityManager = dsm;
 
         FlatRobotoFont.install();
         FlatLaf.registerCustomDefaultsSource("themes");
@@ -61,7 +67,7 @@ public class Main {
 
     public static class AppFrame extends JFrame {
 
-        public AppFrame(DomainSecurityManager domainSecurityManager) {
+        public AppFrame(ShiroDSDomainSecurityManager domainSecurityManager) {
             setTitle("NoSneak");
             setDefaultCloseOperation(EXIT_ON_CLOSE);
             //setSize(800, 600);
@@ -77,6 +83,7 @@ public class Main {
                 @Override
                 public void windowClosing(WindowEvent e) {
                     ctx.session().closeNio();
+                    ctx.session().logout(); // ends the Shiro subject before the store goes
                     domainSecurityManager.getDataStore().close();
                 }
             });
@@ -91,36 +98,31 @@ public class Main {
         }
     }
 
-    public static DomainSecurityManager createDomainSecManager(APIDataStore<?, ?> dataStore) {
+    /**
+     * The manager over a store that is already open with its controller and key maker (see
+     * {@link NoSneakStore#openStore}): built and {@link NoSneakStore#bootstrap bootstrapped}.
+     * {@code ShiroDSDomainSecurityManager} replaced {@code DomainSecurityManagerDefault} (user,
+     * 2026-10-05); it registers {@code CIPassword} and {@code SubjectAPIKey} itself.
+     */
+    public static ShiroDSDomainSecurityManager createDomainSecManager(APIDataStore<?, ?> dataStore) {
         OPSecUtil.singleton();
-
-        return new DomainSecurityManagerDefault()
-                .setDataStore(dataStore)
-                .addCredentialType(CIPassword.class)
-                .addCredentialType(SubjectAPIKey.class);
+        return NoSneakStore.bootstrap(new ShiroDSDomainSecurityManager(dataStore));
     }
 
-    public static void launchApp(DomainSecurityManager domainSecurityManager) {
+    public static void launchApp(ShiroDSDomainSecurityManager domainSecurityManager) {
         new AppFrame(domainSecurityManager).setVisible(true);
     }
 
-    public static APIDataStore<?, ?> createDataStore(String username, String password, String encPassword, String path) {
-        String jdbcURL = H2PUtil.defaultH2JdbcURL(path, dbName);
-
-        return new H2PDSCreator().createAPI(null, H2PDSCreator.toAPIConfigInfo(jdbcURL, username, password, encPassword));
-    }
-
-    public static void showSetup(Consumer<DomainSecurityManager> onComplete) {
+    public static void showSetup(Consumer<ShiroDSDomainSecurityManager> onComplete) {
         JFrame f = new JFrame("NoSneak - Setup");
         f.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
-        f.setSize(520, 460);
+        f.setSize(560, 520);
         f.setLocationRelativeTo(null);
         f.setContentPane(new DataStoreSetupPanel(
-                (location, user, password, encPassword) -> {
-                    APIDataStore<?, ?> dataStore = createDataStore(user, password, encPassword, location);
-                    dataStore.connect();
-                    return createDomainSecManager(dataStore);
-                },
+                (location, vaultPassword, user, password, encPassword) ->
+                        NoSneakStore.vaultExists(location)
+                                ? NoSneakStore.open(location, vaultPassword)
+                                : NoSneakStore.create(location, vaultPassword, user, password, encPassword),
                 dsm -> {
                     f.dispose();
                     onComplete.accept(dsm);

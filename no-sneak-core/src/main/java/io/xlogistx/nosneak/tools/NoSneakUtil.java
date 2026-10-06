@@ -3,7 +3,7 @@ package io.xlogistx.nosneak.tools;
 import io.xlogistx.datastore.XlogistxMongoDSCreator;
 import io.xlogistx.datastore.XlogistxMongoDataStore;
 import io.xlogistx.opsec.OPSecUtil;
-import org.zoxweb.server.security.DomainSecurityManagerDefault;
+import io.xlogistx.shiro.ds.ShiroDSDomainSecurityManager;
 import org.zoxweb.server.util.ServerUtil;
 import org.zoxweb.shared.api.APIConfigInfo;
 import org.zoxweb.shared.api.APIDataStore;
@@ -48,10 +48,9 @@ public final class NoSneakUtil {
                     cache.put(ObjName.DATA_STORE.name(), dataStore);
                 }
                 // Build the manager from the datastore (cached or new) — fixes the C2 NPE-return.
-                dsm = new DomainSecurityManagerDefault()
-                        .setDataStore(dataStore)
-                        .addCredentialType(CIPassword.class)
-                        .addCredentialType(SubjectAPIKey.class);
+                // ShiroDSDomainSecurityManager replaced DomainSecurityManagerDefault (user, 2026-10-05);
+                // it registers CIPassword and SubjectAPIKey itself.
+                dsm = new ShiroDSDomainSecurityManager(dataStore);
                 cache.put(ObjName.DOMAIN_MANAGER.name(), dsm);
             }
             return dsm;

@@ -6,11 +6,8 @@ import io.xlogistx.nosneak.ai.model.AISkill;
 import io.xlogistx.nosneak.app.ui.assistant.AssistantStorage;
 import io.xlogistx.nosneak.app.ui.utility.Session;
 import org.junit.jupiter.api.Test;
-import org.zoxweb.server.security.DomainSecurityManagerDefault;
 import org.zoxweb.server.security.HashUtil;
-import org.zoxweb.server.util.MockAPIDataStore;
-import org.zoxweb.shared.crypto.CIPassword;
-import org.zoxweb.shared.security.DomainSecurityManager;
+import io.xlogistx.shiro.ds.ShiroDSDomainSecurityManager;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -32,9 +29,8 @@ public class AssistantStorageTest {
     private static final String PWD = "Password1!";
 
     private static Session freshLoggedInSession() {
-        DomainSecurityManager dsm =
-                new DomainSecurityManagerDefault().setDataStore(new MockAPIDataStore())
-                        .addCredentialType(CIPassword.class);
+        ShiroDSDomainSecurityManager dsm =
+                TestSecurity.newManager();
         dsm.createSubjectID("kailen01", HashUtil.toBCryptPassword(PWD));
         Session s = new Session(dsm);
         s.loginUsernamePassword("kailen01", PWD.toCharArray());

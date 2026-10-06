@@ -2,10 +2,16 @@ package io.xlogistx.nosneak.app.ui.utility;
 
 import io.xlogistx.nosneak.data.ProbeContent;
 import io.xlogistx.nosneak.data.ReportContent;
+import io.xlogistx.shiro.SubjectSwap;
+import io.xlogistx.shiro.authc.DomainUsernamePasswordToken;
+import io.xlogistx.shiro.ds.DSAuthorizingRealm;
+import io.xlogistx.shiro.ds.ShiroDSDomainSecurityManager;
+import org.apache.shiro.subject.Subject;
 import org.zoxweb.server.net.NIOSocket;
 import org.zoxweb.server.security.CryptoUtil;
 import org.zoxweb.server.security.HashUtil;
 import org.zoxweb.server.task.TaskUtil;
+import org.zoxweb.shared.api.APIConfigInfo;
 import org.zoxweb.shared.api.APIDataStore;
 import org.zoxweb.shared.app.AppIDDefault;
 import org.zoxweb.shared.crypto.CIPassword;
@@ -19,18 +25,31 @@ import org.zoxweb.shared.util.*;
 import javax.crypto.SecretKey;
 import java.beans.PropertyChangeListener;
 import java.beans.PropertyChangeSupport;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.security.NoSuchAlgorithmException;
 import java.util.*;
+import java.util.function.Supplier;
 
 
 /**
  * Authentication and account state for the signed-in subject, backed by a
- * {@link DomainSecurityManager}. Tracks the current principalID (login identifier) and its
+ * {@link ShiroDSDomainSecurityManager}. Tracks the current principalID (login identifier) and its
  * subject, and fires an {@code "authenticated"} property-change event on every login/logout.
  *
- * <p>Result convention: the account-edit methods return a reason {@link String} where
- * {@code null} means success and a non-null value is a human-readable error to show the user.
- * The plain login methods return a {@code boolean} instead.</p>
+ * <p><b>The login is a Shiro subject login, kept unbound (2026-10-05).</b> The h2p store checks
+ * every read and write against the subject bound to the calling thread, and the panels run their
+ * work on {@code SwingWorker} pool threads — a thread-bound login would leave a subject on
+ * whichever pool thread happened to run it. So {@link #loginUsernamePassword} logs the Shiro
+ * {@link Subject} in without binding it ({@link #subject}), and every datastore call made through
+ * this class goes through {@link #getDataStore()} — a view of the store that binds that subject
+ * for the duration of the call with xlogistx-shiro's {@link SubjectSwap} and restores the thread's
+ * previous state afterwards. {@link #asSubject} does the same for arbitrary work. The manager's
+ * own calls (credentials, principals, profile) need no binding: the manager runs its store access
+ * in the system context and permission enforcement is off in a desktop store.</p>
+ *
+ * <p>Result convention: the account-edit methods throw {@link AccessSecurityException} with a
+ * human-readable reason and return normally on success.</p>
  */
 public class Session {
     private static final String PASSWORD_RULES_MESSAGE = """
@@ -43,15 +62,77 @@ public class Session {
             • Cannot be empty or contain only spaces.""";
     private static final String ADDRESSES = "addresses";
     private final PropertyChangeSupport pcs = new PropertyChangeSupport(this);
-    private final DomainSecurityManager domainSecurityManager;
+    /** The app no-sneak is in the app model: {@code xlogistx.com-nosneak} (user, 2026-10-05). */
+    public static final String NO_SNEAK_DOMAIN_ID = "xlogistx.com";
+    public static final String NO_SNEAK_APP_ID = "nosneak";
+
+    private final ShiroDSDomainSecurityManager domainSecurityManager;
+    /** The store as configured: what the manager uses, and what system-context work (backup) needs. */
+    private final APIDataStore<?, ?> rawStore;
+    /** The subject view of {@link #rawStore}: every call runs with {@link #subject} bound. */
     private final APIDataStore<?, ?> ds;
+    /** The logged-in Shiro subject, never bound to a thread outside a {@link SubjectSwap}; null when signed out. */
+    private volatile Subject subject;
     private boolean authenticated;
     private String principalID;
     private SubjectIdentifier subjectIdentifier;
     private NIOSocket nio;
 
-    public DomainSecurityManager getDomainSecurityManager() {
+    public ShiroDSDomainSecurityManager getDomainSecurityManager() {
         return domainSecurityManager;
+    }
+
+    /**
+     * The datastore as the signed-in subject sees it: each call binds the Shiro subject to the
+     * calling thread for its duration ({@link SubjectSwap}), so the store's access check and its
+     * field encryption see the owner, on whatever worker thread the call lands. Signed out, the
+     * calls go through unbound and the store returns nothing (and refuses writes). This is the
+     * store every screen and {@code AssistantStorage} must use — never the manager's raw one.
+     */
+    public APIDataStore<?, ?> getDataStore() {
+        return ds;
+    }
+
+    /** Runs {@code work} with the signed-in subject bound to the calling thread (a no-op binding when signed out). */
+    public <V> V asSubject(Supplier<V> work) {
+        try (SubjectSwap swap = new SubjectSwap(subject)) {
+            return work.get();
+        }
+    }
+
+    /** {@link #asSubject(Supplier)} for work without a result. */
+    public void asSubject(Runnable work) {
+        try (SubjectSwap swap = new SubjectSwap(subject)) {
+            work.run();
+        }
+    }
+
+    /**
+     * Runs {@code work} in the store's system context — the datastore access checks are lifted
+     * for it. For whole-store operations only (backup, restore), never for a screen's own reads.
+     */
+    public <V> V runAsSystem(Supplier<V> work) {
+        APIConfigInfo cfg = rawStore.getAPIConfigInfo();
+        SecurityController sc = cfg != null ? cfg.getSecurityController() : null;
+        return sc != null ? sc.runAsSystem(work) : work.get();
+    }
+
+    /** A {@link Proxy} over the store's interfaces that wraps each call in a {@link SubjectSwap} of the current subject. */
+    private APIDataStore<?, ?> subjectView(APIDataStore<?, ?> store) {
+        Set<Class<?>> interfaces = new LinkedHashSet<>();
+        for (Class<?> c = store.getClass(); c != null; c = c.getSuperclass()) {
+            Collections.addAll(interfaces, c.getInterfaces());
+        }
+        interfaces.add(APIDataStore.class);
+        return (APIDataStore<?, ?>) Proxy.newProxyInstance(store.getClass().getClassLoader(),
+                interfaces.toArray(new Class<?>[0]),
+                (proxy, method, args) -> {
+                    try (SubjectSwap swap = new SubjectSwap(subject)) {
+                        return method.invoke(store, args);
+                    } catch (InvocationTargetException e) {
+                        throw e.getCause();
+                    }
+                });
     }
 
     /**
@@ -102,7 +183,14 @@ public class Session {
         BASE_URL("base-url"),
         AUTH_SCHEME("auth-type"),
         HEADER_NAME("header-name"),
-        ASSISTANT_ENABLED("assistant-enabled");
+        ASSISTANT_ENABLED("assistant-enabled"),
+        /**
+         * The vendor's domain and app of an <b>external</b> key, kept as metadata (2026-10-05): the
+         * key's own {@code app_id} field is an app-model scope that the Shiro manager resolves to
+         * an app record of this store, which a third party's app never is.
+         */
+        VENDOR_DOMAIN("vendor-domain"),
+        VENDOR_APP("vendor-app");
 
         private final String name;
 
@@ -123,9 +211,10 @@ public class Session {
     /**
      * Creates a session over the given security manager; starts signed out.
      */
-    public Session(DomainSecurityManager domainSecurityManager) {
+    public Session(ShiroDSDomainSecurityManager domainSecurityManager) {
         this.domainSecurityManager = domainSecurityManager;
-        ds = domainSecurityManager.getDataStore();
+        rawStore = domainSecurityManager.getDataStore();
+        ds = subjectView(rawStore);
     }
 
 
@@ -146,48 +235,51 @@ public class Session {
 
 
     /**
-     * Logs in with a username/password. @return {@code true} on success, {@code false} otherwise.
+     * Logs in with a username/password as a Shiro subject scoped to the no-sneak app
+     * ({@code xlogistx.com-nosneak}). The subject is logged in <b>unbound</b> — the same thing the
+     * manager's {@code loginUnboundSubjectJWT} does for a token, built here for a password because
+     * the manager has no password variant: a {@link Subject} from the manager's security manager,
+     * logged in with a {@link DomainUsernamePasswordToken}, never put on the calling thread. It is
+     * bound per call by {@link #getDataStore()} / {@link #asSubject}.
+     *
+     * @throws AccessSecurityException {@code "Invalid Credentials"} on any authentication failure
      */
     public void loginUsernamePassword(String subject, char[] password) throws AccessSecurityException {
+        if (SUS.isEmpty(subject) || password == null) throw new AccessSecurityException("Invalid Credentials");
 
+        Subject shiro = new Subject.Builder(domainSecurityManager.getSecurityManager()).buildSubject();
+        SubjectIdentifier si;
         try {
-            subjectIdentifier = domainSecurityManager.login(subject, new String(password));
-        } catch (AccessSecurityException e) {
+            shiro.login(new DomainUsernamePasswordToken(subject.trim(), new String(password), false, null,
+                    NO_SNEAK_DOMAIN_ID, NO_SNEAK_APP_ID));
+            si = domainSecurityManager.lookupSubjectByGUID(DSAuthorizingRealm.subjectGUIDOf(shiro.getPrincipals()));
+        } catch (RuntimeException e) {
+            // AuthenticationException (unknown or inactive principal, bad password) or an invalid
+            // principal id from the manager: one answer for all
             throw new AccessSecurityException("Invalid Credentials", e);
         }
+        if (si == null) {
+            shiro.logout();
+            throw new AccessSecurityException("Invalid Credentials");
+        }
 
-        this.principalID = subject;
+        Subject previous = this.subject;
+        this.subject = shiro;
+        this.subjectIdentifier = si;
+        Object principal = shiro.getPrincipal();
+        this.principalID = principal != null ? principal.toString() : subject.trim();
+        if (previous != null) endSubject(previous);
         boolean old = this.authenticated;
         this.authenticated = true;
         pcs.firePropertyChange("authenticated", old, true);
     }
 
-
-    /**
-     * Logs in with a (plain-stored) API key. @return {@code null} on success, else an error message.
-     */
-    public void loginAPIKey(char[] apiKey) throws AccessSecurityException {
-
+    private static void endSubject(Subject s) {
         try {
-            // Stored plain (see storeAPIKey), so look it up as-is — no hashing.
-            subjectIdentifier = domainSecurityManager.loginApiKey(new String(apiKey));
-        } catch (AccessSecurityException p) {
-            throw new AccessSecurityException("API Key Invalid", p);
+            s.logout();
+        } catch (RuntimeException ignore) {
+            // the session may already be gone; the subject is dropped either way
         }
-
-        if (subjectIdentifier == null) throw new AccessSecurityException("Could not log in");
-
-        PrincipalIdentifier[] principals = domainSecurityManager.lookupAllPrincipalIdentifiers(subjectIdentifier.getGUID());
-        this.principalID = (principals.length > 0) ? principals[0].getPrincipalID() : null;
-
-        if (principals.length == 0) {
-            subjectIdentifier = null;
-            throw new AccessSecurityException("Could not log in");
-        }
-
-        boolean old = this.authenticated;
-        this.authenticated = true;
-        pcs.firePropertyChange("authenticated", old, true);
     }
 
     /**
@@ -207,8 +299,20 @@ public class Session {
         try {
             domainSecurityManager.createSubjectID(subject, HashUtil.toBCryptPassword(new String(password)));
         } catch (AccessSecurityException e) {
-            throw new AccessSecurityException("That username is already taken", e);
+            // only a duplicate principal reads as "taken"; a store failure keeps its own reason
+            String reason = e.getMessage() == null ? "" : e.getMessage();
+            if (reason.contains("already exists")) throw new AccessSecurityException("That username is already taken", e);
+            throw new AccessSecurityException("Registration failed: " + rootMessage(e), e);
+        } catch (RuntimeException e) {
+            throw new AccessSecurityException("Registration failed: " + rootMessage(e), e);
         }
+    }
+
+    /** The innermost message of a cause chain: what a dialog should show for a store failure. */
+    private static String rootMessage(Throwable t) {
+        Throwable root = t;
+        while (root.getCause() != null && root.getCause() != root) root = root.getCause();
+        return root.getMessage() != null ? root.getMessage() : root.toString();
     }
 
     /**
@@ -222,7 +326,7 @@ public class Session {
         SecretKey secretKey;
 
         try {
-            secretKey = CryptoUtil.generateKey(CryptoConst.CryptoAlgo.AES, 256);
+            secretKey = CryptoUtil.generateSecretKey(CryptoConst.CryptoAlgo.AES, 256);
         } catch (NoSuchAlgorithmException e) {
             throw new AccessSecurityException("Could not generate a key", e);
         }
@@ -251,16 +355,11 @@ public class Session {
             // external is stamped unconditionally: a vendor key stored without a domain/app-id
             // pair must still read as external, or rotate could overwrite its real secret
             props.build(new NVBoolean("external", true));
-            if (appID != null && !appID.isBlank() && domainID != null && !domainID.isBlank()) {
-                try {
-                    key.setAppID(new AppIDDefault(domainID.trim(), appID.trim()));
-                } catch (IllegalArgumentException e) {
-                    throw new AccessSecurityException("Invalid domain or app ID", e);
-                }
-            }
+            // the vendor's domain/app is metadata, never the key's app-model scope (see APIKeyInfo)
+            putVendor(props, domainID, appID);
         } else {
             AppIDDefault noSneakAppID = new AppIDDefault();
-            noSneakAppID.setDomainAppID("xlogistx.io", "nosneak");
+            noSneakAppID.setDomainAppID(NO_SNEAK_DOMAIN_ID, NO_SNEAK_APP_ID);
             props.build(new NVBoolean("external", false));
             key.setAppID(noSneakAppID);
         }
@@ -282,6 +381,39 @@ public class Session {
 
     private static void putIfPresent(NVGenericMap props, GetName name, String value) {
         if (value != null && !value.isBlank()) props.build(name, value.trim());
+    }
+
+    /**
+     * Stores a vendor's domain and app on an external key's property bag when both are given,
+     * normalized and validated through the same filters an {@link AppIDDefault} applies (lower
+     * case, {@code FilterType.DOMAIN}, the app-id name filter); one part alone is ignored.
+     *
+     * @throws AccessSecurityException {@code "Invalid domain or app ID"} when a part fails its filter
+     */
+    private static void putVendor(NVGenericMap props, String domainID, String appID) throws AccessSecurityException {
+        if (appID == null || appID.isBlank() || domainID == null || domainID.isBlank()) return;
+        AppIDDefault vendor;
+        try {
+            vendor = new AppIDDefault(domainID.trim(), appID.trim());
+        } catch (IllegalArgumentException e) {
+            throw new AccessSecurityException("Invalid domain or app ID", e);
+        }
+        props.build(APIKeyInfo.VENDOR_DOMAIN, vendor.getDomainID());
+        props.build(APIKeyInfo.VENDOR_APP, vendor.getAppID());
+    }
+
+    /** @return the vendor domain recorded on an external key, or null. */
+    public String vendorDomainOf(APIKey<String> key) {
+        NVGenericMap p = key == null ? null : key.getProperties();
+        Object v = p == null ? null : p.getValue(APIKeyInfo.VENDOR_DOMAIN);
+        return v == null ? null : v.toString();
+    }
+
+    /** @return the vendor app id recorded on an external key, or null. */
+    public String vendorAppOf(APIKey<String> key) {
+        NVGenericMap p = key == null ? null : key.getProperties();
+        Object v = p == null ? null : p.getValue(APIKeyInfo.VENDOR_APP);
+        return v == null ? null : v.toString();
     }
 
     private static NVGenericMap propertiesOf(APIKey<String> key) throws AccessSecurityException {
@@ -390,9 +522,12 @@ public class Session {
      */
     public void logout() {
         boolean old = this.authenticated;
+        Subject s = this.subject;
+        this.subject = null;
         this.authenticated = false;
         this.principalID = null;
         this.subjectIdentifier = null;
+        if (s != null) endSubject(s); // the kept subject can do nothing from here on
         pcs.firePropertyChange("authenticated", old, false);
     }
 
@@ -508,15 +643,10 @@ public class Session {
         if (label != null) apiKey.setName(label.trim());
         if (description != null) apiKey.setDescription(description.trim());
 
-        if (appID != null && !appID.isBlank() && domainID != null && !domainID.isBlank()) {
-            try {
-                apiKey.setAppID(new AppIDDefault(domainID.trim(), appID.trim()));
-            } catch (IllegalArgumentException e) {
-                throw new AccessSecurityException("Invalid domain or app ID", e);
-            }
-        }
-
         NVGenericMap props = propertiesOf(apiKey);
+        // only an external key carries a vendor domain/app; a key no-sneak issued keeps its
+        // xlogistx.com-nosneak scope, which is not editable
+        if (isExternalKey(apiKey)) putVendor(props, domainID, appID);
         props.build(APIKeyInfo.PROVIDER, provider == null ? "" : provider.trim());
         props.build(APIKeyInfo.BASE_URL, baseURI == null ? "" : baseURI.trim());
         props.build(APIKeyInfo.AUTH_SCHEME, authScheme == null ? "" : authScheme.trim());

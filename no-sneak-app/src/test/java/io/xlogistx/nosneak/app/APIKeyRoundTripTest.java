@@ -3,23 +3,21 @@ package io.xlogistx.nosneak.app;
 import io.xlogistx.nosneak.app.ui.utility.Session;
 import org.junit.jupiter.api.Test;
 import org.zoxweb.shared.security.AccessSecurityException;
-import org.zoxweb.server.security.DomainSecurityManagerDefault;
 import org.zoxweb.server.security.HashUtil;
-import org.zoxweb.server.util.MockAPIDataStore;
-import org.zoxweb.shared.crypto.CIPassword;
 import org.zoxweb.shared.security.CredentialInfo;
-import org.zoxweb.shared.security.DomainSecurityManager;
+import io.xlogistx.shiro.ds.ShiroDSDomainSecurityManager;
 import org.zoxweb.shared.security.SubjectAPIKey;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Covers the split API-key flow: {@link Session#generateAPIKey()} produces a fresh
- * {@link SubjectAPIKey} (its {@code getAPIKey()} is the raw secret),
- *  stores it (with a label and
- * description), and {@link Session#loginAPIKey(char[])} logs in with it.
+ * Covers the API-key flow as it is since 2026-10-05: {@link Session#generateAPIKey()} produces a
+ * fresh {@link SubjectAPIKey} (its {@code getAPIKey()} is the raw secret), {@link Session#storeAPIKey}
+ * stores it (with a label and description) as the subject's credential — <b>never a login</b>:
+ * the Shiro manager refuses {@code loginApiKey} and the session has no API-key login any more.
  * Also covers the label/description round-trip, editing the metadata via
- * {@link Session#changeAPIDetails}, and the creation/validation failure paths.
+ * {@link Session#changeAPIDetails}, the vendor domain/app of an external key (metadata on the
+ * property bag, not the key's app-model scope), and the creation/validation failure paths.
  *
  * <p>Failure is signalled by a thrown {@link AccessSecurityException} (business-rule guards and
  * AppID-filter rejections alike); success returns normally.</p>
@@ -27,10 +25,8 @@ import static org.junit.jupiter.api.Assertions.*;
 public class APIKeyRoundTripTest {
 
     private static Session mockSession() {
-        DomainSecurityManager dsm =
-                new DomainSecurityManagerDefault().setDataStore(new MockAPIDataStore())
-                        .addCredentialType(CIPassword.class)
-                        .addCredentialType(SubjectAPIKey.class);
+        ShiroDSDomainSecurityManager dsm =
+                TestSecurity.newManager();
         dsm.createSubjectID("kailen01", HashUtil.toBCryptPassword("Password1!"));
         return new Session(dsm);
     }
@@ -44,7 +40,7 @@ public class APIKeyRoundTripTest {
     }
 
     @Test
-    public void createThenLoginWithApiKey() {
+    public void createdKeyIsACredentialNotALogin() {
         Session s = mockSession();
         assertDoesNotThrow(() -> s.loginUsernamePassword("kailen01", "Password1!".toCharArray()), "password login");
 
@@ -53,12 +49,22 @@ public class APIKeyRoundTripTest {
         assertDoesNotThrow(() -> s.storeAPIKey("prod-key", "for production", null, null, apiKey, null, null, null, null, false),
                 "storeAPIKey should succeed");
 
+        SubjectAPIKey stored = firstApiKey(s);
+        assertNotNull(stored);
+        assertEquals(Session.NO_SNEAK_DOMAIN_ID, stored.getAppID().getDomainID(), "a key no-sneak issues is scoped to its app");
+        assertEquals(Session.NO_SNEAK_APP_ID, stored.getAppID().getAppID());
+
         s.logout();
         assertFalse(s.isAuthenticated());
+        assertTrue(s.getAllCredentialForLoggedInUser().isEmpty(), "signed out, no credential is readable");
 
-        assertDoesNotThrow(() -> s.loginAPIKey(apiKey.toCharArray()), "API-key login should succeed");
-        assertTrue(s.isAuthenticated(), "session should be authenticated after API-key login");
-        assertEquals("kailen01", s.getPrincipalID(), "API-key login should resolve the owning principal");
+        // an API key is the subject's credential for a third-party API, never a login (user rule 2026-10-03)
+        assertThrows(AccessSecurityException.class, () -> s.getDomainSecurityManager().loginApiKey(apiKey),
+                "the manager refuses an API key as a login credential");
+        assertFalse(s.isAuthenticated());
+
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
+        assertEquals(apiKey, firstApiKey(s).getAPIKey(), "the owner reads the secret back in clear");
     }
 
     @Test
@@ -138,21 +144,36 @@ public class APIKeyRoundTripTest {
     }
 
     @Test
-    public void changeApiDetailsUpdatesAppID() {
+    public void changeApiDetailsUpdatesVendorOfExternalKey() {
+        Session s = mockSession();
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
+        assertDoesNotThrow(() -> s.storeAPIKey("label", "desc", null, null, "sk-vendor", null, null, null, null, true));
+
+        SubjectAPIKey stored = firstApiKey(s);
+        assertNotNull(stored);
+        assertNull(s.vendorDomainOf(stored), "no vendor recorded yet");
+
+        assertDoesNotThrow(() -> s.changeAPIDetails(stored, "label", "desc", "example.com", "myapp123", null, null, null, null),
+                "changeAPIDetails should persist the vendor domain/app");
+
+        SubjectAPIKey reloaded = firstApiKey(s);
+        assertEquals("example.com", s.vendorDomainOf(reloaded), "vendor domain should be stored after edit");
+        assertEquals("myapp123", s.vendorAppOf(reloaded), "vendor app should be stored after edit");
+        assertNull(reloaded.getAppID(), "a vendor's app is never the key's app-model scope");
+    }
+
+    @Test
+    public void changeApiDetailsKeepsScopeOfInternalKey() {
         Session s = mockSession();
         s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
         assertDoesNotThrow(() -> s.storeAPIKey("label", "desc", null, null, s.generateAPIKey().getAPIKey(), null, null, null, null, false));
 
         SubjectAPIKey stored = firstApiKey(s);
-        assertNotNull(stored);
-
-        assertDoesNotThrow(() -> s.changeAPIDetails(stored, "label", "desc", "example.com", "myapp123", null, null, null, null),
-                "changeAPIDetails should persist the app id");
+        assertDoesNotThrow(() -> s.changeAPIDetails(stored, "label", "desc", "example.com", "myapp123", null, null, null, null));
 
         SubjectAPIKey reloaded = firstApiKey(s);
-        assertNotNull(reloaded.getAppID(), "app id should be stored after edit");
-        assertEquals("example.com", reloaded.getAppID().getDomainID());
-        assertEquals("myapp123", reloaded.getAppID().getAppID());
+        assertEquals(Session.NO_SNEAK_APP_ID, reloaded.getAppID().getAppID(), "the no-sneak scope is not editable");
+        assertNull(s.vendorDomainOf(reloaded), "an internal key has no vendor");
     }
 
     @Test
@@ -165,7 +186,7 @@ public class APIKeyRoundTripTest {
     }
 
     @Test
-    public void revokeRemovesKeyAndBlocksLogin() {
+    public void revokeRemovesKey() {
         Session s = mockSession();
         s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
         String secret = s.generateAPIKey().getAPIKey();
@@ -176,10 +197,7 @@ public class APIKeyRoundTripTest {
 
         assertDoesNotThrow(() -> s.deleteAPIKey(stored), "revoke should succeed");
         assertNull(firstApiKey(s), "the revoked key must be gone from the credential list");
-
-        s.logout();
-        assertThrows(AccessSecurityException.class, () -> s.loginAPIKey(secret.toCharArray()), "a revoked key must not log in");
-        assertFalse(s.isAuthenticated());
+        assertTrue(s.getAllCredentialForUserByType(CredentialInfo.Type.API_KEY).isEmpty());
     }
 
     @Test
@@ -196,7 +214,7 @@ public class APIKeyRoundTripTest {
     }
 
     @Test
-    public void rotateInvalidatesOldKeyAndNewOneWorks() {
+    public void rotateIssuesAFreshSecret() {
         Session s = mockSession();
         s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
         String oldSecret = s.generateAPIKey().getAPIKey();
@@ -209,14 +227,7 @@ public class APIKeyRoundTripTest {
         String newSecret = stored.getAPIKey();   // rotate mutates the key in place
         assertNotNull(newSecret, "the rotated key should hold a fresh secret");
         assertNotEquals(oldSecret, newSecret, "rotate must issue a different secret");
-
-        s.logout();
-        assertThrows(AccessSecurityException.class, () -> s.loginAPIKey(oldSecret.toCharArray()),
-                "the old secret must stop working after rotate");
-        assertFalse(s.isAuthenticated());
-
-        assertDoesNotThrow(() -> s.loginAPIKey(newSecret.toCharArray()), "the new secret must work after rotate");
-        assertEquals("kailen01", s.getPrincipalID(), "rotated-key login should resolve the owning principal");
+        assertEquals(newSecret, firstApiKey(s).getAPIKey(), "the fresh secret is what the store holds");
     }
 
     @Test
@@ -250,25 +261,11 @@ public class APIKeyRoundTripTest {
                         () -> s.storeAPIKey("label", "desc", null, null, "   ", null, null, null, null, false)).getMessage());
         // NOTE: the "Invalid API key format" branch is not asserted here — SharedBase64.decode
         // is lenient and does not throw on arbitrary junk, so a malformed key is currently
-        // accepted (it just never matches at login). See the review note.
+        // accepted. See the review note.
     }
 
     @Test
-    public void loginApiKeyRejectsUnknownKey() {
-        Session s = mockSession();
-        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
-
-        s.storeAPIKey("real", "desc", null, null, s.generateAPIKey().getAPIKey(), null, null, null, null, false);
-        String phantom = s.generateAPIKey().getAPIKey();   // validly formatted, but never stored
-        s.logout();
-
-        assertThrows(AccessSecurityException.class, () -> s.loginAPIKey(phantom.toCharArray()),
-                "a key that was never stored must not log in");
-        assertFalse(s.isAuthenticated());
-    }
-
-    @Test
-    public void createStoresDomainAndAppIDWhenBothProvided() {
+    public void createStoresVendorDomainAndAppWhenBothProvided() {
         Session s = mockSession();
         s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
         assertDoesNotThrow(() -> s.storeAPIKey("labelled", "desc", "example.com", "myapp123", s.generateAPIKey().getAPIKey(), null, null, null, null, true),
@@ -276,13 +273,13 @@ public class APIKeyRoundTripTest {
 
         SubjectAPIKey stored = firstApiKey(s);
         assertNotNull(stored);
-        assertNotNull(stored.getAppID(), "an app id should be stored when both parts are provided");
-        assertEquals("example.com", stored.getAppID().getDomainID(), "the domain must round-trip");
-        assertEquals("myapp123", stored.getAppID().getAppID(), "the app id must round-trip");
+        assertEquals("example.com", s.vendorDomainOf(stored), "the vendor domain must round-trip");
+        assertEquals("myapp123", s.vendorAppOf(stored), "the vendor app id must round-trip");
+        assertNull(stored.getAppID(), "a vendor's app is metadata, never the key's app-model scope");
     }
 
     @Test
-    public void createNormalizesDomainAndAppIDCase() {
+    public void createNormalizesVendorDomainAndAppCase() {
         Session s = mockSession();
         s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
         // The domain and app-id filters lower-case their input, so mixed-case entry is normalized.
@@ -290,21 +287,22 @@ public class APIKeyRoundTripTest {
 
         SubjectAPIKey stored = firstApiKey(s);
         assertNotNull(stored);
-        assertEquals("example.com", stored.getAppID().getDomainID(), "domain should be lower-cased");
-        assertEquals("myapp123", stored.getAppID().getAppID(), "app id should be lower-cased");
+        assertEquals("example.com", s.vendorDomainOf(stored), "domain should be lower-cased");
+        assertEquals("myapp123", s.vendorAppOf(stored), "app id should be lower-cased");
     }
 
     @Test
-    public void createSkipsAppIDWhenOnlyOnePartProvided() {
+    public void createSkipsVendorWhenOnlyOnePartProvided() {
         Session s = mockSession();
         s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
 
-        // Only a domain (no app id): the app-id block requires both, so it is skipped and the
-        // key is still created without an app-id association.
+        // Only a domain (no app id): the vendor block requires both, so it is skipped and the
+        // key is still created without a vendor.
         assertDoesNotThrow(() -> s.storeAPIKey("dom-only", "desc", "example.com", "  ", s.generateAPIKey().getAPIKey(), null, null, null, null, true),
                 "a domain with a blank app id should still create the key");
         SubjectAPIKey stored = firstApiKey(s);
-        assertNotNull(stored, "the key must be created even though the app id was skipped");
+        assertNotNull(stored, "the key must be created even though the vendor was skipped");
+        assertNull(s.vendorDomainOf(stored));
         assertTrue(s.isExternalKey(stored),
                 "an external key without a domain/app-id pair must still be marked external — "
                         + "otherwise rotate could overwrite a real vendor secret");
@@ -340,6 +338,8 @@ public class APIKeyRoundTripTest {
         SubjectAPIKey stored = firstApiKey(s);
         assertNotNull(stored);
         assertTrue(s.isExternalKey(stored), "an external key must be marked external");
+        assertEquals("example.com", s.vendorDomainOf(stored));
+        assertEquals("myapp123", s.vendorAppOf(stored));
         assertEquals("anthropic", s.providerOf(stored), "provider must round-trip");
         assertEquals("https://api.anthropic.com", s.baseUrlOf(stored), "base URL must round-trip");
         assertEquals("Bearer", s.authTypeOf(stored), "auth scheme must round-trip");

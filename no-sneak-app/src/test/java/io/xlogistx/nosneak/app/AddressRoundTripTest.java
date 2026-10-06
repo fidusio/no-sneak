@@ -3,11 +3,9 @@ package io.xlogistx.nosneak.app;
 import io.xlogistx.nosneak.app.ui.utility.Session;
 import org.junit.jupiter.api.Test;
 import org.zoxweb.shared.security.AccessSecurityException;
-import org.zoxweb.server.security.DomainSecurityManagerDefault;
 import org.zoxweb.server.security.HashUtil;
 import org.zoxweb.server.util.MockAPIDataStore;
-import org.zoxweb.shared.crypto.CIPassword;
-import org.zoxweb.shared.security.DomainSecurityManager;
+import io.xlogistx.shiro.ds.ShiroDSDomainSecurityManager;
 import org.zoxweb.shared.util.NVGenericMap;
 
 import java.util.List;
@@ -32,9 +30,8 @@ import static org.junit.jupiter.api.Assertions.*;
 public class AddressRoundTripTest {
 
     private static Session freshSession() {
-        DomainSecurityManager dsm =
-                new DomainSecurityManagerDefault().setDataStore(new MockAPIDataStore())
-                        .addCredentialType(CIPassword.class);
+        ShiroDSDomainSecurityManager dsm =
+                TestSecurity.newManager();
         dsm.createSubjectID("kailen01", HashUtil.toBCryptPassword("Password1!"));
         Session s = new Session(dsm);
         s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
@@ -167,9 +164,8 @@ public class AddressRoundTripTest {
 
     @Test
     public void survivesLogoutLogin() {
-        DomainSecurityManager dsm =
-                new DomainSecurityManagerDefault().setDataStore(new MockAPIDataStore())
-                        .addCredentialType(CIPassword.class);
+        ShiroDSDomainSecurityManager dsm =
+                TestSecurity.newManager();
         dsm.createSubjectID("kailen01", HashUtil.toBCryptPassword("Password1!"));
         Session s = new Session(dsm);
 
@@ -187,9 +183,8 @@ public class AddressRoundTripTest {
 
     @Test
     public void signedOutGuards() {
-        DomainSecurityManager dsm =
-                new DomainSecurityManagerDefault().setDataStore(new MockAPIDataStore())
-                        .addCredentialType(CIPassword.class);
+        ShiroDSDomainSecurityManager dsm =
+                TestSecurity.newManager();
         dsm.createSubjectID("kailen01", HashUtil.toBCryptPassword("Password1!"));
         Session s = new Session(dsm);   // never logged in
 

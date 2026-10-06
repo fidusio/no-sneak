@@ -1,6 +1,6 @@
 package io.xlogistx.nosneak.app.ui.utility;
 
-import org.zoxweb.shared.security.DomainSecurityManager;
+import io.xlogistx.shiro.ds.ShiroDSDomainSecurityManager;
 
 /**
  * Per-application service locator. Holds the single shared {@link Session} and
@@ -11,7 +11,7 @@ public class AppContext {
     private final Session session;
     private Navigator navigator;
 
-    public AppContext(DomainSecurityManager domainSecurityManager) {
+    public AppContext(ShiroDSDomainSecurityManager domainSecurityManager) {
         session = new Session(domainSecurityManager);
     }
 

@@ -395,6 +395,55 @@ already existed and needed no zoxweb change.
    `SSLSocket` times out against xlogistx.io's TLS 1.3 while SunJSSE completes it — the probe
    path succeeds there under both providers, so nothing in the product is affected today.
 
+## Status check (2026-10-05, Windows dev box) — the app absorbed the upstream security update
+
+The maintainer's "major code update" of 2026-10-05 across zoxweb-core, zoxweb-datastore and
+io-xlogistx (all three committed 18:18–18:20, jars installed 18:13–18:14): `DomainSecurityManagerDefault`
+deleted from core; the Shiro manager, realm and `SecuritySetup` moved from
+`zoxweb-datastore/xlogistx-shiro-ds` (module removed) into io-xlogistx `shiro`, the admin CLI into
+`opsec`; the h2p store refuses every connection without a `SecurityController` **and** a `KeyMaker`
+with the master key loaded, and checks every row against the thread-bound Shiro subject. Before
+this session the repo compiled against the new jars but the app could not open its store at
+runtime. Everything below is uncommitted (the maintainer commits).
+
+**Done in `no-sneak-app`** (record: `no-sneak-app/CLAUDE.md` → the 2026-10-05 block):
+- `NoSneakStore` (new): an installation = a directory with the vault `no-sneak.store` (opsec
+  `SecretStore`: master key + `db.*` entries) and the encrypted H2 file. `create` (first run) /
+  `open` (every run, vault password is the one secret) → master key into `KeyMakerProvider`,
+  `ShiroSecurityController` + key maker on the config, connect, `bootstrap` (catalog seeded, app
+  `xlogistx.com-nosneak` ensured, Shiro sessions never time out). `Main` takes `ds.location=` +
+  `ds.store-password=`; `DataStoreSetupPanel` asks for the vault password and shows the DB
+  fields only on a directory without a vault.
+- `Session`: unbound Shiro subject login scoped to the no-sneak app; `getDataStore()` is a
+  `Proxy` wrapping each store call in `SubjectSwap` (the panels and the assistant run on pool
+  threads); `asSubject` / `runAsSystem`; `logout` ends the subject; `loginAPIKey` removed with the
+  login screen's API-key card; a vendor's domain/app on an external key is metadata
+  (`vendor-domain` / `vendor-app`), not the key's `app_id` — the 3 pending `APIKeyRoundTripTest`
+  cases are closed by that decision; `registerUsernamePassword` reports the real reason.
+- `AssistantStorage` reads the subject view; `SubjectPanel` runs backup/restore in the system
+  context and shows the vendor fields.
+- Tests: `TestSecurity` + 7 round-trip suites on the mock store, `DataStoreSetupFlowTest` on a
+  real vault + encrypted H2 with the access check on (two users, pool threads, isolation, logout,
+  wrong vault password, reopen). **78 / 78** through the `.claude/tools` launcher; `cp.txt` moved
+  to JUnit 6.1.3 (6.1.2 is gone from the local repository). Whole reactor `test-compile` green.
+
+**Decisions taken here, the maintainer may overrule** (the plan's D1/D3/D4/D5/D7 in
+`zoxweb-datastore/h2p-datastore/no-sneak-plan.md`): vault next to the database, its own password;
+sign-up stays the direct `createSubjectID` with BCrypt, no registrar, no `app_user` grant (a scoped
+password login needs none); no super-admin and no `super-admin-id` entry in a desktop vault
+(enforcement off); the keys no-sneak generates itself stay as they are (D5 open). The manager
+has no `loginUnboundSubject(principal, password, domain, app)`; the four lines live in
+`Session.loginUsernamePassword` — upstream's call whether to add it.
+
+**Not done / to know:**
+- The app was not launched with a window this session (tests only). The IntelliJ run
+  configuration `Main` still carries the old `ds.user=… ds.enc-password=…` arguments; change it
+  to `ds.location=<dir> ds.store-password=<pw>`, or run without arguments for the setup screen.
+- Existing no-sneak databases (pre-vault, subjects without subject keys, keys in clear) do not
+  open through the new path — D6, start fresh or write a migration.
+- `no-sneak-core` `NoSneakUtil` (Mongo path) builds the Shiro manager but opens its store without
+  a controller/key maker; Mongo is on standby (D9).
+
 ## Priority matrix (2026-09-11) — discovery closed out; port detection and protocol identification next
 
 *Supersedes the "Suggested order" above for everything that touches scanning.* Host discovery

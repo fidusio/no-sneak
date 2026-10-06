@@ -3,12 +3,10 @@ package io.xlogistx.nosneak.app;
 import io.xlogistx.nosneak.app.ui.utility.Session;
 import org.junit.jupiter.api.Test;
 import org.zoxweb.shared.security.AccessSecurityException;
-import org.zoxweb.server.security.DomainSecurityManagerDefault;
 import org.zoxweb.server.security.HashUtil;
-import org.zoxweb.server.util.MockAPIDataStore;
 import org.zoxweb.shared.crypto.CIPassword;
 import org.zoxweb.shared.security.CredentialInfo;
-import org.zoxweb.shared.security.DomainSecurityManager;
+import io.xlogistx.shiro.ds.ShiroDSDomainSecurityManager;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -25,9 +23,8 @@ public class ChangePasswordRoundTripTest {
     private static final String NEW = "Password2@";
 
     private static Session freshSession() {
-        DomainSecurityManager dsm =
-                new DomainSecurityManagerDefault().setDataStore(new MockAPIDataStore())
-                        .addCredentialType(CIPassword.class);
+        ShiroDSDomainSecurityManager dsm =
+                TestSecurity.newManager();
         dsm.createSubjectID("kailen01", HashUtil.toBCryptPassword(OLD));
         return new Session(dsm);
     }
@@ -85,9 +82,8 @@ public class ChangePasswordRoundTripTest {
 
     @Test
     public void changeStampsLastTimeUpdated() {
-        DomainSecurityManager dsm =
-                new DomainSecurityManagerDefault().setDataStore(new MockAPIDataStore())
-                        .addCredentialType(CIPassword.class);
+        ShiroDSDomainSecurityManager dsm =
+                TestSecurity.newManager();
         dsm.createSubjectID("kailen01", HashUtil.toBCryptPassword(OLD));
         Session s = new Session(dsm);
         s.loginUsernamePassword("kailen01", OLD.toCharArray());

@@ -23,17 +23,15 @@ public class LoginPanel extends JPanel {
     private final JPanel confirmPasswordField = PanelBuilder.passwordField(confirmPassword);
     private final JLabel confirmPasswordLabel = new JLabel("Confirm Password");
     private final JLabel registerError = new JLabel(" ");
-    private final JPasswordField apiKey = new JPasswordField(30);
     private final CardStack cardStack = new CardStack();
 
-    // Authentication-method selectors; API key is login-only.
+    // Authentication-method selectors. There is no API-key method any more (2026-10-05): an API
+    // key is the subject's credential for a third-party API and never logs anyone in.
     private final JToggleButton passwordSelector = new JToggleButton("Subject / Password");
-    private final JToggleButton apiKeySelector = new JToggleButton("API Key");
     private final JToggleButton passkeySelector = new JToggleButton("Passkey");
 
     // Action buttons whose label/behavior flip between Login and Register.
     private final JButton passwordAction = new JButton();
-    private final JButton apiKeyAction = new JButton();
     private final JButton passkeyAction = new JButton();
     private final JButton modeToggle = new JButton();
 
@@ -50,7 +48,6 @@ public class LoginPanel extends JPanel {
         // One card per authentication method. Login vs. Register is a mode that
         // re-labels the action button, not a separate set of cards.
         cardStack.add(buildPasswordScreen(), "Password");
-        cardStack.add(buildAPIKeyScreen(), "APIKey");
         cardStack.add(buildPasskeyScreen(), "Passkey");
         cardStack.show("Password");
 
@@ -65,14 +62,6 @@ public class LoginPanel extends JPanel {
         passwordAction.addActionListener(_ -> {
             passwordAction();
         });
-        apiKeyAction.addActionListener(_ -> {
-            if (login) {
-                BackgroundTask.runCatching(this, apiKeyAction,
-                        () -> ctx.session().loginAPIKey(apiKey.getPassword()),
-                        () -> {
-                        });
-            }
-        });
         passkeyAction.addActionListener(_ -> {
             if (login) ctx.session().loginPasskey();
             else ctx.session().registerPasskey();
@@ -84,7 +73,6 @@ public class LoginPanel extends JPanel {
             if (!(boolean) e.getNewValue()) {
                 password.setText("");
                 username.setText("");
-                apiKey.setText("");
             }
         });
 
@@ -158,23 +146,18 @@ public class LoginPanel extends JPanel {
         ButtonGroup selector = new ButtonGroup();
 
         passwordSelector.addActionListener(_ -> cardStack.show("Password"));
-        apiKeySelector.addActionListener(_ -> cardStack.show("APIKey"));
         passkeySelector.addActionListener(_ -> cardStack.show("Passkey"));
 
         passwordSelector.setSelected(true);
 
         selector.add(passwordSelector);
-        selector.add(apiKeySelector);
         selector.add(passkeySelector);
 
         buttons.add(passwordSelector);
-        buttons.add(apiKeySelector);
         buttons.add(passkeySelector);
 
-        // apikey and passkey selectors can be turned off and on from here. Right now they are both off
-        // also turn on in applyMode
+        // the passkey selector stays off until passkeys are implemented
         passkeySelector.setVisible(false);
-        apiKeySelector.setVisible(false);
 
         return buttons;
     }
@@ -183,10 +166,6 @@ public class LoginPanel extends JPanel {
         Color error = UIManager.getColor("Label.errorForeground");
         registerError.setForeground(error != null ? error : new Color(0xB71C1C));
         return PanelBuilder.buildJPanelWithFields(new JLabel("Username"), username, new JLabel("Password"), PanelBuilder.passwordField(password), confirmPasswordLabel, confirmPasswordField, registerError, new JLabel("DomainAppID — optional"), domain, passwordAction);
-    }
-
-    private JPanel buildAPIKeyScreen() {
-        return PanelBuilder.buildJPanelWithFields(new JLabel("API Key"), PanelBuilder.passwordField(apiKey), apiKeyAction);
     }
 
     private JPanel buildPasskeyScreen() {
@@ -201,7 +180,6 @@ public class LoginPanel extends JPanel {
     private void applyMode() {
         String action = login ? "Login" : "Register";
         passwordAction.setText(action);
-        apiKeyAction.setText(action);
         passkeyAction.setText(action);
         modeToggle.setText(login ? "Need an account? Register" : "Already have an account? Login");
 
@@ -213,13 +191,6 @@ public class LoginPanel extends JPanel {
         if (login) {
             confirmPassword.setText("");
         }
-
-        // uncomment to turn api key login back on
-//            apiKeySelector.setVisible(login);
-//            if (!login && apiKeySelector.isSelected()) {
-//                passwordSelector.setSelected(true);
-//                cardStack.show("Password");
-//            }
     }
 
     private void passwordAction() {
@@ -255,7 +226,6 @@ public class LoginPanel extends JPanel {
                         password.setText("");
                         confirmPassword.setText("");
                         username.setText("");
-                        apiKey.setText("");
                         toggleMode();
                     });
         }

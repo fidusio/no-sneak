@@ -1,7 +1,10 @@
 package io.xlogistx.nosneak.ai.assistant;
 
 import io.xlogistx.gui.IconUtil;
+import io.xlogistx.gui.BackgroundTask;
+import io.xlogistx.gui.MDToPDF;
 import io.xlogistx.gui.MDViewerPanel;
+import io.xlogistx.gui.PDFViewerPanel;
 import org.zoxweb.shared.util.NVGenericMap;
 
 import javax.swing.*;
@@ -81,15 +84,49 @@ public class AssistantUtil {
                 convertMDToPDF.setFont(convertMDToPDF.getFont().deriveFont(convertMDToPDF.getFont().getSize2D() - 2f));
                 convertMDToPDF.setForeground(UIManager.getColor("Label.disabledForeground"));
                 convertMDToPDF.setFocusable(false);
-                convertMDToPDF.setToolTipText("Convert the MD to a PDF");
-                // add action to the button
-                //convertMDToPDF.addActionListener(_ -> );
+                convertMDToPDF.setToolTipText("Show this response as a PDF");
+                convertMDToPDF.addActionListener(_ -> showAsPDF(convertMDToPDF, markdown));
                 south.add(convertMDToPDF);
             }
             bubble.add(south, BorderLayout.SOUTH);
         }
 
         return bubble;
+    }
+
+    /**
+     * The bubble's PDF button (2026-09-23): renders the response's markdown to PDF with the
+     * toolkit's {@link MDToPDF} off the EDT, then opens it in a {@link PDFViewerPanel} inside a
+     * modeless dialog. The conversion is the slow part (fonts embedded, PDFBox layout), so the
+     * button is disabled while it runs and {@code BackgroundTask} reports a failure in its own
+     * dialog. Everything else — Save, Print, Insert, Delete pages — is the viewer's own toolbar
+     * (page editing lives in the toolkit, not here), so the dialog only asks the viewer's
+     * {@code confirmDiscard()} before closing on unsaved edits.
+     */
+    static void showAsPDF(JComponent owner, String markdown) {
+        String md = markdown == null ? "" : markdown;
+        BackgroundTask.run(owner, owner, () -> MDToPDF.mdToPDF(md).toByteArray(), pdf -> {
+            Window parent = SwingUtilities.getWindowAncestor(owner);
+            JDialog dialog = new JDialog(parent, "Response as PDF", Dialog.ModalityType.MODELESS);
+            PDFViewerPanel viewer = new PDFViewerPanel(true);
+            dialog.setContentPane(viewer);
+            dialog.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
+            dialog.addWindowListener(new java.awt.event.WindowAdapter() {
+                @Override
+                public void windowClosing(java.awt.event.WindowEvent e) {
+                    if (viewer.confirmDiscard()) dialog.dispose();
+                }
+
+                @Override
+                public void windowClosed(java.awt.event.WindowEvent e) {
+                    viewer.close();
+                }
+            });
+            dialog.setSize(900, 940);
+            dialog.setLocationRelativeTo(parent);
+            dialog.setVisible(true);
+            viewer.setPDF(pdf);
+        });
     }
 
     private static void copyResponse(JEditorPane pane) {
@@ -99,7 +136,9 @@ public class AssistantUtil {
         if (!selected) pane.select(0, 0);
     }
 
-    /** {@code 120 ms · 57 in / 203 out tokens}; a missing or zero part is left out, all missing → null. */
+    /**
+     * {@code 120 ms · 57 in / 203 out tokens}; a missing or zero part is left out, all missing → null.
+     */
     static String detailLine(Integer latency, Integer inTokens, Integer outTokens) {
         StringBuilder sb = new StringBuilder();
         if (latency != null && latency > 0) sb.append(latency).append(" ms");

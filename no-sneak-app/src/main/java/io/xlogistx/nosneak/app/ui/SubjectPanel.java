@@ -27,8 +27,10 @@ import java.io.BufferedOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.UncheckedIOException;
 import java.util.*;
 
 import static io.xlogistx.gui.PanelBuilder.*;
@@ -240,11 +242,14 @@ public class SubjectPanel extends JPanel {
 
         status.setText("Restoring…");
         BackgroundTask.run(this, restore,
-                () -> {
+                // a whole-store restore needs the store's system context, not a subject
+                () -> ctx.session().runAsSystem(() -> {
                     try (InputStream in = new BufferedInputStream(new FileInputStream(source))) {
                         return ds.restore(in, mode);
+                    } catch (IOException e) {
+                        throw new UncheckedIOException(e);
                     }
-                },
+                }),
                 _ -> {
                     status.setText("Restored " + source.getName());
                     ctx.session().logout();
@@ -263,8 +268,9 @@ public class SubjectPanel extends JPanel {
                 Exports every record in the data store — subjects, credentials, chats and skills — \
                 as a zip archive.
 
-                The archive is NOT encrypted. API keys are stored in the clear, so keep the file \
-                somewhere you would keep the keys themselves.""");
+                The archive itself is not encrypted; the sealed values in it (API keys and other \
+                secrets) can only be opened again with this installation's vault, so keep the file \
+                somewhere you would keep the vault, and keep the vault.""");
         note.setEditable(false);
         note.setOpaque(false);
         note.setLineWrap(true);
@@ -304,12 +310,15 @@ public class SubjectPanel extends JPanel {
 
         status.setText("Exporting…");
         BackgroundTask.run(this, export,
-                () -> {
+                // a whole-store dump needs the store's system context, not a subject
+                () -> ctx.session().runAsSystem(() -> {
                     try (OutputStream out = new BufferedOutputStream(new FileOutputStream(target))) {
                         ds.dumpZip(out);
+                    } catch (IOException e) {
+                        throw new UncheckedIOException(e);
                     }
                     return target.length();
-                },
+                }),
                 size -> {
                     status.setText("Exported " + target.getName() + " — " + (size / 1024) + " KB");
                     JOptionPane.showMessageDialog(this, "Backup written to\n" + target.getAbsolutePath());
@@ -877,7 +886,11 @@ public class SubjectPanel extends JPanel {
         editKeyLabel.setText(key.getName());
         editKeyDescription.setText(key.getDescription());
 
-        if (key.getAppID() != null) {
+        if (external) {
+            // a vendor's domain/app lives on the key's property bag (Session.APIKeyInfo)
+            keyAppID.setText(Objects.requireNonNullElse(ctx.session().vendorAppOf(key), ""));
+            keyDomainID.setText(Objects.requireNonNullElse(ctx.session().vendorDomainOf(key), ""));
+        } else if (key.getAppID() != null) {
             keyAppID.setText(key.getAppID().getAppID());
             keyDomainID.setText(key.getAppID().getDomainID());
         } else {
