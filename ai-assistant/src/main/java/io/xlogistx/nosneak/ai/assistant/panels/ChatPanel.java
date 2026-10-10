@@ -4,6 +4,8 @@ import io.xlogistx.gui.*;
 import io.xlogistx.nosneak.ai.AIProvider;
 import io.xlogistx.nosneak.ai.assistant.AssistantCallback;
 import io.xlogistx.nosneak.ai.assistant.AssistantContext;
+import io.xlogistx.nosneak.ai.assistant.AssistantMDDecoder;
+import io.xlogistx.nosneak.ai.assistant.AssistantUtil;
 import io.xlogistx.nosneak.ai.model.*;
 import net.miginfocom.swing.MigLayout;
 import org.zoxweb.server.io.UByteArrayInputStream;
@@ -16,6 +18,7 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.*;
+import java.awt.datatransfer.StringSelection;
 import java.awt.event.ActionEvent;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
@@ -68,7 +71,13 @@ public class ChatPanel extends JPanel {
     private final JFileChooser fileChooser = new JFileChooser();
     private final Set<CaptureArea> tickedAreas = Collections.newSetFromMap(new IdentityHashMap<>());
 
-    private final JCheckBox sendFullHistory = new JCheckBox("Send history", true);
+    private final JCheckBox sendFullHistory = new JCheckBox("Send history", false);
+    /**
+     * When ticked, the fenced code blocks of each new reply are copied to the system clipboard as
+     * they arrive, so a generated config or command can be pasted without reaching for the bubble's
+     * Copy button. Session-scoped view state: never persisted, cleared by {@link #reset()}.
+     */
+    private final JCheckBox autoCopyCode = new JCheckBox("Auto-copy code", false);
 
     public ChatPanel(AssistantContext ctx) {
         this.ctx = ctx;
@@ -202,17 +211,25 @@ public class ChatPanel extends JPanel {
 
         sendFullHistory.setToolTipText(
                 "Checked: each request carries the whole conversation. Unchecked: only the new message is sent.");
+        autoCopyCode.setToolTipText(
+                "Checked: the code blocks of every new reply are copied to the clipboard as it arrives.");
 
         JButton newChat = new JButton("New Chat", new IconUtil.PlusIcon(16));
         newChat.setToolTipText("Create a new chat");
         newChat.addActionListener(_ -> openChatCreator());
+
+        JButton chatToPDF = GUIUtil.iconButton(new IconUtil.PDFIcon(16, Color.WHITE));
+        chatToPDF.setToolTipText("Show the whole chat as a PDF");
+        chatToPDF.addActionListener(_ -> showChatAsPDF(chatToPDF));
 
         JPanel titlePanel = new JPanel(new FlowLayout());
         titlePanel.add(chatTitle);
         titlePanel.add(modelSelector);
         titlePanel.add(modelFilterField);
         titlePanel.add(sendFullHistory);
+        titlePanel.add(autoCopyCode);
         titlePanel.add(newChat);
+        titlePanel.add(chatToPDF);
 
         transcriptScroll = new JScrollPane(transcript,
                 JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
@@ -342,6 +359,80 @@ public class ChatPanel extends JPanel {
         transcript.repaint();
     }
 
+    /**
+     * The header's PDF button (2026-10-07): the whole chat — every stored request and response, in
+     * order — rendered to one markdown document and shown through {@link AssistantUtil#showAsPDF},
+     * the same path as a single bubble's PDF button. Image attachments are embedded under the
+     * turn they went out with; other sources are listed by name. The markdown is built on the
+     * background worker because the images come out of the store.
+     */
+    private void showChatAsPDF(JComponent owner) {
+        AIChat chat = ctx.currentChat();
+        if (chat == null) {
+            JOptionPane.showMessageDialog(this, "Open a chat first (Chat History > + New Chat)", "Chat as PDF", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        if (chat.getMessages().size() == 0) {
+            JOptionPane.showMessageDialog(this, "This chat has no messages yet.", "Chat as PDF", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        String title = chat.getTitle() != null ? chat.getTitle() : "Default chat";
+        AssistantUtil.showAsPDF(owner, title + " — PDF", () -> chatToMarkdown(ctx, chat, title));
+    }
+
+    /**
+     * Not for the EDT: image attachments are read back from the store through
+     * {@code ctx.getCapture} and embedded as {@code data:image/png;base64} images, which
+     * {@code MDToPDF} scales to the text width. A capture that is gone from the store, or a
+     * non-image source, is listed by name instead.
+     */
+    static String chatToMarkdown(AssistantContext ctx, AIChat chat, String title) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("# ").append(title).append("\n\n");
+        if (chat.getProvider() != null || chat.getModel() != null) {
+            sb.append('*');
+            if (chat.getProvider() != null) sb.append(chat.getProvider());
+            if (chat.getProvider() != null && chat.getModel() != null) sb.append(" · ");
+            if (chat.getModel() != null) sb.append(chat.getModel());
+            sb.append("*\n\n");
+        }
+        for (NVEntity e : chat.getMessages().values()) {
+            AIMessage m = (AIMessage) e;
+            AIRequest req = m.getAIRequest();
+            AIResponse res = m.getAIResponse();
+            if (req != null && req.getContent() != null) {
+                sb.append("---\n\n### You\n\n").append(req.getContent().trim()).append("\n\n");
+                StringBuilder named = new StringBuilder();
+                for (NVEntity a : req.getAttachments().values()) {
+                    AISource source = (AISource) a;
+                    byte[] png = source.isImage() ? captureImage(ctx, source.getCaptureGUID()) : null;
+                    if (png != null) {
+                        sb.append("![").append(source.getName()).append("](data:image/png;base64,")
+                                .append(Base64.getEncoder().encodeToString(png)).append(")\n\n");
+                        continue;
+                    }
+                    named.append("- ").append(source.getName());
+                    if (source.getSourceType() != null)
+                        named.append(" (").append(source.getSourceType().getName()).append(')');
+                    named.append('\n');
+                }
+                if (!named.isEmpty()) sb.append("*Attached:*\n\n").append(named).append('\n');
+            }
+            if (res != null && res.getContent() != null) {
+                sb.append("### Assistant");
+                if (res.getModel() != null) sb.append(" · ").append(res.getModel());
+                sb.append("\n\n").append(res.getContent().trim()).append("\n\n");
+            }
+        }
+        return sb.toString();
+    }
+
+    private static byte[] captureImage(AssistantContext ctx, String guid) {
+        if (guid == null) return null;
+        AICapture capture = ctx.getCapture(guid);
+        return capture != null ? capture.getImage() : null;
+    }
+
     private void onSend() {
 
         if (sendButton == null || !sendButton.isEnabled()) return;
@@ -435,8 +526,10 @@ public class ChatPanel extends JPanel {
         AssistantCallback callback = new AssistantCallback(ctx, sending, msg,
                 resp -> {
                     sendButton.setEnabled(true);
-                    if (sending == ctx.currentChat() && resp.getContent() != null && !resp.getContent().isEmpty())
+                    if (sending == ctx.currentChat() && resp.getContent() != null && !resp.getContent().isEmpty()) {
                         addMessage(resp.getContent(), false, latencyOf(resp), inTokensOf(resp), outTokensOf(resp));
+                        if (autoCopyCode.isSelected()) copyCode(resp.getContent());
+                    }
                 }, err -> {
             sendButton.setEnabled(true);
             BackgroundTask.runCatching(this, null, () -> ctx.saveChat(sending), null);
@@ -523,6 +616,27 @@ public class ChatPanel extends JPanel {
         showErrorDialog(this, "Send", "Send failed: " + e.getMessage(), e);
     }
 
+    /**
+     * Puts the reply's fenced code blocks on the system clipboard, joined by a blank line; a reply
+     * with no code block leaves the clipboard untouched. Runs on the EDT (it is called from the
+     * send callback's EDT half); a clipboard that is held by another application is not an error
+     * worth a dialog, so the failure is swallowed.
+     */
+    static String codeToCopy(String response) {
+        List<String> blocks = AssistantMDDecoder.codeBlocks(response);
+        return blocks.isEmpty() ? null : String.join("\n\n", blocks);
+    }
+
+    private void copyCode(String response) {
+        String code = codeToCopy(response);
+        if (code == null) return;
+        try {
+            Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(code), null);
+        } catch (IllegalStateException ignored) {
+            // the clipboard is currently unavailable; the bubble's Copy button is still there
+        }
+    }
+
     private void addMessage(String response, boolean user, Integer latency, Integer inTokens, Integer outTokens) {
         JComponent bubble = chatBubble(response, user, latency, inTokens, outTokens,
                 user ? null : () -> {
@@ -584,7 +698,8 @@ public class ChatPanel extends JPanel {
     }
 
     private JComponent sourceChip(AISource source) {
-        JLabel chip = new JLabel(ellipsize(source.getName(), CHIP_MAX_CHARS));
+        JLabel chip = new JLabel(ellipsize(source.getName(), CHIP_MAX_CHARS), new IconUtil.PDFIcon(14, Color.WHITE), SwingConstants.LEADING);
+        chip.setIconTextGap(6);
         chip.setToolTipText(source.getName() + " — " + SourceSupport.sublabel(source));
         chip.setForeground(UIManager.getColor("Label.disabledForeground"));
         chip.setBorder(BorderFactory.createCompoundBorder(
@@ -975,7 +1090,8 @@ public class ChatPanel extends JPanel {
     }
 
     public void reset() {
-        sendFullHistory.setSelected(true);
+        sendFullHistory.setSelected(false);
+        autoCopyCode.setSelected(false);
         modelFilterField.setText("");
         pendingSkills.clear();
         tickedAreas.clear();

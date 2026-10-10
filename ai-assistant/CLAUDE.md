@@ -118,7 +118,7 @@ has chosen to use.
 >   latency/token line (assistant bubbles only, never the user's). It routes to
 >   `onSaveSkillFromResponse`, which confirms first if the editor holds unsaved edits, then opens
 >   the skill editor seeded with that response. Guarded by `ChatBubbleSaveAsSkillTest`.
-> - **An assistant reply can be shown as a PDF (2026-09-23).** The file-icon button beside
+> - **An assistant reply can be shown as a PDF (2026-09-23).** The PDF-icon button (`IconUtil.PDFIcon`, 2026-10-07; a plain file icon before) beside
 >   *Copy* on every assistant bubble runs `AssistantUtil.showAsPDF`: the bubble's markdown goes
 >   through the toolkit's `io.xlogistx.gui.MDToPDF` (commonmark with the same GFM extensions as
 >   the viewer, OpenHTMLtoPDF over PDFBox, Roboto embedded) **off the EDT** via `BackgroundTask`
@@ -133,6 +133,31 @@ has chosen to use.
 >   The PDF libraries arrive transitively through `xlogistx-gui-audio`
 >   (`openhtmltopdf-pdfbox`, `pdfbox` 3.0.x, `graphics2d`, `xmpbox`, `jsoup`); a hand-built test
 >   classpath must pin **one** pdfbox version or `fontbox` throws `NoSuchMethodError`. And when the toolkit jar is reinstalled with new transitives, **reload the Maven projects in IntelliJ** — its imported module libraries do not follow the local repository on their own, and the app then dies with `NoClassDefFoundError: com/openhtmltopdf/pdfboxout/PdfRendererBuilder` while `mvn` resolves everything (seen 2026-09-23).
+> - **The whole chat can be shown as a PDF (2026-10-07).** A red `IconUtil.PDFIcon` button at the
+>   end of the chat header (after *New Chat*) runs `ChatPanel.showChatAsPDF`: `chatToMarkdown`
+>   folds every stored turn into one markdown document — `# title`, an italic provider · model
+>   line, then per message a `---` rule, `### You` with the request text, every image attachment
+>   inline (the capture's PNG read back from the store, embedded as a `data:` URI; MDToPDF scales it
+>   to the text width — this is why the markdown is built on the background worker, through the
+>   `Callable` overload of `showAsPDF`) and an *Attached:* list
+>   of the remaining source names (not contents), and `### Assistant · model` with the response —
+>   and hands it to the same `AssistantUtil.showAsPDF(owner, title, markdown)` the bubble button
+>   uses (now public, with the dialog title as a parameter; the dialog carries PDF window icons).
+>   No chat or an empty chat gets an information dialog instead.
+> - **The code in a reply can be auto-copied (2026-10-07).** The chat header carries an
+>   **`Auto-copy code`** checkbox (after *Send history*, default off, reset to off at logout like
+>   the rest of the session view state). While it is ticked, every reply that lands in the
+>   transcript has its **fenced code blocks** put on the system clipboard — `ChatPanel.copyCode`
+>   runs from the send callback's EDT half, right after `addMessage`, and sets a `StringSelection`
+>   of `codeToCopy(response)`: the blocks from `AssistantMDDecoder.codeBlocks(markdown)` joined by
+>   a blank line, fence lines dropped and the fence's indentation stripped. A reply with no fenced
+>   block leaves the clipboard untouched (so the last copied code survives a prose answer), and a
+>   clipboard held by another application (`IllegalStateException`) is swallowed — the bubble's
+>   own *Copy* button is still there. `codeBlocks` uses the decoder's `Fence` grammar: backtick
+>   fences of three or more, closed by a bare fence at least as long as the opener (so a ````md`
+>   wrapper's inner ```` ```java ```` block stays inside it), an unclosed block runs to the end,
+>   inline code spans are not blocks. Pinned by `CodeBlocksTest` (5). Re-rendering an old chat
+>   (`refreshPrompt`) does **not** copy — only a reply arriving from the wire does.
 > - **Chat send is wired for a single provider, async, and persists.** `onSend` validates
 >   (chat / model / provider — each missing piece gets a dialog, no more silent returns), builds
 >   an `AIRequest` (raw user text, maxTokens), attaches an `AIMessage` to `currentChat`, flattens
@@ -289,7 +314,7 @@ has chosen to use.
 > them, and the only way to see them is to widen the window. Measured: a 1400px chip against a
 > 597px viewport pushed the user's bubble 817px out of view. The `wmin 0` matters too — MigLayout
 > will not shrink a component below its reported minimum, and a `JEditorPane` reports the width of
-> its widest unbreakable content. Chip text is additionally ellipsized at 48 chars with the full
+> its widest unbreakable content. Chips carry the red `IconUtil.PDFIcon` (2026-10-07) before the name; chip text is additionally ellipsized at 48 chars with the full
 > name in the tooltip, since `wmax` alone clips mid-word with no indication anything was cut.
 > Callers should keep attachment names short for the same reason — `ScanPanel` sends a scan's
 > targets, not its full command line.
@@ -891,7 +916,7 @@ wire formats. `decode(payload)` runs, in order:
 `totalTokenCount`, else summing the prompt/input/completion/output/candidates spellings; `0`
 when absent.
 
-**Tests.** The module runs **68 green tests** (2026-09-23, through the hand-rolled launcher in
+**Tests.** The module runs **73 green tests** (2026-10-07, through the hand-rolled launcher in
 `.claude/tools/` with the toolkit jars added to its classpath — surefire's JUnit provider is not
 cached on the Windows box, and the Swing tests need a display, so no `-Djava.awt.headless`):
 `ModelNameTest` (4) pins the `models/` prefix strip; `DetailLineTest` (3) the bubble's `latency · in / out tokens` line; `AssistantMDDecoderTest` (29) renders through
@@ -907,7 +932,8 @@ read like the real store does; `CaptureSupportTest` (6) pins the headless-safe c
 built-in markers, bare word → contains, glob include, `!` exclude, exclude-only, `*`,
 round-trip/clear, and a lone `!` being ignored rather than blocking everything); and
 `ChatBubbleSaveAsSkillTest` (4) covers the "Save as skill"
-affordance. `RegionOverlay` and the capture tab/toolbar/inline-rename behavior are **not**
+affordance; `CodeBlocksTest` (5, 2026-10-07) pins the fenced-block extraction behind the chat
+header's *Auto-copy code* box. `RegionOverlay` and the capture tab/toolbar/inline-rename behavior are **not**
 headless-testable — they need real windows and a mouse; use the `AssistantPanelTest` harness.
 
 Three files in test sources are **not** JUnit tests but `main`-method visual harnesses:

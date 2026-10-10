@@ -1,5 +1,6 @@
 package io.xlogistx.nosneak.ai.assistant;
 
+import io.xlogistx.common.util.NVColor;
 import io.xlogistx.gui.IconUtil;
 import io.xlogistx.gui.BackgroundTask;
 import io.xlogistx.gui.MDToPDF;
@@ -9,6 +10,7 @@ import org.zoxweb.shared.util.NVGenericMap;
 
 import javax.swing.*;
 import java.awt.*;
+import java.util.concurrent.Callable;
 
 public class AssistantUtil {
 
@@ -79,13 +81,13 @@ public class AssistantUtil {
                 copyMarkdown.addActionListener(_ -> copyResponse(pane));
                 south.add(copyMarkdown);
 
-                JButton convertMDToPDF = new JButton(new IconUtil.FileIcon(16));
+                JButton convertMDToPDF = new JButton(new IconUtil.PDFIcon(16, Color.WHITE));
                 convertMDToPDF.putClientProperty("JButton.buttonType", "borderless");
                 convertMDToPDF.setFont(convertMDToPDF.getFont().deriveFont(convertMDToPDF.getFont().getSize2D() - 2f));
                 convertMDToPDF.setForeground(UIManager.getColor("Label.disabledForeground"));
                 convertMDToPDF.setFocusable(false);
                 convertMDToPDF.setToolTipText("Show this response as a PDF");
-                convertMDToPDF.addActionListener(_ -> showAsPDF(convertMDToPDF, markdown));
+                convertMDToPDF.addActionListener(_ -> showAsPDF(convertMDToPDF, "Response as PDF", markdown));
                 south.add(convertMDToPDF);
             }
             bubble.add(south, BorderLayout.SOUTH);
@@ -101,13 +103,28 @@ public class AssistantUtil {
      * button is disabled while it runs and {@code BackgroundTask} reports a failure in its own
      * dialog. Everything else — Save, Print, Insert, Delete pages — is the viewer's own toolbar
      * (page editing lives in the toolkit, not here), so the dialog only asks the viewer's
-     * {@code confirmDiscard()} before closing on unsaved edits.
+     * {@code confirmDiscard()} before closing on unsaved edits. Also used by the chat header's
+     * PDF button (2026-10-07) with the whole chat rendered to one markdown document, hence the
+     * {@code title} parameter.
      */
-    static void showAsPDF(JComponent owner, String markdown) {
+    public static void showAsPDF(JComponent owner, String title, String markdown) {
         String md = markdown == null ? "" : markdown;
-        BackgroundTask.run(owner, owner, () -> MDToPDF.mdToPDF(md).toByteArray(), pdf -> {
+        showAsPDF(owner, title, () -> md);
+    }
+
+    /**
+     * As {@link #showAsPDF(JComponent, String, String)}, but the markdown is produced by
+     * {@code markdown} on the same background worker as the conversion — for documents that
+     * have to read the store first (the whole-chat PDF pulls capture images out of it).
+     */
+    public static void showAsPDF(JComponent owner, String title, Callable<String> markdown) {
+        BackgroundTask.run(owner, owner, () -> {
+            String md = markdown.call();
+            return MDToPDF.mdToPDF(md == null ? "" : md).toByteArray();
+        }, pdf -> {
             Window parent = SwingUtilities.getWindowAncestor(owner);
-            JDialog dialog = new JDialog(parent, "Response as PDF", Dialog.ModalityType.MODELESS);
+            JDialog dialog = new JDialog(parent, title, Dialog.ModalityType.MODELESS);
+            dialog.setIconImages(IconUtil.windowIcons(IconUtil.PDFIcon::new, Color.WHITE, NVColor.BOOTSTRAP_RED.getValue()));
             PDFViewerPanel viewer = new PDFViewerPanel(true);
             dialog.setContentPane(viewer);
             dialog.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);

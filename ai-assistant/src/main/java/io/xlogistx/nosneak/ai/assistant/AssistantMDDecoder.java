@@ -8,7 +8,9 @@ import org.zoxweb.shared.util.NVGenericMap;
 import org.zoxweb.shared.util.NVGenericMapList;
 import org.zoxweb.shared.util.SUS;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 /**
  * Turns a provider's raw JSON payload into markdown the chat bubble can render. This is the only
@@ -226,6 +228,46 @@ public class AssistantMDDecoder implements DataDecoder<NVGenericMap, String> {
                 inner = 0;
         }
         return inner == 0;
+    }
+
+    /**
+     * The contents of every fenced code block in {@code markdown}, in order, each without its
+     * fence lines and with the fence's indentation stripped from its lines. Backtick fences only
+     * (the same grammar as {@link Fence}); a block closes on a bare fence at least as long as its
+     * opener, and an unclosed block runs to the end. Inline code spans are not code blocks.
+     *
+     * @return the blocks, empty when there are none or {@code markdown} is null
+     */
+    public static List<String> codeBlocks(String markdown) {
+        List<String> blocks = new ArrayList<>();
+        if (markdown == null)
+            return blocks;
+
+        String[] lines = markdown.split("\n", -1);
+        Fence open = null;
+        StringBuilder body = null;
+        for (String line : lines) {
+            Fence fence = Fence.of(line);
+            if (open == null) {
+                if (fence != null) {
+                    open = fence;
+                    body = new StringBuilder();
+                }
+                continue;
+            }
+            if (fence != null && fence.isBare() && fence.length >= open.length) {
+                blocks.add(body.toString());
+                open = null;
+                body = null;
+                continue;
+            }
+            if (!body.isEmpty())
+                body.append('\n');
+            body.append(line.startsWith(open.indent) ? line.substring(open.indent.length()) : line);
+        }
+        if (open != null)
+            blocks.add(body.toString());
+        return blocks;
     }
 
     private record Fence(String indent, int length, String info) {
