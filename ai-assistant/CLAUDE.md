@@ -285,10 +285,10 @@ has chosen to use.
 >   (provider down, logout while in flight) survives. `failSend` still *removes* the message on a
 >   provider error and re-saves — see the rough edges.
 > - **Session reset is wired.** On logout `no-sneak-app` calls `clearProviders()` (wipes the
->   registrar) + `resetPanel()` → `context.resetContext()` (nulls `currentChat` / credential /
->   model, clears the chat + skill caches, fires `currentChat` so the transcript clears) and
->   blanks the composer / resets the card stacks. On app close, `Main` closes the datastore in a
->   `windowClosing` handler.
+> registrar) + `resetPanel()` → `context.resetContext()` (nulls `currentChat` / credential /
+> model, clears the chat + skill caches, fires `currentChat` so the transcript clears) and
+> blanks the composer / resets the card stacks. On app close, `NoSneakMain` closes the datastore in a
+> `windowClosing` handler.
 >
 > **Still target-only / stubbed:** the multi-model **compare** path (no `AIRunner`; single-provider
 > `asyncSend` is wired); **chat-scoped skill activation** (per-*message* attachment works, but

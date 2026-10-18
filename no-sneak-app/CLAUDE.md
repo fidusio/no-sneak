@@ -11,18 +11,18 @@ network scanner screen** over `no-sneak-core`; the PQC file-sharing screen is st
 > `shiro` module; the h2p store refuses every connection without a `SecurityController` **and** a
 > `KeyMaker` holding the master key) is absorbed here. What changed, in one place each:
 >
-> - **`NoSneakStore`** (new, beside `Main`) is how the store opens. An installation is a directory
->   with `no-sneak.store` (an opsec `SecretStore` vault: AES master key `master-key` + `db.url` /
->   `db.user` / `db.password` / `db.enc-password`) and the encrypted H2 file `no-sneak.mv.db`.
->   `create(location, vaultPassword, dbUser, dbPassword, dbEncPassword)` is the first run (writes
->   the vault, then opens); `open(location, vaultPassword)` is every later run — the vault password
->   is the one secret the subject types. Both load the master key into `KeyMakerProvider.SINGLETON`,
->   put the `ShiroSecurityController` + that key maker on the `APIConfigInfo` (`secure`), connect,
->   and `bootstrap` the manager: catalog seeded, the app **`xlogistx.com-nosneak`** created when
->   missing (its registrar + sealed key are left unused), Shiro session timeout set to never. No
->   super-admin, no `super-admin-id` in the vault: a desktop store has one operator and permission
->   enforcement stays off. `Main` takes `ds.location=` + `ds.store-password=`; the setup screen
->   shows the three database fields only while the chosen directory has no vault.
+> - **`NoSneakStore`** (new, beside `NoSneakMain`) is how the store opens. An installation is a directory
+> with `no-sneak.store` (an opsec `SecretStore` vault: AES master key `master-key` + `db.url` /
+> `db.user` / `db.password` / `db.enc-password`) and the encrypted H2 file `no-sneak.mv.db`.
+> `create(location, vaultPassword, dbUser, dbPassword, dbEncPassword)` is the first run (writes
+> the vault, then opens); `open(location, vaultPassword)` is every later run — the vault password
+> is the one secret the subject types. Both load the master key into `KeyMakerProvider.SINGLETON`,
+> put the `ShiroSecurityController` + that key maker on the `APIConfigInfo` (`secure`), connect,
+> and `bootstrap` the manager: catalog seeded, the app **`xlogistx.com-nosneak`** created when
+> missing (its registrar + sealed key are left unused), Shiro session timeout set to never. No
+> super-admin, no `super-admin-id` in the vault: a desktop store has one operator and permission
+> enforcement stays off. `NoSneakMain` takes `ds.location=` + `ds.store-password=`; the setup screen
+> shows the three database fields only while the chosen directory has no vault.
 > - **`Session` logs in a Shiro `Subject`, unbound** (`loginUsernamePassword` builds the subject on
 >   the manager's security manager and logs it in with a `DomainUsernamePasswordToken` scoped to the
 >   no-sneak app; the manager has no password variant of `loginUnboundSubjectJWT`, so the four
@@ -51,7 +51,7 @@ network scanner screen** over `no-sneak-core`; the PQC file-sharing screen is st
 > **Status.** The session layer (`ui.utility.Session`) is backed by io-xlogistx's
 > **`ShiroDSDomainSecurityManager`** over an **encrypted H2** `H2PDataStore`
 > (`jdbc:h2:file:<dir>/no-sneak;MODE=PostgreSQL;CIPHER=AES`, built by `H2PDSCreator`), opened
-> through the installation's vault (`NoSneakStore`). `Main` opens the store from either `ds.*`
+> through the installation's vault (`NoSneakStore`). `NoSneakMain` opens the store from either `ds.*`
 > launch parameters or the first-run **Data Store Setup** screen. The store **persists across
 > restarts**; the bootstrap seeds the catalog and the no-sneak app but creates **no accounts** —
 > register one before you can log in.
@@ -129,7 +129,7 @@ io.xlogistx.nosneak.app
 
 ## Entry point
 
-### `Main`
+### `NoSneakMain`
 Bootstraps the app. `main` first parses `ds.*` launch parameters (`ParamUtil.parse("=", args)`):
 `ds.location` (the installation directory) and `ds.store-password` (its vault password). If
 **both** are present it opens the installation directly — `NoSneakStore.open(location,
@@ -137,7 +137,7 @@ password)` reads the vault, loads the master key, opens the encrypted H2 store w
 controller + key maker, and returns the bootstrapped `ShiroDSDomainSecurityManager`; a failure
 prints the reason and exits with status 2. It then installs FlatLaf **FlatLightLaf** and launches
 on the EDT. (`createDomainSecManager(store)` is still there for a store opened elsewhere: it builds
-and bootstraps the manager, `OPSecUtil.singleton()` first.) The IntelliJ run configuration `Main`
+and bootstraps the manager, `OPSecUtil.singleton()` first.) The IntelliJ run configuration `NoSneakMain`
 still carries the pre-2026-10-05 `ds.user=… ds.password=… ds.enc-password=… ds.location=…` line;
 those parameters are ignored now — change it to `ds.location=<dir> ds.store-password=<pw>`.
 

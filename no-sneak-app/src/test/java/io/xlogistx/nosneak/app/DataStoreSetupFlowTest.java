@@ -19,7 +19,7 @@ import java.util.concurrent.Future;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Exercises the installation path {@link Main#showSetup} wires the setup panel to — a real
+ * Exercises the installation path {@link NoSneakMain#showSetup} wires the setup panel to — a real
  * encrypted H2 file store in a temp directory, opened through its vault the way the app opens
  * it ({@link NoSneakStore#create} on the first run, {@link NoSneakStore#open} afterwards), with
  * the Shiro controller and the key maker on the store, so the per-row access check and the

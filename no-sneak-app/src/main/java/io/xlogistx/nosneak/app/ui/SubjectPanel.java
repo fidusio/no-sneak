@@ -1,11 +1,10 @@
 package io.xlogistx.nosneak.app.ui;
 
-import io.xlogistx.api.ai.AIAPIBuilder;
 import io.xlogistx.datastore.h2p.H2PDataStore;
 import io.xlogistx.gui.GUIUtil;
 import io.xlogistx.gui.IconUtil;
 import io.xlogistx.gui.*;
-import io.xlogistx.nosneak.app.Main;
+import io.xlogistx.nosneak.app.NoSneakMain;
 import io.xlogistx.nosneak.app.ui.utility.*;
 import net.miginfocom.swing.MigLayout;
 import org.zoxweb.shared.security.AccessSecurityException;
@@ -298,7 +297,7 @@ public class SubjectPanel extends JPanel {
 
         JFileChooser chooser = new JFileChooser();
         chooser.setDialogTitle("Export backup");
-        chooser.setSelectedFile(new File(Main.dbName + "-backup.zip"));
+        chooser.setSelectedFile(new File(NoSneakMain.dbName + "-backup.zip"));
         if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
 
         File target = chooser.getSelectedFile();

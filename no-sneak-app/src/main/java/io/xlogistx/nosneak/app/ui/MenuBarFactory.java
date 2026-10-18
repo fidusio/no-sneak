@@ -3,7 +3,7 @@ package io.xlogistx.nosneak.app.ui;
 
 import io.xlogistx.gui.MDViewerPanel;
 import io.xlogistx.gui.PanelBuilder;
-import io.xlogistx.nosneak.app.Main;
+import io.xlogistx.nosneak.app.NoSneakMain;
 import io.xlogistx.nosneak.app.ui.utility.AppContext;
 import io.xlogistx.nosneak.app.ui.utility.Navigator;
 
@@ -102,7 +102,7 @@ public class MenuBarFactory {
     }
 
     private void showAbout() {
-        if (about == null) about = dialog("About " + Main.VERSION.getName(), buildCard(), null);
+        if (about == null) about = dialog("About " + NoSneakMain.VERSION.getName(), buildCard(), null);
         show(about);
     }
 
@@ -110,7 +110,7 @@ public class MenuBarFactory {
         if (description == null) {
             MDViewerPanel viewer = new MDViewerPanel();
             viewer.setMarkdown(loadDescription());
-            description = dialog(Main.VERSION.getName() + " — description", viewer, new Dimension(680, 560));
+            description = dialog(NoSneakMain.VERSION.getName() + " — description", viewer, new Dimension(680, 560));
         }
         show(description);
     }
@@ -142,7 +142,7 @@ public class MenuBarFactory {
             if (in != null) return new String(in.readAllBytes(), StandardCharsets.UTF_8);
         } catch (IOException ignore) {
         }
-        return "# " + Main.VERSION.getName() + "\n\n" + TAGLINE;
+        return "# " + NoSneakMain.VERSION.getName() + "\n\n" + TAGLINE;
     }
 
     private JComponent buildCard() {
@@ -152,14 +152,14 @@ public class MenuBarFactory {
                 BorderFactory.createLineBorder(UIManager.getColor("Component.borderColor")),
                 BorderFactory.createEmptyBorder(24, 32, 24, 32)));
 
-        card.add(left(PanelBuilder.title(Main.VERSION.getName())));
+        card.add(left(PanelBuilder.title(NoSneakMain.VERSION.getName())));
         card.add(Box.createVerticalStrut(4));
         card.add(left(muted(new JLabel(TAGLINE))));
         card.add(Box.createVerticalStrut(16));
         card.add(left(new JSeparator()));
         card.add(Box.createVerticalStrut(16));
 
-        card.add(left(detail("Version", Main.VERSION.version())));
+        card.add(left(detail("Version", NoSneakMain.VERSION.version())));
         card.add(Box.createVerticalStrut(6));
         card.add(left(detail("Java", System.getProperty("java.version"))));
         card.add(Box.createVerticalStrut(6));

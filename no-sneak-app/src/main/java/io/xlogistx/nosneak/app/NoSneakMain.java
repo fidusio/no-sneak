@@ -10,7 +10,7 @@ import io.xlogistx.nosneak.app.ui.utility.AppContext;
 import io.xlogistx.opsec.OPSecUtil;
 import io.xlogistx.shiro.ds.ShiroDSDomainSecurityManager;
 import org.zoxweb.shared.api.APIDataStore;
-import org.zoxweb.shared.app.AppVersionDAO;
+import org.zoxweb.shared.app.AppVersion;
 import org.zoxweb.shared.util.ParamUtil;
 import org.zoxweb.shared.util.SUS;
 
@@ -20,9 +20,9 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.util.function.Consumer;
 
-public class Main {
+public class NoSneakMain {
 
-    public final static AppVersionDAO VERSION = new AppVersionDAO("NOSNEAK::1.0.0");
+    public final static AppVersion VERSION = new AppVersion("NOSNEAK::1.0.0");
     /** The H2 database name inside the installation directory; see {@link NoSneakStore}. */
     public static final String dbName = NoSneakStore.DB_NAME;
 
@@ -60,7 +60,7 @@ public class Main {
             if (domainSecurityManager != null) {
                 launchApp(domainSecurityManager);
             } else {
-                showSetup(Main::launchApp);
+                showSetup(NoSneakMain::launchApp);
             }
         });
     }

@@ -411,7 +411,7 @@ runtime. Everything below is uncommitted (the maintainer commits).
   `SecretStore`: master key + `db.*` entries) and the encrypted H2 file. `create` (first run) /
   `open` (every run, vault password is the one secret) → master key into `KeyMakerProvider`,
   `ShiroSecurityController` + key maker on the config, connect, `bootstrap` (catalog seeded, app
-  `xlogistx.com-nosneak` ensured, Shiro sessions never time out). `Main` takes `ds.location=` +
+  `xlogistx.com-nosneak` ensured, Shiro sessions never time out). `NoSneakMain` takes `ds.location=` +
   `ds.store-password=`; `DataStoreSetupPanel` asks for the vault password and shows the DB
   fields only on a directory without a vault.
 - `Session`: unbound Shiro subject login scoped to the no-sneak app; `getDataStore()` is a
@@ -437,7 +437,7 @@ has no `loginUnboundSubject(principal, password, domain, app)`; the four lines l
 
 **Not done / to know:**
 - The app was not launched with a window this session (tests only). The IntelliJ run
-  configuration `Main` still carries the old `ds.user=… ds.enc-password=…` arguments; change it
+  configuration `NoSneakMain` still carries the old `ds.user=… ds.enc-password=…` arguments; change it
   to `ds.location=<dir> ds.store-password=<pw>`, or run without arguments for the setup screen.
 - Existing no-sneak databases (pre-vault, subjects without subject keys, keys in clear) do not
   open through the new path — D6, start fresh or write a migration.
