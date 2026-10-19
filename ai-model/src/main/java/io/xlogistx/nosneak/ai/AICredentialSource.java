@@ -1,7 +1,7 @@
 package io.xlogistx.nosneak.ai;
 
 import org.zoxweb.shared.security.AccessSecurityException;
-import org.zoxweb.shared.data.ReferenceIDDAO;
+import org.zoxweb.shared.data.ReferenceIDImpl;
 import org.zoxweb.shared.security.APIKey;
 import org.zoxweb.shared.util.SUS;
 
@@ -26,7 +26,7 @@ public interface AICredentialSource {
      * @return the key's GUID, or null for a key the store has not persisted
      */
     static String guidOf(APIKey<?> key) {
-        return (key instanceof ReferenceIDDAO dao) ? dao.getGUID() : null;
+        return (key instanceof ReferenceIDImpl dao) ? dao.getGUID() : null;
     }
 
     /**

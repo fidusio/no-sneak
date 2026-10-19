@@ -1,6 +1,6 @@
 package io.xlogistx.nosneak.ai.model;
 
-import org.zoxweb.shared.data.PropertyDAO;
+import org.zoxweb.shared.data.PropertyImpl;
 import org.zoxweb.shared.util.*;
 
 /**
@@ -21,7 +21,7 @@ import org.zoxweb.shared.util.*;
  * it is heavy, so a row from a list has a thumbnail and a null PNG. Anything that <i>saves</i> a
  * capture must re-fetch the full row first, or the update writes that null over the stored image.
  */
-public class AICapture extends PropertyDAO {
+public class AICapture extends PropertyImpl {
 
     public enum Param implements GetNVConfig {
         FROM_AREA(NVConfigManager.createNVConfig("from_area", "name of the capture area it came from", "FromArea", false, true, String.class)),
@@ -45,7 +45,7 @@ public class AICapture extends PropertyDAO {
     public static final NVConfigEntity NVC_AI_CAPTURE = new NVConfigEntityPortable(
             "ai_capture", null, "AICapture", true, false, false, false,
             AICapture.class, SUS.extractNVConfigs(Param.values()), null, false,
-            PropertyDAO.NVC_PROPERTY_DAO
+            PropertyImpl.NVC_PROPERTY_IMPL
     );
 
     public AICapture() {

@@ -1,6 +1,6 @@
 package io.xlogistx.nosneak.ai.model;
 
-import org.zoxweb.shared.data.PropertyDAO;
+import org.zoxweb.shared.data.PropertyImpl;
 import org.zoxweb.shared.util.*;
 
 /**
@@ -17,7 +17,7 @@ import org.zoxweb.shared.util.*;
  * an attached md skill is recorded nowhere — {@link AIRequest} has no field for it, so the stored
  * transcript cannot tell you what the model was actually instructed with.
  */
-public class AISkill extends PropertyDAO {
+public class AISkill extends PropertyImpl {
 
     public enum SkillType implements GetName{
         MD_SKILL("md skill"), PROMPT_SKILL("prompt skill");
@@ -50,7 +50,7 @@ public class AISkill extends PropertyDAO {
     public static final NVConfigEntity NVC_AI_SKILL = new NVConfigEntityPortable(
             "ai_skill", null, "AISkill", true, false, false, false,
             AISkill.class, SUS.extractNVConfigs(Param.values()), null, false,
-            PropertyDAO.NVC_PROPERTY_DAO
+            PropertyImpl.NVC_PROPERTY_IMPL
     );
 
     public AISkill() {

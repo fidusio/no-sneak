@@ -456,7 +456,7 @@ Its notes and session log: `zoxweb-datastore/h2p-datastore/SHIRO-DS.md`.
 - **`loginApiKey` always refuses** (user rule 2026-10-03).
 
 > Profile fields (name/DOB) and the address book are stored in the `SubjectIdentifier`'s inherited
-> `PropertyDAO` property bag (`getProperties()` → `NVGenericMap`) — name/DOB as flat keys,
+> `PropertyImpl` property bag (`getProperties()` → `NVGenericMap`) — name/DOB as flat keys,
 > addresses as a nested `NVGenericMapList` — persisted via `updateSubjectID`; the schema itself
 > has no such fields.
 >

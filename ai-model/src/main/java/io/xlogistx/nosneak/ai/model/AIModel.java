@@ -1,13 +1,13 @@
 package io.xlogistx.nosneak.ai.model;
 
-import org.zoxweb.shared.data.PropertyDAO;
+import org.zoxweb.shared.data.PropertyImpl;
 import org.zoxweb.shared.util.*;
 
 
 /**
  * Defines an AI model with name, description, and AI provider
  */
-public class AIModel extends PropertyDAO {
+public class AIModel extends PropertyImpl {
 
     public enum Param implements GetNVConfig {
         PROVIDER(NVConfigManager.createNVConfig("provider", "the ai provider", "Provider", true, true, String.class));
@@ -26,7 +26,7 @@ public class AIModel extends PropertyDAO {
     public static final NVConfigEntity NVC_AI_MODEL = new NVConfigEntityPortable(
             "ai_model", null, "AIModel", true, false, false, false,
             AIModel.class, SUS.extractNVConfigs(Param.values()), null, false,
-            PropertyDAO.NVC_PROPERTY_DAO
+            PropertyImpl.NVC_PROPERTY_IMPL
     );
 
     public AIModel() {

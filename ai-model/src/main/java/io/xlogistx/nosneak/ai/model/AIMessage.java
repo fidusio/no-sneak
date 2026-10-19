@@ -1,7 +1,7 @@
 package io.xlogistx.nosneak.ai.model;
 
 
-import org.zoxweb.shared.data.PropertyDAO;
+import org.zoxweb.shared.data.PropertyImpl;
 import org.zoxweb.shared.util.*;
 
 /**
@@ -13,7 +13,7 @@ import org.zoxweb.shared.util.*;
  * tool-using turn is several {@code AIMessage}s in a row, so "request" means "model input this
  * round" — user text <i>or</i> a tool result — not strictly what a human typed.
  */
-public class AIMessage extends PropertyDAO {
+public class AIMessage extends PropertyImpl {
 
     public enum Param implements GetNVConfig {
         AI_REQUEST(NVConfigManager.createNVConfigEntity("ai_request", "a request sent to an ai provider", "AIRequest", false, true, AIRequest.NVC_AI_REQUEST)),
@@ -33,7 +33,7 @@ public class AIMessage extends PropertyDAO {
     public static final NVConfigEntity NVC_AI_MESSAGE = new NVConfigEntityPortable(
             "ai_message", null, "AIMessage", true, false, false, false,
             AIMessage.class, SUS.extractNVConfigs(Param.values()), null, false,
-            PropertyDAO.NVC_PROPERTY_DAO
+            PropertyImpl.NVC_PROPERTY_IMPL
     );
 
     public AIMessage() {

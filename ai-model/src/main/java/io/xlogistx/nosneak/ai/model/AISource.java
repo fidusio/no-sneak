@@ -1,6 +1,6 @@
 package io.xlogistx.nosneak.ai.model;
 
-import org.zoxweb.shared.data.PropertyDAO;
+import org.zoxweb.shared.data.PropertyImpl;
 import org.zoxweb.shared.util.*;
 
 /**
@@ -19,7 +19,7 @@ import org.zoxweb.shared.util.*;
  * Text sources are flattened into the outgoing prompt; image sources are resolved through their
  * capture and sent as image parts.
  */
-public class AISource extends PropertyDAO {
+public class AISource extends PropertyImpl {
 
     public enum SourceType implements GetName {
         FILE("file"), URL("url"), TEXT("text"), IMAGE("image");
@@ -57,7 +57,7 @@ public class AISource extends PropertyDAO {
     public static final NVConfigEntity NVC_AI_SOURCE = new NVConfigEntityPortable(
             "ai_source", null, "AISource", true, false, false, false,
             AISource.class, SUS.extractNVConfigs(Param.values()), null, false,
-            PropertyDAO.NVC_PROPERTY_DAO
+            PropertyImpl.NVC_PROPERTY_IMPL
     );
 
     public AISource() {

@@ -16,7 +16,7 @@ import org.zoxweb.shared.api.APIDataStore;
 import org.zoxweb.shared.app.AppIDDefault;
 import org.zoxweb.shared.crypto.CIPassword;
 import org.zoxweb.shared.crypto.CryptoConst;
-import org.zoxweb.shared.data.PropertyDAO;
+import org.zoxweb.shared.data.PropertyImpl;
 import org.zoxweb.shared.filters.FilterType;
 import org.zoxweb.shared.io.SharedIOUtil;
 import org.zoxweb.shared.security.*;
@@ -419,9 +419,9 @@ public class Session {
     private static NVGenericMap propertiesOf(APIKey<String> key) throws AccessSecurityException {
         NVGenericMap props = key.getProperties();
         if (props == null) {
-            if (!(key instanceof PropertyDAO dao)) throw new AccessSecurityException("Key cannot store properties");
+            if (!(key instanceof PropertyImpl dao)) throw new AccessSecurityException("Key cannot store properties");
             props = new NVGenericMap();
-            dao.setValue(PropertyDAO.Param.PROPERTIES, props);
+            dao.setValue(PropertyImpl.Param.PROPERTIES, props);
         }
         return props;
     }
@@ -664,7 +664,7 @@ public class Session {
         NVGenericMap props = subjectIdentifier.getProperties();
         if (props == null) {
             props = new NVGenericMap();
-            subjectIdentifier.setValue(PropertyDAO.Param.PROPERTIES, props);
+            subjectIdentifier.setValue(PropertyImpl.Param.PROPERTIES, props);
         }
         NVGenericMap finalProps = props;
         fields.forEach((k, v) -> finalProps.build(k, v == null ? "" : v));
@@ -717,7 +717,7 @@ public class Session {
         NVGenericMap props = subjectIdentifier.getProperties();
         if (props == null) {
             props = new NVGenericMap();
-            subjectIdentifier.setValue(PropertyDAO.Param.PROPERTIES, props);
+            subjectIdentifier.setValue(PropertyImpl.Param.PROPERTIES, props);
         }
         NVGenericMapList list = props.lookup(ADDRESSES);
         if (list == null) {

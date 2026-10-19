@@ -5,7 +5,7 @@ import io.xlogistx.nosneak.app.ui.utility.Session;
 import org.junit.jupiter.api.Test;
 import org.zoxweb.shared.security.AccessSecurityException;
 import org.zoxweb.server.security.HashUtil;
-import org.zoxweb.shared.data.ReferenceIDDAO;
+import org.zoxweb.shared.data.ReferenceIDImpl;
 import org.zoxweb.shared.security.APIKey;
 import io.xlogistx.shiro.ds.ShiroDSDomainSecurityManager;
 
@@ -96,8 +96,8 @@ public class SessionAICredentialSourceTest {
         SessionAICredentialSource source = new SessionAICredentialSource(s);
         APIKey<String> key = source.addAPIKey("k", "", "openai", "", "", "", "sk-guid");
 
-        assertInstanceOf(ReferenceIDDAO.class, key);
-        String guid = ((ReferenceIDDAO) key).getGUID();
+        assertInstanceOf(ReferenceIDImpl.class, key);
+        String guid = ((ReferenceIDImpl) key).getGUID();
         assertNotNull(guid, "the created key must come back carrying its GUID");
         assertFalse(guid.isEmpty());
 

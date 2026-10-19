@@ -1,6 +1,6 @@
 package io.xlogistx.nosneak.ai.model;
 
-import org.zoxweb.shared.data.PropertyDAO;
+import org.zoxweb.shared.data.PropertyImpl;
 import org.zoxweb.shared.util.*;
 
 /**
@@ -16,7 +16,7 @@ import org.zoxweb.shared.util.*;
  * {@code AIProvider.getID()}), not a provider name — labels are editable and two providers may
  * share one.
  */
-public class AIChat extends PropertyDAO {
+public class AIChat extends PropertyImpl {
 
     public enum Param implements GetNVConfig {
         PROVIDER_SESSION_ID(NVConfigManager.createNVConfig("provider_session_id", "provider-issued handle to resume server-side context on a stateful api; null until a response supplies it", "ProviderSessionID", false, true, String.class)),
@@ -39,7 +39,7 @@ public class AIChat extends PropertyDAO {
     public static final NVConfigEntity NVC_AI_CHAT = new NVConfigEntityPortable(
             "ai_chat", null, "AIChat", true, false, false, false,
             AIChat.class, SUS.extractNVConfigs(Param.values()), null, false,
-            PropertyDAO.NVC_PROPERTY_DAO
+            PropertyImpl.NVC_PROPERTY_IMPL
     );
 
     public AIChat() {

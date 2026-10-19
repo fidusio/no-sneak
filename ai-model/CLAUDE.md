@@ -13,7 +13,7 @@ it depends on neither. The dependency is one-way: `no-sneak-app → ai-assistant
 
 Two packages:
 
-- **`io.xlogistx.nosneak.ai.model`** — concrete, JSON-serializable `PropertyDAO`s (the
+- **`io.xlogistx.nosneak.ai.model`** — concrete, JSON-serializable `PropertyImpl`s (the
   conversation model), plus `AIProviderRegistrar`.
 - **`io.xlogistx.nosneak.ai`** — the service interfaces (no implementations) and `AIException`.
 
@@ -133,16 +133,16 @@ drops the nested entity on JSON round-trip.
   exercises the sync path, and a type change is a migration, not an edit. (History: before the
   sync existed, `AISkill.skillType` did break the dev store this way.)
   > **This is a property of the H2P store, not of this module**, so it governs every
-  > `PropertyDAO` the app persists — including `no-sneak-core`'s `ProbeContent` / `ReportContent`
+  > `PropertyImpl` the app persists — including `no-sneak-core`'s `ProbeContent` / `ReportContent`
   > (`io.xlogistx.nosneak.data`), which `no-sneak-app`'s `Session` writes to the same store.
   > `ProbeContent` currently has a single `content` param and wants several more; that is cheap
   > only until a `probe_content` table exists somewhere. See `no-sneak-app/CLAUDE.md` → *Scan
   > panel*.
-- **None of these DAOs collide with the inherited `PropertyDAO` chain**, and new params must
+- **None of these DAOs collide with the inherited `PropertyImpl` chain**, and new params must
   keep it that way. The reserved attribute names are `guid` / `subject_guid`
-  (`ReferenceIDDAO`), `name` (`SetNameDAO`), `description` (`SetNameDescriptionDAO`),
-  `creation_ts` / `last_update_ts` / `last_read_ts` (`TimeStampDAO`), and `canonical_id` /
-  `properties` (`PropertyDAO`). `AIChat.getTitle`/`setTitle` and `AIModel.getModelID`
+  (`ReferenceIDImpl`), `name` (`SetNameImpl`), `description` (`SetNameDescriptionImpl`),
+  `creation_ts` / `last_update_ts` / `last_read_ts` (`TimeStampImpl`), and `canonical_id` /
+  `properties` (`PropertyImpl`). `AIChat.getTitle`/`setTitle` and `AIModel.getModelID`
   **delegate** to the inherited `name` rather than declaring a field — keep that pattern.
 - **`last_update_ts` does not advance by itself.** The store calls
   `MetaUtil.initTimeStamp(nve)` on both insert and update, but it only writes a value when the
@@ -195,7 +195,7 @@ drops the nested entity on JSON round-trip.
 - **`AICredentialSource`** — `APIKeys()` (returns `List<APIKey<String>>`, what the Providers
   picker lists), `enabledAPIKeys()`, `setEnabled(key, on)`, and `addAPIKey(...)`, which **returns
   the created key** so the caller can configure a provider against it. It also owns the one
-  definition of a key's identity: the **`guidOf(APIKey<?>)` static** (casts to `ReferenceIDDAO`,
+  definition of a key's identity: the **`guidOf(APIKey<?>)` static** (casts to `ReferenceIDImpl`,
   null for an unpersisted key) and the **`getKey(String guid)` default** that resolves the
   credential an `AIProviderConfig` borrows from. Match on GUID, never on name.
   `no-sneak-app`'s `SessionAICredentialSource` implements it.

@@ -1,6 +1,6 @@
 package io.xlogistx.nosneak.ai.model;
 
-import org.zoxweb.shared.data.PropertyDAO;
+import org.zoxweb.shared.data.PropertyImpl;
 import org.zoxweb.shared.util.*;
 
 /**
@@ -16,7 +16,7 @@ import org.zoxweb.shared.util.*;
  * <p>
  * No secret is ever stored here.
  */
-public class AIProviderConfig extends PropertyDAO {
+public class AIProviderConfig extends PropertyImpl {
 
     public enum Param implements GetNVConfig {
         KEY_GUID(NVConfigManager.createNVConfig("key_guid", "guid of the credential supplying the secret", "KeyGUID", true, true, String.class)),
@@ -39,7 +39,7 @@ public class AIProviderConfig extends PropertyDAO {
     public static final NVConfigEntity NVC_AI_PROVIDER_CONFIG = new NVConfigEntityPortable(
             "ai_provider_config", null, "AIProviderConfig", true, false, false, false,
             AIProviderConfig.class, SUS.extractNVConfigs(Param.values()), null, false,
-            PropertyDAO.NVC_PROPERTY_DAO
+            PropertyImpl.NVC_PROPERTY_IMPL
     );
 
     public AIProviderConfig() {

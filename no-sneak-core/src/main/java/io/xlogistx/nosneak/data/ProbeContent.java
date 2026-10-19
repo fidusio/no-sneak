@@ -1,9 +1,9 @@
 package io.xlogistx.nosneak.data;
 
-import org.zoxweb.shared.data.PropertyDAO;
+import org.zoxweb.shared.data.PropertyImpl;
 import org.zoxweb.shared.util.*;
 
-public class ProbeContent extends PropertyDAO {
+public class ProbeContent extends PropertyImpl {
 
     public enum Param
             implements GetNVConfig {
@@ -31,7 +31,7 @@ public class ProbeContent extends PropertyDAO {
             SUS.extractNVConfigs(Param.values()),
             null,
             false,
-            PropertyDAO.NVC_PROPERTY_DAO);
+            PropertyImpl.NVC_PROPERTY_IMPL);
 
     public ProbeContent() {
         super(NVC_PROBE_CONTENT);

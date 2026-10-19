@@ -159,7 +159,7 @@ v2 is a quarter of the size and the only working one.
 | REST `/check-qdz/{domain}/{detailed}` | `services/QDZChecker`: `future.join()` on the request thread; private-IP guard on request thread; `start-count-at` property → `scanCount` → `total-scanned` in the body | `v2/service/Checker`: fully async, `ProtoSession` held open, 504 backstop at 100 s, guard resolves all addresses off-thread, `Grade` merged into the body, `checkQDZDirect` server-free entry; **`total-scanned` and `start-count-at` dropped** |
 | `DMTool` | identical byte-for-byte except package and one line break; same stale Mongo URL (C1) | same |
 | `NoSneakUtil` | latent null return when the datastore is cached but the manager is not | fixed (C2) |
-| `v2/data/{ProbeContent,ReportContent}` | no v1 equivalent | two `PropertyDAO` rows used by the app's `Session`/`ScanPanel` |
+| `v2/data/{ProbeContent,ReportContent}` | no v1 equivalent | two `PropertyImpl` rows used by the app's `Session`/`ScanPanel` |
 
 ## 2. Consumer map — what the rename touches
 

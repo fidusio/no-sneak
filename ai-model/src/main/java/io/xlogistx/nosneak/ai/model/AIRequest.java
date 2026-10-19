@@ -1,12 +1,12 @@
 package io.xlogistx.nosneak.ai.model;
 
-import org.zoxweb.shared.data.PropertyDAO;
+import org.zoxweb.shared.data.PropertyImpl;
 import org.zoxweb.shared.util.*;
 
 /**
  * Creates a request that can be sent to an AI that will send a response back.
  */
-public class AIRequest extends PropertyDAO {
+public class AIRequest extends PropertyImpl {
 
     public enum Param implements GetNVConfig {
         MODEL(NVConfigManager.createNVConfig("model", "the ai model for the request", "Model", false, false, String.class)),
@@ -30,7 +30,7 @@ public class AIRequest extends PropertyDAO {
     public static final NVConfigEntity NVC_AI_REQUEST = new NVConfigEntityPortable(
             "ai_request", null, "AIRequest", true, false, false, false,
             AIRequest.class, SUS.extractNVConfigs(Param.values()), null, false,
-            PropertyDAO.NVC_PROPERTY_DAO
+            PropertyImpl.NVC_PROPERTY_IMPL
     );
 
     public AIRequest() {

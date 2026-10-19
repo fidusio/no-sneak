@@ -5,7 +5,7 @@ import io.xlogistx.nosneak.ai.AIProvider;
 import io.xlogistx.nosneak.ai.AIRepository;
 import io.xlogistx.nosneak.ai.AICredentialSource;
 import io.xlogistx.nosneak.ai.model.*;
-import org.zoxweb.shared.data.ReferenceIDDAO;
+import org.zoxweb.shared.data.ReferenceIDImpl;
 import org.zoxweb.shared.security.APIKey;
 import org.zoxweb.shared.util.SUS;
 
@@ -121,7 +121,7 @@ public class AssistantContext {
      * The canonical-cache rule shared by chats, skills, and provider configs: the first instance
      * seen for a GUID stays the one everyone gets, so list refreshes don't hand out duplicates.
      */
-    private static <T extends ReferenceIDDAO> T canonical(Map<String, T> cache, T dao) {
+    private static <T extends ReferenceIDImpl> T canonical(Map<String, T> cache, T dao) {
         if (dao == null) return null;
         String id = dao.getGUID();
         if (id == null) return dao;
