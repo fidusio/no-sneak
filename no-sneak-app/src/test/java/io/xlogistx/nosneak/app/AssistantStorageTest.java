@@ -6,7 +6,6 @@ import io.xlogistx.nosneak.ai.model.AISkill;
 import io.xlogistx.nosneak.app.ui.assistant.AssistantStorage;
 import io.xlogistx.nosneak.app.ui.utility.Session;
 import org.junit.jupiter.api.Test;
-import org.zoxweb.server.security.HashUtil;
 import io.xlogistx.shiro.ds.ShiroDSDomainSecurityManager;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -31,7 +30,7 @@ public class AssistantStorageTest {
     private static Session freshLoggedInSession() {
         ShiroDSDomainSecurityManager dsm =
                 TestSecurity.newManager();
-        dsm.createSubjectID("kailen01", HashUtil.toBCryptPassword(PWD));
+        TestSecurity.createUser(dsm, "kailen01", PWD);
         Session s = new Session(dsm);
         s.loginUsernamePassword("kailen01", PWD.toCharArray());
         return s;

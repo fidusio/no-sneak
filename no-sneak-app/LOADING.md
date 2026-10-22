@@ -117,7 +117,7 @@ zero-configs check is the only thing gating it.
 - **The capture `Robot`.** Created on first sweep and cached, inside `io.xlogistx.gui`'s
   `CaptureAreaSet`.
 - **Markdown preview.** A 250 ms non-repeating timer restarted per keystroke, so typing does not
-  reparse per character (`MDFileViewer.java:122`).
+  reparse per character (`io.xlogistx.gui.MDEditorPanel:122`, in gui-audio since 2026-10-22).
 - **Capture areas and their pixels.** Defining an area is a drag and nothing more; nothing is shot
   until Send, and the PNG encode happens at send time inside a `BackgroundTask` — not at attach
   time.

@@ -3,7 +3,6 @@ package io.xlogistx.nosneak.app;
 import io.xlogistx.nosneak.app.ui.utility.Session;
 import org.junit.jupiter.api.Test;
 import org.zoxweb.shared.security.AccessSecurityException;
-import org.zoxweb.server.security.HashUtil;
 import io.xlogistx.shiro.ds.ShiroDSDomainSecurityManager;
 
 import java.util.LinkedHashMap;
@@ -21,7 +20,7 @@ public class ProfileRoundTripTest {
     private static Session freshSession() {
         ShiroDSDomainSecurityManager dsm =
                 TestSecurity.newManager();
-        dsm.createSubjectID("kailen01", HashUtil.toBCryptPassword("Password1!"));
+        TestSecurity.createUser(dsm, "kailen01", "Password1!");
         return new Session(dsm);
     }
 
@@ -69,7 +68,7 @@ public class ProfileRoundTripTest {
     public void survivesLogoutLogin() {
         ShiroDSDomainSecurityManager dsm =
                 TestSecurity.newManager();
-        dsm.createSubjectID("kailen01", HashUtil.toBCryptPassword("Password1!"));
+        TestSecurity.createUser(dsm, "kailen01", "Password1!");
         Session s = new Session(dsm);
 
         s.loginUsernamePassword("kailen01", "Password1!".toCharArray());

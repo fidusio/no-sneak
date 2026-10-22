@@ -10,10 +10,11 @@ that are not written down anywhere else.*
 > attacks, DoS, or evasion). Finding 1 below is a data-boundary defect, which is the other half of
 > the same rule set.
 
-> **Latest: Status check (2026-09-20)** further down — **start there.** The scan pipeline was made
-> fast and `-sV` was made honest in one session; it lists what changed, what was measured, and the
-> five things left open, two of them parked by the maintainer. Everything from that session was
-> **uncommitted** when it was written.
+> **Latest: Status check (2026-10-21)** further down — **start there.** The app's store now follows
+> the datastore's deployment model (`H2PSetup` on a first run, vault + `shiro.ini` + attached
+> manager on every run, `app_user` granted at sign-up for the app login gate). The 2026-10-05 and
+> 2026-09-20 checks below it are the two sessions before. Everything from those sessions is
+> **uncommitted** unless the maintainer has committed since.
 >
 > **Status check 2026-09-09** at the bottom of this file: build/test state on the dev box, and
 > confirmation that all ten findings below were still open at `c082f11`. **All ten were fixed on
@@ -105,7 +106,7 @@ anything ships.
    BackgroundTask then skips `onDone`, so `ctx.clearProviders()`/registration never runs and the
    subject signs in with **zero providers**.
 
-8. **Editor commits its baseline before the save target accepts** — `MDFileViewer.java:518` *(confirmed)*
+8. **Editor commits its baseline before the save target accepts** — `MDEditorPanel.java:518` (now `io.xlogistx.gui.MDEditorPanel` in io-xlogistx/gui-audio, 2026-10-22) *(confirmed)*
    `onSave` runs validator → `commit()` (sets dirty=false, line 540) → `onCommit`. On the
    "Save as: probe" branch, `ScanPanel.fillProbe` can show "Not a valid probe" and return with
    nothing persisted, but the editor already reads clean. The skill branch compensates with
@@ -125,7 +126,7 @@ anything ships.
    a **duplicated chat row**, not just doubled I/O. Fix: delete the line-504 save.
 
 10. **Skill validator blocks "Save as: probe" with a misleading error** — `SkillsPanel.java:116` *(plausible)*
-    `MDFileViewer.onSave` runs `validateSkill` (line 517) before the save-target dispatch, and it
+    `MDEditorPanel.onSave` runs `validateSkill` (line 517) before the save-target dispatch, and it
     rejects a blank Name with "Give the skill a name before saving." / title "Skill" regardless of
     the selected target. A valid probe JSON saved via "Save as: probe" with Name empty is refused
     with a skill-worded error — even though `fillProbe` passes the typed name to
@@ -172,7 +173,7 @@ Verified in the code, not the doc, at `c082f11`:
   splices names (line 221), and `TimeoutException` is still imported but never translated.
 - **7** — `ProvidersPanel.reloadIssues.clear()` at line 282, still unguarded against an overlapping
   reload.
-- **8, 10** — `MDFileViewer.onSave` still runs `commit()` (line 518) before the save target accepts.
+- **8, 10** — `MDEditorPanel.onSave` still runs `commit()` (line 518) before the save target accepts.
 - **9** — `ChatPanel` still saves the chat at both line 399 and line 504.
 
 ### What the five commits since 2026-08-13 did touch
@@ -394,6 +395,78 @@ already existed and needed no zoxweb change.
    ours. And BCJSSE 1.0.24 on a plain blocking
    `SSLSocket` times out against xlogistx.io's TLS 1.3 while SunJSSE completes it — the probe
    path succeeds there under both providers, so nothing in the product is affected today.
+
+## Status check (2026-10-21, Windows dev box) — the store follows the datastore's deployment model
+
+The maintainer's instruction: *"the model how to setup the local h2 database changed, read it from
+the datastore project"*. What changed upstream between 2026-10-09 and 2026-10-21 (zoxweb-datastore
+`e46b7b8`, io-xlogistx `1147986`, jars installed 00:34–00:35 on 2026-10-21; record:
+`zoxweb-datastore/h2p-datastore/CLAUDE.md` → the `H2PSetup` row and the `ShiroIniRealmMain`
+paragraph, `SHIRO-DS.md` → the 2026-10-20 entries):
+- A **deployment** is a `SecretStore` vault whose **mandatory** entries are `master-key`,
+  `super-admin-id`, `super-admin-password` and `db.url` (plus `db.user`, `db.password`,
+  `db.enc-password`, `app-id`), set up once by **`H2PSetup command=create`** (vault, H2 file,
+  `SecurityAdminTool bootstrap-super-admin` = catalog + super-admin + common app with its
+  registrar, `create-app` for the deployment's default app, `shiro.ini` written and loaded once).
+- At **run time** an application sets nothing up (`ShiroIniRealmMain.build`): vault → master key
+  into `KeyMakerProvider`, `H2PDSCreator.toAPIConfigInfo` + controller + key maker, the store
+  registered under `ResourceManager.Resource.DATA_STORE`, `ShiroUtil.loadSecurityManager(shiro.ini)`
+  installed as the global security manager, `ShiroDSDomainSecurityManager.fromGlobal(store)`
+  (attached, not self-managed), `setSuperAdminPrincipalID` from the vault.
+- The **app login gate** (user rule 2026-10-20): a login carrying a domain and app succeeds only
+  when the subject's grants in that app imply `app:login` — the `app_user` starter role carries
+  it, the super-admin's wildcard applies in every login. no-sneak's login is scoped to
+  `xlogistx.com-nosneak`, so a subject created by a bare `createSubjectID` can no longer log in.
+- Dual ownership (`app_guid` on every entity, app-owned registered classes) is in the store but
+  touches no-sneak only through the schema: no no-sneak class is registered on the app.
+
+**Done in `no-sneak-app`** (record: `no-sneak-app/CLAUDE.md` → the 2026-10-21 block); all
+uncommitted, the maintainer commits:
+- `NoSneakStore` rewritten. An installation directory holds `no-sneak.store`, `no-sneak.mv.db`
+  and **`shiro.ini`**. `create(location, vaultPassword, FirstRun)` runs `H2PSetup command=create`
+  in-process with every answer given (`db.path` = the directory, `db.name=no-sneak`, encrypted,
+  `app.id=xlogistx.com-nosneak`, INI beside the vault) — the **operator is the super-admin**
+  (`FirstRun.adminID/adminPassword` → `super-admin-id/password`, password rules enforced before
+  the run); empty DB passwords are generated by the set-up and live only in the vault. The
+  app's registrar `registrar.xlogistx.com-nosneak` (the app's owner and `app_admin`; user,
+  2026-10-21: *"this is the app super-admin and he should have a password too"*) gets the
+  **operator's password** as a second login beside its JWT one (`setRegistrarPassword` =
+  `createCredential(registrar, CIPassword)`, kept when one exists); its signing key, printed
+  once by the set-up, is discarded (no-sneak never signs up through a registrar JWT).
+  `open(location, vaultPassword)` is the `ShiroIniRealmMain` model above, refuses a vault lacking a
+  mandatory entry ("predates the current set-up model") or a missing INI, and verifies the no-sneak
+  app exists; it no longer seeds or creates anything. `bootstrap` stays for stores not set up by
+  `H2PSetup` (the mock-store tests, `NoSneakMain.createDomainSecManager`). New
+  `grantAppUser(dsm, subject)` = the no-sneak app's `app_user` role, idempotent.
+- `Session.registerUsernamePassword` grants `app_user` after `createSubjectID` (else the realm
+  refuses the login); `loginUsernamePassword` uses the `char[]` token constructor (the `String`
+  one is deprecated upstream).
+- `DataStoreSetupPanel`: on a directory without a vault it asks for the **operator username,
+  password and confirmation** and the DB user (default `sa`) / password / encryption password
+  (empty = generated); the factory takes a `NoSneakStore.FirstRun`. `NoSneakMain` wiring updated;
+  `ds.location=` + `ds.store-password=` unchanged.
+- Tests: `TestSecurity.createUser` (create + grant) replaces the bare `createSubjectID` in the
+  eight mock-store suites; `DataStoreSetupFlowTest` rewritten on the new path (vault entries,
+  INI, attached manager, operator login through the wildcard, the registrar's password login
+  into the app, an ungranted subject refused, sign-up login through `app_user`, pool-thread
+  isolation, wrong password, reopen) plus a
+  refusal case; it uses `target/no-sneak-setup-test/<id>` rather than `@TempDir` because the
+  set-up's URL carries `DB_CLOSE_DELAY=-1`. **79 / 79** through IntelliJ (10 classes).
+
+**Decisions taken here, the maintainer may overrule:** the operator typed on the setup screen is
+the store's super-admin (the model makes the entry mandatory; a desktop store has one operator)
+and the registrar's password is that same password (one operator, one secret to remember; it can
+be changed later through `updateCredential` or the admin tool);
+further accounts still sign up from the login screen through the direct `createSubjectID` +
+`app_user` grant, not the registrar path; no DB password is asked for by default (generated).
+
+**Not done / to know:**
+- Installations written before this session (vault without super-admin, no `shiro.ini`, tables of
+  the pre-2026-10-19 class names) are refused by `open` with the reason — the one at `/data/ds` in
+  the IntelliJ run configuration `NoSneakMain` is one of them: delete it and run without arguments
+  for the setup screen, then put its vault password back in the run configuration.
+- The app was not launched with a window this session (tests only).
+- `no-sneak-core` `NoSneakUtil` (Mongo path, D9) and D5/D6 of the 2026-10-05 check unchanged.
 
 ## Status check (2026-10-05, Windows dev box) — the app absorbed the upstream security update
 

@@ -1,5 +1,6 @@
 package io.xlogistx.nosneak.ai.assistant;
 
+import io.xlogistx.gui.MDEditorPanel;
 import com.formdev.flatlaf.FlatLaf;
 import com.formdev.flatlaf.FlatLightLaf;
 import com.formdev.flatlaf.fonts.roboto.FlatRobotoFont;
@@ -36,7 +37,7 @@ public class JPanelTest {
             frame.setSize(1000, 700);
             frame.setLocationRelativeTo(null);
 
-            MDFileViewer fileViewer = new MDFileViewer(MARKDOWN)
+            MDEditorPanel fileViewer = new MDEditorPanel(MARKDOWN)
                     .setTitle("Skill instructions")
                     .setOnCommit(doc -> System.out.println("saved " + doc.getName() + " · " + doc.getType()
                             + " · " + doc.getMarkdown().length() + " chars"))

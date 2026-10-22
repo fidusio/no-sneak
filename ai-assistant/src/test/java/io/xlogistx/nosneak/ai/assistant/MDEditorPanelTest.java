@@ -1,5 +1,6 @@
 package io.xlogistx.nosneak.ai.assistant;
 
+import io.xlogistx.gui.MDEditorPanel;
 import io.xlogistx.nosneak.ai.model.AISkill;
 import org.junit.jupiter.api.Test;
 
@@ -10,16 +11,16 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Guards {@link MDFileViewer}'s commit/revert state machine — the guarantee the skills page
+ * Guards {@link MDEditorPanel}'s commit/revert state machine — the guarantee the skills page
  * relies on: nothing reaches the caller until Save, a rejected save leaves the committed
  * baseline intact (so Cancel still restores the pre-edit values), and the metadata fields
  * (name / description / type) participate in dirty tracking and revert alongside the
  * markdown buffer.
  */
-public class MDFileViewerTest {
+public class MDEditorPanelTest {
 
-    private static MDFileViewer editorWithMeta() {
-        MDFileViewer v = new MDFileViewer();
+    private static MDEditorPanel editorWithMeta() {
+        MDEditorPanel v = new MDEditorPanel();
         v.withName("Name", "orig-name");
         v.withDescription("Description", "orig-desc");
         v.withTypes("Type", List.of(AISkill.SkillType.values()),
@@ -30,7 +31,7 @@ public class MDFileViewerTest {
 
     @Test
     public void rejectedSaveLeavesBaselineIntact() {
-        MDFileViewer v = editorWithMeta();
+        MDEditorPanel v = editorWithMeta();
         AtomicInteger commits = new AtomicInteger();
         v.setOnCommit(d -> commits.incrementAndGet());
         v.setValidator(d -> false);
@@ -49,8 +50,8 @@ public class MDFileViewerTest {
 
     @Test
     public void acceptedSaveCommitsAndDeliversDocument() {
-        MDFileViewer v = editorWithMeta();
-        AtomicReference<MDFileViewer.MDDocument> delivered = new AtomicReference<>();
+        MDEditorPanel v = editorWithMeta();
+        AtomicReference<MDEditorPanel.MDDocument> delivered = new AtomicReference<>();
         v.setOnCommit(delivered::set);
         v.setValidator(d -> d.getName() != null && !d.getName().isBlank());
 
@@ -58,7 +59,7 @@ public class MDFileViewerTest {
         v.getEditor().setText("new text");
         v.getSaveButton().doClick();
 
-        MDFileViewer.MDDocument doc = delivered.get();
+        MDEditorPanel.MDDocument doc = delivered.get();
         assertNotNull(doc, "an accepted save must deliver the document");
         assertEquals("new-name", doc.getName());
         assertEquals("orig-desc", doc.getDescription());
@@ -72,7 +73,7 @@ public class MDFileViewerTest {
 
     @Test
     public void cancelRevertsMetadataAndRunsHandler() {
-        MDFileViewer v = editorWithMeta();
+        MDEditorPanel v = editorWithMeta();
         AtomicInteger cancels = new AtomicInteger();
         v.setOnCancel(cancels::incrementAndGet);
 
@@ -92,7 +93,7 @@ public class MDFileViewerTest {
 
     @Test
     public void metadataEditsDriveDirtyTracking() {
-        MDFileViewer v = editorWithMeta();
+        MDEditorPanel v = editorWithMeta();
         assertFalse(v.isDirty(), "freshly populated editor starts clean");
 
         v.getNameField().setText("renamed");
@@ -105,14 +106,14 @@ public class MDFileViewerTest {
 
     @Test
     public void typeChangeAloneIsDirty() {
-        MDFileViewer v = editorWithMeta();
+        MDEditorPanel v = editorWithMeta();
         v.getTypeCombo().setSelectedItem(AISkill.SkillType.PROMPT_SKILL);
         assertTrue(v.isDirty(), "a type change alone must read as dirty");
     }
 
     @Test
     public void setMarkdownNullIsEmpty() {
-        MDFileViewer v = new MDFileViewer();
+        MDEditorPanel v = new MDEditorPanel();
         v.setMarkdown(null);
         assertEquals("", v.getMarkdown(), "a null skill content must load as an empty buffer");
     }
@@ -124,7 +125,7 @@ public class MDFileViewerTest {
      */
     @Test
     public void aRefusingSaveTargetLeavesTheEditorDirty() {
-        MDFileViewer v = editorWithMeta();
+        MDEditorPanel v = editorWithMeta();
         v.setOnCommit(d -> {
             throw new IllegalArgumentException("not a valid probe");
         });
@@ -142,7 +143,7 @@ public class MDFileViewerTest {
 
     @Test
     public void saveWithoutValidatorStillCommits() {
-        MDFileViewer v = editorWithMeta();
+        MDEditorPanel v = editorWithMeta();
         AtomicInteger commits = new AtomicInteger();
         v.setOnCommit(d -> commits.incrementAndGet());
 

@@ -4,7 +4,7 @@ import io.xlogistx.gui.BackgroundTask;
 import io.xlogistx.gui.CardStack;
 import io.xlogistx.gui.ListSection;
 import io.xlogistx.nosneak.ai.assistant.AssistantContext;
-import io.xlogistx.nosneak.ai.assistant.MDFileViewer;
+import io.xlogistx.gui.MDEditorPanel;
 import io.xlogistx.nosneak.ai.model.AISkill;
 import org.zoxweb.shared.util.SUS;
 
@@ -62,7 +62,7 @@ public class SkillsPanel extends JPanel {
 
     private final CardStack skillsCards = new CardStack();
     private ListSection<AISkill> skillsList;
-    private MDFileViewer skillEditor;
+    private MDEditorPanel skillEditor;
     private AISkill selectedSkill;
 
     public JComponent buildSkillCards() {
@@ -90,7 +90,7 @@ public class SkillsPanel extends JPanel {
     }
 
     public JPanel buildSkillEditor() {
-        skillEditor = new MDFileViewer();
+        skillEditor = new MDEditorPanel();
         skillEditor.setTitle("Skill instructions");
         skillEditor.withName("Name", "");
         skillEditor.withDescription("Description", "");
@@ -118,7 +118,7 @@ public class SkillsPanel extends JPanel {
      * (a probe takes its name from the JSON, for instance) and reports its own failure, so a
      * skill-worded refusal there would be both wrong and misleading.
      */
-    private boolean validateSkill(MDFileViewer.MDDocument document) {
+    private boolean validateSkill(MDEditorPanel.MDDocument document) {
         if (!(document.getType() instanceof AISkill.SkillType)) {
             return true;
         }
@@ -131,7 +131,7 @@ public class SkillsPanel extends JPanel {
         return true;
     }
 
-    private void onSaveSkill(MDFileViewer.MDDocument document) {
+    private void onSaveSkill(MDEditorPanel.MDDocument document) {
         Object type = document.getType();
         if (!(type instanceof AISkill.SkillType)) {
             String label = targetLabel(type);

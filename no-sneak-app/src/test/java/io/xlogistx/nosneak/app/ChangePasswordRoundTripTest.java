@@ -3,7 +3,6 @@ package io.xlogistx.nosneak.app;
 import io.xlogistx.nosneak.app.ui.utility.Session;
 import org.junit.jupiter.api.Test;
 import org.zoxweb.shared.security.AccessSecurityException;
-import org.zoxweb.server.security.HashUtil;
 import org.zoxweb.shared.crypto.CIPassword;
 import org.zoxweb.shared.security.CredentialInfo;
 import io.xlogistx.shiro.ds.ShiroDSDomainSecurityManager;
@@ -25,7 +24,7 @@ public class ChangePasswordRoundTripTest {
     private static Session freshSession() {
         ShiroDSDomainSecurityManager dsm =
                 TestSecurity.newManager();
-        dsm.createSubjectID("kailen01", HashUtil.toBCryptPassword(OLD));
+        TestSecurity.createUser(dsm, "kailen01", OLD);
         return new Session(dsm);
     }
 
@@ -84,7 +83,7 @@ public class ChangePasswordRoundTripTest {
     public void changeStampsLastTimeUpdated() {
         ShiroDSDomainSecurityManager dsm =
                 TestSecurity.newManager();
-        dsm.createSubjectID("kailen01", HashUtil.toBCryptPassword(OLD));
+        TestSecurity.createUser(dsm, "kailen01", OLD);
         Session s = new Session(dsm);
         s.loginUsernamePassword("kailen01", OLD.toCharArray());
 

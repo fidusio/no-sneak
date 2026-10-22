@@ -3,7 +3,6 @@ package io.xlogistx.nosneak.app;
 import io.xlogistx.nosneak.app.ui.utility.Session;
 import org.junit.jupiter.api.Test;
 import org.zoxweb.shared.security.AccessSecurityException;
-import org.zoxweb.server.security.HashUtil;
 import org.zoxweb.shared.security.CredentialInfo;
 import io.xlogistx.shiro.ds.ShiroDSDomainSecurityManager;
 import org.zoxweb.shared.security.SubjectAPIKey;
@@ -27,7 +26,7 @@ public class APIKeyRoundTripTest {
     private static Session mockSession() {
         ShiroDSDomainSecurityManager dsm =
                 TestSecurity.newManager();
-        dsm.createSubjectID("kailen01", HashUtil.toBCryptPassword("Password1!"));
+        TestSecurity.createUser(dsm, "kailen01", "Password1!");
         return new Session(dsm);
     }
 

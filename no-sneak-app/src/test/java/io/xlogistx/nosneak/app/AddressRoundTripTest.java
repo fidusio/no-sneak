@@ -3,7 +3,6 @@ package io.xlogistx.nosneak.app;
 import io.xlogistx.nosneak.app.ui.utility.Session;
 import org.junit.jupiter.api.Test;
 import org.zoxweb.shared.security.AccessSecurityException;
-import org.zoxweb.server.security.HashUtil;
 import org.zoxweb.server.util.MockAPIDataStore;
 import io.xlogistx.shiro.ds.ShiroDSDomainSecurityManager;
 import org.zoxweb.shared.util.NVGenericMap;
@@ -32,7 +31,7 @@ public class AddressRoundTripTest {
     private static Session freshSession() {
         ShiroDSDomainSecurityManager dsm =
                 TestSecurity.newManager();
-        dsm.createSubjectID("kailen01", HashUtil.toBCryptPassword("Password1!"));
+        TestSecurity.createUser(dsm, "kailen01", "Password1!");
         Session s = new Session(dsm);
         s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
         return s;
@@ -166,7 +165,7 @@ public class AddressRoundTripTest {
     public void survivesLogoutLogin() {
         ShiroDSDomainSecurityManager dsm =
                 TestSecurity.newManager();
-        dsm.createSubjectID("kailen01", HashUtil.toBCryptPassword("Password1!"));
+        TestSecurity.createUser(dsm, "kailen01", "Password1!");
         Session s = new Session(dsm);
 
         s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
@@ -185,7 +184,7 @@ public class AddressRoundTripTest {
     public void signedOutGuards() {
         ShiroDSDomainSecurityManager dsm =
                 TestSecurity.newManager();
-        dsm.createSubjectID("kailen01", HashUtil.toBCryptPassword("Password1!"));
+        TestSecurity.createUser(dsm, "kailen01", "Password1!");
         Session s = new Session(dsm);   // never logged in
 
         assertTrue(s.getAllAddresses().isEmpty(), "getAllAddresses returns empty when signed out");

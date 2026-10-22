@@ -3,10 +3,12 @@ package io.xlogistx.nosneak.app;
 import io.xlogistx.opsec.OPSecUtil;
 import io.xlogistx.opsec.SecretStore;
 import io.xlogistx.shiro.ds.ShiroDSDomainSecurityManager;
+import org.zoxweb.server.security.HashUtil;
 import org.zoxweb.server.security.KeyMakerProvider;
 import org.zoxweb.server.util.MockAPIDataStore;
 import org.zoxweb.shared.api.APIConfigInfo;
 import org.zoxweb.shared.api.APIConfigInfoImpl;
+import org.zoxweb.shared.security.SubjectIdentifier;
 
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
@@ -72,5 +74,16 @@ final class TestSecurity {
         APIConfigInfo cfg = NoSneakStore.secure(new APIConfigInfoImpl());
         store.setAPIConfigInfo(cfg);
         return NoSneakStore.bootstrap(new ShiroDSDomainSecurityManager(store));
+    }
+
+    /**
+     * A subject that can log into no-sneak: created with a bcrypt password and granted the app's
+     * {@code app_user} role, as {@code Session.registerUsernamePassword} does — since the app
+     * login gate (2026-10-20) a bare {@code createSubjectID} cannot log into the app.
+     */
+    static SubjectIdentifier createUser(ShiroDSDomainSecurityManager dsm, String principalID, String password) {
+        SubjectIdentifier subject = dsm.createSubjectID(principalID, HashUtil.toBCryptPassword(password));
+        NoSneakStore.grantAppUser(dsm, subject);
+        return subject;
     }
 }

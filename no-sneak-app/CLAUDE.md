@@ -5,6 +5,48 @@ and the **`ui`** package that wires together the screens, navigation, and the se
 layer. It began as a UX prototype but now runs a **real** session/access layer and a **working
 network scanner screen** over `no-sneak-core`; the PQC file-sharing screen is still a placeholder.
 
+> **2026-10-21 — the store follows the datastore's deployment model.** User instruction: *the
+> model how to set up the local H2 database changed, read it from the datastore project*. The
+> model (zoxweb-datastore `h2p-datastore/CLAUDE.md` → `H2PSetup`, `ShiroIniRealmMain`; io-xlogistx
+> `shiro`): a deployment is a vault with **mandatory** `master-key`, `super-admin-id`,
+> `super-admin-password`, `db.url` (+ `db.*`, `app-id`), set up once by `H2PSetup command=create`
+> (vault, H2 file, `bootstrap-super-admin`, `create-app`, `shiro.ini`); at run time the application
+> sets nothing up — vault → key maker → store with controller, registered under
+> `ResourceManager.Resource.DATA_STORE` → `ShiroUtil.loadSecurityManager(shiro.ini)` as the global
+> security manager → `ShiroDSDomainSecurityManager.fromGlobal(store)` (attached) with the
+> super-admin id from the vault; and a login scoped to an app passes only with `app:login` in that
+> app (the **app login gate**, user rule 2026-10-20: `app_user` carries it, the super-admin's
+> wildcard applies everywhere). Absorbed here, superseding the 2026-10-05 block below where they differ:
+>
+> - **`NoSneakStore`**: an installation directory holds `no-sneak.store`, `no-sneak.mv.db` and
+>   **`shiro.ini`**. `create(location, vaultPassword, FirstRun)` = `H2PSetup command=create`
+>   in-process (`db.path` = the directory, `db.name=no-sneak`, `CIPHER=AES`,
+>   `app.id=xlogistx.com-nosneak`, INI beside the vault); the **operator typed on the setup screen
+>   is the super-admin** (`FirstRun.adminID` / `adminPassword`, password rules enforced first);
+>   an empty DB password / encryption password is generated and lives only in the vault; the
+>   app's registrar `registrar.xlogistx.com-nosneak` (owner + `app_admin` of the app, "the app
+>   super-admin", user 2026-10-21) gets the **operator's password** as a login beside its JWT
+>   (`setRegistrarPassword`, kept when one exists; `registrarPrincipal(dsm)` names it); the
+>   registrar's signing key the set-up prints once is discarded. `open(location, vaultPassword)` is the
+>   run-time model above; it refuses a vault lacking a mandatory entry (an installation from before
+>   this model) or a missing INI, verifies the no-sneak app exists, seeds nothing. `bootstrap` is
+>   kept for stores not set up by `H2PSetup` (mock-store tests, `createDomainSecManager`).
+>   `grantAppUser(dsm, subject)` gives the app's `app_user` role, idempotently.
+> - **`Session.registerUsernamePassword`** grants `app_user` after `createSubjectID` — without it
+>   the realm refuses the scoped login. `loginUsernamePassword` passes the password as `char[]`
+>   (the `String` token constructor is deprecated upstream).
+> - **`DataStoreSetupPanel`** on a directory without a vault asks for the operator username,
+>   password + confirmation, DB user (default `sa`), DB password and encryption password (empty =
+>   generated); its factory takes a `NoSneakStore.FirstRun` (null = open).
+> - Tests: `TestSecurity.createUser` (create + grant) in the eight mock-store suites;
+>   `DataStoreSetupFlowTest` rewritten on the new path (vault entries, INI, attached manager,
+>   operator login, registrar password login, ungranted subject refused, sign-up login,
+>   isolation, wrong password, reopen,
+>   a refusal case), in `target/no-sneak-setup-test/<id>` because the set-up's URL carries
+>   `DB_CLOSE_DELAY=-1` (a `@TempDir` cleanup would hit the locked file). **79 / 79** through
+>   IntelliJ, 10 classes. Installations written before this session are refused by `open` with
+>   the reason: the `/data/ds` one in the IntelliJ run configuration `NoSneakMain` is one of them.
+>
 > **2026-10-05 — the app runs on the Shiro manager, through a vault.** The upstream "major
 > code update" of that day (zoxweb-core deleted `DomainSecurityManagerDefault`; the Shiro manager,
 > realm and `SecuritySetup` moved from `zoxweb-datastore/xlogistx-shiro-ds` into io-xlogistx's
@@ -51,10 +93,11 @@ network scanner screen** over `no-sneak-core`; the PQC file-sharing screen is st
 > **Status.** The session layer (`ui.utility.Session`) is backed by io-xlogistx's
 > **`ShiroDSDomainSecurityManager`** over an **encrypted H2** `H2PDataStore`
 > (`jdbc:h2:file:<dir>/no-sneak;MODE=PostgreSQL;CIPHER=AES`, built by `H2PDSCreator`), opened
-> through the installation's vault (`NoSneakStore`). `NoSneakMain` opens the store from either `ds.*`
-> launch parameters or the first-run **Data Store Setup** screen. The store **persists across
-> restarts**; the bootstrap seeds the catalog and the no-sneak app but creates **no accounts** —
-> register one before you can log in.
+> through the installation's vault and `shiro.ini` (`NoSneakStore`, manager attached to the INI
+> realm since 2026-10-21). `NoSneakMain` opens the store from either `ds.*` launch parameters or
+> the first-run **Data Store Setup** screen. The store **persists across restarts**; the first run
+> (`H2PSetup`) seeds the catalog, creates the no-sneak app and **one account, the operator's**
+> (the super-admin) — further accounts register from the login screen.
 >
 > Working end-to-end: username/password **register + login**, **change password**,
 > **add/remove identifiers**, **profile save/load** (name/DOB), a **multi-address book**, and the
@@ -105,11 +148,11 @@ when the subject attaches one to a chat themselves. Nothing here uploads, phones
 ```
 io.xlogistx.nosneak.app
 ├── Main.java                      ← entry point; opens the installation (ds.location/ds.store-password or setup screen) + JFrame
-├── NoSneakStore.java              ← the vault + encrypted H2 store: create / open / secure / bootstrap (2026-10-05)
+├── NoSneakStore.java              ← vault + encrypted H2 + shiro.ini: create (H2PSetup) / open (attached manager) / secure / bootstrap / grantAppUser / setRegistrarPassword (2026-10-21)
 └── ui/                            ← UI (screens, menu, session/access wiring)
     ├── AppShell.java              ← root content pane, CardLayout host (mounts ai-assistant's AssistantPanel)
     ├── LoginPanel.java            ← login/register screen (password; passkey card hidden)
-    ├── DataStoreSetupPanel.java   ← first screen: choose location + vault password (+ DB credentials on a first run)
+    ├── DataStoreSetupPanel.java   ← first screen: choose location + vault password (+ operator account and DB settings on a first run)
     ├── PQCRegistryPanel.java      ← PQC file-sharing registry view
     ├── SubjectPanel.java          ← subject account view (master–detail)
     ├── SubjectSecManagerPanel.java← ACL admin view (master–detail)
@@ -134,19 +177,21 @@ Bootstraps the app. `main` first parses `ds.*` launch parameters (`ParamUtil.par
 `ds.location` (the installation directory) and `ds.store-password` (its vault password). If
 **both** are present it opens the installation directly — `NoSneakStore.open(location,
 password)` reads the vault, loads the master key, opens the encrypted H2 store with the Shiro
-controller + key maker, and returns the bootstrapped `ShiroDSDomainSecurityManager`; a failure
-prints the reason and exits with status 2. It then installs FlatLaf **FlatLightLaf** and launches
-on the EDT. (`createDomainSecManager(store)` is still there for a store opened elsewhere: it builds
-and bootstraps the manager, `OPSecUtil.singleton()` first.) The IntelliJ run configuration `NoSneakMain`
-still carries the pre-2026-10-05 `ds.user=… ds.password=… ds.enc-password=… ds.location=…` line;
-those parameters are ignored now — change it to `ds.location=<dir> ds.store-password=<pw>`.
+controller + key maker, builds the realm from the directory's `shiro.ini` and returns the
+`ShiroDSDomainSecurityManager` attached to it; a failure prints the reason and exits with status 2.
+It then installs FlatLaf **FlatLightLaf** and launches on the EDT. (`createDomainSecManager(store)`
+is still there for a store opened elsewhere and not set up by `H2PSetup`: it builds a self-managed
+manager and bootstraps it, `OPSecUtil.singleton()` first.) The IntelliJ run configuration
+`NoSneakMain` points `ds.location=/data/ds` at an installation written before the 2026-10-21 model
+(no super-admin in its vault, no INI): `open` refuses it with the reason — delete it, run without
+arguments for the setup screen, then put the new vault password back in the configuration.
 
 Two entry paths, chosen by whether a manager was built from the params:
 - **Params present** → `launchApp(dsm)` goes straight to the app.
 - **No params** → `showSetup(...)` displays `DataStoreSetupPanel` (choose the directory, type the
-  vault password; on a directory without a vault also the DB username / password / encryption
-  password); on completion it opens or creates the installation through `NoSneakStore` and then
-  `launchApp(dsm)`.
+  vault password; on a directory without a vault also the operator's username and password, the
+  DB username and, optionally, the DB password / encryption password); on completion it opens or
+  creates the installation through `NoSneakStore` and then `launchApp(dsm)`.
 
 `launchApp(ShiroDSDomainSecurityManager)` opens `Main.AppFrame` (a `JFrame` titled "NoSneak", sized
 **relative to the display** — 60 % of screen width × 70 % of screen height from
@@ -470,10 +515,13 @@ Its notes and session log: `zoxweb-datastore/h2p-datastore/SHIRO-DS.md`.
 > provider/base-url/auth-type/header-name metadata), `ChangePasswordRoundTripTest`,
 > `IdentifierRoundTripTest`, `AddressRoundTripTest`, `AssistantStorageTest`,
 > `SessionAICredentialSourceTest`, `AppIDDefaultTest` (the domain + app-id filters directly), and
-> **`DataStoreSetupFlowTest`** on a real vault + encrypted H2 file with the access check on (the
-> only suite where the subject binding is enforced). Surefire cannot fetch its provider offline
-> here; run them through the `.claude/tools` launcher with the app classpath (module output dirs +
-> the jars IntelliJ lists for `no-sneak-app`, JUnit 6.1.3), or per class in IntelliJ.
+> **`DataStoreSetupFlowTest`** on a real installation set up by `H2PSetup` (vault + encrypted H2
+> file + `shiro.ini`, access check on, manager attached to the INI realm — the only suite where
+> the subject binding and the app login gate are enforced). Subjects the mock-store suites need
+> come from `TestSecurity.createUser`, which creates and grants `app_user` as sign-up does.
+> Surefire cannot fetch its provider offline here; run them per class in IntelliJ (10 classes,
+> 79 tests on 2026-10-21), or through the `.claude/tools` launcher with the app classpath (module
+> output dirs + the jars IntelliJ lists for `no-sneak-app`, JUnit 6.1.3).
 
 ## `ui.utility` — application services
 
@@ -526,7 +574,8 @@ Auth (username/password is real against the store):
   persists a bcrypt `CIPassword` via `createSubjectID` (the manager creates the subject key with
   it) and maps the duplicate-principal failure to `"That username is already taken"`; every other
   reason surfaces as `"Registration failed: <root cause>"`. It does **not** auto-login. Sign-up is
-  this direct creation, not the manager's registrar path, and grants nothing.
+  this direct creation, not the manager's registrar path; since 2026-10-21 it grants the no-sneak
+  app's **`app_user`** role (`NoSneakStore.grantAppUser`), the one grant the app login gate needs.
 - `logout` ends the kept Shiro subject and clears the state; `loginAPIKey` **no longer exists**.
 
 API-key lifecycle (failures throw `AccessSecurityException`; the raw key is sealed by the store

@@ -98,21 +98,21 @@ has chosen to use.
 >   `context.getAllChats()` (→ `AIRepository.getAllChats()`), refreshed by the public EDT-safe
 >   `refreshHistory()`, which `no-sneak-app` calls on both login and logout.
 > - **Skills have create / edit / delete + persistence, and are typed.** `buildSkillCards` is a
->   nested `CardStack` of exactly two cards (`list` / `editor`). The list source is
->   `context.getAllSkills()` (→ `AIRepository.getAllSkills()`), refreshed by `refreshSkills()`.
->   **The editor card *is* an `MDFileViewer`** — one instance reused for both create and edit,
->   carrying name / description / **type** (`AISkill.SkillType`) / instructions in a single form;
->   remove calls `context.deleteSkill`; all saves run off the EDT via `BackgroundTask.runCatching`.
->   `AISkill.content` is the instruction text — a plain `String`, so a skill authored in markdown
->   is stored verbatim. There is no separate page form and no modal dialog any more: the viewer's
->   own Save is the single persistence point. See §5 and §5.1. The editor also takes a
->   `setValidator(Predicate<MDDocument>)` — `validateSkill` rejects a blank name **before**
->   `onSaveSkill` runs, but only when the selected type is a `SkillType`: a registered save target
->   (the app's "probe") validates its own content, so the skill-worded name check no longer blocks
->   it (finding 10) — and `onSaveSkill` snapshots the old field values so a failed store write
->   rolls the cached `AISkill` back and re-marks the editor dirty. The editor itself now re-marks
->   dirty when a commit handler *throws* (finding 8), so a target that refuses the document can
->   never leave a rejected draft reading as saved.
+> nested `CardStack` of exactly two cards (`list` / `editor`). The list source is
+> `context.getAllSkills()` (→ `AIRepository.getAllSkills()`), refreshed by `refreshSkills()`.
+> **The editor card *is* an `MDEditorPanel`** — one instance reused for both create and edit,
+> carrying name / description / **type** (`AISkill.SkillType`) / instructions in a single form;
+> remove calls `context.deleteSkill`; all saves run off the EDT via `BackgroundTask.runCatching`.
+> `AISkill.content` is the instruction text — a plain `String`, so a skill authored in markdown
+> is stored verbatim. There is no separate page form and no modal dialog any more: the viewer's
+> own Save is the single persistence point. See §5 and §5.1. The editor also takes a
+> `setValidator(Predicate<MDDocument>)` — `validateSkill` rejects a blank name **before**
+> `onSaveSkill` runs, but only when the selected type is a `SkillType`: a registered save target
+> (the app's "probe") validates its own content, so the skill-worded name check no longer blocks
+> it (finding 10) — and `onSaveSkill` snapshots the old field values so a failed store write
+> rolls the cached `AISkill` back and re-marks the editor dirty. The editor itself now re-marks
+> dirty when a commit handler *throws* (finding 8), so a target that refuses the document can
+> never leave a rejected draft reading as saved.
 > - **An assistant reply can become a skill.** `AssistantUtil.chatBubble(...)` takes an optional
 >   `onSaveAsSkill` `Runnable`, rendered as a borderless "Save as skill" button beside the
 >   latency/token line (assistant bubbles only, never the user's). It routes to
@@ -437,10 +437,10 @@ split out of `AssistantPanel`, which is now just wiring:
 | `AssistantCallback` | `ConsumerCallback<NVGenericMap>` — payload → `AIResponse`, persist, hop to the EDT |
 | `AssistantMDDecoder` | Provider payload → renderable markdown (see §10.1) |
 | `AssistantUtil` | `chatBubble(...)` — a rounded bubble around an `io.xlogistx.gui.MDViewerPanel` |
-| `MDFileViewer` | Split markdown editor: editor left, live `MDViewerPanel` preview right (see §5.1) |
+| `io.xlogistx.gui.MDEditorPanel` | Split markdown editor: editor left, live `MDViewerPanel` preview right (see §5.1). **Lives in `io-xlogistx/gui-audio` since 2026-10-22**; only its test stays here |
 | `panels/ChatPanel` | The Prompt page: transcript, composer, `+` popup (skills / images / capture), pending image list, `onSend`, `attachText` |
 | `panels/ChatHistoryPanel` | History list + create/edit cards |
-| `panels/SkillsPanel` | Skills list + the `MDFileViewer` editor card |
+| `panels/SkillsPanel` | Skills list + the `MDEditorPanel` editor card |
 | `panels/ProvidersPanel` | The four-card Providers page |
 | `panels/JobQueuePanel` | Stub (see the status block) |
 | `panels/CapturePanel` | The two-tab Capture page (see the status block) |
@@ -600,12 +600,12 @@ Data-access options: `Scan data`, `Scan data and host inventory`, `Findings only
 > the row back to a single line). The DAO carries `name` / `description` / `content` (the
 > instructions) / `skillType`, with the content a plain `String` — so **markdown skills are just
 > the string**
-> (no file reference; `MDFileViewer`'s *Open file* loads a `.md` off disk **into the editor
+> (no file reference; `MDEditorPanel`'s *Open file* loads a `.md` off disk **into the editor
 > buffer**, it does not create a link to it, and there is no export. If you want frontmatter
 > import, parse it →name/description, body→content at the edge and keep the model a `String`).
 >
 > **There is one skill form, and it is the markdown editor.** `buildSkillEditor()` builds a
-> single `MDFileViewer` (field `skillEditor`), enables its optional name / description / type
+> single `MDEditorPanel` (field `skillEditor`), enables its optional name / description / type
 > rows (`withName` / `withDescription` / `withTypes(...)`, the type combo rendered through
 > `SkillType.getName()` — "md skill" / "prompt skill" — rather than `toString()`), and hands it
 > `setOnCommit(this::onSaveSkill)` plus a `setOnCancel` that clears `selectedSkill` and returns
@@ -621,7 +621,7 @@ Data-access options: `Scan data`, `Scan data and host inventory`, `Findings only
 > is labelled **"Save as"**. The `withTypes(...)` call lives in `showSkillEditorFields` — i.e. it
 > is rebuilt on **every open**, not once in `buildSkillEditor` — because a host registers its
 > targets *after* this panel is constructed, so a combo built at construction would never show
-> them. `MDFileViewer` needs no changes for any of this: `withTypes` is already
+> them. `MDEditorPanel` needs no changes for any of this: `withTypes` is already
 > `Collection<? extends T>` and `MDDocument.getType()` already returns `Object`.
 >
 > `onSaveSkill(MDDocument)` is the only persistence point, and it **dispatches first**: a selected
@@ -656,7 +656,17 @@ Data-access options: `Scan data`, `Scan data and host inventory`, `Findings only
 > nothing records *which* skills went out with a given turn — `AIRequest` has no `skillsPrompt`
 > field, so the stored transcript cannot tell you what the model was actually instructed with.
 
-### 5.1 The markdown editor (`MDFileViewer`)
+### 5.1 The markdown editor (`MDEditorPanel`)
+
+> **2026-10-22 — moved out of this repo.** The class is `io.xlogistx.gui.MDEditorPanel` in
+> `io-xlogistx/gui-audio`, next to `MDViewerPanel` and `IconUtil`, the only house classes it
+> uses; it depends on nothing in no-sneak (`MDDocument.type` is an `Object`, `withTypes` is
+> generic, the caller hands in the enum). It was `MDFileViewer` → `MDEditor` → `MDEditorPanel`
+> on 2026-10-21. gui-audio compiles at Java 8, so three calls were lowered on the way
+> (`getMenuShortcutKeyMask`, `Files.readAllBytes`, `sb.length() > 0`). **`MDEditorPanelTest`
+> stays here** (it exercises the type combo with `AISkill.SkillType`), as does the `JPanelTest`
+> window. Changing the editor means editing it in io-xlogistx, `mvn -o -pl gui-audio install`
+> into `D:/dev/data/java/.m2`, then a Maven reload in IntelliJ.
 
 A standalone `JPanel`, deliberately **not** to the house spec in §9 — it is its own thing, and it
 *is* the skill editor page today (§5), reusable anywhere a markdown string needs editing.
@@ -921,8 +931,8 @@ when absent.
 cached on the Windows box, and the Swing tests need a display, so no `-Djava.awt.headless`):
 `ModelNameTest` (4) pins the `models/` prefix strip; `DetailLineTest` (3) the bubble's `latency · in / out tokens` line; `AssistantMDDecoderTest` (29) renders through
 commonmark and asserts on the resulting HTML rather than on strings, so it checks the fix actually
-renders — plus fence fixtures in `src/test/resources/fence/`; `MDFileViewerTest` (7) covers the
-editor's commit/revert/dirty contract; `AssistantContextTest` (7) guards the canonical caches, the
+renders — plus fence fixtures in `src/test/resources/fence/`; `MDEditorPanelTest` (8) covers the
+editor's commit/revert/dirty contract (the class itself lives in gui-audio since 2026-10-22); `AssistantContextTest` (7) guards the canonical caches, the
 delete-fires-only-for-the-current-chat rule, `resetContext` (including session capture areas), and
 the capture round-trip, against an in-memory `AIRepository` that hands out a fresh instance per
 read like the real store does; `CaptureSupportTest` (6) pins the headless-safe capture helpers
@@ -939,7 +949,7 @@ headless-testable — they need real windows and a mouse; use the `AssistantPane
 Three files in test sources are **not** JUnit tests but `main`-method visual harnesses:
 `ChatBubbleTest` (renders `AssistantUtil.chatBubble` over the real transcript layout under both
 FlatLaf themes — paste a provider answer into its `RESPONSE` constant to eyeball a rendering bug),
-`JPanelTest` (the `MDFileViewer`), and `AssistantPanelTest` (the whole panel — including the
+`JPanelTest` (the `MDEditorPanel`), and `AssistantPanelTest` (the whole panel — including the
 capture page; its in-memory repository's `saveCapture` is a passthrough, so captures "save"
 without a store — against fake credentials, layout only; its keys are not real, so anything
 touching a wire will fail). Run the suite with

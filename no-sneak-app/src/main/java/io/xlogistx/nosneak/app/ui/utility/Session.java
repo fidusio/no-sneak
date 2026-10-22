@@ -1,5 +1,6 @@
 package io.xlogistx.nosneak.app.ui.utility;
 
+import io.xlogistx.nosneak.app.NoSneakStore;
 import io.xlogistx.nosneak.data.ProbeContent;
 import io.xlogistx.nosneak.data.ReportContent;
 import io.xlogistx.shiro.SubjectSwap;
@@ -250,7 +251,7 @@ public class Session {
         Subject shiro = new Subject.Builder(domainSecurityManager.getSecurityManager()).buildSubject();
         SubjectIdentifier si;
         try {
-            shiro.login(new DomainUsernamePasswordToken(subject.trim(), new String(password), false, null,
+            shiro.login(new DomainUsernamePasswordToken(subject.trim(), password, false, null,
                     NO_SNEAK_DOMAIN_ID, NO_SNEAK_APP_ID));
             si = domainSecurityManager.lookupSubjectByGUID(DSAuthorizingRealm.subjectGUIDOf(shiro.getPrincipals()));
         } catch (RuntimeException e) {
@@ -291,13 +292,17 @@ public class Session {
 
 
     /**
-     * Creates a new username/password account (does not log in). @return {@code null} on success, else an error message.
+     * Creates a new username/password account (does not log in) and grants it the no-sneak app's
+     * {@code app_user} role: since the app login gate (upstream, 2026-10-20) a login scoped to
+     * {@link #NO_SNEAK_APP_ID} needs {@code app:login}, which that role carries
+     * ({@link NoSneakStore#grantAppUser}). Throws {@link AccessSecurityException} with the reason on failure.
      */
     public void registerUsernamePassword(String subject, char[] password) throws AccessSecurityException {
         // TBD change the signature to void explicitly declare thrown exception
         if (!FilterType.PASSWORD.isValid(new String(password))) throw new AccessSecurityException(PASSWORD_RULES_MESSAGE);
         try {
-            domainSecurityManager.createSubjectID(subject, HashUtil.toBCryptPassword(new String(password)));
+            SubjectIdentifier created = domainSecurityManager.createSubjectID(subject, HashUtil.toBCryptPassword(new String(password)));
+            NoSneakStore.grantAppUser(domainSecurityManager, created);
         } catch (AccessSecurityException e) {
             // only a duplicate principal reads as "taken"; a store failure keeps its own reason
             String reason = e.getMessage() == null ? "" : e.getMessage();

@@ -28,8 +28,9 @@ public class NoSneakMain {
 
     /**
      * Launch parameters: {@code ds.location=<dir>} and {@code ds.store-password=<vault password>}
-     * open an existing installation directly ({@link NoSneakStore#open}); without both, the
-     * setup screen asks for them (and creates the vault and the database on a first run).
+     * open an existing installation directly ({@link NoSneakStore#open}: vault + {@code shiro.ini}
+     * in that directory); without both, the setup screen asks for them (and on a first run creates
+     * the vault, the database, the operator account and the INI through {@code H2PSetup}).
      * Passing the vault password on the command line exposes it (process list, shell history,
      * run configurations): a development convenience, the setup screen is the normal path.
      */
@@ -99,8 +100,10 @@ public class NoSneakMain {
     }
 
     /**
-     * The manager over a store that is already open with its controller and key maker (see
-     * {@link NoSneakStore#openStore}): built and {@link NoSneakStore#bootstrap bootstrapped}.
+     * A self-managed manager over a store that is already open with its controller and key maker
+     * but was not set up by {@code H2PSetup} (see {@link NoSneakStore#secure}): built and
+     * {@link NoSneakStore#bootstrap bootstrapped}. An installation on disk goes through
+     * {@link NoSneakStore#open} instead, which attaches the manager to the INI realm.
      * {@code ShiroDSDomainSecurityManager} replaced {@code DomainSecurityManagerDefault} (user,
      * 2026-10-05); it registers {@code CIPassword} and {@code SubjectAPIKey} itself.
      */
@@ -119,10 +122,10 @@ public class NoSneakMain {
         f.setSize(560, 520);
         f.setLocationRelativeTo(null);
         f.setContentPane(new DataStoreSetupPanel(
-                (location, vaultPassword, user, password, encPassword) ->
-                        NoSneakStore.vaultExists(location)
+                (location, vaultPassword, firstRun) ->
+                        NoSneakStore.vaultExists(location) || firstRun == null
                                 ? NoSneakStore.open(location, vaultPassword)
-                                : NoSneakStore.create(location, vaultPassword, user, password, encPassword),
+                                : NoSneakStore.create(location, vaultPassword, firstRun),
                 dsm -> {
                     f.dispose();
                     onComplete.accept(dsm);

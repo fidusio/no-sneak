@@ -3,10 +3,12 @@
 > **Picking this project up?** `PENDING-ISSUES.md` at the repo root is the handoff index of open
 > work — it points at every per-module open-items list and records the 2026-08-13 code-review
 > findings against the then-uncommitted scan-panel and AI-assistant changes. **Its latest section
-> is *Status check (2026-10-05)*: read that first** — the app now opens its store through a vault
-> (`no-sneak-app/NoSneakStore`) on the Shiro manager, with an unbound subject login and a
-> per-call `SubjectSwap` view of the store; it lists the decisions taken on the maintainer's
-> behalf and what is still open (stale IntelliJ run config, old databases, the Mongo path).
+> is *Status check (2026-10-21)*: read that first** — the app's store now follows the datastore's
+> deployment model: a first run is `H2PSetup command=create` (vault with the operator as
+> super-admin, encrypted H2 file, the no-sneak app, `shiro.ini`), every run opens the vault and
+> attaches the Shiro manager to the INI realm, and sign-up grants the app's `app_user` role so the
+> app login gate lets the subject in (`no-sneak-app/NoSneakStore`). It lists the decisions taken
+> on the maintainer's behalf and what is still open (old installations are refused, the Mongo path).
 
 Assessment tooling for what a network endpoint exposes — TLS posture, **post-quantum
 readiness**, and running services — plus a Swing front-end and an AI-assistant layer.
