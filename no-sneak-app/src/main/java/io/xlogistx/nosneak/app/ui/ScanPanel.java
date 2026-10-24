@@ -132,7 +132,7 @@ public class ScanPanel extends JPanel {
         JToggleButton probeButton = new JToggleButton("Probe Library");
         probeButton.addActionListener(e -> cardStack.show("Probe"));
 
-        JToggleButton resultButton = new JToggleButton("Result List");
+        JToggleButton resultButton = new JToggleButton("Scan History");
         resultButton.addActionListener(e -> cardStack.show("Result"));
 
         add(PanelBuilder.buildDefaultSplitPanel(cardStack.view(), scanButton, resultButton, probeButton));
@@ -299,7 +299,7 @@ public class ScanPanel extends JPanel {
 
     /**
      * The label a scan is filed under — the subject's own name for it, falling back to the
-     * targets so a report is never nameless. It becomes the report's name, the Result List row
+     * targets so a report is never nameless. It becomes the report's name, the Scan History row
      * label, and the attachment label when the report is sent to a chat, so it is deliberately
      * short: the full command lives in the report's description.
      */
@@ -524,7 +524,8 @@ public class ScanPanel extends JPanel {
                 .title("Scan Results")
                 .label(ReportContent::getName)
                 .sublabel(ScanPanel::stampOf)
-                .action(new ListSection.RowAction<>(new IconUtil.CopyIcon(16), "Copy", s -> () -> onCopyScanResult(s)))
+                .action(new ListSection.RowAction<>(new IconUtil.TextBoxIcon(16), "Copy the command", s -> () -> onCopyScanCommand(s)))
+                .action(new ListSection.RowAction<>(new IconUtil.CopyIcon(16), "Copy the result", s -> () -> onCopyScanResult(s)))
                 .action(new ListSection.RowAction<>(new IconUtil.NextIcon(16), "Send to chat", s -> () -> onSendScanResult(s)))
                 .action(new ListSection.RowAction<>(new IconUtil.VisibleIcon(16), "View", s -> () -> onViewScanResult(s)))
                 .onRemove(s -> () -> onRemoveScanResult(s))
@@ -533,6 +534,24 @@ public class ScanPanel extends JPanel {
                 .build();
 
         return resultList;
+    }
+
+    /**
+     * Row action: copy the command the scan was run with, ready to paste back into the command
+     * box. The typed command lives in the {@code command} property and the projected row carries
+     * properties, so no re-fetch; a report saved before that property existed falls back to the
+     * description (the command plus the probe names).
+     */
+    private void onCopyScanCommand(ReportContent row) {
+        if (row == null) return;
+        copyToClipboard(commandOf(row));
+    }
+
+    /** The typed command of a report: the {@code command} property, else the description. */
+    static String commandOf(ReportContent scan) {
+        Object typed = scan.getProperties() != null ? scan.getProperties().getValue("command") : null;
+        String command = typed != null ? SUS.trimOrNull(typed.toString()) : null;
+        return command != null ? command : SUS.trimOrNull(scan.getDescription());
     }
 
     /** Row action: copy the stored report. Rows are projections without content, so re-fetch first. */

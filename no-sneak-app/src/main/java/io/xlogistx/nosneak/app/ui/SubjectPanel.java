@@ -225,9 +225,11 @@ public class SubjectPanel extends JPanel {
 
         JFileChooser chooser = new JFileChooser();
         chooser.setDialogTitle("Restore backup");
+        chooser.setCurrentDirectory(AppPrefs.fileDirectory());
         if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) return;
 
         File source = chooser.getSelectedFile();
+        AppPrefs.fileDirectory(source);
         String warning = mode == H2PDataStore.RestoreMode.WIPE_AND_LOAD
                 ? "Every record in this store will be deleted and replaced with the contents of\n"
                 + source.getName() + ".\n\nThis cannot be undone. Continue?"
@@ -297,10 +299,12 @@ public class SubjectPanel extends JPanel {
 
         JFileChooser chooser = new JFileChooser();
         chooser.setDialogTitle("Export backup");
+        chooser.setCurrentDirectory(AppPrefs.fileDirectory());
         chooser.setSelectedFile(new File(NoSneakMain.dbName + "-backup.zip"));
         if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
 
         File target = chooser.getSelectedFile();
+        AppPrefs.fileDirectory(target);
         if (target.exists() && JOptionPane.showConfirmDialog(this,
                 target.getName() + " already exists. Replace it?", "Export backup",
                 JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE) != JOptionPane.OK_OPTION) {

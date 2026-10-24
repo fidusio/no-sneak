@@ -3,10 +3,13 @@ package io.xlogistx.nosneak.app;
 import com.formdev.flatlaf.FlatLaf;
 import com.formdev.flatlaf.FlatLightLaf;
 import com.formdev.flatlaf.fonts.roboto.FlatRobotoFont;
+import com.openhtmltopdf.util.XRLog;
+import io.xlogistx.datastore.h2p.H2PDataStore;
 import io.xlogistx.nosneak.app.ui.AppShell;
 import io.xlogistx.nosneak.app.ui.DataStoreSetupPanel;
 import io.xlogistx.nosneak.app.ui.MenuBarFactory;
 import io.xlogistx.nosneak.app.ui.utility.AppContext;
+import io.xlogistx.nosneak.app.ui.utility.AppPrefs;
 import io.xlogistx.opsec.OPSecUtil;
 import io.xlogistx.shiro.ds.ShiroDSDomainSecurityManager;
 import org.zoxweb.shared.api.APIDataStore;
@@ -22,6 +25,7 @@ import java.util.function.Consumer;
 
 public class NoSneakMain {
 
+
     public final static AppVersion VERSION = new AppVersion("NOSNEAK::1.0.0");
     /** The H2 database name inside the installation directory; see {@link NoSneakStore}. */
     public static final String dbName = NoSneakStore.DB_NAME;
@@ -36,6 +40,10 @@ public class NoSneakMain {
      */
     public static void main(String... args) {
 
+        XRLog.setLoggingEnabled(false);
+        // Must run before any LoggerFactory.getLogger() call anywhere in the JVM
+        System.setProperty("org.slf4j.simpleLogger.log.com.zaxxer.hikari", "warn");
+        H2PDataStore.log.setEnabled(false);
         ParamUtil.ParamMap params = ParamUtil.parse("=", args);
         String location = params.stringValue("ds.location", true);
         String storePassword = params.stringValue("ds.store-password", true);
@@ -44,6 +52,7 @@ public class NoSneakMain {
         if (!SUS.isEmpty(location) && storePassword != null) {
             try {
                 dsm = NoSneakStore.open(location, storePassword.toCharArray());
+                AppPrefs.storeLocation(location);
             } catch (Exception e) {
                 System.err.println("Could not open the no-sneak store at " + location + ": " + e.getMessage());
                 System.exit(2);

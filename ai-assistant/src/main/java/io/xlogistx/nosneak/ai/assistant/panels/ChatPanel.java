@@ -55,6 +55,21 @@ public class ChatPanel extends JPanel {
     private final List<AISkill> pendingSkills = new ArrayList<>();
 
     private final List<AISource> pendingSources = new ArrayList<>();
+    /**
+     * The pending sources as <b>conditional entries at the end of the transcript</b> — a scan
+     * report sent from the scanner shows there in full, as a markdown view, so the subject sees
+     * what the next prompt is about before typing it. Each view carries a Delete button; that
+     * is the only time a source can be dropped, because once sent it is persisted on the
+     * request and becomes part of the chat ({@link #addAttachments(List)} renders the same
+     * view, without Delete). The entries live in the transcript's own scroll, never in a
+     * panel of their own, so they can never cover the conversation. This list is what is
+     * currently in the transcript; rebuilt by {@link #refreshPendingPanel()}, which every
+     * pending-state change reaches through {@link #refreshSkillTooltip()}.
+     */
+    private final List<JComponent> pendingViews = new ArrayList<>();
+    /** Height cap of one source view in the transcript. */
+    private static final int SOURCE_VIEW_MAX_HEIGHT = 260;
+    private static final String SOURCE_VIEW_CONSTRAINT = "growx, wmin 0, wmax 92%, alignx trailing";
     private static final int AREA_LIST_MAX_HEIGHT = 160;
     /**
      * Attachment rows carry a caller-supplied name, so they must be width-capped like the bubbles.
@@ -355,6 +370,9 @@ public class ChatPanel extends JPanel {
                     addMessage(res.getContent(), false, latencyOf(res), inTokensOf(res), outTokensOf(res));
             }
         }
+        // removeAll took the conditional entries with it; put the still-pending ones back last
+        pendingViews.clear();
+        refreshPendingPanel();
         transcript.revalidate();
         transcript.repaint();
     }
@@ -402,7 +420,6 @@ public class ChatPanel extends JPanel {
             AIResponse res = m.getAIResponse();
             if (req != null && req.getContent() != null) {
                 sb.append("---\n\n### You\n\n").append(req.getContent().trim()).append("\n\n");
-                StringBuilder named = new StringBuilder();
                 for (NVEntity a : req.getAttachments().values()) {
                     AISource source = (AISource) a;
                     byte[] png = source.isImage() ? captureImage(ctx, source.getCaptureGUID()) : null;
@@ -411,12 +428,13 @@ public class ChatPanel extends JPanel {
                                 .append(Base64.getEncoder().encodeToString(png)).append(")\n\n");
                         continue;
                     }
-                    named.append("- ").append(source.getName());
-                    if (source.getSourceType() != null)
-                        named.append(" (").append(source.getSourceType().getName()).append(')');
-                    named.append('\n');
+                    if (source.isImage()) continue;
+                    // a text source is part of the chat: its content goes in, not just its name
+                    sb.append("**Attached: ").append(source.getName()).append("**");
+                    String sub = SourceSupport.sublabel(source);
+                    if (!sub.isEmpty()) sb.append("  \n*").append(sub).append('*');
+                    sb.append("\n\n").append(sourceMarkdown(source)).append("\n\n");
                 }
-                if (!named.isEmpty()) sb.append("*Attached:*\n\n").append(named).append('\n');
             }
             if (res != null && res.getContent() != null) {
                 sb.append("### Assistant");
@@ -479,6 +497,9 @@ public class ChatPanel extends JPanel {
         // Persist before dispatch: the response callback is the only other save point, so a turn
         // that never gets answered (provider down, logout while in flight) would otherwise vanish.
         BackgroundTask.runCatching(this, null, () -> ctx.saveChat(chat), null);
+        // the pending entries become the sent turn: out with the conditional views, in with the
+        // message and its attachments as part of the chat
+        removePendingViews();
         addMessage(text, true, null, null, null);
         addAttachments(sources);
 
@@ -493,8 +514,15 @@ public class ChatPanel extends JPanel {
                 AIMessage m = (AIMessage) e;
                 AIRequest req = m.getAIRequest();
                 AIResponse res = m.getAIResponse();
-                if (req != null && req.getContent() != null)
+                if (req != null && req.getContent() != null) {
                     sb.append("Human: ").append(req.getContent()).append("\n\n");
+                    // an earlier turn's text attachments are part of the chat and go with it;
+                    // the current turn's (m == msg) travel in the source block below instead
+                    if (m != msg) {
+                        String past = SourceSupport.block(textSourcesOf(req));
+                        if (!past.isEmpty()) sb.append(past).append("\n\n");
+                    }
+                }
                 if (res != null && res.getContent() != null)
                     sb.append("Assistant: ").append(res.getContent()).append("\n\n");
             }
@@ -662,7 +690,8 @@ public class ChatPanel extends JPanel {
     private void addAttachments(List<AISource> sources) {
         for (AISource source : sources) {
             if (!source.isImage()) {
-                transcript.add(sourceChip(source), ATTACHMENT_CONSTRAINT);
+                // part of the chat now: the same full view as the pending area, without Delete
+                transcript.add(sourceView(source, null), SOURCE_VIEW_CONSTRAINT);
                 continue;
             }
 
@@ -692,20 +721,88 @@ public class ChatPanel extends JPanel {
         if (!sources.isEmpty()) addAttachments(sources);
     }
 
+    /** The non-image sources persisted on a request, in attachment order. */
+    static List<AISource> textSourcesOf(AIRequest request) {
+        List<AISource> out = new ArrayList<>();
+        if (request == null || request.getAttachments() == null) return out;
+        for (NVEntity e : request.getAttachments().values()) {
+            AISource source = (AISource) e;
+            if (!source.isImage()) out.add(source);
+        }
+        return out;
+    }
+
     private static String ellipsize(String text, int max) {
         if (text == null) return "";
         return text.length() <= max ? text : text.substring(0, max - 1) + "…";
     }
 
-    private JComponent sourceChip(AISource source) {
-        JLabel chip = new JLabel(ellipsize(source.getName(), CHIP_MAX_CHARS), new IconUtil.PDFIcon(14, Color.WHITE), SwingConstants.LEADING);
-        chip.setIconTextGap(6);
-        chip.setToolTipText(source.getName() + " — " + SourceSupport.sublabel(source));
-        chip.setForeground(UIManager.getColor("Label.disabledForeground"));
-        chip.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(UIManager.getColor("Component.borderColor")),
-                BorderFactory.createEmptyBorder(2, 6, 2, 6)));
-        return chip;
+    /**
+     * A text source rendered in full: a header line (name, then type · origin · size, muted) over
+     * an {@link MDViewerPanel} of the content, height-capped with its own scrollbar so a 50 KB
+     * scan report does not swallow the transcript. {@code onDelete} non-null adds a Delete button
+     * to the header — only the pending area passes one; in the transcript the source is part of
+     * the chat and stays.
+     */
+    private JComponent sourceView(AISource source, Runnable onDelete) {
+        JLabel name = new JLabel(ellipsize(source.getName(), CHIP_MAX_CHARS));
+        name.setFont(name.getFont().deriveFont(Font.BOLD));
+        name.setToolTipText(source.getName());
+        JLabel detail = new JLabel(SourceSupport.sublabel(source));
+        detail.setFont(detail.getFont().deriveFont(detail.getFont().getSize2D() - 2f));
+        detail.setForeground(UIManager.getColor("Label.disabledForeground"));
+
+        JPanel header = new JPanel(new MigLayout("insets 6 10 2 6, gapx 10", "[][grow][]"));
+        header.setOpaque(false);
+        header.add(name);
+        header.add(detail, "wmin 0");
+        if (onDelete != null) {
+            JButton delete = GUIUtil.iconButton(new IconUtil.DeleteIcon(16), true);
+            delete.setToolTipText("Drop this from the next message");
+            delete.setFocusable(false);
+            delete.addActionListener(_ -> onDelete.run());
+            header.add(delete, "alignx trailing");
+        }
+
+        MDViewerPanel viewer = new MDViewerPanel();
+        viewer.setMarkdown(sourceMarkdown(source));
+        JEditorPane pane = viewer.getEditorPane();
+        pane.setOpaque(false);
+        pane.setBorder(BorderFactory.createEmptyBorder(0, 10, 8, 10));
+        JScrollPane body = new JScrollPane(pane,
+                JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER) {
+            @Override
+            public Dimension getPreferredSize() {
+                Dimension d = super.getPreferredSize();
+                return new Dimension(d.width, Math.min(d.height, SOURCE_VIEW_MAX_HEIGHT));
+            }
+        };
+        body.setBorder(BorderFactory.createEmptyBorder());
+        body.setOpaque(false);
+        body.getViewport().setOpaque(false);
+        body.getVerticalScrollBar().setUnitIncrement(16);
+
+        JPanel view = new JPanel(new BorderLayout());
+        Color bg = UIManager.getColor("Button.background");
+        view.setBackground(bg != null ? bg : new Color(0xE6E6E6));
+        view.setBorder(BorderFactory.createLineBorder(UIManager.getColor("Component.borderColor")));
+        view.add(header, BorderLayout.NORTH);
+        view.add(body, BorderLayout.CENTER);
+        return view;
+    }
+
+    /**
+     * The markdown shown for a source: JSON (every scan report is one) goes into a {@code json}
+     * fence so it renders as code; anything else is shown as the markdown it is.
+     */
+    static String sourceMarkdown(AISource source) {
+        String content = source.getContent();
+        if (content == null) return "";
+        String trimmed = content.trim();
+        if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+            return "```json\n" + trimmed + "\n```";
+        }
+        return content;
     }
 
     private static Integer latencyOf(AIResponse res) {
@@ -1059,6 +1156,9 @@ public class ChatPanel extends JPanel {
 
     private void refreshSkillTooltip() {
         if (attachSkillButton == null) return;
+        // first, so removing the last pending source clears the area (the early return below
+        // used to skip it and the deleted view stayed on screen)
+        refreshPendingPanel();
         CaptureArea[] areas = areasToSend();
         if (pendingSkills.isEmpty() && pendingSources.isEmpty() && areas.length == 0) {
             attachSkillButton.setToolTipText("Attach skills, sources or capture areas to the next message");
@@ -1080,6 +1180,40 @@ public class ChatPanel extends JPanel {
         attachSkillButton.setToolTipText("Attached to the next message: " + names);
     }
 
+    /**
+     * Rebuilds the conditional entries at the end of the transcript: one full
+     * {@link #sourceView} per pending text source, each with Delete. Images stay in the
+     * {@code +} popup (they are shown as thumbnails once sent). Scrolls to the bottom so a
+     * freshly attached report is in view.
+     */
+    private void refreshPendingPanel() {
+        if (transcript == null) return;
+        removePendingViews();
+        for (AISource source : new ArrayList<>(pendingSources)) {
+            if (source.isImage()) continue;
+            JComponent view = sourceView(source, () -> {
+                pendingSources.remove(source);
+                refreshSkillTooltip();
+            });
+            transcript.add(view, SOURCE_VIEW_CONSTRAINT);
+            pendingViews.add(view);
+        }
+        transcript.revalidate();
+        transcript.repaint();
+        if (!pendingViews.isEmpty()) {
+            SwingUtilities.invokeLater(() -> {
+                JScrollBar v = transcriptScroll.getVerticalScrollBar();
+                v.setValue(v.getMaximum());
+            });
+        }
+    }
+
+    /** Takes the conditional entries out of the transcript; the pending sources themselves stay. */
+    private void removePendingViews() {
+        for (JComponent view : pendingViews) transcript.remove(view);
+        pendingViews.clear();
+    }
+
     public void attachText(String text, String name) {
         if (text == null || text.isBlank())
             throw new AccessSecurityException("There is nothing to send.");
@@ -1087,6 +1221,7 @@ public class ChatPanel extends JPanel {
             throw new AccessSecurityException("Open a chat first (Chat History > + New Chat)");
         pendingSources.add(SourceSupport.fromText(text, name));
         refreshSkillTooltip();
+        composer.requestFocusInWindow();
     }
 
     public void reset() {

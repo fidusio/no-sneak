@@ -136,7 +136,10 @@ decisions have to keep.
 
 Two properties this module owns, and every screen has to keep them: **the store is encrypted and
 opened with the subject's own credentials**, and **everything in it is scoped to the subject who
-created it** — scan reports, probes, chats, captures, keys. Logout must leave nothing of the
+created it** — scan reports, probes, chats, captures, keys. The one setting outside
+the store is `ui.utility.AppPrefs` (`java.util.prefs` of the OS user, 2026-10-22): the directory
+of the last successful open or create, and the last backup/restore directory. Directories only;
+the vault password is never written there. Logout must leave nothing of the
 previous subject on screen or in a panel field; `ScanPanel.resetPanel()` runs on *every* auth
 change for exactly this reason (the gap `PENDING-ISSUES.md` finding 1 described, closed
 2026-09-11), and a scan whose subject signed out before it finished is discarded, not shown to
@@ -152,7 +155,7 @@ io.xlogistx.nosneak.app
 └── ui/                            ← UI (screens, menu, session/access wiring)
     ├── AppShell.java              ← root content pane, CardLayout host (mounts ai-assistant's AssistantPanel)
     ├── LoginPanel.java            ← login/register screen (password; passkey card hidden)
-    ├── DataStoreSetupPanel.java   ← first screen: choose location + vault password (+ operator account and DB settings on a first run)
+    ├── DataStoreSetupPanel.java   ← first screen: last location pre-filled, choose location + vault password (+ operator account and DB settings on a first run)
     ├── PQCRegistryPanel.java      ← PQC file-sharing registry view
     ├── SubjectPanel.java          ← subject account view (master–detail)
     ├── SubjectSecManagerPanel.java← ACL admin view (master–detail)
@@ -164,7 +167,8 @@ io.xlogistx.nosneak.app
     └── utility/
         ├── AppContext.java        ← per-app service locator (Session + Navigator)
         ├── Session.java           ← auth (unbound Shiro subject) + identifiers + credentials + profile + addresses + the subject view of the store
-        └── Navigator.java         ← top-level screen switching over a CardLayout
+        ├── Navigator.java         ← top-level screen switching over a CardLayout
+        └── AppPrefs.java          ← java.util.prefs of the OS user: last store location + last chooser directory (2026-10-22)
 
 (The `CardStack` / `PanelBuilder` / `ListSection` / `BackgroundTask` helpers live in the shared
 `io.xlogistx.gui` toolkit — `xlogistx-gui-audio` — not in this module.)
@@ -188,7 +192,10 @@ arguments for the setup screen, then put the new vault password back in the conf
 
 Two entry paths, chosen by whether a manager was built from the params:
 - **Params present** → `launchApp(dsm)` goes straight to the app.
-- **No params** → `showSetup(...)` displays `DataStoreSetupPanel` (choose the directory, type the
+- **No params** → `showSetup(...)` displays `DataStoreSetupPanel` (the directory of the last
+  successful open is pre-filled from `AppPrefs.storeLocation()` when it still exists, so a
+  returning subject only types the vault password — the field has focus and Enter in it is
+  the Open / Create click (2026-10-23); otherwise choose the directory, type the
   vault password; on a directory without a vault also the operator's username and password, the
   DB username and, optionally, the DB password / encryption password); on completion it opens or
   creates the installation through `NoSneakStore` and then `launchApp(dsm)`.
@@ -345,7 +352,8 @@ The **Profile** screen is itself a nested `CardStack` (`profileCards`, built by
 > **Icon buttons.** Actions render as `io.xlogistx.gui.IconUtil` SVG icons with tooltips, and the
 > vocabulary is deliberately one-meaning-per-icon: **EditIcon** (pencil), **DeleteIcon** (trash),
 > **RefreshIcon** (rotate/regenerate **only** — restore-from-backup uses **RollbackIcon**),
-> **CopyIcon** → **CheckIcon** on success, **VisibleIcon/InvisibleIcon** (reveal, and as a pair
+> **CopyIcon** → **CheckIcon** on success, **TextBoxIcon** (copy the command a scan ran with,
+> beside the result's CopyIcon), **VisibleIcon/InvisibleIcon** (reveal, and as a pair
 > they are the mask toggle), **VisibleIcon** alone = view/open a row, **NextIcon** = advance with
 > this row (open chat, send to chat), **SearchIcon**, **BackIcon** (`PanelBuilder.detail`),
 > **InfoIcon** (usage), **RunIcon** (run a scan), **AreaIcon** (define/redraw a capture area),
@@ -436,9 +444,12 @@ ticked — that dedupe belongs to the scanner, not the panel.
 
 **Result List / View scan.** A `ListSection` over `Session.getAllScanResults()` — a **projected**
 read that omits `content` — with rows labelled by target and a sublabel of
-`<full command>  ·  <timestamp>`. Row actions are *Copy*, *Send to chat*, *View*, and remove. Copy,
-View and Send all **re-fetch the full row** by GUID first and bail with a dialog if it misses;
-sending or copying a list instance would attach empty content. The scanner card's result pane has
+`<full command>  ·  <timestamp>`. Row actions are *Copy the command* (`TextBoxIcon`, 2026-10-22:
+puts the typed command from the `command` property on the clipboard, falling back to the
+description for older rows, ready to paste into the command box; the projection carries
+`properties`, so no re-fetch), *Copy the result*, *Send to chat*, *View*, and remove. Copy the
+result, View and Send all **re-fetch the full row** by GUID first and bail with a dialog if it
+misses; sending or copying a list instance would attach empty content. The scanner card's result pane has
 the same pair, a copy icon beside *Send to chat* (2026-09-20): Copy is enabled whenever the pane
 holds a render, including the partial render of a stopped scan, while Send needs a completed one.
 

@@ -125,7 +125,11 @@ has chosen to use.
 >   — the button is disabled while it renders and a failure lands in `BackgroundTask`'s own error
 >   dialog — and the bytes open in an `io.xlogistx.gui.PDFViewerPanel` inside a modeless
 >   `JDialog` (900 × 940, toolbar on; closing asks the viewer's `confirmDiscard()` when it has
->   unsaved edits, disposal → `viewer.close()`). **Page editing is the toolkit's, not ours:** the
+>   unsaved edits, disposal → `viewer.close()`). The viewer's **Aa text size spinner is scoped
+>   to the viewer** (gui-audio 2026-10-23, `FontSizeWidget(Component scope)` — the default for
+>   a `PDFViewerPanel`): turning it resizes the dialog's controls only, never no-sneak's, and a
+>   no-sneak text size change does not reach the dialog; it used to drive the whole application.
+>   **Page editing is the toolkit's, not ours:** the
 >   viewer's toolbar carries *Insert* and *Delete* (pages: current, list or range; added to
 >   `PDFViewerPanel` in `io-xlogistx/gui-audio` on 2026-09-23 — a first cut of the deletion
 >   lived here as `ResponsePDFDialog` for an hour and was moved), plus *Save* and *Print*, so
@@ -139,8 +143,11 @@ has chosen to use.
 >   line, then per message a `---` rule, `### You` with the request text, every image attachment
 >   inline (the capture's PNG read back from the store, embedded as a `data:` URI; MDToPDF scales it
 >   to the text width — this is why the markdown is built on the background worker, through the
->   `Callable` overload of `showAsPDF`) and an *Attached:* list
->   of the remaining source names (not contents), and `### Assistant · model` with the response —
+>   `Callable` overload of `showAsPDF`) and, for every text source, **its content** under a
+>   bold `Attached: <name>` line with the muted `type · origin · size` (a JSON report in a
+>   ```` ```json ```` fence via `sourceMarkdown`; until 2026-10-23 only the names were listed —
+>   a sent attachment is part of the chat, so the PDF carries it), and `### Assistant · model`
+>   with the response —
 >   and hands it to the same `AssistantUtil.showAsPDF(owner, title, markdown)` the bubble button
 >   uses (now public, with the dialog title as a parameter; the dialog carries PDF window icons).
 >   No chat or an empty chat gets an information dialog instead.
@@ -195,7 +202,11 @@ has chosen to use.
 >   two further sections below the skills — **Images for this message** and **Capture** (both
 >   below); job-queue items are meant to join them. The chat
 >   header also carries the **`Send history`** checkbox (default on; reset to on at logout) —
->   unchecked sends only the new message with no conversation context.
+>   unchecked sends only the new message with no conversation context. Checked, every earlier
+>   turn's **text attachments go with its `Human:` line** as `SourceSupport.block(textSourcesOf(req))`
+>   (2026-10-23): a scan report sent two turns ago is still in front of the model. The current
+>   turn's sources are not repeated there — they travel in the source block appended to the
+>   skill text, as before.
 > - **A message can carry several images, and the popup is where they live.** `ChatPanel` holds
 >   two index-parallel lists — `pendingImages` (`BufferedImage`) and `pendingImageNames` — and
 >   every attach path funnels through the public **`attachImage(image, name)`**, which
@@ -270,7 +281,8 @@ has chosen to use.
 >   the lists are session-sized. Note macOS needs Screen Recording permission for
 >   `Robot.createScreenCapture` — without it captures come back blank with no exception.
 > - **The module has two outward hooks, and they are the whole coupling to the scanner.**
->   **`AssistantPanel.sendToChat(text, name)`** attaches plain text as a pending `AISource` and
+>   **`AssistantPanel.sendToChat(text, name)`** attaches plain text as a pending `AISource`
+>   (rendered in full as the last transcript entry, with a Delete button until it is sent, 2026-10-22) and
 >   flips to the Chat card — `no-sneak-app` hands it to `ScanPanel` so a scan report can be sent
 >   into a conversation. It throws a `SecurityException` (message shown by the caller) when there
 >   is no current chat, since an attachment with nowhere to land is silently lost otherwise.
@@ -307,15 +319,18 @@ has chosen to use.
 > **Every row added to the transcript must be width-capped.** The transcript is a `MigLayout`
 > panel inside a `JScrollPane` with `HORIZONTAL_SCROLLBAR_NEVER`. Bubbles carry
 > `wmin 0, wmax 60%` (user, trailing) or `growx, wmin 0, wmax 92%` (assistant, leading); the
-> attachment rows — `sourceChip` and image thumbnails — go in through the shared
-> `ATTACHMENT_CONSTRAINT` for the same reason. An **uncapped** row sizes to its content, which
+> attachment rows — image thumbnails through the shared `ATTACHMENT_CONSTRAINT`, text sources
+> (`sourceView`, 2026-10-22) through `SOURCE_VIEW_CONSTRAINT` — are capped for the same reason. An **uncapped** row sizes to its content, which
 > sets the panel's preferred width past the viewport; because chips and user bubbles are
 > `alignx trailing`, they are then positioned off-screen with no horizontal scrollbar to reach
 > them, and the only way to see them is to widen the window. Measured: a 1400px chip against a
 > 597px viewport pushed the user's bubble 817px out of view. The `wmin 0` matters too — MigLayout
 > will not shrink a component below its reported minimum, and a `JEditorPane` reports the width of
-> its widest unbreakable content. Chips carry the red `IconUtil.PDFIcon` (2026-10-07) before the name; chip text is additionally ellipsized at 48 chars with the full
-> name in the tooltip, since `wmax` alone clips mid-word with no indication anything was cut.
+> its widest unbreakable content. A source view's header shows the name in bold, no icon (the
+> chips it replaced carried a PDF icon; dropped by request 2026-10-22); the name is ellipsized at 48 chars with
+> the full name in the tooltip, since `wmax` alone clips mid-word with no indication anything
+> was cut, and the body is a `JScrollPane` around the viewer's editor pane, which reports a small
+> minimum width however wide the JSON inside is.
 > Callers should keep attachment names short for the same reason — `ScanPanel` sends a scan's
 > targets, not its full command line.
 >
@@ -510,7 +525,26 @@ are buttons that paste their text into the composer for the subject to edit befo
 §5's implementation status for the mechanics and why a prompt skill is not also attached.
 
 > **Implementation status.** The popup has four sections, not two, and the chips were never
-> built: **Skills for this message**, **Images for this message** (a checkbox per attached
+> built. **What exists instead, since 2026-10-22, are conditional entries in the transcript**
+> (`ChatPanel.pendingViews`): every pending **text** source — a scan report sent from the
+> scanner, an attached file, a fetched URL — is rendered **in full as the last entry of the
+> transcript** through `sourceView(source, onDelete)`: a header (bold name, muted
+> `type · origin · size`, a Delete button) over an `MDViewerPanel` of the content, capped at
+> `SOURCE_VIEW_MAX_HEIGHT` with its own scrollbar. The entries live in the transcript's own
+> scroll — a separate panel between transcript and composer was tried the same day and read as
+> covering the chat, so it is a design rule now: **nothing may sit between the transcript and
+> the composer**. `sourceMarkdown` puts JSON (every scan report) in a ```` ```json ```` fence so
+> it renders as code and passes anything else through as markdown. **Delete exists only while
+> pending**: `onSend` calls `removePendingViews()` and renders the turn — the message bubble, then
+> `addAttachments`, the same `sourceView` with no Delete (under `SOURCE_VIEW_CONSTRAINT`,
+> `growx, wmin 0, wmax 92%`) — and the source is persisted on the request, so it comes back on
+> every `refreshPrompt` as part of the chat. `refreshPendingPanel()` rebuilds the entries (and
+> scrolls to the bottom) from `refreshSkillTooltip()`, which runs it **first** — its early return
+> on "nothing pending" used to skip the rebuild, so deleting the last source left its view on
+> screen — and from the end of `refreshPrompt`, whose `removeAll` takes the entries with it. The
+> popup's *Sources for this message* checkboxes still drop a source too. Images stay in the
+> popup and render as thumbnails once sent. `attachText` moves focus to the composer. The popup
+> sections are **Skills for this message**, **Images for this message** (a checkbox per attached
 > image, uncheck to drop it, plus an *Attach image* file picker), and **Capture** (a fresh drag
 > that *defines* a new area, an *All areas* check-all, and one tick box + remove ✕ per session
 > capture area — ticked areas are shot in one sweep **when Send is pressed**, and the ticks
