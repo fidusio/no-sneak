@@ -8,7 +8,10 @@
 > super-admin, encrypted H2 file, the no-sneak app, `shiro.ini`), every run opens the vault and
 > attaches the Shiro manager to the INI realm, and sign-up grants the app's `app_user` role so the
 > app login gate lets the subject in (`no-sneak-app/NoSneakStore`). It lists the decisions taken
-> on the maintainer's behalf and what is still open (old installations are refused, the Mongo path).
+> on the maintainer's behalf and what is still open (old installations are refused). The **Mongo
+> path is deprecated** (2026-10-25): the store is the encrypted H2 file, PostgreSQL is the next
+> datastore target. The Swing UI was redesigned on 2026-10-24/25 — `no-sneak-app/UI-REDESIGN-PLAN.md`
+> and the *Status check (2026-10-24)* section of `PENDING-ISSUES.md` carry it; uncommitted.
 
 Assessment tooling for what a network endpoint exposes — TLS posture, **post-quantum
 readiness**, and running services — plus a Swing front-end and an AI-assistant layer.
