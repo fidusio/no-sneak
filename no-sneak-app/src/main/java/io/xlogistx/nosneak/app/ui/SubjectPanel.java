@@ -100,17 +100,16 @@ public class SubjectPanel extends JPanel {
         setLayout(new BorderLayout());
         this.ctx = ctx;
 
-        cardStack.add(new JScrollPane(buildProfileArea()), "Profile");
-        cardStack.add(new JScrollPane(buildCredentials()), "Credentials");
-        cardStack.add(new JScrollPane(buildBackupArea()), "Backup");
-        cardStack.show("Profile");
-
-        JToggleButton profileButton = new JToggleButton("Profile");
-        profileButton.addActionListener(_ -> cardStack.show("Profile"));
-        JToggleButton credentialButton = new JToggleButton("Credentials");
-        credentialButton.addActionListener(_ -> cardStack.show("Credentials"));
-        JToggleButton backupButton = new JToggleButton("Backup");
-        backupButton.addActionListener(_ -> cardStack.show("Backup"));
+        // Phase 5 of the redesign (2026-10-24): Profile and Backup sit in the shared page frame;
+        // Credentials already has its own two-card layout (Phase 4)
+        PagePanel profilePage = new PagePanel("Profile", "Your account: name, date of birth, identifiers and addresses.");
+        profilePage.card(scroll(buildProfileArea()));
+        cardStack.add(profilePage, "Profile");
+        cardStack.add(buildCredentials(), "Credentials");
+        PagePanel backupPage = new PagePanel("Backup", "Export this store to an encrypted archive, or restore one into it.");
+        backupPage.card(scroll(buildBackupArea()));
+        cardStack.add(backupPage, "Backup");
+        cardStack.show(SECTION_PROFILE);
 
         // Panels are built once (before login). Refresh on both login and logout: the Session
         // getters return empty once logged out, so this also clears the previous subject's rows
@@ -122,8 +121,7 @@ public class SubjectPanel extends JPanel {
             apiKeySection.refresh();
             populateProfile();
             if (!(boolean) e.getNewValue()) {
-                cardStack.show("Profile");
-                profileButton.setSelected(true);
+                cardStack.show(SECTION_PROFILE);
                 credentialCards.show("list");
                 currentPwd.setText("");
                 newPwd.setText("");
@@ -161,7 +159,29 @@ public class SubjectPanel extends JPanel {
             apiKeySection.refresh();
         }));
 
-        add(PanelBuilder.buildDefaultSplitPanel(cardStack.view(), profileButton, credentialButton, backupButton));
+        add(cardStack.view(), BorderLayout.CENTER);
+    }
+
+    /** A borderless scroll pane on the surface colour, for a card's content. */
+    private static JScrollPane scroll(JComponent content) {
+        content.setOpaque(true);
+        content.setBackground(UITokens.surface());
+        content.setBorder(BorderFactory.createEmptyBorder(12, 16, 16, 16));
+        JScrollPane sp = new JScrollPane(content, ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED, ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        sp.setBorder(BorderFactory.createEmptyBorder());
+        sp.getViewport().setBackground(UITokens.surface());
+        sp.getVerticalScrollBar().setUnitIncrement(16);
+        return sp;
+    }
+
+    /** The sections the application's sidebar routes to (2026-10-24); the toggle column is gone. */
+    public static final String SECTION_PROFILE = "Profile";
+    public static final String SECTION_CREDENTIALS = "Credentials";
+    public static final String SECTION_BACKUP = "Backup";
+
+    /** Shows one of the {@code SECTION_*} cards. */
+    public void show(String section) {
+        cardStack.show(section);
     }
 
     // ============================ Backup ============================
@@ -363,8 +383,6 @@ public class SubjectPanel extends JPanel {
         saveProfile.addActionListener(_ -> onSaveProfile());
 
         return PanelBuilder.buildJPanelWithFields(
-                PanelBuilder.title("Profile"),
-                new JLabel("Details about your account. Some fields are managed by the system and can't be changed."),
                 new JLabel("First name"),
                 firstName,
                 new JLabel("Last name"),
@@ -560,14 +578,39 @@ public class SubjectPanel extends JPanel {
 
     // ============================ Credentials (list) ============================
 
+    /**
+     * The API keys page (board 5 of the redesign canvas, 2026-10-24): the credential list on the
+     * left, the editor on the right. The right-hand stack keeps the old card names — {@code "list"}
+     * is now the placeholder shown while nothing is being edited — so every
+     * {@code credentialCards.show("list")} after a save, a delete or a logout still lands on the
+     * right thing without touching those call sites.
+     */
     private JPanel buildCredentials() {
-        credentialCards.add(buildCredentialList(), "list");
+        JLabel placeholder = new JLabel("Select a key to edit it, or add one.", SwingConstants.CENTER);
+        placeholder.setForeground(UITokens.muted());
+        JPanel empty = new JPanel(new BorderLayout());
+        empty.setOpaque(false);
+        empty.add(placeholder, BorderLayout.CENTER);
+
+        credentialCards.add(empty, "list");
         credentialCards.add(buildChangePassword(), "changePassword");
         credentialCards.add(buildEditAPIKey(), "editAPI");
         credentialCards.show("list");
 
-        JPanel p = new JPanel(new BorderLayout());
-        p.add(credentialCards.view(), BorderLayout.CENTER);
+        JPanel left = buildCredentialList();
+        left.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(UITokens.border()),
+                BorderFactory.createEmptyBorder(8, 8, 8, 8)));
+        left.setBackground(UITokens.surface());
+        JPanel right = new JPanel(new BorderLayout());
+        right.setBackground(UITokens.surface());
+        right.setBorder(BorderFactory.createLineBorder(UITokens.border()));
+        right.add(credentialCards.view(), BorderLayout.CENTER);
+
+        JPanel p = new JPanel(new MigLayout("insets 20 24 24 24, gapx 20, fill", "[grow 45,fill][grow 55,fill]", "[grow,fill]"));
+        p.setBackground(UITokens.color("xlogistx.ground", null, 0xF4F4F7));
+        p.add(left, "wmin 0, hmin 0, aligny top, growy");
+        p.add(right, "wmin 0, hmin 0, aligny top, growy");
         return p;
     }
 

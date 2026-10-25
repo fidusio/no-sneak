@@ -477,36 +477,58 @@ array or an intended "capture nothing" turns into "capture everything".
 
 ---
 
+> **2026-10-24, Phase 4 of the UI redesign (plan: `no-sneak-app/UI-REDESIGN-PLAN.md`).** Three
+> pages were re-laid out side by side and the composer gained chips; nothing in the wiring, the
+> DAOs or the send path changed.
+> - **Providers** (board 8): the provider list on the left, the picker / new-key / form cards on
+>   the right. `providerCards` keeps its card names — `"list"` is now a placeholder ("Select a
+>   provider to edit it, or add one") — so every `providerCards.show("list")` still lands right.
+>   The form scrolls inside its card; the panel implements `Scrollable` and fills the host's
+>   viewport (the host mounts it in a `JScrollPane`), otherwise the placeholder sat below the fold.
+> - **Skills** (board 7): the list (320–420 px) on the left, the `MDEditorPanel` on the right;
+>   `skillsCards` keeps `"list"` as the placeholder the same way. The editor's `JSplitPane` gets a
+>   real viewport height from the page's `[grow,fill]` row.
+> - **Capture** (board 6): capture areas and captures **side by side** instead of two tabs; each
+>   half has a header (*Capture areas · this session only*, *Captures · stored under your
+>   account*). The preview card still replaces the captures list while a capture is open, and
+>   `showAreas()` now means "close the preview" (areas are always on screen); the two toggle
+>   buttons exist only as the selected-state bookkeeping those methods keep. *Delete all* is
+>   always visible.
+> - **Chat composer chips** (board 4): a `ChipPanel` **inside the composer bar**, above the input
+>   box, lists what goes with the next message — md skills (*skill*), attached images (*image*),
+>   capture areas ticked to shoot on send (*shot on send*) — each removable from its ×
+>   (`dropPendingChip`: `pendingSkills` / `pendingSources` / `tickedAreas`, then
+>   `refreshSkillTooltip`). Text sources are not repeated: they keep their full view at the end of
+>   the transcript. The row is hidden while empty, and it lives in the composer bar, so the rule
+>   that nothing sits between the transcript and the composer holds.
+> - The *Chats* (history) page and the job-queue stub are untouched.
+
 ## 1. Window shape
 
-`JFrame` with its own `JMenuBar` (File / View / Tools / Help).
+The host application (`no-sneak-app`'s `AppShell`) owns the window: its one sidebar lists the
+assistant's pages under an **Assistant** section — Chat, Chats, Capture, Skills, Providers — and
+routes each to `AssistantPanel.showPage(Page)`. `AssistantPanel` itself is **wiring only** since
+2026-10-24: the six page panels behind one `CardStack`, no navigation column of its own
+(`PanelBuilder.buildDefaultSplitPanel` and the `JToggleButton`s are gone).
 
-Left sidebar, **208 px, navigation only** — no actions, no lists. It selects which page renders in
-the detail pane via `CardLayout`, matching the Subject panel master/detail pattern. Section label
-`ASSISTANT` (uppercase, muted) above the items.
+| `Page` | Panel | Refreshed on the way in |
+|---|---|---|
+| `CHAT` | `ChatPanel` | — |
+| `HISTORY` | `ChatHistoryPanel` | `refreshHistory()` |
+| `CAPTURE` | `CapturePanel` | `refreshAreas()` + `refreshCaptures()` |
+| `SKILLS` | `SkillsPanel` | `refreshSkills()` |
+| `PROVIDERS` | `ProvidersPanel` | `refreshList()` only — not `refreshProviderViews()`, which repopulates the chat editor's provider combo and would reset a selection that card is still holding |
+| `QUEUE` | `JobQueuePanel` (stub) | not offered by the host's sidebar |
 
-| Nav item | Page |
-|---|---|
-| Prompt | The conversation |
-| Job queue | Items feedable to a prompt |
-| History | Past prompts (rename / delete live here) |
-| Skills | Reusable instruction sets (list + editor) |
-| Providers | Keys the assistant may use (added from the source) |
+The refresh-on-the-way-in rule stands: a `ListSection` only rebuilds from its supplier on
+`refresh()`, so a page merely switched back to used to show whatever it held at the last
+mutation. When a page moves the assistant by itself — a chat opened from history, a capture sent
+to the chat, `sendToChat` from the scanner, *Save as skill* from a bubble — it calls `showPage`
+too, and the host hears it through `setOnPageShown(Consumer<Page>)` to move its sidebar
+highlight (`Navigator.sync`). `getPage()` is the page showing now.
 
-Page-level actions live in each page's own toolbar (`New prompt`, `Add item`, `Add skill`,
-`Add key`), never in the sidebar.
-
-> **Implementation status.** The sidebar is a `ButtonGroup` of `JToggleButton`s built by
-> `PanelBuilder.buildDefaultSplitPanel`, ordered **Chat / Chat History / Providers —
-> separator — Skills / Job Queue / Capture**: the daily loop first, the configuration below the
-> line. The separator is why `buildDefaultSplitPanel` takes `JComponent...` rather than
-> `JToggleButton...` — toggle buttons join the group, anything else is laid out but ungrouped.
-> The History / Skills / Providers buttons **refresh their list on the way in**
-> (`refreshHistory()` / `refreshSkills()` / `providerList.refresh()`): a `ListSection` only
-> rebuilds from its supplier on `refresh()`, so a page that was merely switched back to used to
-> show whatever it held at the last mutation — a message count frozen until the next login.
-> Providers deliberately refreshes the **list only**, not `refreshProviderViews()`, which would
-> repopulate the chat editor's provider combo and reset a selection that card is still holding.
+Page-level actions live in each page's own toolbar (`New Chat`, `Add skill`, `+ Add Provider`,
+`Define area`), never in the host's sidebar.
 
 ---
 

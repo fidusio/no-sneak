@@ -11,6 +11,8 @@ import io.xlogistx.nosneak.ai.model.AIProviderConfig;
 import org.zoxweb.shared.security.APIKey;
 import org.zoxweb.shared.util.SUS;
 
+import net.miginfocom.swing.MigLayout;
+
 import javax.swing.*;
 import java.awt.*;
 import java.time.Instant;
@@ -23,7 +25,35 @@ import static io.xlogistx.nosneak.ai.assistant.panels.PanelSupport.blankTo;
 import static io.xlogistx.nosneak.ai.assistant.panels.PanelSupport.fillModels;
 import static io.xlogistx.nosneak.ai.assistant.panels.PanelSupport.timestamp;
 
-public class ProvidersPanel extends JPanel {
+public class ProvidersPanel extends JPanel implements Scrollable {
+
+    // The host mounts this page in a JScrollPane. The page itself fills the viewport (its two
+    // cards scroll inside themselves), so the outer pane never scrolls — without this the right
+    // card's placeholder sat below the fold and the window grew a scrollbar (seen 2026-10-24).
+    @Override
+    public Dimension getPreferredScrollableViewportSize() {
+        return getPreferredSize();
+    }
+
+    @Override
+    public int getScrollableUnitIncrement(Rectangle visibleRect, int orientation, int direction) {
+        return 16;
+    }
+
+    @Override
+    public int getScrollableBlockIncrement(Rectangle visibleRect, int orientation, int direction) {
+        return 64;
+    }
+
+    @Override
+    public boolean getScrollableTracksViewportWidth() {
+        return true;
+    }
+
+    @Override
+    public boolean getScrollableTracksViewportHeight() {
+        return true;
+    }
     private final AssistantContext ctx;
 
     private Runnable onProvidersChanged;
@@ -63,14 +93,51 @@ public class ProvidersPanel extends JPanel {
      */
     private int reloadGeneration;
 
+    /**
+     * The Providers page (board 8 of the redesign canvas, 2026-10-24): the provider list on the
+     * left, the picker / new-key / form cards on the right. The right-hand stack keeps the old
+     * card names — {@code "list"} is now the placeholder shown while nothing is being edited — so
+     * every {@code providerCards.show("list")} after a save, a remove or a reset still lands on
+     * the right thing without touching those call sites.
+     */
     public JComponent buildProviderCardsPanel() {
-        providerCards.add(buildProviderPanel(), "list");
+        JLabel placeholder = new JLabel("Select a provider to edit it, or add one.", SwingConstants.CENTER);
+        placeholder.setForeground(UITokens.muted());
+        JPanel empty = new JPanel(new BorderLayout());
+        empty.setOpaque(false);
+        empty.add(placeholder, BorderLayout.CENTER);
+
+        providerCards.add(empty, "list");
         providerCards.add(buildAddProvider(), "add");
         providerCards.add(buildCreateProviderKey(), "create");
         providerCards.add(buildProviderForm(), "form");
-
         providerCards.show("list");
-        return providerCards.view();
+
+        JPanel left = buildProviderPanel();
+        left.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(UITokens.border()),
+                BorderFactory.createEmptyBorder(8, 8, 8, 8)));
+        left.setBackground(UITokens.surface());
+        JPanel right = new JPanel(new BorderLayout());
+        right.setBackground(UITokens.surface());
+        right.setBorder(BorderFactory.createLineBorder(UITokens.border()));
+        // the form can be taller than the window: it scrolls inside its card, the page does not
+        ScrollablePanel rightView = new ScrollablePanel(new BorderLayout());
+        rightView.setOpaque(false);
+        rightView.add(providerCards.view(), BorderLayout.CENTER);
+        JScrollPane rightScroll = new JScrollPane(rightView, ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED, ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        rightScroll.setBorder(BorderFactory.createEmptyBorder());
+        rightScroll.getViewport().setBackground(UITokens.surface());
+        rightScroll.getVerticalScrollBar().setUnitIncrement(16);
+        right.add(rightScroll, BorderLayout.CENTER);
+
+        JPanel page = new JPanel(new MigLayout("insets 20 24 24 24, gapx 20, fill", "[grow 55,fill][grow 45,fill]", "[grow,fill]"));
+        page.setBackground(UITokens.color("xlogistx.ground", null, 0xF4F4F7));
+        // hmin 0: a card's preferred height is its tallest content (the picker's list reports
+        // 1600 px); without it MigLayout keeps that height and the page overflows the window
+        page.add(left, "wmin 0, hmin 0, growy");
+        page.add(right, "wmin 0, hmin 0, growy");
+        return page;
     }
 
     public JPanel buildProviderPanel() {

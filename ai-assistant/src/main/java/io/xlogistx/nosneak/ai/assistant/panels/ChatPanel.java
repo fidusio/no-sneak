@@ -154,6 +154,52 @@ public class ChatPanel extends JPanel {
         if (pendingSkills.remove(skill)) refreshSkillTooltip();
     }
 
+    /** The chips above the composer: md skills, attached images, capture areas to shoot on send. */
+    private final ChipPanel pendingChips = new ChipPanel();
+
+    private void refreshPendingChips() {
+        List<ChipPanel.Chip> chips = new ArrayList<>();
+        for (int i = 0; i < pendingSkills.size(); i++) {
+            chips.add(new ChipPanel.Chip("skill:" + i, pendingSkills.get(i).getName(), "skill"));
+        }
+        for (int i = 0; i < pendingSources.size(); i++) {
+            AISource source = pendingSources.get(i);
+            if (source.isImage()) chips.add(new ChipPanel.Chip("image:" + i, source.getName(), "image"));
+        }
+        CaptureArea[] areas = areasToSend();
+        for (int i = 0; i < areas.length; i++) {
+            chips.add(new ChipPanel.Chip("area:" + i, areas[i].getName(), "shot on send"));
+        }
+        pendingChips.setChips(chips);
+        pendingChips.setVisible(!chips.isEmpty());
+    }
+
+    private void dropPendingChip(String key) {
+        int colon = key.indexOf(':');
+        if (colon < 0) return;
+        int index;
+        try {
+            index = Integer.parseInt(key.substring(colon + 1));
+        } catch (NumberFormatException e) {
+            return;
+        }
+        switch (key.substring(0, colon)) {
+            case "skill" -> {
+                if (index < pendingSkills.size()) pendingSkills.remove(index);
+            }
+            case "image" -> {
+                if (index < pendingSources.size()) pendingSources.remove(index);
+            }
+            case "area" -> {
+                CaptureArea[] areas = areasToSend();
+                if (index < areas.length) tickedAreas.remove(areas[index]);
+            }
+            default -> {
+            }
+        }
+        refreshSkillTooltip();
+    }
+
     public JPanel buildEmptyChat() {
         JLabel title = new JLabel("No chat selected");
         title.setFont(title.getFont().deriveFont(Font.BOLD, title.getFont().getSize2D() + 4f));
@@ -309,10 +355,17 @@ public class ChatPanel extends JPanel {
         sendButton = new JButton("Send");
         sendButton.addActionListener(_ -> onSend());
 
-        JPanel composerBar = new JPanel(new BorderLayout(8, 0));
+        JPanel composerBar = new JPanel(new BorderLayout(8, 6));
         composerBar.setBorder(BorderFactory.createEmptyBorder(8, 14, 12, 14));
         composerBar.add(inputBox, BorderLayout.CENTER);
         composerBar.add(sendButton, BorderLayout.EAST);
+        // what goes with the next message, as removable chips inside the composer bar (2026-10-24):
+        // skills, attached images, capture areas shot on send. Text sources keep their full view
+        // at the end of the transcript, so they are not repeated here. Hidden while empty.
+        pendingChips.setEmptyText(null);
+        pendingChips.setVisible(false);
+        pendingChips.onRemove(this::dropPendingChip);
+        composerBar.add(pendingChips, BorderLayout.NORTH);
 
         composer.getDocument().addDocumentListener(new DocumentListener() {
             public void insertUpdate(DocumentEvent e) {
@@ -1159,6 +1212,7 @@ public class ChatPanel extends JPanel {
         // first, so removing the last pending source clears the area (the early return below
         // used to skip it and the deleted view stayed on screen)
         refreshPendingPanel();
+        refreshPendingChips();
         CaptureArea[] areas = areasToSend();
         if (pendingSkills.isEmpty() && pendingSources.isEmpty() && areas.length == 0) {
             attachSkillButton.setToolTipText("Attach skills, sources or capture areas to the next message");

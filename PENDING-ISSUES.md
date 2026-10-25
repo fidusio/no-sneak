@@ -396,6 +396,90 @@ already existed and needed no zoxweb change.
    `SSLSocket` times out against xlogistx.io's TLS 1.3 while SunJSSE completes it — the probe
    path succeeds there under both providers, so nothing in the product is affected today.
 
+## Status check (2026-10-24, Windows dev box) — UI redesign Phase 1: setup and login
+
+The maintainer found the UI unintuitive and asked for a redesign to review visually first. The
+design is a nine-board canvas (https://claude.ai/artifact/Ln8xCjHgxDrnRo1joeurpE: unlock, new scan
+with tabular results, history, assistant chat with PDF buttons and the attach popup, API keys,
+capture, skills with the Save-as combo, providers, the PDF dialog); the execution plan is
+**`no-sneak-app/UI-REDESIGN-PLAN.md`**. Two rules were set on the way: the implementation stays
+Java Swing (FlatLaf + MigLayout), and **any reusable widget that does not reference a no-sneak type
+goes into io-xlogistx/gui-audio (`io.xlogistx.gui`, Java 8)**.
+
+**Phase 1 is implemented** (uncommitted at the time of writing):
+
+- gui-audio: `UITokens`, `BadgeLabel`, `InlineMessage`, `DirectoryField`, `FormPanel`,
+  `StepperPanel`, `SplashSidePanel`, icons `KeyIcon` / `LockIcon` / `LogoutIcon` / `ShieldIcon`;
+  `FormPanelTest` (6 headless tests, green through the `.claude/tools/RunTests` launcher — the
+  launcher's `cp.txt` lacks MigLayout, add the two `com.miglayout` jars from the local repository),
+  `StepperPanelDemo`. Installed to the local repository; reload the Maven projects in IntelliJ.
+- no-sneak-app: `ui/UnlockPanel` replaces `LoginPanel` + `DataStoreSetupPanel` (both deleted);
+  `NoSneakMain` is one `AppFrame` whose content pane swaps between the unlock panel and the
+  `AppShell` on the session's `authenticated` event; `NoSneakStore.openOrCreate`; `Navigator.Screen`
+  lost `LOGIN` / `REGISTER`; the footer's "mock-build" text is gone. Tests: `UnlockFormTest`,
+  `NoSneakStoreOpenOrCreateTest`; `DataStoreSetupFlowTest` unchanged.
+- Decisions taken (listed in the plan): the DomainAppID combo and the passkey stub left the login
+  screen; the store is fixed once step 1 completes (restart to switch); the `AppShell` is built when
+  the store opens; the landing page after sign-in stays the profile until Phase 2.
+
+**Phase 2 (the shell) is implemented the same day**, after the maintainer ran Phase 1 ("it looks
+fine now"): gui-audio `SideNavPanel` + `HeaderBar` + navigation SVGs; `AppShell` = header,
+sidebar (Scan / Assistant / Account / Admin, the last only for the super-admin), card host,
+footer; `Navigator` routes `Screen` → card + section and `sync`s moves the assistant makes by
+itself; every panel lost its toggle column (`show(SECTION_*)` instead, `SubjectSecManagerPanel`
+is tabs, `PQCRegistryPanel` unregistered); `MenuBarFactory` is File / View / Help; the assistant's
+`AssistantPanel` is wiring only with `Page` / `showPage` / `setOnPageShown`. Screens were
+rendered headless on a throw-away store and checked before hand-over (lesson from Phase 1's
+first cut, whose stepper did not wrap rows).
+
+**Phase 3 (the scanner page) is implemented the same day**: core `NMap.formatCommand` (inverse of
+`parseCommand`, `NMapFormatCommandTest`), gui-audio `ChipPanel` / `SegmentedControl` /
+`KeyValuePanel` / `Tables`, app `ui.scan.ReportView` (reads the engine's per-port grade / PQC /
+trust; no new grader), `ScanFormPanel` (form ⇄ command) and `ScanResultView` (Hosts / Services /
+Raw JSON with a detail pane), wired into `ScanPanel` as targeted edits after a full-file rewrite was
+stopped by the safety classifier mid-write (the truncated file was restored by writing HEAD's
+content back; `git checkout` is off limits — the maintainer's rule: *I modify, they approve and
+commit*). Rendered with a sample report and checked.
+
+**Phase 4 (lists and the assistant pages) is implemented the same day**: scan history as a table
+with search and a selection toolbar; API keys, Providers and Skills as list-left / editor-right
+(each `CardStack` keeps its card names with `"list"` as the placeholder, so no call site moved);
+Capture areas and captures side by side; composer chips for skills, images and areas-on-send.
+Rendered and checked.
+
+**Phase 5 (remaining pages) is implemented the same day**: gui-audio `PagePanel` (the shared page
+frame) wraps Profile, Backup and Access control. JetBrains Mono is **optional, not open work**
+(maintainer's call, 2026-10-25): the app ships with the logical monospaced font; `UITokens.mono`
+honours `UIManager "xlogistx.monoFamily"`, so if the fallback looks dated the FlatLaf font
+artifact plus two lines in `NoSneakMain` switch it over. The unreferenced `icons/*.svg` were
+already gone.
+
+**Run-through findings (2026-10-25).** First report from the maintainer: a scan with `80,443` in
+Ports and "Host discovery only" ticked ran `-sn` and showed 0 open ports, the form giving no sign
+that the ports were dropped. Fixed in `ScanFormPanel`: the box and the Ports field are exclusive,
+last action wins. Typing ports unticks the box; ticking the box keeps the typed list and an
+inline note says those ports are not scanned (`ScanFormPanelTest.discoveryOnlyAndPortsAreExclusiveLastActionWins`;
+a first cut greyed the field, which the maintainer read as the port range being disabled). The
+engine and the result parser were verified on the same segment with the CLI: 22 hosts up, 12
+with port 80 open, counted as 12 by `ReportView`. Second request the same day: **Scan again** on a
+stored report (history toolbar and the stored view's header) loads its command, probes and name
+back into the New scan form (`ScanPanel.rerunScan`, `ProbeSelection.keysForNames`). Third:
+**`subject=` + `password=` launch parameters** sign in directly when `ds.location=` +
+`ds.store-password=` opened the store (`NoSneakMain` → `UnlockPanel.signIn`; a refusal stays on
+the sign-in step with the reason inline; `UnlockPanelSignInTest`).
+
+**Decisions (2026-10-25, maintainer):** JetBrains Mono is dropped for good (the
+`xlogistx.monoFamily` hook stays, nothing more). **The Mongo datastore path is deprecated**: the
+app's store is the encrypted H2 file today and **PostgreSQL is the next datastore target**;
+`no-sneak-core` `NoSneakUtil`'s Mongo branch (D9) is legacy, not to be extended. The redesign
+is closed; new work starts after this session.
+
+**Open after Phase 5:** the rest of the maintainer's run-through on a display (unlock, the scan
+form and history are done; still to try: a stored report from history, API keys, Providers, a
+chat with chips, a capture, Profile, Backup, Access control); the commit of the redesign (both
+repos); and, from before the redesign, the ACL tables are still empty stubs and the job-queue
+page is not offered.
+
 ## Status check (2026-10-21, Windows dev box) — the store follows the datastore's deployment model
 
 The maintainer's instruction: *"the model how to setup the local h2 database changed, read it from
@@ -466,7 +550,8 @@ further accounts still sign up from the login screen through the direct `createS
   the IntelliJ run configuration `NoSneakMain` is one of them: delete it and run without arguments
   for the setup screen, then put its vault password back in the run configuration.
 - The app was not launched with a window this session (tests only).
-- `no-sneak-core` `NoSneakUtil` (Mongo path, D9) and D5/D6 of the 2026-10-05 check unchanged.
+- `no-sneak-core` `NoSneakUtil` (Mongo path, D9) and D5/D6 of the 2026-10-05 check unchanged
+  (Mongo deprecated 2026-10-25: H2 now, PostgreSQL next).
 
 ## Status check (2026-10-05, Windows dev box) — the app absorbed the upstream security update
 
@@ -515,7 +600,8 @@ has no `loginUnboundSubject(principal, password, domain, app)`; the four lines l
 - Existing no-sneak databases (pre-vault, subjects without subject keys, keys in clear) do not
   open through the new path — D6, start fresh or write a migration.
 - `no-sneak-core` `NoSneakUtil` (Mongo path) builds the Shiro manager but opens its store without
-  a controller/key maker; Mongo is on standby (D9).
+  a controller/key maker; Mongo is on standby (D9). **Deprecated 2026-10-25** — the store is H2,
+  PostgreSQL is next; the Mongo branch is not to be extended.
 
 ## Priority matrix (2026-09-11) — discovery closed out; port detection and protocol identification next
 

@@ -162,6 +162,39 @@ public final class NMapConfig {
             this.maxPerSec = maxPerSec;
             this.timeoutSec = timeoutSec;
         }
+
+        /** How many of the three knobs a configuration shares with this template (0..3). */
+        public int matches(NMapConfig cfg) {
+            int n = 0;
+            if (cfg.maxInFlight == maxInFlight) n++;
+            if (cfg.maxPerSec == maxPerSec) n++;
+            if (cfg.timeoutSec == timeoutSec) n++;
+            return n;
+        }
+
+        /** The template whose three knobs the configuration carries exactly, or null (2026-10-24). */
+        public static Timing matching(NMapConfig cfg) {
+            for (Timing t : values()) if (t.matches(cfg) == 3) return t;
+            return null;
+        }
+
+        /**
+         * The template closest to a configuration: the most knobs in common, {@link #T3} (the
+         * defaults) winning ties, then the lower template. What {@code NMap.formatCommand} prints
+         * a {@code -T} for, followed by the knobs that differ from it.
+         */
+        public static Timing closest(NMapConfig cfg) {
+            Timing best = T3;
+            int bestMatches = T3.matches(cfg);
+            for (Timing t : values()) {
+                int m = t.matches(cfg);
+                if (m > bestMatches) {
+                    best = t;
+                    bestMatches = m;
+                }
+            }
+            return best;
+        }
     }
 
     public NMapConfig target(String t) { if (t != null && !t.isEmpty()) targets.add(t); return this; }

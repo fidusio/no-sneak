@@ -133,6 +133,28 @@ public final class NoSneakStore {
     }
 
     /**
+     * The one call the unlock screen makes: {@link #open} when {@code location} already holds a
+     * vault or no first-run answers were given, else {@link #create}. The decision is taken here,
+     * at call time, because the directory may have gained or lost its vault since it was chosen.
+     *
+     * @param firstRun the operator's account and database settings for a first run; ignored when
+     *                 a vault exists, required (non-null) to create one
+     * @throws IOException              from {@link #open} / {@link #create}, or when there is no
+     *                                  vault and no first-run answers
+     * @throws GeneralSecurityException from {@link #open} / {@link #create}
+     */
+    public static ShiroDSDomainSecurityManager openOrCreate(String location, char[] vaultPassword, FirstRun firstRun)
+            throws IOException, GeneralSecurityException {
+        if (vaultExists(location)) {
+            return open(location, vaultPassword);
+        }
+        if (firstRun == null) {
+            throw new IOException("no vault at " + vaultFile(location) + ": choose an existing installation, or create one here");
+        }
+        return create(location, vaultPassword, firstRun);
+    }
+
+    /**
      * First run: {@code H2PSetup command=create} in-process — vault, encrypted H2 file, database
      * set-up (super-admin = the operator, common app, the no-sneak app) and Shiro INI — then
      * {@link #open}.

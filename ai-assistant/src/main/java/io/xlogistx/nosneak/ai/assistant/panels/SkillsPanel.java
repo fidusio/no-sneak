@@ -5,6 +5,8 @@ import io.xlogistx.gui.CardStack;
 import io.xlogistx.gui.ListSection;
 import io.xlogistx.nosneak.ai.assistant.AssistantContext;
 import io.xlogistx.gui.MDEditorPanel;
+import io.xlogistx.gui.UITokens;
+import net.miginfocom.swing.MigLayout;
 import io.xlogistx.nosneak.ai.model.AISkill;
 import org.zoxweb.shared.util.SUS;
 
@@ -65,12 +67,39 @@ public class SkillsPanel extends JPanel {
     private MDEditorPanel skillEditor;
     private AISkill selectedSkill;
 
+    /**
+     * The Skills page (board 7 of the redesign canvas, 2026-10-24): the list on the left, the
+     * markdown editor on the right. The right-hand stack keeps the old card names —
+     * {@code "list"} is now the placeholder shown while no skill is open — so every
+     * {@code skillsCards.show("list")} after a save, a cancel or a reset still lands on the right
+     * thing without touching those call sites.
+     */
     public JComponent buildSkillCards() {
-        skillsCards.add(buildSkillPanel(), "list");
-        skillsCards.add(buildSkillEditor(), "editor");
+        JLabel placeholder = new JLabel("Select a skill to edit it, or create one.", SwingConstants.CENTER);
+        placeholder.setForeground(UITokens.muted());
+        JPanel empty = new JPanel(new BorderLayout());
+        empty.setOpaque(false);
+        empty.add(placeholder, BorderLayout.CENTER);
 
+        skillsCards.add(empty, "list");
+        skillsCards.add(buildSkillEditor(), "editor");
         skillsCards.show("list");
-        return skillsCards.view();
+
+        JPanel left = buildSkillPanel();
+        left.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(UITokens.border()),
+                BorderFactory.createEmptyBorder(8, 8, 8, 8)));
+        left.setBackground(UITokens.surface());
+        JPanel right = new JPanel(new BorderLayout());
+        right.setBackground(UITokens.surface());
+        right.setBorder(BorderFactory.createLineBorder(UITokens.border()));
+        right.add(skillsCards.view(), BorderLayout.CENTER);
+
+        JPanel page = new JPanel(new MigLayout("insets 20 24 24 24, gapx 20, fill", "[320::420,fill][grow,fill]", "[grow,fill]"));
+        page.setBackground(UITokens.color("xlogistx.ground", null, 0xF4F4F7));
+        page.add(left, "wmin 0, hmin 0, growy");
+        page.add(right, "wmin 0, hmin 0, growy");
+        return page;
     }
 
     public JPanel buildSkillPanel() {

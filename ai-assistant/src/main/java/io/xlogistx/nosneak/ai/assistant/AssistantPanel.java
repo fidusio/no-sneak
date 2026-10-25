@@ -1,7 +1,6 @@
 package io.xlogistx.nosneak.ai.assistant;
 
 import io.xlogistx.gui.CardStack;
-import io.xlogistx.gui.PanelBuilder;
 import io.xlogistx.nosneak.ai.assistant.panels.CapturePanel;
 import io.xlogistx.nosneak.ai.assistant.panels.ChatHistoryPanel;
 import io.xlogistx.nosneak.ai.assistant.panels.ChatPanel;
@@ -12,8 +11,19 @@ import io.xlogistx.nosneak.ai.assistant.panels.SkillsPanel;
 import javax.swing.*;
 import java.awt.*;
 import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
+/**
+ * The assistant's pages behind one {@link CardStack}, with no navigation column of its own
+ * (2026-10-24): the host application's sidebar picks the page through {@link #showPage}, and
+ * when a page moves the assistant by itself (a chat opened from history, a capture sent to the
+ * chat, {@link #sendToChat}) the host hears about it through {@link #setOnPageShown} and
+ * highlights the matching item. Wiring only; the pages live in {@code panels}.
+ */
 public class AssistantPanel extends JPanel {
+
+    /** The pages. {@link #QUEUE} is a stub and is not offered by the host's navigation. */
+    public enum Page {CHAT, HISTORY, QUEUE, SKILLS, PROVIDERS, CAPTURE}
 
     private final AssistantContext context;
     private final CardStack cardStack = new CardStack();
@@ -25,9 +35,9 @@ public class AssistantPanel extends JPanel {
     private final JobQueuePanel jobQueuePanel;
     private final CapturePanel capturePanel;
 
-    private final JToggleButton chatButton = new JToggleButton("Chat");
-    private final JToggleButton historyButton = new JToggleButton("Chat History");
-    private final JToggleButton skillsButton = new JToggleButton("Skills");
+    private Consumer<Page> onPageShown = page -> {
+    };
+    private Page current = Page.CHAT;
 
     public AssistantPanel(AssistantContext context) {
         this.context = context;
@@ -41,19 +51,18 @@ public class AssistantPanel extends JPanel {
         jobQueuePanel = new JobQueuePanel(context);
         capturePanel = new CapturePanel(context);
 
-        chatPanel.setOnOpenHistory(historyButton::doClick);
+        chatPanel.setOnOpenHistory(() -> showPage(Page.HISTORY));
         chatPanel.setOnNewChat(() -> {
-            historyButton.doClick();
+            showPage(Page.HISTORY);
             historyPanel.startNewChat();
         });
         chatPanel.setOnSaveAsSkill(markdown -> {
-            if (skillsPanel.startSkillFromResponse(markdown)) skillsButton.doClick();
+            if (skillsPanel.startSkillFromResponse(markdown)) showPage(Page.SKILLS);
         });
 
         historyPanel.setOnChatOpened(() -> {
             chatPanel.showPrompt();
-            cardStack.show("chat");
-            chatButton.setSelected(true);
+            showPage(Page.CHAT);
         });
 
         providersPanel.setOnProvidersChanged(historyPanel::refreshProviderCombos);
@@ -62,54 +71,55 @@ public class AssistantPanel extends JPanel {
         capturePanel.setOnSendToChat(capture -> {
             chatPanel.attachCapture(capture);
             chatPanel.showPrompt();
-            cardStack.show("chat");
-            chatButton.setSelected(true);
+            showPage(Page.CHAT);
         });
 
-        cardStack.add(chatPanel, "chat");
-        cardStack.add(new JScrollPane(historyPanel), "history");
-        cardStack.add(new JScrollPane(jobQueuePanel), "queue");
-        cardStack.add(skillsPanel, "skills");
-        cardStack.add(new JScrollPane(providersPanel), "providers");
-        cardStack.add(capturePanel, "capture");
+        cardStack.add(chatPanel, Page.CHAT.name());
+        cardStack.add(new JScrollPane(historyPanel), Page.HISTORY.name());
+        cardStack.add(new JScrollPane(jobQueuePanel), Page.QUEUE.name());
+        cardStack.add(skillsPanel, Page.SKILLS.name());
+        cardStack.add(new JScrollPane(providersPanel), Page.PROVIDERS.name());
+        cardStack.add(capturePanel, Page.CAPTURE.name());
 
-        JToggleButton jobQueueButton = new JToggleButton("Job Queue");
-        JToggleButton providersButton = new JToggleButton("Providers");
-        JToggleButton captureButton = new JToggleButton("Capture");
-
-        // A list only rebuilds from its supplier on refresh(), so a page that is merely switched
-        // back to shows whatever it held when it was last refreshed — stale message counts and
-        // timestamps until the next login. Refresh on the way in.
-        chatButton.addActionListener(_ -> cardStack.show("chat"));
-        jobQueueButton.addActionListener(_ -> cardStack.show("queue"));
-        historyButton.addActionListener(_ -> {
-            refreshHistory();
-            cardStack.show("history");
-        });
-        skillsButton.addActionListener(_ -> {
-            refreshSkills();
-            cardStack.show("skills");
-        });
-        providersButton.addActionListener(_ -> {
-            // The list only — not refreshProviderViews(), which repopulates the chat editor's
-            // provider combo and would reset a selection the editor card is still holding.
-            providersPanel.refreshList();
-            cardStack.show("providers");
-        });
-        captureButton.addActionListener(_ -> {
-            capturePanel.refreshAreas();
-            capturePanel.refreshCaptures();
-            cardStack.show("capture");
-        });
-
-        chatButton.setSelected(true);
-
-        add(PanelBuilder.buildDefaultSplitPanel(cardStack.view(),
-                chatButton, historyButton, providersButton,
-                new JSeparator(),
-                skillsButton, jobQueueButton, captureButton));
+        add(cardStack.view(), BorderLayout.CENTER);
+        cardStack.show(Page.CHAT.name());
 
         reloadProviders();
+    }
+
+    /**
+     * Shows a page, refreshing its list on the way in: a list only rebuilds from its supplier on
+     * refresh(), so a page merely switched back to used to show whatever it held when it was last
+     * refreshed — stale message counts and timestamps until the next login. Providers refreshes
+     * the list only, not {@code refreshProviderViews()}, which repopulates the chat editor's
+     * provider combo and would reset a selection the editor card is still holding.
+     */
+    public void showPage(Page page) {
+        switch (page) {
+            case HISTORY -> refreshHistory();
+            case SKILLS -> refreshSkills();
+            case PROVIDERS -> providersPanel.refreshList();
+            case CAPTURE -> {
+                capturePanel.refreshAreas();
+                capturePanel.refreshCaptures();
+            }
+            default -> {
+            }
+        }
+        current = page;
+        cardStack.show(page.name());
+        onPageShown.accept(page);
+    }
+
+    /** The page showing now. */
+    public Page getPage() {
+        return current;
+    }
+
+    /** Told after every {@link #showPage}, including the ones the assistant triggers itself. */
+    public void setOnPageShown(Consumer<Page> listener) {
+        onPageShown = listener != null ? listener : page -> {
+        };
     }
 
     public void reloadProviders() {
@@ -151,8 +161,7 @@ public class AssistantPanel extends JPanel {
     public void sendToChat(String text, String name) {
         chatPanel.attachText(text, name);
         chatPanel.showPrompt();
-        cardStack.show("chat");
-        chatButton.setSelected(true);
+        showPage(Page.CHAT);
     }
 
     public void resetPanel() {
@@ -164,7 +173,7 @@ public class AssistantPanel extends JPanel {
         providersPanel.reset();
         capturePanel.reset();
 
-        cardStack.show("chat");
-        chatButton.setSelected(true);
+        current = Page.CHAT;
+        cardStack.show(Page.CHAT.name());
     }
 }

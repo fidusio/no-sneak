@@ -5,6 +5,19 @@ and the **`ui`** package that wires together the screens, navigation, and the se
 layer. It began as a UX prototype but now runs a **real** session/access layer and a **working
 network scanner screen** over `no-sneak-core`; the PQC file-sharing screen is still a placeholder.
 
+> **2026-10-24 — UI redesign, Phase 1 (setup and login).** The maintainer asked for a more
+> intuitive UI, reviewed the nine-board design canvas, and approved the execution plan in
+> **`UI-REDESIGN-PLAN.md`** (read it before continuing the redesign). Phase 1 is done: one window
+> from the start, whose content pane is the new **`UnlockPanel`** — step 1 opens or creates the
+> store (every `DataStoreSetupPanel` behaviour kept, through `NoSneakStore.openOrCreate`), step 2
+> signs in or registers — until the session authenticates, when `NoSneakMain.AppFrame` swaps in
+> the `AppShell`; `LoginPanel`, `DataStoreSetupPanel`, the setup frame, the DomainAppID combo,
+> the passkey stub and the favicon fetch are gone. The reusable pieces (`StepperPanel`,
+> `FormPanel`, `DirectoryField`, `InlineMessage`, `BadgeLabel`, `SplashSidePanel`, `UITokens`,
+> four icons) went into **io-xlogistx/gui-audio** per the maintainer's rule: *generic panels go to
+> xlogistx-gui-audio, only no-sneak screens and wiring stay here.* Phases 2–5 (sidebar shell,
+> form-driven scan with tabular results, lists and assistant pages, polish) are still to do.
+>
 > **2026-10-21 — the store follows the datastore's deployment model.** User instruction: *the
 > model how to set up the local H2 database changed, read it from the datastore project*. The
 > model (zoxweb-datastore `h2p-datastore/CLAUDE.md` → `H2PSetup`, `ShiroIniRealmMain`; io-xlogistx
@@ -153,9 +166,8 @@ io.xlogistx.nosneak.app
 ├── Main.java                      ← entry point; opens the installation (ds.location/ds.store-password or setup screen) + JFrame
 ├── NoSneakStore.java              ← vault + encrypted H2 + shiro.ini: create (H2PSetup) / open (attached manager) / secure / bootstrap / grantAppUser / setRegistrarPassword (2026-10-21)
 └── ui/                            ← UI (screens, menu, session/access wiring)
-    ├── AppShell.java              ← root content pane, CardLayout host (mounts ai-assistant's AssistantPanel)
-    ├── LoginPanel.java            ← login/register screen (password; passkey card hidden)
-    ├── DataStoreSetupPanel.java   ← first screen: last location pre-filled, choose location + vault password (+ operator account and DB settings on a first run)
+    ├── AppShell.java              ← the signed-in window: HeaderBar + SideNavPanel + CardLayout host (2026-10-24), mounts ai-assistant's AssistantPanel
+    ├── UnlockPanel.java           ← the pre-auth screen (2026-10-24): step 1 open/create the store, step 2 sign in / register; replaced LoginPanel + DataStoreSetupPanel
     ├── PQCRegistryPanel.java      ← PQC file-sharing registry view
     ├── SubjectPanel.java          ← subject account view (master–detail)
     ├── SubjectSecManagerPanel.java← ACL admin view (master–detail)
@@ -183,108 +195,102 @@ Bootstraps the app. `main` first parses `ds.*` launch parameters (`ParamUtil.par
 password)` reads the vault, loads the master key, opens the encrypted H2 store with the Shiro
 controller + key maker, builds the realm from the directory's `shiro.ini` and returns the
 `ShiroDSDomainSecurityManager` attached to it; a failure prints the reason and exits with status 2.
-It then installs FlatLaf **FlatLightLaf** and launches on the EDT. (`createDomainSecManager(store)`
-is still there for a store opened elsewhere and not set up by `H2PSetup`: it builds a self-managed
-manager and bootstraps it, `OPSecUtil.singleton()` first.) The IntelliJ run configuration
-`NoSneakMain` points `ds.location=/data/ds` at an installation written before the 2026-10-21 model
-(no super-admin in its vault, no INI): `open` refuses it with the reason — delete it, run without
-arguments for the setup screen, then put the new vault password back in the configuration.
+It then installs FlatLaf **FlatLightLaf** (Roboto as the default font) and calls
+`launchApp(dsm, location, subject, password)` on the EDT — with a null manager when there were no
+parameters. **`subject=<username>` + `password=<password>`** (2026-10-25, asked for during the
+run-through; `username=` is an alias for `subject=`) sign that subject in once the window is up,
+through `UnlockPanel.signIn`, the same path as typing on the sign-in step: success lands in the
+shell, a refusal stays on the sign-in step with the reason inline and the username kept. They need
+the `ds.*` pair (the store must be open) and are ignored with a message on stderr otherwise.
+`UnlockPanelSignInTest` pins both outcomes on a real store.
+(`createDomainSecManager(store)` is still there for a store opened elsewhere and not set up by
+`H2PSetup`: it builds a self-managed manager and bootstraps it, `OPSecUtil.singleton()` first.)
 
-Two entry paths, chosen by whether a manager was built from the params:
-- **Params present** → `launchApp(dsm)` goes straight to the app.
-- **No params** → `showSetup(...)` displays `DataStoreSetupPanel` (the directory of the last
-  successful open is pre-filled from `AppPrefs.storeLocation()` when it still exists, so a
-  returning subject only types the vault password — the field has focus and Enter in it is
-  the Open / Create click (2026-10-23); otherwise choose the directory, type the
-  vault password; on a directory without a vault also the operator's username and password, the
-  DB username and, optionally, the DB password / encryption password); on completion it opens or
-  creates the installation through `NoSneakStore` and then `launchApp(dsm)`.
+**One window from the start (2026-10-24, Phase 1 of the UI redesign — plan in
+`UI-REDESIGN-PLAN.md`).** `launchApp` creates `AppFrame` — a `JFrame` titled "NoSneak", sized
+**relative to the primary display** (60 % × 70 % of `Toolkit.getScreenSize()`, then centred; on a
+multi-monitor setup the frame is sized off the primary regardless of where it opens), with the
+shield badge as its window icon — whose content pane is the **`UnlockPanel`**. The application is
+built lazily around the store:
 
-`launchApp(ShiroDSDomainSecurityManager)` opens `Main.AppFrame` (a `JFrame` titled "NoSneak", sized
-**relative to the display** — 60 % of screen width × 70 % of screen height from
-`Toolkit.getDefaultToolkit().getScreenSize()`, then centred; the old fixed 800×600 is commented
-out just above it. `getScreenSize()` reports the **primary** display, so on a multi-monitor setup
-the frame is sized off that one regardless of where it opens),
-which creates the single `AppContext` from the manager, builds the menu bar via `MenuBarFactory`,
-and installs `AppShell` as the content pane. The menu bar starts hidden and is toggled by
-`session().onAuthChange(...)` — it only appears once authenticated. `AppFrame` is `EXIT_ON_CLOSE`
-and adds a `windowClosing` handler that calls `ctx.session().closeNio()`, `ctx.session().logout()`
-(ends the Shiro subject) and then `domainSecurityManager.getDataStore().close()`, so the
-encrypted H2 store is flushed/closed on exit rather than left to the JVM teardown. (The datastore is
-closed on **app close only**, not on logout — logout keeps it open for the next sign-in.)
+- **`AppFrame.storeOpened(dsm)`** — called on the EDT by the unlock panel after a successful
+  Open / Create, or by `launchApp` when the manager came from the parameters — creates the single
+  `AppContext`, builds the menu bar via `MenuBarFactory`, constructs `AppShell` (every signed-in
+  screen), hands the panel its `Session` (`unlock.bindSession`) and subscribes to
+  `session().onAuthChange(...)`: **authenticated** → menu bar installed, content pane = the
+  `AppShell`; **signed out** → menu bar removed, `unlock.resetForSignIn()`, content pane = the
+  unlock panel again, at its sign-in step. A second `storeOpened` is ignored: **the store is fixed
+  for the life of the process**; switching installations means a restart, as before.
+- With parameters, `launchApp` also calls `unlock.markStoreOpened(location)`, so the window opens
+  on the sign-in step with step 1 already collapsed to `<location> · vault unlocked`.
+- `AppFrame` is `EXIT_ON_CLOSE`; its `windowClosing` handler calls `ctx.session().closeNio()` and
+  `ctx.session().logout()` when a context exists, then `domainSecurityManager.getDataStore().close()`
+  when a store was opened, so the encrypted H2 store is flushed/closed on exit rather than left to
+  the JVM teardown. (The datastore is closed on **app close only**, not on logout — logout keeps
+  it open for the next sign-in.)
 
-> Passing the vault password via `ds.store-password` on the command line exposes it (process list,
-> shell history, run-config files), so treat that path as a dev convenience and prefer the setup
-> screen. A **wrong vault password** fails the keystore's integrity check (`IOException` from
-> `SecretStore.open`, surfaced as the setup panel's error dialog); the database passwords never
+There is no separate "NoSneak - Setup" frame and no `showSetup` any more; `DataStoreSetupPanel`
+and `LoginPanel` were deleted with it. The IntelliJ run configuration `NoSneakMain` points
+`ds.location=/data/ds` at an installation written before the 2026-10-21 model (no super-admin in
+its vault, no INI): `open` refuses it with the reason — delete it, run without arguments for the
+unlock screen, then put the new vault password back in the configuration.
+
+> Passing the vault password via `ds.store-password`, or a subject's password via `password=`, on
+> the command line exposes it (process list, shell history, run-config files), so treat that path
+> as a dev convenience and prefer the unlock screen. A **wrong vault password** fails the keystore's integrity check (`IOException` from
+> `SecretStore.open`, shown inline under the location on step 1); the database passwords never
 > leave the vault.
 
 ## `ui` — UI screens & wiring
 
 ### `AppShell`
-The root panel (`BorderLayout`). Hosts a `CardLayout` content area registering one card per
-`Navigator.Screen` (`LOGIN`, `MAIN`, `SUBJECT`, `SCAN`, `MANAGER`, `ASSISTANT`) plus a footer
-status bar. On construction it builds the `Navigator`, registers it on the `AppContext`, and
-wires `session().onAuthChange(...)` so a successful auth navigates to `SUBJECT` and a logout back
-to `LOGIN`. The same handler also drives the assistant across the auth boundary: on **login** it
-calls `assistantPanel.reloadProviders()` + `refreshHistory()` + `refreshSkills()`; on **logout**
-`refreshHistory()` + `refreshSkills()` (empty-owner → cleared) + `clearProviders()` + `resetPanel()`
-(blanks the composer/transcript and drops the previous subject's selection). The footer (left:
-`session: … | subject: …`, right: status) also subscribes to auth changes. Starts on `LOGIN`.
+The signed-in application (rebuilt 2026-10-24, Phase 2 of the redesign): a `BorderLayout` of
+gui-audio's **`HeaderBar`** (north: shield + "NoSneak", a mono chip with the open store's
+directory from `AppPrefs.storeLocation()` and "vault open", then the subject — initial avatar,
+principal, a *super-admin* badge when `ShiroDSDomainSecurityManager.isSuperAdminSubject` says so —
+and a **Sign out** button that confirms and calls `session().logout()`), one **`SideNavPanel`**
+(west), the `CardLayout` content host (centre) and the footer (south: `subject: …` / `Ready`).
+
+**One navigation layer now.** The sidebar's sections and items are the whole page list:
+
+| Section | Items → `Navigator.Screen` → card · section |
+|---|---|
+| Scan | New scan → `SCAN_NEW` → `ScanPanel.show(SECTION_SCAN)`; History → `SCAN_HISTORY` → `SECTION_HISTORY`; Probe library → `PROBES` → `SECTION_PROBES` |
+| Assistant | Chat / Chats / Capture / Skills / Providers → `CHAT` … `PROVIDERS` → `AssistantPanel.showPage(Page.CHAT …)` |
+| Account | Profile / API keys / Backup → `PROFILE` / `API_KEYS` / `BACKUP` → `SubjectPanel.show(SECTION_PROFILE / SECTION_CREDENTIALS / SECTION_BACKUP)` |
+| Admin | Access control → `ACL` → `SubjectSecManagerPanel` (visible only for the super-admin: `nav.setSectionVisible("admin", …)` on every login) |
+
+Footer of the sidebar: **Help and about** (`MenuBarFactory.showDescription`) and the version line.
+`navigator.onShow` keeps the sidebar highlight in step; a click on an item is
+`navigator.show(Screen.valueOf(key))`. When the assistant moves itself (a chat opened from
+history, a capture sent to the chat, `sendToChat` from the scanner) `AssistantPanel.setOnPageShown`
+→ `navigator.sync(screen)` updates the highlight without re-running the route. The per-screen
+toggle columns (`PanelBuilder.buildDefaultSplitPanel`) are gone from every panel; each keeps its
+`CardStack` and exposes `show(section)` with `SECTION_*` constants. The `PQCRegistryPanel`
+placeholder is **no longer registered** as a card (the class remains, unreferenced).
+
+Every panel is constructed here, when the store opens and before anyone signs in — the navigator
+controls visibility only, never construction. On **login** the shell sets the header subject,
+shows or hides the Admin section, calls `assistantPanel.reloadProviders()` + `refreshHistory()` +
+`refreshSkills()` and lands on **`SCAN_NEW`**; on **logout** it clears the subject,
+`refreshHistory()` + `refreshSkills()` (empty-owner → cleared) + `clearProviders()` +
+`resetPanel()` and returns the cards to `SCAN_NEW`, so nothing of the previous subject is on
+screen when `NoSneakMain.AppFrame` swaps the shell back in. `menuBar()` hands the frame the
+`MenuBarFactory` menu that goes with the shell.
 
 **`AppShell` is also where the scanner and the assistant are joined**, and the order matters:
 `assistantPanel` is built first, then `ScanPanel` takes `assistantPanel::sendToChat`, then
 `assistantPanel.addSaveTarget("probe", scanPanel::saveProbeFromEditor)` registers the reverse
 direction. Both are plain callbacks, so the dependency stays one-way (`no-sneak-app →
-ai-assistant`) in both directions of the data flow.
-
-The `ASSISTANT` card is the `ai-assistant` module's
-`io.xlogistx.nosneak.ai.assistant.AssistantPanel`, constructed with an `AssistantContext`:
+ai-assistant`) in both directions of the data flow. The `ASSISTANT` card is the `ai-assistant`
+module's `AssistantPanel`, constructed with an `AssistantContext`:
 `new AssistantPanel(new AssistantContext(new SessionAICredentialSource(ctx.session()), new
-AssistantStorage(ctx.session())))` (`AssistantStorage` takes the `Session` and reads the H2P
-`APIDataStore` off it). The context holds
-the credential source, the chat/skill repository (`AssistantStorage`, over the same H2P `APIDataStore`
-that `DomainSecurityManager` uses), an internally built `AIProviderRegistrar`, and the current
-chat/credential/model selection. This is the **only** coupling point — the dependency runs
-`no-sneak-app → ai-assistant`, never the reverse.
-
-### `LoginPanel`
-The `LOGIN` card. A `GridBagLayout` with NoSneak branding above the credential area, and two
-orthogonal selectors:
-
-- **Method** (a `JToggleButton` group over a `CardStack`): `Subject / Password` and `Passkey` —
-  switches which credential card is shown. The `API Key` method was **removed on 2026-10-05**: an
-  API key is the subject's credential for a third-party API and never logs anyone in.
-- **Mode** (a toggle button): flips between **Login** and **Register**. It re-labels each
-  method's action button and changes which `Session` call it makes (`login*` vs `register*`); it
-  is not a separate set of cards.
-
-`applyMode()` adapts the password card and selectors to the current mode:
-- In **Register** mode the password card reveals a **Confirm Password** field; submission
-  compares it against the password and blocks (error dialog) on mismatch. Switching back to
-  **Login** hides and clears it.
-- **Passkey is hidden everywhere** (`passkeySelector.setVisible(false)`); its card is a
-  "NOT IMPLEMENTED" placeholder.
-
-The password card also has an optional **DomainAppID** field; field rows are laid out by
-`PanelBuilder.buildJPanelWithFields(...)`.
-
-The password action captures field values on the EDT, then runs the `Session` call **off the
-EDT** via `BackgroundTask.runCatching(...)` (so bcrypt/round-trips never freeze the UI, and the
-action button is disabled while in flight). Failures throw a `SecurityException` whose message
-the worker shows as an error dialog. Reporting: failed login → "Invalid Credentials"; register
-confirm-mismatch → "Passwords do not match" (an instant EDT check before the worker); register
-success → "Registered Successfully" (clears fields and flips to Login). Login success shows no
-dialog — the `"authenticated"` event navigates away. The **passkey** action is wired to a
-`Session` stub that does nothing.
-
-> `registerUsernamePassword` throws a `SecurityException` on failure, so a **taken username**
-> shows "That username is already taken" (distinct from the password-rules message).
+AssistantStorage(ctx.session())))` — the **only** coupling point.
 
 ### `PQCRegistryPanel`
-The `MAIN` screen — PQC file-sharing registry. A `JSplitPane` with a `TreeTextWidget` (file tree,
-from `io.xlogistx.gui`) on the left and a `JTable` global registry (columns: *Public Key*,
-*Documents*) on the right.
+A placeholder with no settled specification (two "PLACEHOLDER" toggles over an empty card). Since
+2026-10-24 it is **not registered** as a card and has no sidebar item; the class stays in the tree
+until a product decision exists for it.
 
 ### `SubjectPanel`
 The `SUBJECT` screen — the signed-in subject's own account view, a **master–detail**
@@ -293,6 +299,11 @@ are wired to `Session` for real. Because the panel is built once (before login),
 `onAuthChange` and, on **both** login and logout, calls `identifiers.refresh()` /
 `credentials.refresh()` / `populateProfile()` — repopulating on login, clearing on logout (the
 `Session` getters return empty when signed out).
+
+Since 2026-10-24 (Phase 5 of the redesign) the Profile and Backup sections sit in gui-audio's
+`PagePanel` — page title and description over the ground, the existing content in one white card
+that scrolls — and the old in-form "Profile" title and description line are gone; Credentials
+has its own two-card layout (Phase 4).
 
 The **Profile** screen is itself a nested `CardStack` (`profileCards`, built by
 `buildProfileArea`) with a **profile** card (the form) and an **editAddress** detail card.
@@ -313,7 +324,11 @@ The **Profile** screen is itself a nested `CardStack` (`profileCards`, built by
     (blocks with a "Missing information" dialog otherwise).
   - **Save Changes** collects only name/DOB and calls `Session.saveProfile(...)`;
     `populateProfile()` reads them back via `Session.loadProfile`.
-- **Credentials** (card key `Credentials`) — a nested `CardStack` (`credentialCards`) with three
+- **Credentials** (card key `Credentials`; the sidebar's **API keys** page, re-laid out on
+  2026-10-24 as board 5 of the redesign: the list card on the left, the editor on the right. The
+  right-hand `credentialCards` stack keeps its card names — `"list"` is now the placeholder shown
+  while nothing is being edited — so every `credentialCards.show("list")` after a save, a delete
+  or a logout still lands on the right thing) — a nested `CardStack` (`credentialCards`) with three
   views: a **list**, a **change-password** form, and an **edit-API-key** form (`editAPI`). The
   list card stacks **two** `ListSection`s in a `BorderLayout` (Password `NORTH`, API keys
   `CENTER`), each with an empty-state row ("No password set" / "No API keys yet"):
@@ -365,10 +380,11 @@ The **Profile** screen is itself a nested `CardStack` (`profileCards`, built by
 > `src/main/resources/icons/*.svg` files are no longer referenced and can be removed.
 
 ### `SubjectSecManagerPanel`
-The `MANAGER` screen — an admin view over the access-control model (the UI front for zoxweb's
-`DomainSecurityManager`). Same master–detail shape as `SubjectPanel`, with five sections, each a
-header + description + search bar + `JTable` (wrapped in a `JScrollPane`, with a trailing
-unlabeled actions column reserved for per-row controls):
+The `ACL` page (sidebar: Admin → Access control, super-admin only) — an admin view over the
+access-control model (the UI front for zoxweb's `DomainSecurityManager`). Since 2026-10-24 its
+five views are **tabs** of one `JTabbedPane` in a `PagePanel` card instead of a toggle column, each a header +
+description + search bar + `JTable` (wrapped in a `JScrollPane`, with a trailing unlabeled
+actions column reserved for per-row controls):
 
 - **Subjects** — subjects and their principals, credentials, grants (Name, Primary principal, Owns).
 - **Permissions** — permission definitions, scoped by AppID (Permission, Description).
@@ -377,118 +393,108 @@ unlabeled actions column reserved for per-row controls):
 - **Grants** — permission/role/role-group grants bound to subjects (Subject, Grant Type, Granted).
 
 All tables are empty `DefaultTableModel` stubs; search and the actions column are not wired.
-Reached from **View → ACL Tool**.
 
 > Scope: `SubjectPanel` manages **your own** account; `SubjectSecManagerPanel` is the **admin**
 > view over all subjects/permissions/roles/grants.
 
 ### `ScanPanel`
-The `SCAN` screen — the front end for the `no-sneak-core` scanning engine. Same master–detail
-shape as the other screens (`buildDefaultSplitPanel` + a `CardStack`), with three selectors —
-**Scanner** / **Result List** / **Probe Library** — over five cards: `Scan`, `Probe`, `Result`,
-`View_scan`, `Edit_probe`.
+The scanner pages — the front end for the `no-sneak-core` scanning engine. Five cards: the three the
+sidebar routes to (`SECTION_SCAN` = New scan, `SECTION_HISTORY` = History, `SECTION_PROBES` = Probe
+library, through `show(section)`) and two reached from within (a stored report, a probe editor).
+**Rebuilt on 2026-10-24 (Phase 3 of the redesign; board 2 of the canvas).** Constructed as
+`new ScanPanel(ctx, assistantPanel::sendToChat)`; the second argument is a `BiConsumer<String,String>`
+(content, name), so the panel can hand a report to the assistant without `no-sneak-app` reaching
+into it for anything else.
 
-Constructed as `new ScanPanel(ctx, assistantPanel::sendToChat)`; the second argument is a
-`BiConsumer<String,String>` (content, name), so the panel can hand a report to the assistant
-without `no-sneak-app` reaching into it for anything else.
+**New scan card.** A page header, then **`ui.scan.ScanFormPanel`** over a **`ui.scan.ScanResultView`**.
 
-**Scanner card.** A `Command` text field plus Run and a usage button, over a split of the probe
-selector (left) and the raw result text (right).
+- **The form generates the command, and the command refills the form.** Targets (whitespace
+  separated), Ports (a `-p` spec; empty = the engine's default list), Name, the option boxes
+  (Service detection `-sV`, Host discovery only `-sn`, Skip ping `-Pn`, Live hosts only
+  `--up-only`, Open ports only `--open`), a `SegmentedControl` for the `-T` template, Max in flight,
+  Min RTT timeout, the probe chips, and the **Command** field. The command is the truth and the form
+  a view over it: `toConfig()` parses the field (`NMap.parseCommand`) so flags the form has no
+  control for — `-PR`, `--dns-servers`, `-sU` — survive, then lays the fields over it; every field
+  change re-prints the command with **`NMap.formatCommand`** (core, same day; the inverse of
+  `parseCommand`, pinned by `NMapFormatCommandTest`); every command edit re-parses into the fields,
+  a guard stopping the echo. A command that does not parse shows the engine's reason inline under
+  the field and leaves the fields alone; `--help` text is behind the ⓘ button. Picking a `-T`
+  template resets Max in flight to the template's value; a template with one knob overridden prints
+  as `-T5 --max-inflight 4096` (`Timing.closest`). `ScanFormPanelTest` (headless) pins the round
+  trips. Enter in the command or the targets runs the scan. **Host discovery only and Ports are
+  exclusive, last action wins** (2026-10-25, the maintainer's first run: `80,443` typed with the
+  box ticked ran `-sn` and said 0 open ports with nothing explaining why): typing ports unticks the
+  box; ticking the box with ports typed keeps the text and an inline note under the command says
+  those ports are not scanned. Nothing is ever greyed: a first fix disabled the field under `-sn`
+  and the maintainer read it as "I can no longer specify the port range". A parsed command is not
+  typing: `-sn` in the command ticks the box and empties the field without unticking anything.
+- **Probes are chips, not checkboxes.** *Add probe* opens a popup with a check item per bundled and
+  stored probe (grouped, an *All* per group, the bundled tooltip of service · ports); ticked probes
+  show as chips (`ChipPanel`; a stored one carries a *mine* badge) and a chip's × unticks it. The
+  ticks are still `tickedProbes`, keyed as before (`b:<name>` / `s:<guid>`), still applied to the
+  parsed config by `ProbeSelection.applyTo` — never spliced into the command — and ticking any probe
+  ticks Service detection, since the probe stage returns early without `-sV`. `ProbeSelection`
+  itself is unchanged and `ScanPanelTest` still pins every rule.
+- **Run.** `onRun` builds `form.toConfig()`, applies the ticks, and records as the report's `command`
+  the field's text (or the config's print when the field was empty). Invalid input is an inline
+  message, not a dialog. The worker is `runScan` as before (wait budget, Stop through the handle, a
+  partial report on cancel). The outcome goes to `resultView.setReport(name, json, stopped, saved)`:
+  a stopped scan shows its partial report with a *stopped · not saved* badge and the reason inline;
+  a completed one shows *not saved* until the store insert lands (`BackgroundTask.runCatching`,
+  off the EDT), then `markSaved(true)` and the history list reloads. The departed-subject rule is
+  unchanged: a scan whose subject signed out is not saved.
+- **The result as tables.** `ScanResultView` parses the JSON with **`ui.scan.ReportView`** (pure;
+  `ReportViewTest` reads a hand-written sample and a report the engine itself rendered): header with
+  name, command, time, duration, the state badge, the four counts (hosts up, open ports, TLS
+  endpoints, PQC ready), Copy (the raw JSON) and Send to assistant; then **Hosts** (address and
+  hostname, status, open count, services, the worst TLS endpoint's version · key exchange, and the
+  **posture** — the engine's own letter from the port's `grade` field, with *Hybrid PQC* /
+  *Classical* / *Not ready* from `pqc`, coloured by tone; selecting a row fills the detail pane:
+  ports with version · probe, the worst TLS port's protocol / key exchange / cipher / certificate /
+  chain / groups offered, and the verdict in words from the PQC status, the trust verdict and the
+  engine's advisories), **Services** (every open port flat) and **Raw JSON**. Nothing here grades:
+  `grade.Grade` in the core wrote the letter per port; the view only picks the worst per host.
 
-- **The command box is the real CLI.** `NMap.parseCommand(String)` — extracted from `NMap.main`
-  so the two cannot drift — accepts `-p`, `-sV`, `-Pn`, `-sn`, `-PR`, `-PE`, `--probes`,
-  `--icmp-probes`, `--max-inflight`, `--max-rate`, `-t`, `--min-rtt-timeout` (floor of the
-  adaptive connect timeout, default 500 ms; `-t` is its ceiling), `--open`, and `--up-only`
-  (list only hosts found up; a `/24 -sn` otherwise renders 254 entries, most of them
-  `"up": false`). The output-file flags (`-oN`…`-oA`) are
-  **rejected**, not ignored: a caller holding a string has nowhere to write. Parsing happens on
-  the EDT (it is instant and non-blocking) and a bad command shows a dialog with the message plus
-  `NMap.usageText()`, rather than reaching `BackgroundTask`'s generic "Unexpected error".
-- **Ticked probes are applied to the parsed `NMapConfig`, never spliced into the command.**
-  `ScanPanel.ProbeSelection` (a pure, tested static) turns the ticks into `probeScan(true)`,
-  `probe(name)` for bundled probes and `extraProbe(def)` + `probe(name)` for stored ones. Only the
-  typed text is parsed, so a probe name with spaces or commas — ordinary for an assistant-authored
-  one — can no longer turn into scan *targets* (finding 3). The muted line under the field shows
-  `probes: a, b`; the report stores the typed command in `command` and the names in `probes`.
-  Ticking implies `-sV` deliberately: `probeStage` returns early when `probeScan` is false, so
-  ticked probes with no `-sV` would silently do nothing.
-- **The scan itself** is `runScan(NMapConfig)` → `NMapScanner.scan` on `Session.getNio()`, which
-  hands back a `ScanHandle`. The worker holds the handle in a `volatile running` field and always
-  comes back with a rendered report: on the wait budget (`NMap.maxWaitMs(cfg)`) it **cancels**
-  through the handle and renders the partial report, so nothing keeps running in the background
-  (finding 6, closed with matrix row P6). Run's worker returns a `ScanOutcome`: JSON, or a
-  `stopped` message (the timeout text, or the progress line after a Stop). The **Stop button**
-  (`IconUtil.StopIcon`, enabled only while a scan runs) calls `handle.cancel()`; a cancelled scan
-  renders what completed and saves nothing. The save of a finished report goes through
-  `BackgroundTask.runCatching` — encrypting and inserting a 50 KB report on the EDT froze the UI
-  (finding 2) — and is skipped, with a notice, if the subject who started the scan is no longer
-  the one signed in. Since 2026-09-20 the engine paces connects with an adaptive per-host
-  deadline and streams `-sV` probes from the connect, so a `/24 × 1024 ports` from this panel
-  takes seconds, not minutes, on a LAN; the wait budget (`NMap.maxWaitMs`) is unchanged and
-  still generous. Recommended command on a wired segment:
-  `10.0.0.0/24 -T5 --min-rtt-timeout 200 --max-inflight 4096 --up-only --open`. If a local
-  antivirus mail shield is running, its ports read `open` on every host — see
-  `no-sneak-core/CLAUDE.md` → *Build, test, verify*.
+**History / stored report (Phase 4, same day; board 3).** A `JTable` over
+`Session.getAllScanResults()` — Scan (name), Command (mono, muted), When, Hosts up, Open ports —
+sorted newest first, a search box that filters every column (`RowFilter`), a count label, and a
+toolbar acting on the selected row: View, Scan again, Copy command, Copy result, Send to
+assistant, Delete (confirmed). Double-click views. **Scan again** (2026-10-25, asked for during
+the run-through; also a header button on the stored report's view, `ScanResultView.onRerun`)
+puts the report's saved `command`, `probes` (names mapped back to ticks by
+`ProbeSelection.keysForNames`: bundled by name, stored by name, deleted ones dropped) and name
+into the New scan form and navigates there; nothing runs until Run is pressed, so the command can
+be adjusted first. A report without a `command` property falls back to its description cut before
+the `· probes:` suffix. Rows are still projections re-fetched by GUID before their
+content is read; the two counts come from the `hostsUp` / `openPorts` properties a run now records
+on the `ReportContent` (parsed from the report at save time), so older rows show a dash. *View*
+opens the stored report in a second `ScanResultView` with a *Back to history* link — the same
+tables as a fresh run. **Probe library / Edit probe** are unchanged (`probeToSave`, name from the
+JSON, update-by-name, `saveProbeFromEditor` for the assistant). `showResult(name, json)` feeds the
+scanner page a report from outside (renders, tests).
 
-**Probe selector.** A rebuilt-per-refresh panel of checkboxes in two sections — *Bundled probes*
-(the 18 classpath definitions, loaded once off the EDT and cached) and *My probes* (stored
-`ProbeContent` rows) — each with an "All" box and an empty state. **Ticks are keyed by
-identity**, held in a plain `Set<String>` on the panel: `b:<name>` for a bundled definition,
-`s:<guid>` for a stored row. A stored probe that shares a bundled name is therefore its own
-checkbox with its own state, and renaming a stored probe keeps its tick (finding 4). The set is
-pruned to live keys on every reload and cleared on every auth change. The All box is placed after
-the empty-list early return, so `allMatch` over an empty list can never read as ticked. One
-engine-side caveat remains: `NMapScanner.buildChecker` resolves `--probes` names against the
-merged catalog, so a stored probe named exactly like a bundled one runs *both* when either is
-ticked — that dedupe belongs to the scanner, not the panel.
-
-**Result List / View scan.** A `ListSection` over `Session.getAllScanResults()` — a **projected**
-read that omits `content` — with rows labelled by target and a sublabel of
-`<full command>  ·  <timestamp>`. Row actions are *Copy the command* (`TextBoxIcon`, 2026-10-22:
-puts the typed command from the `command` property on the clipboard, falling back to the
-description for older rows, ready to paste into the command box; the projection carries
-`properties`, so no re-fetch), *Copy the result*, *Send to chat*, *View*, and remove. Copy the
-result, View and Send all **re-fetch the full row** by GUID first and bail with a dialog if it
-misses; sending or copying a list instance would attach empty content. The scanner card's result pane has
-the same pair, a copy icon beside *Send to chat* (2026-09-20): Copy is enabled whenever the pane
-holds a render, including the partial render of a stopped scan, while Send needs a completed one.
-
-**Probe Library / Edit probe.** A searchable `ListSection` over `Session.getAllProbes()` with
-add, edit and remove. Both save paths — the editor's Save and `saveProbeFromEditor` (the
-assistant's) — go through one `probeToSave(...)` helper that strips a markdown fence, runs
-`ProbeDefinitionLoader.parse` (so `validate` rejects unknown actions, dangling transitions and
-unreachable terminals), **takes the name from the parsed definition**, and **updates the library
-row that already carries that name** instead of inserting a second one (finding 5: a probe fixed
-twice in the assistant used to be two rows that both ran). The name rule is load-bearing: the
-engine matches `--probes` on the name *inside* the JSON, so a typed name that disagrees yields a
-probe you can tick but that resolves to `unknown probe '…' (ignored)`. `saveProbeFromEditor`
-**throws** `IllegalArgumentException` on invalid content rather than showing a dialog of its own:
-the assistant's editor owns that draft, shows the message, and keeps it dirty (finding 8).
-
-> **Two-way assistant wiring.** Out: the scan panel, the result rows and the View card all call
+> **Two-way assistant wiring.** Out: the result views and the history rows call
 > `setSendToChat(content, name)` → the injected `BiConsumer` → `AssistantPanel.sendToChat`, then
-> navigate to `ASSISTANT`. A missing chat throws a `SecurityException` whose message the panel
-> shows. In: `AppShell` registers `assistantPanel.addSaveTarget("probe", scanPanel::saveProbeFromEditor)`,
-> which puts **probe** in the skill editor's "Save as" combo — choosing it routes the editor's
-> content here instead of to the skill store. See `ai-assistant/CLAUDE.md` §5.
+> `ctx.nav().show(Screen.CHAT)`. A missing chat throws a `SecurityException` whose message the
+> panel shows. In: `AppShell` registers `assistantPanel.addSaveTarget("probe",
+> scanPanel::saveProbeFromEditor)`, which puts **probe** in the skill editor's "Save as" combo —
+> choosing it routes the editor's content here instead of to the skill store; on success the
+> navigator shows `PROBES`.
 
 ### `MenuBarFactory` & the navigation model
-Builds the `JMenuBar`: `File`, `View`, `Tools`, `Help`, and a right-aligned `Mode` menu (with a
-"Technical Mode" checkbox). **File** has a placeholder *Test* item and **Logout**
-(`session().logout()`).
+Builds the `JMenuBar` of the signed-in window: **File** (Sign out, with the same confirmation
+as the header button), **View** (one item per `Navigator.Screen`, in sidebar order, for keyboard
+discoverability — it mirrors the sidebar and adds nothing), **Help** (Help = the bundled
+`app-description.md` in an `MDViewerPanel`; About = version / Java / platform card). Both
+dialogs are modeless and owned by the application window. `showDescription()` / `showAbout()`
+are public so the sidebar's *Help and about* can open them. The old *Tools* / *Mode* menus and
+the never-wired *Technical Mode* checkbox were removed on 2026-10-24.
 
-The app uses **two independent navigation layers**, deliberately separate:
-
-- **Top menu bar** — app-level destinations. The **View** menu drives the `Navigator` between
-  top-level screens: *Network scanner* → `SCAN`, *PQC file sharing* → `MAIN`, *Subject Profile* →
-  `SUBJECT`, *ACL Tool* → `MANAGER`, *AI Chat* → `ASSISTANT`. (There is no
-  separate "Subject" menu.)
-- **Left selector inside a panel** — sub-section switching *within* a screen, via a local
-  `CardStack` (e.g. `SubjectPanel`'s Profile / Credentials). Local to the panel; does **not** go
-  through the top-level `Navigator`.
-
-The top menu chooses *which screen*; a panel's left selector chooses *which section*. They are
-separate `CardLayout`s (the in-panel ones wrapped by `CardStack`).
+**There is one navigation layer** (2026-10-24). The sidebar in `AppShell` chooses the page; a
+page is a `Navigator.Screen`, routed to a card on the content host plus a section inside that
+card's panel. A panel's internal `CardStack` still exists (the scan panel's result and probe
+detail cards, the subject panel's edit cards) but is driven by the panel's own buttons and by
+`show(section)`, never by a second column of toggles.
 
 ### Access-control backend — `ShiroDSDomainSecurityManager` (io-xlogistx `shiro`)
 `NoSneakStore.bootstrap(new ShiroDSDomainSecurityManager(store))` (also behind
@@ -739,10 +745,12 @@ update from landing a millisecond apart on a fresh row. See the timestamp note i
 > full field round-trip, **one key backing several configs**, upsert-by-GUID, and delete.
 
 ### `Navigator`
-Thin top-level screen-switcher over a `CardLayout`. Defines the `Screen` enum (`LOGIN, REGISTER,
-MAIN, SCAN, SUBJECT, MANAGER, ASSISTANT`) and `show(Screen)` flips the shared content panel to the
-matching card (keyed by `Screen.name()`). `REGISTER` is currently **unused** — register is a
-*mode* of the `LOGIN` screen, not its own card.
+Routes a `Screen` (`SCAN_NEW, SCAN_HISTORY, PROBES, CHAT, CHATS, CAPTURE, SKILLS, PROVIDERS,
+PROFILE, API_KEYS, BACKUP, ACL` — the sidebar's items, in order) to a `Route(card, section)`:
+`show(screen)` flips the `CardLayout` to the card, runs the section `Runnable` (the panel's
+`show(section)` / `showPage(page)`), records `current()` and tells the `onShow` listeners;
+`sync(screen)` records a move a panel made by itself and tells the listeners without running the
+route. `AppShell` registers every route; a screen without one throws. EDT only.
 
 ### `CardStack`
 A small wrapper around a `CardLayout` + backing `JPanel` for **in-panel** section switching
@@ -868,7 +876,7 @@ All target-only, because the model has nowhere to store them: per-identifier **s
 
 ## Needed fixes / updates
 
-### Register flow (`LoginPanel`)
+### Register flow (`UnlockPanel`, step 2)
 - **Confirmation warning on Register.** Clicking **Register** should prompt a confirmation dialog
   before proceeding (e.g. "Register using this email / username?"). Register currently proceeds
   straight to the filter/persist call.

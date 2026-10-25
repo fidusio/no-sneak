@@ -159,7 +159,8 @@ io.xlogistx.nosneak
 ├── analysis/               TLSProbeCallback base · Cipher/VersionProbeCallback · RevocationChecker
 ├── grade/                  Grade — letter, PQC readiness, TrustVerdict, advisories
 ├── result/                 ProbeResult (+ CertInfo, ConnectionTrace)
-├── nmap/                   NMapScanner (staged; adaptive deadline, streamed probes) · NMap CLI · PortScanCallback (ms deadline
+├── nmap/                   NMapScanner (staged; adaptive deadline, streamed probes) · NMap CLI (+ formatCommand, the
+│                           inverse of parseCommand for the app's scan form, 2026-10-24; NMapFormatCommandTest) · PortScanCallback (ms deadline
 │                           + releaseWith) · UdpScanCallback · ReverseDnsCallback · ScanGate (window + per-slot quantum) · output/
 ├── service/                Checker — REST /check-qdz/{domain}/{detailed}
 └── tools/                  DMTool · NoSneakUtil

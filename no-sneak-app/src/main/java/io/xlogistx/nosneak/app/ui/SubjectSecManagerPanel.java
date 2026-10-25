@@ -2,6 +2,8 @@ package io.xlogistx.nosneak.app.ui;
 
 import io.xlogistx.gui.GUIUtil;
 import io.xlogistx.gui.IconUtil;
+import io.xlogistx.gui.PagePanel;
+import io.xlogistx.gui.UITokens;
 import io.xlogistx.nosneak.app.ui.utility.AppContext;
 import io.xlogistx.gui.CardStack;
 import io.xlogistx.gui.PanelBuilder;
@@ -16,25 +18,19 @@ public class SubjectSecManagerPanel extends JPanel {
     SubjectSecManagerPanel(AppContext ctx) {
         setLayout(new BorderLayout());
 
-        cardStack.add(buildSubjectPanel(), "Subjects");
-        cardStack.add(buildPermissionsPanel(), "Permissions");
-        cardStack.add(buildRolesPanel(), "Roles");
-        cardStack.add(buildRoleGroupsPanel(), "RoleGroups");
-        cardStack.add(buildGrantsPanel(), "Grants");
-        cardStack.show("Subjects");
-
-        JToggleButton subjectButton = new JToggleButton("Subjects");
-        subjectButton.addActionListener(e -> cardStack.show("Subjects"));
-        JToggleButton permissionButton = new JToggleButton("Permissions");
-        permissionButton.addActionListener(e -> cardStack.show("Permissions"));
-        JToggleButton roleButton = new JToggleButton("Roles");
-        roleButton.addActionListener(e -> cardStack.show("Roles"));
-        JToggleButton roleGroupButton = new JToggleButton("RoleGroups");
-        roleGroupButton.addActionListener(e -> cardStack.show("RoleGroups"));
-        JToggleButton grantButton = new JToggleButton("Grants");
-        grantButton.addActionListener(e -> cardStack.show("Grants"));
-
-        add(PanelBuilder.buildDefaultSplitPanel(cardStack.view(), subjectButton, permissionButton, roleButton, roleGroupButton, grantButton));
+        // one sidebar item (Access control) opens this page; its five views are tabs (2026-10-24)
+        JTabbedPane tabs = new JTabbedPane();
+        tabs.addTab("Subjects", buildSubjectPanel());
+        tabs.addTab("Permissions", buildPermissionsPanel());
+        tabs.addTab("Roles", buildRolesPanel());
+        tabs.addTab("Role groups", buildRoleGroupsPanel());
+        tabs.addTab("Grants", buildGrantsPanel());
+        tabs.setBorder(BorderFactory.createEmptyBorder(8, 12, 12, 12));
+        tabs.setBackground(UITokens.surface());
+        PagePanel page = new PagePanel("Access control",
+                "Every subject in this store, with its permissions, roles, role groups and grants. Super-admin only.");
+        page.card(tabs);
+        add(page, BorderLayout.CENTER);
     }
 
     private JPanel buildSubjectPanel() {

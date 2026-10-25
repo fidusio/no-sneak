@@ -21,17 +21,19 @@ definitions, the shared `NIOSocket` and scan reports are part of the loading pic
 
 | What | Where | Note |
 |---|---|---|
-| H2 datastore opened + `connect()` | `Main.java:42-44` | From `ds.*` params, else after the setup screen. **Held open across logout**; closed only in `windowClosing` (`Main.java:76-81`). |
+| H2 datastore opened + `connect()` | `NoSneakMain.main` / `UnlockPanel` step 1 | From `ds.*` params before the window exists, else when the unlock screen's first step opens or creates the store (`NoSneakStore.openOrCreate`, off the EDT). **Held open across logout**; closed only in `windowClosing`. |
 | `OPSecUtil.singleton()` + credential types | `Main.java:94-99` | On every `DomainSecurityManager` build. |
 | FlatLaf, Roboto, theme defaults | `Main.java:48-51` | Before the EDT hop. |
-| Menu bar | `Main.java:83-85` | Fully built at frame construction, then `setVisible(false)` until auth. |
-| Login-screen favicon | `LoginPanel.java:94` | An outbound `https://xlogistx.io/favicon.ico` fetch during construction. Eager **and** off-machine — see the hardening list in `CLAUDE.md`. |
+| Menu bar | `AppShell.menuBar()` from `NoSneakMain.AppFrame.storeOpened` | Built when the store opens, installed on the frame only while a subject is signed in (2026-10-24). |
+| ~~Login-screen favicon~~ | — | Gone with `LoginPanel` (2026-10-24): the unlock screen's brand mark is the bundled shield SVG, nothing is fetched. |
 
 ### Screens
 
-**Every top-level screen is constructed before login.** `AppShell`'s constructor instantiates
-`LoginPanel`, `PQCRegistryPanel`, `SubjectPanel`, `ScanPanel`, `SubjectSecManagerPanel` and
-`AssistantPanel` and registers them all as `CardLayout` cards (`AppShell.java:26-33`).
+**Every top-level screen is constructed when the store opens, before anyone signs in.**
+`AppFrame.storeOpened` (2026-10-24) builds the `AppContext`, the menu bar and the `AppShell`, whose
+constructor instantiates `PQCRegistryPanel`, `SubjectPanel`, `ScanPanel`, `SubjectSecManagerPanel`
+and `AssistantPanel` and registers them all as `CardLayout` cards. Until then the window holds only
+the `UnlockPanel`. With `ds.*` launch parameters this happens before the window is shown, as before.
 
 `Navigator` controls **visibility only, never construction** (`Navigator.java:33-35`). The same
 holds one level down: the assistant's six pages — Chat, History, Providers, Skills, Job Queue,

@@ -128,6 +128,17 @@ class ScanPanelTest {
         assertNotNull(msg);
     }
 
+    /** Scan again (2026-10-25): a report's saved probe names become ticks against what exists now. */
+    @Test
+    void aStoredReportsProbeNamesBecomeTicksAgain() {
+        ProbeContent mine = stored("g1", "Redis TLS handshake");
+        Set<String> keys = ScanPanel.ProbeSelection.keysForNames("ssh, Redis TLS handshake, deleted-since",
+                bundled("ssh"), List.of(mine));
+        assertEquals(Set.of("b:ssh", "s:g1"), keys, "bundled by name, stored by name, unknown dropped");
+        assertTrue(ScanPanel.ProbeSelection.keysForNames(null, bundled("ssh"), List.of()).isEmpty());
+        assertTrue(ScanPanel.ProbeSelection.keysForNames("  ", bundled("ssh"), List.of()).isEmpty());
+    }
+
     @Test
     void keysAreDistinctPerKind() {
         ProbeContent mine = stored("g1", "ssh");

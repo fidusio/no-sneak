@@ -100,6 +100,120 @@ public final class NMap {
     }
 
     /**
+     * The command line for a configuration — the inverse of {@link #parseCommand}, added
+     * 2026-10-24 for the scanner screen, whose form generates the command and whose command
+     * field, when edited, refills the form. Parsing what this prints gives the configuration
+     * back ({@code NMapFormatCommandTest}); the text is canonical: targets, {@code -p}, {@code -sU},
+     * {@code -sn}, {@code -sV}, {@code --probes}, discovery flags, {@code --icmp-probes}, timing
+     * (the closest {@code -T} template plus the knobs that differ from it; nothing for the
+     * defaults), {@code --min-rtt-timeout}, {@code --open}, {@code --up-only}, {@code -n}/{@code -R},
+     * {@code --dns-servers}, {@code -v}. Defaults are omitted. A probe name with whitespace or a
+     * comma cannot be written on the command line and is left out — the scanner screen applies
+     * such names to the configuration directly, as it does with every ticked probe.
+     */
+    public static String formatCommand(NMapConfig cfg) {
+        List<String> out = new ArrayList<>(cfg.targets);
+        boolean noTcp = cfg.ports != null && cfg.ports.length == 0;
+        boolean noUdp = cfg.udpPorts == null || cfg.udpPorts.length == 0;
+        if (noTcp && noUdp && !cfg.udpScan) {
+            out.add("-sn");
+        } else {
+            boolean udpDefault = cfg.udpPorts != null && java.util.Arrays.equals(cfg.udpPorts, WellKnownPorts.TOP_20_UDP);
+            int[] udp = cfg.udpScan && udpDefault ? null : cfg.udpPorts;
+            String spec = portSpec(cfg.ports, udp);
+            if (!spec.isEmpty()) {
+                out.add("-p");
+                out.add(spec);
+            }
+        }
+        if (cfg.udpScan) out.add("-sU");
+        if (cfg.probeScan) out.add("-sV");
+        List<String> names = new ArrayList<>();
+        for (String n : cfg.probeNames) {
+            if (n != null && !n.isEmpty() && n.indexOf(',') < 0 && !n.matches(".*\\s.*")) names.add(n);
+        }
+        if (!names.isEmpty()) {
+            out.add("--probes");
+            out.add(String.join(",", names));
+        }
+        if (!cfg.discovery) {
+            out.add("-Pn");
+        } else if (!cfg.discoveryTcp && !cfg.discoveryIcmp && cfg.discoveryArp) {
+            out.add("-PR");
+        } else if (!cfg.discoveryTcp && !cfg.discoveryArp && cfg.discoveryIcmp) {
+            out.add("-PE");
+        } else {
+            if (!cfg.discoveryTcp) out.add("--no-tcp-ping");
+            if (!cfg.discoveryIcmp) out.add("--no-icmp");
+            if (!cfg.discoveryArp) out.add("--no-arp");
+        }
+        if (cfg.icmpProbes != 2) {
+            out.add("--icmp-probes");
+            out.add(Integer.toString(cfg.icmpProbes));
+        }
+        NMapConfig.Timing t = NMapConfig.Timing.closest(cfg);
+        if (t != NMapConfig.Timing.T3) out.add("-" + t.name());
+        if (cfg.maxInFlight != t.maxInFlight) {
+            out.add("--max-inflight");
+            out.add(Integer.toString(cfg.maxInFlight));
+        }
+        if (cfg.maxPerSec != t.maxPerSec) {
+            out.add("--max-rate");
+            out.add(Integer.toString(cfg.maxPerSec));
+        }
+        if (cfg.timeoutSec != t.timeoutSec) {
+            out.add("-t");
+            out.add(Integer.toString(cfg.timeoutSec));
+        }
+        if (cfg.minRttTimeoutMs != NMapConfig.DEFAULT_MIN_RTT_TIMEOUT_MS) {
+            out.add("--min-rtt-timeout");
+            out.add(Integer.toString(cfg.minRttTimeoutMs));
+        }
+        if (cfg.openOnly) out.add("--open");
+        if (cfg.upOnly) out.add("--up-only");
+        if (cfg.reverseDns == NMapConfig.ReverseDns.NEVER) out.add("-n");
+        else if (cfg.reverseDns == NMapConfig.ReverseDns.ALL) out.add("-R");
+        if (cfg.dnsServer != null) {
+            out.add("--dns-servers");
+            out.add(cfg.dnsServer);
+        }
+        if (cfg.verbose) out.add("-v");
+        return String.join(" ", out);
+    }
+
+    /**
+     * A {@code -p} spec for the given ports, runs of consecutive ports compressed to ranges, the
+     * UDP half prefixed {@code U:}; empty when there is nothing to name. Null arrays count as
+     * empty. {@code portSpec(new int[]{80}, new int[]{53, 161, 162})} is {@code 80,U:53,161-162}.
+     */
+    public static String portSpec(int[] tcp, int[] udp) {
+        StringBuilder sb = new StringBuilder();
+        appendRanges(sb, tcp);
+        if (udp != null && udp.length > 0) {
+            if (sb.length() > 0) sb.append(',');
+            sb.append("U:");
+            appendRanges(sb, udp);
+        }
+        return sb.toString();
+    }
+
+    private static void appendRanges(StringBuilder sb, int[] ports) {
+        if (ports == null) return;
+        int i = 0;
+        while (i < ports.length) {
+            int start = ports[i];
+            int end = start;
+            while (i + 1 < ports.length && ports[i + 1] == end + 1) {
+                end = ports[++i];
+            }
+            if (sb.length() > 0 && sb.charAt(sb.length() - 1) != ':') sb.append(',');
+            sb.append(start);
+            if (end > start) sb.append('-').append(end);
+            i++;
+        }
+    }
+
+    /**
      * Parse a port spec like {@code "22,80,443"} or {@code "1-1024"} into a TCP port array.
      * {@code T:}/{@code U:} prefixes are accepted; only the TCP half is returned here — use
      * {@link #parsePortSpec} to see both.

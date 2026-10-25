@@ -1,6 +1,8 @@
 package io.xlogistx.nosneak.app.ui;
 
 import io.xlogistx.gui.*;
+import io.xlogistx.nosneak.app.ui.scan.ScanFormPanel;
+import io.xlogistx.nosneak.app.ui.scan.ScanResultView;
 import io.xlogistx.nosneak.app.ui.utility.AppContext;
 import io.xlogistx.nosneak.app.ui.utility.Navigator;
 import io.xlogistx.nosneak.data.ProbeContent;
@@ -19,6 +21,7 @@ import org.zoxweb.shared.task.CallableConsumerTask;
 import org.zoxweb.shared.util.SUS;
 
 import javax.swing.*;
+import javax.swing.table.TableRowSorter;
 import java.awt.*;
 import java.awt.datatransfer.StringSelection;
 import java.time.Instant;
@@ -70,42 +73,45 @@ public class ScanPanel extends JPanel {
     private final CardStack cardStack = new CardStack();
     private final AppContext ctx;
 
-    private ListSection<ReportContent> resultList;
+    private final HistoryModel historyModel = new HistoryModel();
+    private final JTable historyTable = new JTable(historyModel);
+    private final TableRowSorter<HistoryModel> historySorter = new TableRowSorter<>(historyModel);
+    private final JLabel historyCount = new JLabel();
     private ListSection<ProbeContent> probeList;
     private List<ReportContent> scanResults = List.of();
     private List<ProbeContent> probes = List.of();
 
-    private final JTextField nameText = new JTextField(16);
-    private final JTextField commandText = new JTextField(30);
-    private final JLabel effectiveLabel = new JLabel(" ");
-    private final JTextArea resultText = new JTextArea();
-    private final JButton sendResultToChatButton = new JButton("Send to chat", new IconUtil.NextIcon(16));
-    /** Copies the result pane to the clipboard; enabled whenever the pane holds a render, partial or not. */
-    private final JButton copyResultButton = new JButton(new IconUtil.CopyIcon(16));
-    /** Enabled only while a scan runs; stops it through the scanner's handle. */
-    private final JButton stopButton = new JButton("Stop", new IconUtil.StopIcon(16));
+    /** The scan set-up: fields that generate the command, and the command that refills them (2026-10-24). */
+    private final ScanFormPanel form = new ScanFormPanel();
+    /** The ticked probes as chips; the ticks themselves live in {@link #tickedProbes}. */
+    private final ChipPanel probeChips = new ChipPanel();
+    /** The fresh run's report as tables, under the form. */
+    private final ScanResultView resultView;
+    /** A stored report opened from history, on its own card. */
+    private final ScanResultView storedView;
+    /** Enabled only while a scan runs; stops it through the scanner's handle. The form owns the button. */
+    private final JButton stopButton;
     /** The scan in progress, or null. Set on the worker, read on the EDT by the Stop button. */
     private volatile NMapScanner.ScanHandle running;
     private ReportContent selectedScan;
     private ProbeContent selectedProbe;
-
-    private JTextArea viewScanTextArea;
 
     private JTextField viewProbeTitleArea;
     private JTextArea viewProbeTextArea;
 
     /** Tick keys — see {@link ProbeSelection#bundledKey} and {@link ProbeSelection#storedKey}. */
     private final Set<String> tickedProbes = new HashSet<>();
-    private final JPanel probeSelector = new JPanel(new MigLayout("wrap 1, insets 8, gapy 2", "[grow]"));
     private List<ProbeDefinition> bundledProbes = List.of();
 
     private final BiConsumer<String, String> sendToChat;
-    private String lastScanName = "";
 
     public ScanPanel(AppContext ctx, BiConsumer<String, String> sendToChat) {
         this.ctx = ctx;
-
         this.sendToChat = sendToChat;
+        this.stopButton = form.getStopButton();
+        this.resultView = new ScanResultView(ScanPanel::copyToClipboard, this::setSendToChat);
+        this.storedView = new ScanResultView(ScanPanel::copyToClipboard, this::setSendToChat);
+        this.storedView.onRerun(() -> rerunScan(selectedScan));
 
         setLayout(new BorderLayout());
         cardStack.add(buildScanPanel(), "Scan");
@@ -114,7 +120,7 @@ public class ScanPanel extends JPanel {
         cardStack.add(buildViewScanResult(), "View_scan");
         cardStack.add(buildEditProbe(), "Edit_probe");
 
-        rebuildProbeSelector();
+        refreshProbeChips();
 
         ctx.session().onAuthChange(e -> SwingUtilities.invokeLater(() -> {
             // Login or logout, the previous subject's data leaves the screen first. Only a
@@ -126,16 +132,17 @@ public class ScanPanel extends JPanel {
             }
         }));
 
-        JToggleButton scanButton = new JToggleButton("Scanner");
-        scanButton.addActionListener(e -> cardStack.show("Scan"));
+        add(cardStack.view(), BorderLayout.CENTER);
+    }
 
-        JToggleButton probeButton = new JToggleButton("Probe Library");
-        probeButton.addActionListener(e -> cardStack.show("Probe"));
+    /** The sections the application's sidebar routes to (2026-10-24); the toggle column is gone. */
+    public static final String SECTION_SCAN = "Scan";
+    public static final String SECTION_HISTORY = "Result";
+    public static final String SECTION_PROBES = "Probe";
 
-        JToggleButton resultButton = new JToggleButton("Scan History");
-        resultButton.addActionListener(e -> cardStack.show("Result"));
-
-        add(PanelBuilder.buildDefaultSplitPanel(cardStack.view(), scanButton, resultButton, probeButton));
+    /** Shows one of the {@code SECTION_*} cards (the detail cards are reached from within). */
+    public void show(String section) {
+        cardStack.show(section);
     }
 
     /**
@@ -144,16 +151,11 @@ public class ScanPanel extends JPanel {
      * time from the EDT.
      */
     public void resetPanel() {
-        nameText.setText("");
-        commandText.setText("");
-        effectiveLabel.setText(" ");
-        resultText.setText("");
-        lastScanName = "";
-        sendResultToChatButton.setEnabled(false);
-        copyResultButton.setEnabled(false);
+        form.reset();
+        resultView.clear();
+        storedView.clear();
         selectedScan = null;
         selectedProbe = null;
-        if (viewScanTextArea != null) viewScanTextArea.setText("");
         if (viewProbeTextArea != null) viewProbeTextArea.setText("");
         if (viewProbeTitleArea != null) viewProbeTitleArea.setText("");
         tickedProbes.clear();
@@ -161,65 +163,45 @@ public class ScanPanel extends JPanel {
         onStop();
         scanResults = List.of();
         probes = List.of();
-        if (resultList != null) resultList.refresh();
+        historyModel.setRows(scanResults);
+        updateHistoryCount();
         if (probeList != null) probeList.refresh();
-        rebuildProbeSelector();
+        refreshProbeChips();
         cardStack.show("Scan");
     }
 
+    /** Shows a report on the scanner page as a finished, stored run; for hosts and renders. */
+    public void showResult(String name, String json) {
+        resultView.setReport(name, json, null, true);
+    }
+
     private JPanel buildScanPanel() {
-        JPanel out = new JPanel(new BorderLayout(0, 8));
+        JPanel out = new JPanel(new MigLayout("insets 20 24 24 24, wrap 1, gapy 14, fill", "[grow,fill]", "[][]0[grow,fill]"));
+        out.setBackground(UITokens.color("xlogistx.ground", null, 0xF4F4F7));
 
-        JPanel top = new JPanel(new BorderLayout(6, 0));
-        JButton help = new JButton(new IconUtil.InfoIcon(16));
-        help.setToolTipText("Usage");
-        help.addActionListener(e -> showUsage());
+        JPanel head = new JPanel(new MigLayout("insets 0, wrap 1, gapy 2"));
+        head.setOpaque(false);
+        JLabel title = new JLabel("New scan");
+        title.setFont(UITokens.font(Font.BOLD, 8f));
+        head.add(title);
+        JLabel sub = new JLabel("Assess what the hosts on a segment expose. Only ordinary handshakes are sent, from this machine's own address.");
+        sub.setForeground(UITokens.muted());
+        head.add(sub);
+        out.add(head, "growx");
 
-        JButton run = new JButton("Run", new IconUtil.RunIcon(16));
-        stopButton.setEnabled(false);
-        stopButton.setToolTipText("Stop the running scan; what completed so far is shown, nothing is saved");
+        probeChips.setEmptyText("none · service detection still identifies services");
+        probeChips.addAction("Add probe", this::showProbeMenu);
+        probeChips.onRemove(key -> {
+            tickedProbes.remove(key);
+            refreshProbeChips();
+        });
+        form.setProbeControl(probeChips);
+        form.getHelpButton().addActionListener(_ -> showUsage());
         stopButton.addActionListener(_ -> onStop());
-        JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
-        actions.add(help);
-        actions.add(run);
-        actions.add(stopButton);
+        form.getRunButton().addActionListener(_ -> onRun(form.getRunButton()));
+        out.add(form, "growx");
 
-        effectiveLabel.setFont(effectiveLabel.getFont().deriveFont(effectiveLabel.getFont().getSize2D() - 2f));
-        effectiveLabel.setForeground(UIManager.getColor("Label.disabledForeground"));
-
-        JPanel fields = new JPanel(new MigLayout("insets 0, gapx 10, wrap 3", "[180!][grow][]", "[][]"));
-        fields.add(new JLabel("Name"));
-        fields.add(new JLabel("Command"));
-        fields.add(new JLabel());
-        fields.add(nameText, "growx");
-        fields.add(commandText, "growx");
-        fields.add(actions);
-
-        top.add(fields, BorderLayout.CENTER);
-        top.add(effectiveLabel, BorderLayout.SOUTH);
-        top.setBorder(BorderFactory.createEmptyBorder(10, 12, 10, 12));
-
-        resultText.setEditable(false);
-
-        JPanel result = new JPanel(new BorderLayout());
-        sendResultToChatButton.setEnabled(false);
-        sendResultToChatButton.addActionListener(_ -> setSendToChat(resultText.getText(), lastScanName));
-        copyResultButton.setEnabled(false);
-        copyResultButton.setToolTipText("Copy the result to the clipboard");
-        copyResultButton.addActionListener(_ -> copyToClipboard(resultText.getText()));
-        JPanel resultActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
-        resultActions.add(copyResultButton);
-        resultActions.add(sendResultToChatButton);
-        result.add(resultActions, BorderLayout.NORTH);
-        result.add(new JScrollPane(resultText), BorderLayout.CENTER);
-
-        JSplitPane split = PanelBuilder.buildHorizontalSplitView(buildProbeSelector(), result, 320, 0);
-
-        out.add(top, BorderLayout.NORTH);
-        out.add(split, BorderLayout.CENTER);
-
-        run.addActionListener(_ -> onRun(run));
-
+        out.add(resultView, "grow, push");
         return out;
     }
 
@@ -240,20 +222,21 @@ public class ScanPanel extends JPanel {
     }
 
     private void onRun(JButton run) {
-        String typed = commandText.getText().trim();
         NMapConfig cfg;
         ProbeSelection.Selection selected;
         try {
-            cfg = NMap.parseCommand(typed);
+            cfg = form.toConfig();
             selected = ProbeSelection.select(bundledProbes, probes, tickedProbes);
             ProbeSelection.applyTo(cfg, selected);
         } catch (IllegalArgumentException ex) {
-            JOptionPane.showMessageDialog(this, ex.getMessage() + "\n\n" + NMap.usageText(),
-                    "Invalid command", JOptionPane.ERROR_MESSAGE);
+            form.showError(ex.getMessage());
             return;
         }
+        form.clearMessage();
+        // what the report records as the command: the form's own print of what it is running,
+        // probes aside (they are applied to the config, never written into the line)
+        String typed = form.getCommand().isEmpty() ? NMap.formatCommand(cfg) : form.getCommand();
         String probeNames = ProbeSelection.describe(selected);
-        effectiveLabel.setText(probeNames.isEmpty() ? " " : "probes: " + probeNames);
         String scanName = reportName(cfg);
         String subjectAtStart = ctx.session().getSubjectGUID();
 
@@ -262,12 +245,9 @@ public class ScanPanel extends JPanel {
             stopButton.setEnabled(false);
             if (outcome.stopped() != null) {
                 // Stopped by the subject or by the wait budget: show what completed, save nothing.
-                resultText.setText(outcome.json() == null ? "" : outcome.json());
-                resultText.setCaretPosition(0);
-                sendResultToChatButton.setEnabled(false);
-                copyResultButton.setEnabled(outcome.json() != null); // a partial render is still worth copying
-                JOptionPane.showMessageDialog(this, outcome.stopped(), "Scan stopped",
-                        JOptionPane.WARNING_MESSAGE);
+                if (outcome.json() != null) resultView.setReport(scanName, outcome.json(), outcome.stopped(), false);
+                else resultView.clear();
+                form.showError(outcome.stopped().lines().findFirst().orElse("Scan stopped"));
                 return;
             }
             // The scan belongs to whoever started it. If that subject is gone, so is the report.
@@ -279,21 +259,27 @@ public class ScanPanel extends JPanel {
                 return;
             }
             String json = outcome.json();
-            resultText.setText(json);
-            resultText.setCaretPosition(0);
-            lastScanName = scanName;
-            sendResultToChatButton.setEnabled(true);
-            copyResultButton.setEnabled(true);
+            resultView.setReport(scanName, json, null, false);
             ReportContent r = new ReportContent();
             r.setName(scanName);
             r.setDescription(probeNames.isEmpty() ? typed : typed + "  ·  probes: " + probeNames);
             r.setContent(json);
             r.getProperties().build("command", typed);
             if (!probeNames.isEmpty()) r.getProperties().build("probes", probeNames);
+            // the history table reads these off the projected row, so a report is never re-fetched to count
+            try {
+                io.xlogistx.nosneak.app.ui.scan.ReportView.Report parsed = io.xlogistx.nosneak.app.ui.scan.ReportView.parse(json);
+                r.getProperties().build("hostsUp", Integer.toString(parsed.upHosts().size()));
+                r.getProperties().build("openPorts", Integer.toString(parsed.openPortCount()));
+            } catch (IllegalArgumentException ignore) {
+                // an unparseable report still saves; the table shows a dash
+            }
             // Encrypting and inserting a report is store I/O: off the EDT, like every other
             // Session call in this file, and a failure is a dialog rather than a frozen UI.
-            BackgroundTask.runCatching(this, null, () -> ctx.session().saveScanResult(r),
-                    this::reloadScanResults);
+            BackgroundTask.runCatching(this, null, () -> ctx.session().saveScanResult(r), () -> {
+                resultView.markSaved(true);
+                reloadScanResults();
+            });
         });
     }
 
@@ -304,7 +290,7 @@ public class ScanPanel extends JPanel {
      * short: the full command lives in the report's description.
      */
     private String reportName(NMapConfig cfg) {
-        String typed = nameText.getText().trim();
+        String typed = form.getScanName();
         return typed.isEmpty() ? String.join(" ", cfg.targets) : typed;
     }
 
@@ -374,6 +360,33 @@ public class ScanPanel extends JPanel {
             }
         }
 
+        /**
+         * The inverse of {@link #describe}: the ticks a report's saved {@code probes} property
+         * stands for, against the probes known now (2026-10-25, for <i>Scan again</i>). A name is
+         * matched to a bundled probe first, then to a stored one by name; a name that matches
+         * nothing (a stored probe deleted since) is dropped. Null or blank gives no ticks.
+         */
+        static Set<String> keysForNames(String csv, List<ProbeDefinition> bundled, List<ProbeContent> stored) {
+            Set<String> keys = new HashSet<>();
+            if (csv == null || csv.isBlank()) return keys;
+            for (String raw : csv.split(",")) {
+                String name = raw.trim();
+                if (name.isEmpty()) continue;
+                boolean found = false;
+                for (ProbeDefinition d : bundled) {
+                    if (name.equals(d.getName())) {
+                        keys.add(bundledKey(d.getName()));
+                        found = true;
+                        break;
+                    }
+                }
+                if (found) continue;
+                ProbeContent mine = existingByName(stored, name);
+                if (mine != null) keys.add(storedKey(mine));
+            }
+            return keys;
+        }
+
         /** The ticked names as a comma-separated list, for display and for the report. */
         static String describe(Selection sel) {
             List<String> names = new ArrayList<>(sel.bundledNames());
@@ -406,67 +419,71 @@ public class ScanPanel extends JPanel {
         }
     }
 
-    private JComponent buildProbeSelector() {
-        JScrollPane sp = new JScrollPane(probeSelector);
-        sp.setBorder(BorderFactory.createEmptyBorder());
-        sp.getVerticalScrollBar().setUnitIncrement(16);
-        return sp;
-    }
+    /** One selectable probe: the label shown and the tick key behind it. */
+    private record ProbeRow(String key, String label, String tooltip, boolean stored) {}
 
-    /** One checkbox row: the label shown and the tick key behind it. */
-    private record ProbeRow(String key, String label, String tooltip) {}
-
-    private void rebuildProbeSelector() {
-        probeSelector.removeAll();
-
-        List<ProbeRow> bundledRows = new ArrayList<>();
+    private List<ProbeRow> probeRows() {
+        List<ProbeRow> rows = new ArrayList<>();
         for (ProbeDefinition d : bundledProbes) {
-            bundledRows.add(new ProbeRow(ProbeSelection.bundledKey(d.getName()), d.getName(), bundledTip(d)));
+            rows.add(new ProbeRow(ProbeSelection.bundledKey(d.getName()), d.getName(), bundledTip(d), false));
         }
-        addProbeSection("Bundled probes", "", bundledRows, "None loaded");
-
-        List<ProbeRow> myRows = new ArrayList<>();
         for (ProbeContent p : probes) {
             if (p.getName() != null && !p.getName().isBlank()) {
-                myRows.add(new ProbeRow(ProbeSelection.storedKey(p), p.getName(), null));
+                rows.add(new ProbeRow(ProbeSelection.storedKey(p), p.getName(), null, true));
             }
         }
-        addProbeSection("My probes", "gaptop 10", myRows, "No probes yet");
-
-        probeSelector.revalidate();
-        probeSelector.repaint();
+        return rows;
     }
 
-    private void addProbeSection(String title, String titleGap, List<ProbeRow> rows, String emptyText) {
-        probeSelector.add(sectionLabel(title), titleGap);
+    /** The chips are the ticked probes; a stored one carries a "mine" badge. */
+    private void refreshProbeChips() {
+        List<ChipPanel.Chip> chips = new ArrayList<>();
+        for (ProbeRow row : probeRows()) {
+            if (tickedProbes.contains(row.key())) chips.add(new ChipPanel.Chip(row.key(), row.label(), row.stored() ? "mine" : null));
+        }
+        probeChips.setChips(chips);
+        if (!chips.isEmpty()) form.setServiceDetection(true); // ticking implies -sV, as applyTo does
+    }
 
+    /** The Add probe menu: a check item per bundled and stored probe, grouped, with an All per group. */
+    private void showProbeMenu() {
+        JPopupMenu menu = new JPopupMenu();
+        List<ProbeRow> rows = probeRows();
+        addProbeGroup(menu, "Bundled probes", rows.stream().filter(r -> !r.stored()).toList(), "None loaded");
+        menu.addSeparator();
+        addProbeGroup(menu, "My probes", rows.stream().filter(ProbeRow::stored).toList(), "No probes yet");
+        JComponent anchor = probeChips;
+        menu.show(anchor, 0, anchor.getHeight());
+    }
+
+    private void addProbeGroup(JPopupMenu menu, String title, List<ProbeRow> rows, String emptyText) {
+        JMenuItem header = new JMenuItem(title.toUpperCase());
+        header.setEnabled(false);
+        header.setFont(UITokens.font(Font.BOLD, -2f));
+        menu.add(header);
         if (rows.isEmpty()) {
-            probeSelector.add(emptyLabel(emptyText));
+            JMenuItem none = new JMenuItem(emptyText);
+            none.setEnabled(false);
+            menu.add(none);
             return;
         }
-
         List<String> keys = rows.stream().map(ProbeRow::key).toList();
-        List<JCheckBox> rowBoxes = new ArrayList<>();
-        JCheckBox allBox = new JCheckBox("All", tickedProbes.containsAll(keys));
-        allBox.setToolTipText("Select every probe in this group");
-        allBox.addActionListener(_ -> {
-            boolean on = allBox.isSelected();
-            for (JCheckBox b : rowBoxes) b.setSelected(on);
-            if (on) tickedProbes.addAll(keys);
+        JCheckBoxMenuItem all = new JCheckBoxMenuItem("All", tickedProbes.containsAll(keys));
+        all.addActionListener(_ -> {
+            if (all.isSelected()) tickedProbes.addAll(keys);
             else tickedProbes.removeAll(keys);
+            refreshProbeChips();
         });
-        probeSelector.add(allBox, "growx");
-
+        menu.add(all);
         for (ProbeRow row : rows) {
-            JCheckBox box = new JCheckBox(row.label(), tickedProbes.contains(row.key()));
-            if (row.tooltip() != null) box.setToolTipText(row.tooltip());
-            box.addActionListener(_ -> {
-                if (box.isSelected()) tickedProbes.add(row.key());
+            JCheckBoxMenuItem item = new JCheckBoxMenuItem(row.label(), tickedProbes.contains(row.key()));
+            if (row.tooltip() != null) item.setToolTipText(row.tooltip());
+            item.addActionListener(_ -> {
+                if (item.isSelected()) tickedProbes.add(row.key());
                 else tickedProbes.remove(row.key());
-                allBox.setSelected(!rowBoxes.isEmpty() && rowBoxes.stream().allMatch(AbstractButton::isSelected));
+                refreshProbeChips();
             });
-            rowBoxes.add(box);
-            probeSelector.add(box, "growx, gapleft 12");
+            menu.add(item);
         }
     }
 
@@ -482,19 +499,6 @@ public class ScanPanel extends JPanel {
             }
         }
         return sb.isEmpty() ? null : sb.toString();
-    }
-
-    private static JLabel sectionLabel(String text) {
-        JLabel label = new JLabel(text.toUpperCase());
-        label.setFont(label.getFont().deriveFont(Font.BOLD, label.getFont().getSize2D() - 2f));
-        label.setForeground(UIManager.getColor("Label.disabledForeground"));
-        return label;
-    }
-
-    private static JLabel emptyLabel(String text) {
-        JLabel label = new JLabel(text);
-        label.setEnabled(false);
-        return label;
     }
 
     private void showUsage() {
@@ -519,21 +523,179 @@ public class ScanPanel extends JPanel {
         return probeList;
     }
 
+    /**
+     * The history page (board 3 of the redesign canvas, 2026-10-24): a table of stored scans —
+     * name and target, the command, when and how long, hosts up, open ports — with a search box
+     * that filters every column and a toolbar that acts on the selected row (View, Scan again,
+     * Copy command, Copy result, Send to assistant, Delete); a double-click views. Rows are the projected
+     * {@link ReportContent}s (no content), so hosts and ports come from the {@code summary}
+     * property a run records; older rows show a dash.
+     */
     private JPanel buildResultPanel() {
-        resultList = ListSection.of(() -> scanResults)
-                .title("Scan Results")
-                .label(ReportContent::getName)
-                .sublabel(ScanPanel::stampOf)
-                .action(new ListSection.RowAction<>(new IconUtil.TextBoxIcon(16), "Copy the command", s -> () -> onCopyScanCommand(s)))
-                .action(new ListSection.RowAction<>(new IconUtil.CopyIcon(16), "Copy the result", s -> () -> onCopyScanResult(s)))
-                .action(new ListSection.RowAction<>(new IconUtil.NextIcon(16), "Send to chat", s -> () -> onSendScanResult(s)))
-                .action(new ListSection.RowAction<>(new IconUtil.VisibleIcon(16), "View", s -> () -> onViewScanResult(s)))
-                .onRemove(s -> () -> onRemoveScanResult(s))
-                .emptyText("No scans yet")
-                .scrollable()
-                .build();
+        JPanel out = new JPanel(new MigLayout("insets 20 24 24 24, wrap 1, gapy 14, fill", "[grow,fill]", "[][]0[grow,fill]"));
+        out.setBackground(UITokens.color("xlogistx.ground", null, 0xF4F4F7));
 
-        return resultList;
+        JPanel head = new JPanel(new MigLayout("insets 0, gapx 12", "[grow][]"));
+        head.setOpaque(false);
+        JPanel titles = new JPanel(new MigLayout("insets 0, wrap 1, gapy 2"));
+        titles.setOpaque(false);
+        JLabel title = new JLabel("Scan history");
+        title.setFont(UITokens.font(Font.BOLD, 8f));
+        titles.add(title);
+        JLabel sub = new JLabel("Every completed scan you ran, kept in this store under your account only. Stopped scans are not saved.");
+        sub.setForeground(UITokens.muted());
+        titles.add(sub);
+        head.add(titles, "wmin 0");
+        JButton newScan = UITokens.primary(new JButton("New scan", IconUtil.svgIcon("io/xlogistx/gui/icons/plus.svg", 14, Color.WHITE)));
+        newScan.addActionListener(_ -> ctx.nav().show(Navigator.Screen.SCAN_NEW));
+        head.add(newScan);
+        out.add(head, "growx");
+
+        JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", "[260!][]push[][][][][][]"));
+        bar.setOpaque(false);
+        JTextField search = new JTextField();
+        search.putClientProperty("JTextField.placeholderText", "Search by name, target or command");
+        search.putClientProperty("JTextField.leadingIcon", new IconUtil.SearchIcon(14));
+        bar.add(search, "growx");
+        historyCount.setForeground(UITokens.muted());
+        historyCount.setFont(UITokens.font(Font.PLAIN, -1f));
+        bar.add(historyCount);
+        JButton view = new JButton("View", new IconUtil.VisibleIcon(16));
+        JButton again = new JButton("Scan again", IconUtil.svgIcon("io/xlogistx/gui/icons/refresh.svg", 16, UITokens.text()));
+        again.setToolTipText("Load this scan's command, probes and name into New scan");
+        JButton copyCommand = new JButton("Copy command", new IconUtil.TextBoxIcon(16));
+        JButton copyResult = new JButton("Copy result", new IconUtil.CopyIcon(16));
+        JButton send = new JButton("Send to assistant", IconUtil.svgIcon("io/xlogistx/gui/icons/chat.svg", 16, UITokens.text()));
+        JButton delete = new JButton("Delete", new IconUtil.DeleteIcon(16));
+        delete.setForeground(UITokens.danger());
+        for (JButton b : new JButton[]{view, again, copyCommand, copyResult, send, delete}) {
+            b.putClientProperty("JButton.buttonType", "toolBarButton");
+            b.setEnabled(false);
+            bar.add(b);
+        }
+        out.add(bar, "growx");
+
+        Tables.style(historyTable);
+        Tables.width(historyTable, 0, 220);
+        Tables.width(historyTable, 1, 360);
+        Tables.width(historyTable, 2, 150);
+        Tables.width(historyTable, 3, 80);
+        Tables.width(historyTable, 4, 90);
+        historyTable.getColumnModel().getColumn(1).setCellRenderer(new MonoRenderer());
+        historyTable.setRowSorter(historySorter);
+        historySorter.setSortKeys(List.of(new RowSorter.SortKey(2, SortOrder.DESCENDING)));
+        historyTable.getSelectionModel().addListSelectionListener(e -> {
+            boolean on = historyTable.getSelectedRow() >= 0;
+            for (JButton b : new JButton[]{view, again, copyCommand, copyResult, send, delete}) b.setEnabled(on);
+        });
+        historyTable.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent e) {
+                if (e.getClickCount() == 2) onViewScanResult(selectedHistoryRow());
+            }
+        });
+        search.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            public void insertUpdate(javax.swing.event.DocumentEvent e) {
+                filter();
+            }
+
+            public void removeUpdate(javax.swing.event.DocumentEvent e) {
+                filter();
+            }
+
+            public void changedUpdate(javax.swing.event.DocumentEvent e) {
+                filter();
+            }
+
+            private void filter() {
+                String q = search.getText().trim();
+                historySorter.setRowFilter(q.isEmpty() ? null : RowFilter.regexFilter("(?i)" + Pattern.quote(q)));
+                updateHistoryCount();
+            }
+        });
+        view.addActionListener(_ -> onViewScanResult(selectedHistoryRow()));
+        again.addActionListener(_ -> rerunScan(selectedHistoryRow()));
+        copyCommand.addActionListener(_ -> onCopyScanCommand(selectedHistoryRow()));
+        copyResult.addActionListener(_ -> onCopyScanResult(selectedHistoryRow()));
+        send.addActionListener(_ -> onSendScanResult(selectedHistoryRow()));
+        delete.addActionListener(_ -> {
+            ReportContent row = selectedHistoryRow();
+            if (row == null) return;
+            int ok = JOptionPane.showConfirmDialog(this, "Delete the scan \"" + row.getName() + "\"?", "Delete scan",
+                    JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
+            if (ok == JOptionPane.OK_OPTION) onRemoveScanResult(row);
+        });
+
+        JScrollPane scroll = new JScrollPane(historyTable);
+        scroll.setBorder(BorderFactory.createLineBorder(UITokens.border()));
+        scroll.getViewport().setBackground(UITokens.surface());
+        out.add(scroll, "grow, push");
+        return out;
+    }
+
+    private ReportContent selectedHistoryRow() {
+        int row = historyTable.getSelectedRow();
+        return row < 0 ? null : historyModel.at(historyTable.convertRowIndexToModel(row));
+    }
+
+    private void updateHistoryCount() {
+        int shown = historyTable.getRowCount();
+        int all = historyModel.getRowCount();
+        historyCount.setText(all == 0 ? "No scans yet" : shown == all ? all + " scans" : shown + " of " + all + " scans");
+    }
+
+    /** The history rows: projections, re-fetched by GUID before anything reads their content. */
+    private static final class HistoryModel extends javax.swing.table.AbstractTableModel {
+        private static final String[] COLS = {"Scan", "Command", "When", "Hosts up", "Open ports"};
+        private List<ReportContent> rows = List.of();
+
+        void setRows(List<ReportContent> list) {
+            rows = list != null ? list : List.of();
+            fireTableDataChanged();
+        }
+
+        ReportContent at(int row) {
+            return rows.get(row);
+        }
+
+        public int getRowCount() {
+            return rows.size();
+        }
+
+        public int getColumnCount() {
+            return COLS.length;
+        }
+
+        public String getColumnName(int c) {
+            return COLS[c];
+        }
+
+        public Object getValueAt(int r, int c) {
+            ReportContent s = rows.get(r);
+            return switch (c) {
+                case 0 -> s.getName();
+                case 1 -> commandOf(s);
+                case 2 -> s.getCreationTime() > 0 ? STAMP.format(Instant.ofEpochMilli(s.getCreationTime())) : "";
+                case 3 -> property(s, "hostsUp");
+                default -> property(s, "openPorts");
+            };
+        }
+
+        private static String property(ReportContent s, String key) {
+            Object v = s.getProperties() != null ? s.getProperties().getValue(key) : null;
+            return v != null ? v.toString() : "—";
+        }
+    }
+
+    /** The command column in the mono font, muted. */
+    private static final class MonoRenderer extends javax.swing.table.DefaultTableCellRenderer {
+        @Override
+        public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
+            super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+            setFont(UITokens.mono(-1.5f));
+            if (!isSelected) setForeground(UITokens.muted());
+            return this;
+        }
     }
 
     /**
@@ -545,6 +707,31 @@ public class ScanPanel extends JPanel {
     private void onCopyScanCommand(ReportContent row) {
         if (row == null) return;
         copyToClipboard(commandOf(row));
+    }
+
+    /**
+     * <b>Scan again</b>: the stored report's command, probe ticks and name go back into the New
+     * scan form, which then shows the scan exactly as it was defined, ready for Run. Nothing runs
+     * until the subject presses Run, so the command can still be adjusted first. A report saved
+     * before the command property existed falls back to its description, cut before the
+     * {@code · probes:} suffix the description carries.
+     */
+    private void rerunScan(ReportContent scan) {
+        if (scan == null) return;
+        String command = commandOf(scan);
+        if (command != null) command = command.split("\s+·\s+", 2)[0].trim();
+        if (SUS.isEmpty(command)) {
+            JOptionPane.showMessageDialog(this, "This report did not record its command.", "Scan again",
+                    JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        Object saved = scan.getProperties() != null ? scan.getProperties().getValue("probes") : null;
+        tickedProbes.clear();
+        tickedProbes.addAll(ProbeSelection.keysForNames(saved != null ? saved.toString() : null, bundledProbes, probes));
+        form.setCommand(command);
+        form.setScanName(scan.getName());
+        refreshProbeChips();
+        ctx.nav().show(Navigator.Screen.SCAN_NEW);
     }
 
     /** The typed command of a report: the {@code command} property, else the description. */
@@ -598,7 +785,8 @@ public class ScanPanel extends JPanel {
     private void reloadScanResults() {
         BackgroundTask.run(this, null, () -> ctx.session().getAllScanResults(), loaded -> {
             scanResults = loaded;
-            resultList.refresh();
+            historyModel.setRows(scanResults);
+            updateHistoryCount();
         });
     }
 
@@ -615,7 +803,7 @@ public class ScanPanel extends JPanel {
             for (ProbeContent p : probes) live.add(ProbeSelection.storedKey(p));
             tickedProbes.retainAll(live);
             probeList.refresh();
-            rebuildProbeSelector();
+            refreshProbeChips();
         });
     }
 
@@ -629,37 +817,20 @@ public class ScanPanel extends JPanel {
                 return;
             }
             this.selectedScan = full;
-            viewScanTextArea.setText(full.getContent());
-            viewScanTextArea.setCaretPosition(0);
+            storedView.setReport(full.getName(), full.getContent(), null, true);
             cardStack.show("View_scan");
         });
     }
 
+    /** A stored report, in the same tables as a fresh run, with a way back to the history list. */
     private JPanel buildViewScanResult() {
-        viewScanTextArea = new JTextArea();
-        viewScanTextArea.setEditable(false);
-        viewScanTextArea.setLineWrap(true);
-        viewScanTextArea.setWrapStyleWord(true);
-
-        return PanelBuilder.detail("View Scan Result", () -> cardStack.show("Result"), content -> {
-            JPanel body = new JPanel(new BorderLayout());
-
-            JButton copy = new JButton(new IconUtil.CopyIcon(16));
-            copy.setToolTipText("Copy the result to the clipboard");
-            copy.addActionListener(e -> copyToClipboard(viewScanTextArea.getText()));
-            JButton sendButton = new JButton("Send to chat", new IconUtil.NextIcon(16));
-            sendButton.setEnabled(sendToChat != null);
-            sendButton.addActionListener(e -> {
-                if (selectedScan == null) return;
-                setSendToChat(selectedScan.getContent(), selectedScan.getName());
-            });
-            content.add(copy, "gapbottom 6");
-            content.add(sendButton, "gapbottom 6");
-
-            body.add(new JScrollPane(viewScanTextArea), BorderLayout.CENTER);
-
-            content.add(body, "grow, push");
-        });
+        JPanel out = new JPanel(new MigLayout("insets 20 24 24 24, wrap 1, gapy 10, fill", "[grow,fill]", "[]0[grow,fill]"));
+        out.setBackground(UITokens.color("xlogistx.ground", null, 0xF4F4F7));
+        JButton back = UITokens.link(new JButton("Back to history", new IconUtil.BackIcon(16)));
+        back.addActionListener(_ -> cardStack.show("Result"));
+        out.add(back, "alignx left");
+        out.add(storedView, "grow, push");
+        return out;
     }
 
     private void onRemoveScanResult(ReportContent reportContent) {
@@ -729,8 +900,7 @@ public class ScanPanel extends JPanel {
         boolean updated = SUS.isNotEmpty(p.getGUID());
         BackgroundTask.run(this, null, () -> ctx.session().saveProbe(p), saved -> {
             reloadProbes();
-            ctx.nav().show(Navigator.Screen.SCAN);
-            cardStack.show("Probe");
+            ctx.nav().show(Navigator.Screen.PROBES);
             JOptionPane.showMessageDialog(this,
                     (updated ? "Updated probe \"" : "Saved probe \"") + p.getName() + "\".",
                     "Probe", JOptionPane.INFORMATION_MESSAGE);
@@ -827,6 +997,6 @@ public class ScanPanel extends JPanel {
             JOptionPane.showMessageDialog(this, e.getMessage(), "Send to chat", JOptionPane.WARNING_MESSAGE);
             return;
         }
-        ctx.nav().show(Navigator.Screen.ASSISTANT);
+        ctx.nav().show(Navigator.Screen.CHAT);
     }
 }

@@ -1,5 +1,7 @@
 package io.xlogistx.nosneak.ai.assistant.panels;
 
+import net.miginfocom.swing.MigLayout;
+import io.xlogistx.gui.UITokens;
 import io.xlogistx.gui.*;
 import io.xlogistx.nosneak.ai.assistant.AssistantContext;
 import io.xlogistx.nosneak.ai.model.AICapture;
@@ -100,25 +102,59 @@ public class CapturePanel extends JPanel {
         tabs.add(areasTab);
         tabs.add(capturesTab);
 
-        JPanel tabRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
-        tabRow.add(areasTab);
-        tabRow.add(capturesTab);
-
+        // the two toggles are no longer shown (2026-10-24: areas and captures sit side by side);
+        // they stay as the selected-state bookkeeping showAreas / showCaptures already keep
         JPanel toolbar = new JPanel(new BorderLayout(0, 8));
-        toolbar.setBorder(BorderFactory.createEmptyBorder(8, 14, 8, 14));
+        toolbar.setBorder(BorderFactory.createEmptyBorder(20, 24, 8, 24));
         toolbar.add(titleRow, BorderLayout.NORTH);
-        toolbar.add(tabRow, BorderLayout.SOUTH);
         return toolbar;
     }
 
+    /**
+     * Board 6 of the redesign canvas (2026-10-24): the session's capture areas on the left and the
+     * stored captures on the right, both visible at once instead of behind two tabs; the preview
+     * card still replaces the captures list while a capture is open.
+     */
     private JComponent buildCaptureCards() {
         areasContent = listContent();
         capturesContent = listContent();
-        captureCards.add(scrollList(areasContent), "areas");
         captureCards.add(scrollList(capturesContent), "captures");
         captureCards.add(buildPreviewPanel(), "preview");
-        captureCards.show("areas");
-        return captureCards.view();
+        captureCards.show("captures");
+
+        JPanel left = new JPanel(new BorderLayout());
+        left.setBackground(UITokens.surface());
+        left.setBorder(BorderFactory.createLineBorder(UITokens.border()));
+        left.add(sectionHeader("Capture areas", "this session only"), BorderLayout.NORTH);
+        left.add(scrollList(areasContent), BorderLayout.CENTER);
+
+        JPanel right = new JPanel(new BorderLayout());
+        right.setBackground(UITokens.surface());
+        right.setBorder(BorderFactory.createLineBorder(UITokens.border()));
+        right.add(sectionHeader("Captures", "stored under your account"), BorderLayout.NORTH);
+        right.add(captureCards.view(), BorderLayout.CENTER);
+
+        JPanel page = new JPanel(new MigLayout("insets 0 24 24 24, gapx 20, fill", "[grow 40,fill][grow 60,fill]", "[grow,fill]"));
+        page.setBackground(UITokens.color("xlogistx.ground", null, 0xF4F4F7));
+        page.add(left, "wmin 0, hmin 0, growy");
+        page.add(right, "wmin 0, hmin 0, growy");
+        return page;
+    }
+
+    private static JComponent sectionHeader(String title, String note) {
+        JPanel h = new JPanel(new BorderLayout(8, 0));
+        h.setOpaque(false);
+        h.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(0, 0, 1, 0, UITokens.border()),
+                BorderFactory.createEmptyBorder(10, 14, 10, 14)));
+        JLabel t = new JLabel(title);
+        t.setFont(UITokens.font(Font.BOLD, 1f));
+        JLabel n = new JLabel(note);
+        n.setForeground(UITokens.muted());
+        n.setFont(UITokens.font(Font.PLAIN, -1.5f));
+        h.add(t, BorderLayout.WEST);
+        h.add(n, BorderLayout.EAST);
+        return h;
     }
 
     private JPanel buildPreviewPanel() {
@@ -466,12 +502,13 @@ public class CapturePanel extends JPanel {
         return (stored != null) ? stored : projected;
     }
 
+    /** Areas are always on screen now; this closes a preview and shows the captures beside them. */
     private void showAreas() {
         areasTab.setSelected(true);
         previewed = null;
         previewImage.setIcon(null);
-        deleteAllButton.setVisible(false);
-        captureCards.show("areas");
+        deleteAllButton.setVisible(true);
+        captureCards.show("captures");
     }
 
     private void showCaptures() {

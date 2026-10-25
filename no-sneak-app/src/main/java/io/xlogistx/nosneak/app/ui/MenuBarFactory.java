@@ -16,10 +16,15 @@ import java.nio.charset.StandardCharsets;
 
 import static java.awt.Component.LEFT_ALIGNMENT;
 
+/**
+ * The menu bar of the signed-in window (2026-10-24: File / View / Help). Navigation moved to the
+ * sidebar; the View menu mirrors it for keyboard discoverability and nothing else. The "Mode"
+ * menu with its never-wired "Technical Mode" checkbox is gone.
+ */
 public class MenuBarFactory {
 
     private static final String DESCRIPTION_RESOURCE = "/app-description.md";
-    private static final String TAGLINE = "Network exposure and post-quantum readiness tooling";
+    public static final String TAGLINE = "Network exposure and post-quantum readiness tooling";
 
     private final AppContext ctx;
     private JMenuBar menuBar;
@@ -33,80 +38,60 @@ public class MenuBarFactory {
     public JMenuBar buildMenu() {
         menuBar = new JMenuBar();
 
-        // JMenuBar -> JMenu -> JMenuItem
-
-        // create menu bar items
         JMenu file = new JMenu("File");
-        JMenu tools = new JMenu("Tools");
+        JMenu view = new JMenu("View");
         JMenu help = new JMenu("Help");
-        JMenu mode = new JMenu("Mode");
 
-        JMenuItem logout = new JMenuItem("Logout");
-        logout.setMaximumSize(logout.getPreferredSize());
+        JMenuItem logout = new JMenuItem("Sign out");
         logout.addActionListener(_ -> {
-            int ok = JOptionPane.showConfirmDialog(menuBar, "Log out of NoSneak?", "Logout",
+            int ok = JOptionPane.showConfirmDialog(menuBar, "Sign out of NoSneak?", "Sign out",
                     JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE);
             if (ok == JOptionPane.OK_OPTION) ctx.session().logout();
         });
+        file.add(logout);
 
-        JCheckBoxMenuItem modeToggle = new JCheckBoxMenuItem("Technical Mode");
-
-        JMenuItem scanner = new JMenuItem("Network scanner");
-        scanner.addActionListener(_ -> ctx.nav().show(Navigator.Screen.SCAN));
-
-/*
-      JMenuItem pqc = new JMenuItem("PQC file sharing");
-      pqc.addActionListener(e -> ctx.nav().show(Navigator.Screen.MAIN));
-*/
-
-        JMenuItem settings = new JMenuItem("Settings");
-        settings.addActionListener(_ -> ctx.nav().show(Navigator.Screen.SUBJECT));
-
-        JMenuItem manager = new JMenuItem("ACL Tool");
-        manager.addActionListener(_ -> ctx.nav().show(Navigator.Screen.MANAGER));
-
-        JMenuItem aiChat = new JMenuItem("AI Assistant");
-        aiChat.addActionListener(_ -> ctx.nav().show(Navigator.Screen.ASSISTANT));
+        view.add(page("New scan", Navigator.Screen.SCAN_NEW));
+        view.add(page("Scan history", Navigator.Screen.SCAN_HISTORY));
+        view.add(page("Probe library", Navigator.Screen.PROBES));
+        view.addSeparator();
+        view.add(page("Assistant chat", Navigator.Screen.CHAT));
+        view.add(page("Chats", Navigator.Screen.CHATS));
+        view.add(page("Capture", Navigator.Screen.CAPTURE));
+        view.add(page("Skills", Navigator.Screen.SKILLS));
+        view.add(page("Providers", Navigator.Screen.PROVIDERS));
+        view.addSeparator();
+        view.add(page("Profile", Navigator.Screen.PROFILE));
+        view.add(page("API keys", Navigator.Screen.API_KEYS));
+        view.add(page("Backup", Navigator.Screen.BACKUP));
+        view.addSeparator();
+        view.add(page("Access control", Navigator.Screen.ACL));
 
         JMenuItem aboutItem = new JMenuItem("About");
         aboutItem.addActionListener(_ -> showAbout());
-
         JMenuItem appHelp = new JMenuItem("Help");
         appHelp.addActionListener(_ -> showDescription());
-
-        // FILE
-        file.add(settings);
-
-        // TOOLS
-        tools.add(scanner);
-        tools.add(manager);
-        tools.add(aiChat);
-//        tools.add(pqc);
-
-        // HELP
-        help.add(aboutItem);
         help.add(appHelp);
+        help.add(aboutItem);
 
-
-        mode.add(modeToggle);
-
-        // add menu bar items to menu bar
         menuBar.add(file);
-        menuBar.add(tools);
+        menuBar.add(view);
         menuBar.add(help);
-        menuBar.add(Box.createHorizontalGlue());
-        menuBar.add(logout);
-        menuBar.add(mode);
 
         return menuBar;
     }
 
-    private void showAbout() {
+    private JMenuItem page(String label, Navigator.Screen screen) {
+        JMenuItem item = new JMenuItem(label);
+        item.addActionListener(_ -> ctx.nav().show(screen));
+        return item;
+    }
+
+    public void showAbout() {
         if (about == null) about = dialog("About " + NoSneakMain.VERSION.getName(), buildCard(), null);
         show(about);
     }
 
-    private void showDescription() {
+    public void showDescription() {
         if (description == null) {
             MDViewerPanel viewer = new MDViewerPanel();
             viewer.setMarkdown(loadDescription());
@@ -116,13 +101,15 @@ public class MenuBarFactory {
     }
 
     /**
-     * A modeless dialog owned by the frame the menu bar is installed in, so it stays with the app
-     * window instead of floating as its own top-level.
+     * A modeless dialog owned by the application window, so it stays with it instead of
+     * floating as its own top-level. The owner is found from the menu bar when it is installed,
+     * else from the focused window.
      *
      * @param size explicit size, or null to pack to the content's preferred size
      */
     private JDialog dialog(String title, JComponent content, Dimension size) {
         Window owner = menuBar != null ? SwingUtilities.getWindowAncestor(menuBar) : null;
+        if (owner == null) owner = KeyboardFocusManager.getCurrentKeyboardFocusManager().getActiveWindow();
 
         JDialog d = new JDialog(owner, title, Dialog.ModalityType.MODELESS);
         d.setContentPane(content);
