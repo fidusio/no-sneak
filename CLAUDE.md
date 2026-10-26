@@ -1,10 +1,9 @@
 # no-sneak
 
-> **Picking this project up?** `PENDING-ISSUES.md` at the repo root is the handoff index of open
-> work — it points at every per-module open-items list and records the 2026-08-13 code-review
-> findings against the then-uncommitted scan-panel and AI-assistant changes. **Its latest section
-> is *Status check (2026-10-21)*: read that first** — the app's store now follows the datastore's
-> deployment model: a first run is `H2PSetup command=create` (vault with the operator as
+> **Picking this project up?** `PENDING-ISSUES.md` at the repo root is the open-work index: its
+> *Open now (2026-10-26)* section is the whole open list, and everything under *History* is the
+> dated record (kept because sources cite its finding numbers). Since 2026-10-21 the app's store
+> follows the datastore's deployment model: a first run is `H2PSetup command=create` (vault with the operator as
 > super-admin, encrypted H2 file, the no-sneak app, `shiro.ini`), every run opens the vault and
 > attaches the Shiro manager to the INI realm, and sign-up grants the app's `app_user` role so the
 > app login gate lets the subject in (`no-sneak-app/NoSneakStore`). It lists the decisions taken
@@ -15,8 +14,13 @@
 > 2026-10-25. **After it, uncommitted (2026-10-25/26, same section, dated blocks):** MAC vendor
 > names in scan reports (the Wireshark manuf file kept in the store as a `DataContent`, loaded into
 > `NSNetUtil.MAC_VENDORS` after login, *Account → Settings → Sync* to refresh it), Delete all and
-> multi-select on the scan history, **no probe ticked = no probing**, and a Network adapter block
-> (MAC, vendor) in the host detail pane.
+> multi-select on the scan history, **no probe ticked = no probing**, a Network adapter block
+> (MAC, vendor) in the host detail pane, and (2026-10-26) a **Probe library** that shows every
+> bundled and stored probe read-only, explains how to add one, shows `PROBE-DEFINITION.md` in
+> the app and asks the assistant for a probe (*Save as probe* on the reply); probes carry an
+> optional one-line `description`. Same day: the two unbundled probe files were deleted as
+> redundant and `postgres-tls` was fixed with a new `tls-upgrade` action (SSLRequest, then TLS
+> in place, then the version over it).
 
 Assessment tooling for what a network endpoint exposes — TLS posture, **post-quantum
 readiness**, and running services — plus a Swing front-end and an AI-assistant layer.
@@ -86,17 +90,17 @@ Until 2026-09-12 the module carried two generations side by side: the original p
 from-scratch non-blocking rebuild under `io.xlogistx.nosneak.v2`. **The merge is done.** The
 original packages (`nmap`, `probe`, `scanners`, `services`, `tools`) and their tests are deleted,
 the rebuild lives at `io.xlogistx.nosneak`, and the bundled probes are at `/probes/`. There is no
-`v2` package, no `v2` class name and no frozen code left. `no-sneak-core/V1-V2-MERGE-ANALYSIS.md`
-is the record of what the deleted generation had, and how each of those things was carried across
-before deletion; `no-sneak-core/ACTION-PLAN.md` is pre-merge history. Read `no-sneak-core/CLAUDE.md`
-first; it routes to the plan log, the probe reference, and the open-work list.
+`v2` package, no `v2` class name and no frozen code left. The merge analysis and the pre-merge
+action plan were deleted on 2026-10-26 as history; the vulnerability checklist the action plan
+held is now in `no-sneak-core/CLAUDE.md`. Read `no-sneak-core/CLAUDE.md` first; it routes to the
+plan log, the probe definition, and the open-work list.
 
 **2026-09-20 — the scan pipeline was made fast on a LAN.** Adaptive per-host connect deadline
 (`--min-rtt-timeout` floor, `-t` ceiling), probes streamed from the connect callback under `-sV`,
 a `ScanGate` that honours rate caps above 1000/s, NIOSocket's connect monitor released when the
 scanner's own deadline wins, and `--up-only` to list live hosts only. A `/24 × 1024 ports` on the
-maintainer's segment went from 136 s to 6 s; the measured record is `no-sneak-core/PLAN.md` →
-2026-09-19/20, the design is `no-sneak-core/CLAUDE.md` → *The scan pipeline*.
+maintainer's segment went from 136 s to 6 s; the design is `no-sneak-core/CLAUDE.md` → *The scan
+pipeline*.
 
 ## Build and test
 

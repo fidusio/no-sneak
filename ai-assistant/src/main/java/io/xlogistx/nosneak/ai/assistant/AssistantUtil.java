@@ -10,6 +10,7 @@ import org.zoxweb.shared.util.NVGenericMap;
 
 import javax.swing.*;
 import java.awt.*;
+import java.util.Map;
 import java.util.concurrent.Callable;
 
 public class AssistantUtil {
@@ -32,7 +33,20 @@ public class AssistantUtil {
      */
     public static JComponent chatBubble(String markdown, boolean user, Integer latency,
                                         Integer inTokens, Integer outTokens, Runnable onSaveAsSkill) {
+        return chatBubble(markdown, user, latency, inTokens, outTokens, onSaveAsSkill, null);
+    }
 
+    /**
+     * @param saveAs the host's save targets (2026-10-26): label to action, rendered after
+     *               <i>Save as skill</i> as one borderless <i>Save as &lt;label&gt;</i> button each,
+     *               on assistant bubbles only. The app registers "probe", so a reply that is a
+     *               probe definition lands in the probe library in one click. Null or empty = none.
+     */
+    public static JComponent chatBubble(String markdown, boolean user, Integer latency,
+                                        Integer inTokens, Integer outTokens, Runnable onSaveAsSkill,
+                                        Map<String, Runnable> saveAs) {
+
+        boolean targets = !user && saveAs != null && !saveAs.isEmpty();
         MDViewerPanel mdViewerPanel = new MDViewerPanel();
         mdViewerPanel.setMarkdown(markdown);
 
@@ -51,7 +65,7 @@ public class AssistantUtil {
         Bubble bubble = new Bubble(bg);
         bubble.add(pane, BorderLayout.CENTER);
         String detail = user ? null : detailLine(latency, inTokens, outTokens);
-        if (detail != null || (!user && onSaveAsSkill != null)) {
+        if (detail != null || (!user && onSaveAsSkill != null) || targets) {
             JPanel south = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
             south.setOpaque(false);
             south.setBorder(BorderFactory.createEmptyBorder(0, 12, 6, 12));
@@ -70,6 +84,30 @@ public class AssistantUtil {
                 saveAsSkill.setToolTipText("Open the skill editor seeded with this response");
                 saveAsSkill.addActionListener(_ -> onSaveAsSkill.run());
                 south.add(saveAsSkill);
+            }
+            if (targets) {
+                for (Map.Entry<String, Runnable> target : saveAs.entrySet()) {
+                    JButton saveAsTarget = new JButton("Save as " + target.getKey());
+                    saveAsTarget.putClientProperty("JButton.buttonType", "borderless");
+                    saveAsTarget.setFont(saveAsTarget.getFont().deriveFont(saveAsTarget.getFont().getSize2D() - 2f));
+                    saveAsTarget.setForeground(UIManager.getColor("Label.disabledForeground"));
+                    saveAsTarget.setFocusable(false);
+                    saveAsTarget.setToolTipText("Save this response as a " + target.getKey());
+                    saveAsTarget.addActionListener(_ -> target.getValue().run());
+                    south.add(saveAsTarget);
+                }
+            }
+            if (targets) {
+                for (Map.Entry<String, Runnable> target : saveAs.entrySet()) {
+                    JButton saveAsTarget = new JButton("Save as " + target.getKey());
+                    saveAsTarget.putClientProperty("JButton.buttonType", "borderless");
+                    saveAsTarget.setFont(saveAsTarget.getFont().deriveFont(saveAsTarget.getFont().getSize2D() - 2f));
+                    saveAsTarget.setForeground(UIManager.getColor("Label.disabledForeground"));
+                    saveAsTarget.setFocusable(false);
+                    saveAsTarget.setToolTipText("Save this response as a " + target.getKey());
+                    saveAsTarget.addActionListener(_ -> target.getValue().run());
+                    south.add(saveAsTarget);
+                }
             }
             if (markdown != null) {
                 JButton copyMarkdown = new JButton(new IconUtil.CopyIcon(16));

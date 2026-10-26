@@ -1,5 +1,6 @@
 {
   "name": "pop3",
+  "description": "POP3 +OK greeting banner",
   "service": "pop3",
   "transport": "tcp",
   "ports": [110],

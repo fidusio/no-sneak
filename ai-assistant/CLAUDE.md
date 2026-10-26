@@ -118,6 +118,13 @@ has chosen to use.
 >   latency/token line (assistant bubbles only, never the user's). It routes to
 >   `onSaveSkillFromResponse`, which confirms first if the editor holds unsaved edits, then opens
 >   the skill editor seeded with that response. Guarded by `ChatBubbleSaveAsSkillTest`.
+>   **Or a host record, in one click (2026-10-26):** the seven-argument `chatBubble` also takes a
+>   `Map<String, Runnable>` of the host's save targets and renders one borderless
+>   "Save as <label>" button per entry after *Save as skill*. `ChatPanel.addSaveTarget(label,
+>   handler)` keeps the targets and `addMessage` builds the runnables: `handler.accept("",
+>   markdown)`, with a `RuntimeException` from the handler shown under "Not a valid <label>" and
+>   nothing else done. The app registers "probe", so a reply that is a probe definition goes
+>   straight into the probe library (the skill editor's "Save as" combo still offers it too).
 > - **An assistant reply can be shown as a PDF (2026-09-23).** The PDF-icon button (`IconUtil.PDFIcon`, 2026-10-07; a plain file icon before) beside
 >   *Copy* on every assistant bubble runs `AssistantUtil.showAsPDF`: the bubble's markdown goes
 >   through the toolkit's `io.xlogistx.gui.MDToPDF` (commonmark with the same GFM extensions as
@@ -286,8 +293,14 @@ has chosen to use.
 >   flips to the Chat card — `no-sneak-app` hands it to `ScanPanel` so a scan report can be sent
 >   into a conversation. It throws a `SecurityException` (message shown by the caller) when there
 >   is no current chat, since an attachment with nowhere to land is silently lost otherwise.
+>   **`sendToChat(text, name, composerText)`** (2026-10-26) does the same and types
+>   `composerText` into the composer (`ChatPanel.setComposerText`, the public face of
+>   `insertIntoComposer`: appended at the caret when something is already typed) so the subject
+>   only has to press Send; the Probe library attaches `PROBE-DEFINITION.md` and asks for a
+>   probe this way.
 >   **`AssistantPanel.addSaveTarget(label, BiConsumer<String,String>)`** registers an extra
->   destination in the skill editor's **"Save as"** combo; the app registers `"probe"` there, so a
+>   destination in the skill editor's **"Save as"** combo **and** a "Save as <label>" button on
+>   every assistant reply (2026-10-26, above); the app registers `"probe"` there, so a
 >   response can be saved into the probe store instead of the skill store (§5). The handler takes
 >   `(name, content)` rather than an `MDDocument` deliberately: the host never references this
 >   module's editor types, and this module never learns what a probe is — it has no view of
@@ -353,13 +366,10 @@ has chosen to use.
 >   the only live one is in the text-to-speech endpoint), so text and vision sends both run at
 >   the provider's default. Do not reach for the 1024 to explain a truncated answer until that
 >   is fixed upstream.
-> - **`CaptureSupport.shootAndSave` can leave the window hidden.** The save loop sits in the
->   `finally` **before** `restoreWindow(owner)`, so any throw out of `toCapture` (png encode) or
->   `ctx.saveCapture` (store write, or signed out) skips the restore and the assistant window
->   stays invisible for the rest of the session — with no control left to bring it back. The
->   window is also held hidden across every encode and DB write, not just the sweep. Restore
->   first, then persist (and let a failed save report rather than abort the batch, the way the
->   deleted `shootAll` did per area).
+> - ~~**`CaptureSupport.shootAndSave` can leave the window hidden.**~~ **Fixed** (verified
+>   2026-10-26): the sweep runs inside `try { takeSnapShots } finally { restoreWindow }` and the
+>   encode + save loop comes after it, so the window is back before anything is written and a
+>   failed save cannot hide the assistant. A failed save still aborts the rest of the batch.
 > - **A failed send loses the attached images — now on every path.** `clearPendingImages()` runs
 >   right after dispatch and `failSend` restores only the composer text, so a capture that cost a
 >   drag-select is gone and the retry sends text alone. This used to be async-only; the image

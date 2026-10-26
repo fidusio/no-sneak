@@ -34,6 +34,7 @@ public class ProbeState {
     private String mode;             // tls-handshake: "pqc" (default) | "jsse"/"classical"
     private String note;             // record: free-form annotation merged into the result
     private Integer port;            // connect/reconnect/tls-connect: alternate port
+    private Boolean upgradable;      // connect: open on the TLS-capable channel so tls-upgrade can secure it in place
     private Integer revocationTimeoutMs; // revocation-check: bound on the active OCSP/CRL fetch (default 5000)
     // enumerate-versions: which legacy versions to offer besides TLSv1.3/1.2 (null = offered)
     private Boolean includeSSLv3;
@@ -90,6 +91,15 @@ public class ProbeState {
 
     public String getNote() {
         return note;
+    }
+
+    /**
+     * connect: open the connection on the TLS-capable (JSSE) channel so that, after a plaintext
+     * exchange the protocol requires first (PostgreSQL's SSLRequest), a {@code tls-upgrade}
+     * state can secure the same connection in place. Absent = false (2026-10-26).
+     */
+    public Boolean getUpgradable() {
+        return upgradable;
     }
 
     public Integer getPort() {

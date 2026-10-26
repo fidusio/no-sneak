@@ -31,13 +31,20 @@ public final class ProbeDefinitionLoader {
      */
     public static final Set<String> KNOWN_ACTIONS = new HashSet<>(Arrays.asList(
             "connect", "send", "expect", "reconnect", "starttls",
-            "tls-connect", "tls-handshake", "pqc-check", "tls-facts",
+            "tls-connect", "tls-upgrade", "tls-handshake", "pqc-check", "tls-facts",
             "cert-chain-validate", "revocation-check",
             "enumerate-versions", "enumerate-ciphers", "enumerate-groups",
             "record", "done", "fail"));
 
     /** Actions that terminate the state machine (no outgoing transitions required). */
     public static final Set<String> TERMINAL_ACTIONS = new HashSet<>(Arrays.asList("done", "fail"));
+
+    /**
+     * The probe definition, {@code PROBE-DEFINITION.md}, as a classpath resource: the module's
+     * pom copies the file from the module root at build time so the desktop app can show it and
+     * hand it to an AI assistant (2026-10-26). The file on disk stays the one that is edited.
+     */
+    public static final String PROBE_DEFINITION_RESOURCE = "/probes/PROBE-DEFINITION.md";
 
     /** The probe definitions bundled with this module (Phase 0/1 set). */
     public static final String[] BUNDLED = {
@@ -71,6 +78,27 @@ public final class ProbeDefinitionLoader {
      */
     public static ProbeDefinition load(String resourcePath) {
         return parse(readResource(resourcePath), resourcePath);
+    }
+
+    /**
+     * The JSON text of a bundled probe, by probe name, for a reader (the Probe library shows the
+     * bundled definitions read-only and offers them as drafts to copy). The bundled files are
+     * named after their probe, so the name maps to {@code /probes/<name>.json}; only paths in
+     * {@link #BUNDLED} are served.
+     *
+     * @throws IllegalArgumentException when {@code name} is not a bundled probe
+     */
+    public static String bundledSource(String name) {
+        String path = "/probes/" + name + ".json";
+        for (String bundled : BUNDLED) {
+            if (bundled.equals(path)) return readResource(path);
+        }
+        throw new IllegalArgumentException("Not a bundled probe: " + name);
+    }
+
+    /** The text of {@code PROBE-DEFINITION.md}, the contract a probe author (or an AI) works from. */
+    public static String probeDefinition() {
+        return readResource(PROBE_DEFINITION_RESOURCE);
     }
 
     public static ProbeDefinition parse(String json, String source) {
@@ -219,7 +247,8 @@ public final class ProbeDefinitionLoader {
 
     // ==================== Resource IO ====================
 
-    private static String readResource(String resourcePath) {
+    /** The raw text of a classpath resource; {@link IllegalArgumentException} when it is missing. */
+    public static String readResource(String resourcePath) {
         try (InputStream in = ProbeDefinitionLoader.class.getResourceAsStream(resourcePath)) {
             if (in == null) {
                 throw new IllegalArgumentException("Probe resource not found on classpath: " + resourcePath);

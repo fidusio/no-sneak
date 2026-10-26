@@ -17,6 +17,9 @@ public class ProbeDefinition {
 
     private String name;
     private String service;
+    // One line for a reader (the Probe library shows it). Optional since 2026-10-26: absent in
+    // the JSON means null, the loader does not require it, and every older file loads unchanged.
+    private String description;
     private String transport;   // "tcp" | "udp"
     private int[] ports;
     private int priority = 50;  // higher = preferred when several definitions match a port
@@ -37,6 +40,11 @@ public class ProbeDefinition {
 
     public String getService() {
         return service;
+    }
+
+    /** One line saying what the probe identifies, for people; null when the file has none. */
+    public String getDescription() {
+        return description;
     }
 
     public String getTransport() {

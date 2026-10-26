@@ -286,4 +286,34 @@ public class ProbeDefinitionLoaderTest {
         ProbeDefinition def = GSONUtil.fromJSONDefault(json, ProbeDefinition.class);
         ProbeDefinitionLoader.validate(def, "inline-test");
     }
+    /** 2026-10-26: the Probe library reads the bundled files as text; every one carries a description. */
+    @Test
+    public void bundledSourceServesEveryBundledFileWithADescription() {
+        for (String path : ProbeDefinitionLoader.BUNDLED) {
+            String name = path.substring("/probes/".length(), path.length() - ".json".length());
+            String json = ProbeDefinitionLoader.bundledSource(name);
+            ProbeDefinition def = ProbeDefinitionLoader.parse(json, name);
+            assertEquals(name, def.getName(), path + " must be named after its probe");
+            assertTrue(def.getDescription() != null && !def.getDescription().isBlank(),
+                    name + " needs a one-line description");
+        }
+        assertThrows(IllegalArgumentException.class, () -> ProbeDefinitionLoader.bundledSource("no-such-probe"));
+    }
+
+    @Test
+    public void descriptionIsOptional() {
+        ProbeDefinition def = ProbeDefinitionLoader.parse("""
+                { "name": "t", "service": "t", "ports": [1], "start": "c",
+                  "states": { "c": { "action": "connect", "on": { "connected": "d", "error": "f", "timeout": "f" } },
+                              "d": { "action": "done" }, "f": { "action": "fail" } } }
+                """, "test");
+        assertNull(def.getDescription());
+    }
+
+    @Test
+    public void probeDefinitionDocumentIsOnTheClasspath() {
+        String md = ProbeDefinitionLoader.probeDefinition();
+        assertTrue(md.contains("## 13"), "the output contract section must be there");
+        assertTrue(md.contains("`description`"), "the definition must document the description key");
+    }
 }

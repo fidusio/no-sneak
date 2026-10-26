@@ -1,5 +1,6 @@
 {
   "name": "ssh",
+  "description": "SSH greeting banner, records the server version",
   "service": "ssh",
   "transport": "tcp",
   "ports": [22, 2222],

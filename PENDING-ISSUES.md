@@ -1,33 +1,105 @@
-# Pending issues — handoff
+# Pending issues
 
-*Written 2026-08-13. This is the index of known open work at handoff time. The per-module lists
-below stay authoritative for their areas; the "Code review findings" section records issues found
-in the uncommitted working tree on this date (scan panel + AI assistant changes, post-`bf072b9`)
-that are not written down anywhere else.*
+*The open-work index for the repo. The first section is the whole open list as of 2026-10-26;
+everything under* History *is the dated record of how it got here and is not an open list. Per-area
+detail lives in the module `CLAUDE.md` files, named below.*
 
-> **Before picking anything up:** the repo root `CLAUDE.md` → *Operating scope* states what this
-> tooling does and does not do (assessment and detection only — no exploitation, credential
-> attacks, DoS, or evasion). Finding 1 below is a data-boundary defect, which is the other half of
-> the same rule set.
+> **Operating scope first:** the repo root `CLAUDE.md` → *Operating scope* states what this tooling
+> does and does not do (assessment and detection only — no exploitation, credential attacks, DoS,
+> or evasion). Nothing on this list may cross that line.
 
-> **Latest: Status check (2026-10-21)** further down — **start there.** The app's store now follows
-> the datastore's deployment model (`H2PSetup` on a first run, vault + `shiro.ini` + attached
-> manager on every run, `app_user` granted at sign-up for the app login gate). The 2026-10-05 and
-> 2026-09-20 checks below it are the two sessions before. Everything from those sessions is
-> **uncommitted** unless the maintainer has committed since.
->
-> **Status check 2026-09-09** at the bottom of this file: build/test state on the dev box, and
-> confirmation that all ten findings below were still open at `c082f11`. **All ten were fixed on
-> 2026-09-11** (wave 1, group ζ) — see the priority matrix at the bottom for what is still open.
+## Open now (2026-10-26)
 
-## Where the existing open-work lists live
+**Maintainer's own items**
+1. **Live checks owed**, in the order the features landed:
+   - first sign-in downloads the Wireshark vendor list and a LAN scan names vendors; the next
+     sign-in does not download; *Account → Settings → Sync MAC vendors* replaces the list;
+   - a scan with no probe chips sends no probe traffic; ticking *Service detection* fills the strip;
+   - Probe library: *Write with the assistant* on an open chat, then *Save as probe* on the reply;
+     *Copy to my probes* of `ssh`, Save, and a scan reports the shadow warning;
+   - `postgres-tls` against a real PostgreSQL with `ssl = on` (the version needs `trust` auth for
+     the probe's user; otherwise `postgresql-tls-auth-required`, still a completed identification).
+2. **Run-through on a display** of the pages not yet tried since the redesign: a stored report
+   opened from history, API keys, Providers, a chat with chips, a capture, Profile, Settings
+   (Backup and Restore), Access control.
+3. **Decisions parked with the maintainer:** run tier 2 only after tier 1 fails (the match-first
+   sweep's ~18 simultaneous connections lose the `ssh` verdict on hosts with OpenSSH
+   `MaxStartups 10:30:100`; measured 2 of 13 SSH hosts on the `/24`); the sibling TCP-ping aborts
+   in `NMapScanner.discoverHost` that print a harmless `ClosedChannelException`; P17, the SSL Labs
+   vulnerability checklist (pinned, not scheduled); a CI runner that can reach Maven Central.
+4. **Needs a Mac:** `no-sneak-net` M1 (the `observe 60` measurement after the BPF filter fix) and
+   M9 (an IPv6 neighbour answering multicast; the arena-shutdown race under sustained capture).
 
-| Area | Authoritative list |
+**no-sneak-app**
+- Access control page: every table is an empty stub and search is not wired; the
+  `DomainSecurityManager` catalog is there to bind to (`SubjectSecManagerPanel`).
+- The assistant's job-queue page is a stub and is not offered in the sidebar.
+- Register needs a confirmation dialog; the Technical / Simple tier toggle is not wired; an
+  identifier has no status (primary / alias / verified; blocked on `PrincipalIdentifier` holding
+  only the id string); no mandatory-field convention across the profile and address forms.
+- A scan report goes to the assistant as its full JSON (a `/24` is ~53 KB, ~15k tokens); the
+  compact `NORMAL` render would need to be stored at scan time. Decide before stores fill up.
+- A copied API-key secret stays on the clipboard; add a guarded auto-clear (~60 s).
+- Hardening, still open (all verified against the code on 2026-10-26): `Session.addIdentifier`'s
+  blank / duplicate guards are commented out and `removeIdentifier` has no last-identifier guard;
+  the signed-in guards in `Session` mix `principalID` and `subjectIdentifier`;
+  `AssistantStorage.deleteChat` deletes without references, so a chat's message, request and
+  response rows survive it; `changeAPIDetails` writes an empty provider rather than removing the
+  property, which unlinks the key from the assistant.
+- Installations written before 2026-10-21 (vault without super-admin, no `shiro.ini`, old table
+  names) are refused by `open`: start fresh or write a migration.
+- PostgreSQL is the next datastore target (Mongo deprecated 2026-10-25; the Mongo branch of
+  `NoSneakUtil` is not to be extended).
+
+**ai-assistant** — the full list is `ai-assistant/CLAUDE.md` → *Known rough edges*; the ones that
+lose data or hang: no send timeout or cancel (a provider that never calls back leaves Send disabled
+for the life of the app; the fix belongs in `ai-model`); a failed send loses the attached images;
+`CapturePanel.full()` can write an image-less row over a stored capture when the store misses;
+`maxTokens` never reaches the wire (commented out upstream in `xlog-api-ai`); auto-named capture
+areas can collide; the compare (multi-model) path and chat-scoped skills are unbuilt.
+
+**no-sneak-core**
+- The vulnerability-scanning backlog (`no-sneak-core/CLAUDE.md` → *Vulnerability-scanning
+  backlog*): nothing implemented; P17 above.
+- HTTP security-header analysis and CNSA 2.0 compliance rules.
+- `service/Checker`'s private-IP guard is a literal-prefix match that lets loopback, link-local
+  and inward-resolving names through — fix before exposing the REST endpoint.
+- An `-O`-style open-port heuristic would need its own flag (`-O` is rejected as nmap's
+  fingerprint flag); a native raw-socket layer for accurate port state; end-to-end runtime
+  testing of the DM tools.
+
+**no-sneak-net**
+- N3: IPv6 unicast-NS re-solicit (the v6 twin of the unicast ARP), small; needs a `dst16`
+  overload of `Icmp6.neighborSolicitation`. The Linux v6 wire exists since 2026-09-13.
+- M1 and M9 above (Mac).
+
+**Declined, do not reopen:** an antivirus / interception-proxy detection heuristic (Avast's mail
+shield fakes open mail ports on every host; scan with it off).
+
+## Where per-area detail lives
+
+| Area | Authoritative detail |
 |---|---|
-| Scanning engine | `no-sneak-core/ACTION-PLAN.md` → *Pending Issues / Next Steps* (item 1, vulnerability-check checklist, is the largest remaining gap) |
-| Probe engine reference / deferrals | `no-sneak-core/PROBE-CONFIG.md` → *Known deferrals* |
-| Host discovery | `no-sneak-net/CLAUDE.md` §13.21 — open items split per platform. **As of 2026-09-11 every code item there is fixed** (§13.22 sweep admission; §13.23-A/B/C the rest); what remains is M1/M9 (need a Mac); **L1 closed 2026-09-13 — Linux IPv6/NDP verified on a wire, §13.24**. Next steps for this module are rows N1–N5 in the priority matrix at the bottom of this file. |
-| App loading/session | `no-sneak-app/LOADING.md` |
+| Scanning engine, deferrals and the vulnerability backlog | `no-sneak-core/CLAUDE.md` → *Engine reference*, *Vulnerability-scanning backlog*, *Next up* |
+| Probe format | `no-sneak-core/PROBE-DEFINITION.md` (the one probe-format document; the app shows it and hands it to the assistant) |
+| Host discovery | `no-sneak-net/CLAUDE.md` §13.21 (open items per platform; every code item fixed, M1/M9 need a Mac, N3 open) |
+| Desktop app | `no-sneak-app/CLAUDE.md` → *Needed fixes / updates*; `no-sneak-app/LOADING.md` for what loads when |
+| Assistant | `ai-assistant/CLAUDE.md` → *Known rough edges*; `ai-model/CLAUDE.md` for the interface-shape gaps |
+
+---
+
+## History
+
+*Dated status checks and the 2026-08-13 code review, kept because the Java sources and tests cite
+their finding numbers (P6, P14, P23, findings 7 to 10). The checks are not in date order. Nothing
+below is an open list; the open list is above.*
+
+*The original handoff note (2026-08-13):* this file was the index of known open work at handoff
+time; the "Code review findings" section records issues found in the uncommitted working tree on
+that date (scan panel + AI assistant changes, post-`bf072b9`). All ten findings were fixed on
+2026-09-11 (wave 1, group ζ). The store followed the datastore's deployment model on 2026-10-21
+(`H2PSetup` on a first run, vault + `shiro.ini` + attached manager on every run, `app_user` granted
+at sign-up); the 2026-10-05 and 2026-09-20 checks are the two sessions before it.
 
 ## Code review findings (2026-08-13, uncommitted working tree)
 
@@ -138,7 +210,7 @@ anything ships.
 - ~~v1 packages in `no-sneak-core` are frozen~~ **Merged 2026-09-12; the old packages are gone.** (was: never fix v1 bugs; anything v1 has that v2 lacks
   is a regression. See `no-sneak-core/CLAUDE.md` for the routing.
 - **Vulnerability scanning (A11)** is still the largest v2 gap — checklist in
-  `ACTION-PLAN.md` → *Pending Issues / Next Steps* item 1.
+  `no-sneak-core/CLAUDE.md` → *Vulnerability-scanning backlog*.
 - ~~Named-group enumeration (A12)~~ **Done** — `enumerate-groups` ships (`supported-groups`, `server-group-preference`).
 - ~~Stale Mongo default (C1)~~ **FIXED 2026-09-12.** `DMTool` carries no datastore URL at all: it is
   resolved from `db-url=` → `NOSNEAK_DB_URL` → `-Dnosneak.db.url`, and with none set the tool prints
@@ -242,12 +314,12 @@ gone, `tls-connect` uses the JCA default (BCJSSE), `TlsConnectContextTest` pins 
 **Merge done (2026-09-12, later the same day):** the original packages, their five test files
 and `src/main/resources/probes/` (old set) plus the orphan `services-categories-info.json` are
 deleted; the rebuild's package collapsed to `io.xlogistx.nosneak`; bundled probes are at
-`/probes/`; `PLAN.md`/`PROBE-CONFIG.md` moved to the module root (the old authoring tutorial is
+`/probes/`; `PLAN.md`/`PROBE-CONFIG.md` (both deleted 2026-10-26) moved to the module root (the old authoring tutorial is
 `PROBE-DEFINITION.md`); the app, the server test config and the docs are retargeted. Whole repo
 compiles; 365 tests green under the new package; CLIs verified live.
 
-**Merge analysis and parity pass (2026-09-12):** `no-sneak-core/V1-V2-MERGE-ANALYSIS.md` is the
-code-verified v1-vs-v2 comparison. Verdict: keep v2, delete v1. The 18 regressions its §4 listed
+**Merge analysis and parity pass (2026-09-12):** `no-sneak-core/V1-V2-MERGE-ANALYSIS.md` (deleted
+2026-10-26 as history) was the code-verified v1-vs-v2 comparison. Verdict: keep v2, delete v1. The 18 regressions its §4 listed
 (stapled-OCSP fallthrough, the TLS-1.3-classical vs ≤1.2 PQC split, enumeration toggles, down
 hosts in Normal/CSV, CLI aliases, per-octet ranges, XML metadata, reverse DNS, …) were **all
 closed the same day** — see its "Status after the fix pass" section. v2 is now 365 pure tests in
@@ -276,8 +348,8 @@ for an IPv6 neighbour not proved by ICMP. A root-gated live class, `platform/lin
 
 **Start here if you are picking the project up.** One long session on the Windows box (the same
 machine that is 10.0.0.61 on the maintainer's `/24`; Avast installed, Npcap installed). The
-measured record with reasons is `no-sneak-core/PLAN.md` → the 2026-09-19/20 entries; the design
-is `no-sneak-core/CLAUDE.md` → *The scan pipeline*. At the time of writing **43 files were modified
+design is `no-sneak-core/CLAUDE.md` → *The scan pipeline* (the dated log that held the measured
+record was deleted 2026-10-26). At the time of writing **43 files were modified
 and uncommitted** (35 M, 4 A, 1 D, 1 R) — the maintainer commits; nothing here was.
 
 **What changed (all in `no-sneak-core` unless noted):**
@@ -341,8 +413,7 @@ from the target string, and zoxweb's `SSLContextInfo.newInstance()` mints the en
 On this segment an address without a PTR record costs 4.6 s, paid between the TCP connect and
 the ClientHello, inside the probe's one 5 s `arm()` window; the handshake then ran out of time
 one step from finishing. Name targets never paid it (the resolver stores the name), which is why
-xlogistx.io was fine. Full record with the driver-log timeline: `no-sneak-core/PLAN.md` →
-2026-09-22. Fix: `ProbeSecureCallback.namedAddress` pins the host string on the resolved
+xlogistx.io was fine. Fix: `ProbeSecureCallback.namedAddress` pins the host string on the resolved
 address (`InetAddress.getByAddress`), pinned by `TlsConnectContextTest` (+3). Measured:
 `https-scan` on 10.0.0.8 9.4–10.1 s → **4.8–5.3 s**, tail alone 2.3–3.0 s, all complete; the host
 sends no `Server:` header at all, so `no-server-header` is the *right* answer there. Suite
@@ -354,7 +425,7 @@ and only the finishing worker restores it; the "second thread" was the probe's o
 run (20 up, 23.5 s at `-T5`) surfaced one banner defect, fixed — dropbear's binary KEXINIT arrives
 in the same read as its greeting and its printable fragments were glued onto the row; the greeting
 now ends at the first binary byte (`PortScanCallback.cleanBanner`, `PortScanCallbackTest` +1).
-Suite **403 / 403**. Record: `no-sneak-core/PLAN.md` → 2026-09-22. The Web Shield was on for that
+Suite **403 / 403**. The Web Shield was on for that
 run and its proxy caps this process at **100 concurrent connections** (it says so in the mail-port
 banners: `421 concurrent connection limit in Avast exceeded`), which is a second reason, besides
 the fake open ports, to scan with it off.
@@ -507,7 +578,26 @@ stored probe ticked) or none; the chip strip's empty text says nothing is probed
 no chips → a scan with no probe traffic; tick Service detection → all chips appear. (3) **Backup
 moved under Settings** — the Backup and Restore blocks follow Sync on the Settings page;
 `Screen.BACKUP`, `SECTION_BACKUP`, the sidebar item and the View-menu entry are removed. Rendered
-and checked; no test touched the screen.
+and checked; no test touched the screen. (4) **The Probe library** ("very plain; the bundled
+probes can't be read; it doesn't explain how to create a probe; I can use the AI assistant"):
+core gained `ProbeDefinition.description` (optional; the 18 bundled files carry one),
+`ProbeDefinitionLoader.bundledSource(name)` / `probeDefinition()` and a pom resource that serves
+`PROBE-DEFINITION.md` from the classpath; the assistant gained the three-argument
+`sendToChat(text, name, composerText)` and a *Save as <target>* button on every reply
+(`ChatPanel.addSaveTarget`); the app's Probe library is a table (bundled + stored, filter and
+search) with a read-only detail pane, a how-to block, an editor with inline Check, the definition
+card and *Write with the assistant*. Tests: `ProbeDefinitionLoaderTest` (three new),
+`ChatBubbleSaveAsSkillTest` (two new), `ProbeLibraryModelTest` (new, 5). Rendered in five states
+and checked. Live checks owed: *Write with the assistant* on an open chat, then *Save as probe* on
+the reply; *Copy to my probes* of `ssh`, Save, and a scan reports the shadow warning. (5) **Probe
+set audit** ("are any of the default probe definitions redundant?"): the two unbundled files
+(`https-classical`, `smtp-starttls`) are deleted; `postgres-tls` never sent the SSLRequest and so
+only worked against PostgreSQL 17 direct-SSL servers — it now does SSLRequest → `S` →
+**`tls-upgrade`** (new action: JSSE handshake in place on a `connect` with `upgradable: true`)
+→ StartupMessage → version over TLS; `TlsUpgradeEndToEndTest` (loopback PostgreSQL-style TLS
+negotiation) pins it. Live check owed: `postgres-tls` against a real PostgreSQL with `ssl = on`
+(the version arrives only when `trust` auth applies to the probe's user; otherwise the note is
+`postgresql-tls-auth-required`, which is still a completed identification).
 
 **Open after Phase 5 (updated 2026-10-26):** the rest of the maintainer's run-through on a
 display (unlock, the scan form and history are done; still to try: a stored report from history,
@@ -515,7 +605,8 @@ API keys, Providers, a chat with chips, a capture, Profile, Settings with Backup
 Access control); the **live
 checks owed** for the 2026-10-25/26 additions — first login downloads the vendor list and a LAN
 scan names vendors, the next login does not download, *Settings → Sync* replaces the list, a scan
-with no chips sends no probe traffic and ticking Service detection fills the strip; the commit of
+with no chips sends no probe traffic and ticking Service detection fills the strip, the Probe
+library's assistant round trip (ask, send, Save as probe) and a copied bundled probe; the commit of
 those additions (no-sneak, and io-xlogistx for `settings.svg`); and, from before the redesign,
 the ACL tables are still empty stubs and the job-queue page is not offered.
 
@@ -685,7 +776,7 @@ P = parity (v1 had it, so it is a regression at merge). **effort** S < 1 day, M 
 | ~~P6~~ | **FIXED 2026-09-11 (wave 4).** `NMapScanner.scan(...)` returns a `ScanHandle` with `cancel()`/`isCancelled()`/`completion()`. Cancel flips a flag checked at every stage boundary and before every launch, aborts each in-flight `PortScanCallback`/`UdpScanCallback` (`abort()` -> `FILTERED/cancelled`), tears down each `ProbeChecker` sweep (delivers a `cancelled` result so barriers drain), and closes the `HostScanner` session; the report is delivered once with `ScanReport.cancelled` and a progress warning. `NMap.main` cancels on Ctrl-C (shutdown hook) and on the wait-budget timeout; `ScanPanel` has a Stop button (`IconUtil.StopIcon`) and its timeout path now cancels. Idempotent, nothing blocks. `ScanCancelTest` (8). Live: cancel 500 ms into a `-Pn` scan -> 7 ports completed, 1 `filtered/cancelled`, exit 0.55 s; full run unaffected. | -- | -- | -- | -- | `NMapScanner`, `NMap`, `PortScanCallback`, `UdpScanCallback`, `ProbeChecker`, `ScanPanel` |
 | ~~P7~~ | **FIXED 2026-09-11 (wave 3 δ).** `-sU` UDP scan (`nmap/UdpScanCallback`, `UdpProbePayloads`): connected ephemeral datagram socket per host:port, one datagram + one retransmit at half budget; reply → `open/udp-response` (+RTT); ICMP port-unreachable → `closed/port-unreach`; other unreachable → `filtered/no-route`; silence → `open|filtered/no-response`. DNS and NTP payloads, empty datagram elsewhere, **no SNMP** (a community string is a credential guess). Probe stage runs `dns.json` on UDP ports that answered. Paced by the same limiter. Live: `xlogistx.io -sU -p U:53 -sV` → `53/udp open udp-response 6 ms dns`. `UdpScanCallbackTest` (10), `UdpProbePayloadsTest` (3). | — | — | — | — | `v2/nmap/UdpScanCallback`, `UdpProbePayloads`, `NMapScanner`, `NMap`, `NMapConfig` |
 | ~~P9~~ | **FIXED 2026-09-11 (wave 1).** `--top-ports N`, `T:`/`U:` prefixes, `--open` (config flag, see P21), `-T0..-T5` mapped onto in-flight/rate/timeout; `-sS -sF -sX -sN -sA -sW -sM -O --stealth` rejected with a message naming the flag and the assessment-only rule. Live: `xlogistx.io --top-ports 10` (5 open), `google.com -p T:80,443 -T3`, `xlogistx.io -sS` → exit 2 with the message. `-O` is rejected rather than mapped to a heuristic. | — | — | — | — | `NMap.java`, `NMapConfig.java` |
-| ~~P19~~ | **FIXED 2026-09-11 (wave 1).** OPEN reason is `connected` (was the false `syn-ack`); `PROBE-CONFIG.md` test count corrected (145 in 11 classes); `PLAN.md` no longer names `PortScanner`. | — | — | — | — | docs, `NMapScanner.scanHostPorts` |
+| ~~P19~~ | **FIXED 2026-09-11 (wave 1).** OPEN reason is `connected` (was the false `syn-ack`); the engine reference's test count corrected (145 in 11 classes; that file was deleted 2026-10-26); the plan log (also deleted 2026-10-26) no longer named `PortScanner`. | — | — | — | — | docs, `NMapScanner.scanHostPorts` |
 
 ### `no-sneak-core` stage 2 — protocol identification
 
@@ -700,7 +791,7 @@ P = parity (v1 had it, so it is a regression at merge). **effort** S < 1 day, M 
 | ~~P14~~ | **FIXED 2026-09-11 (wave 3 ε).** `NetworkRevocationChecker`: OCSP POST to the AIA responder, then CRL from the CDP, non-blocking on the injected `HTTPNIOSocket`, bounded by `revocationTimeoutMs` (default 5 s), exactly-once, soft-fail `UNKNOWN/<method>-unreachable`; `revocation-date`/`-reason` kept; CRL signature and freshness verified. Live: both hosts GOOD via crl (neither CA publishes an OCSP responder any more; the OCSP branch is covered by the BC fixture). `RevocationCheckerTest` (9). **Addendum 2026-09-20:** the live verification was on the ungated `ProbeChecker` CLI; the gated path (`NMapScanner`, the app) built its contexts without a socket and reported `UNKNOWN`/`none` on every scan until `GatedProbeTransport.Registry.create` was fixed to keep it (`GatedContextRevocationTest`). | — | — | — | — | `analysis/*RevocationChecker`, `ProbeContext.checkRevocation`, `GatedProbeTransport.Registry` |
 | ~~P15~~ | **FIXED 2026-09-11 (wave 3 ε).** `enumerate-ciphers` offers opsec's strong + weak + insecure TLS 1.2 sets (39) and all 5 TLS 1.3 suites; each accepted suite recorded with version/strength/key-exchange/forward-secrecy; `server-cipher-preference` from two ordered offers; RC4/NULL/EXPORT/DES/anon cap the letter at C. Enumeration budget: at most 64 child connections per deep probe. Live: google.com shows TLS_RSA_* and 3DES. See P24 for the grading side effect. | — | — | — | — | `ProbeContext.enumerateCiphers`, `Grade`, `ProbeResult` |
 | ~~P16~~ | **FIXED 2026-09-11 (wave 1).** `Checker.TargetGuard`: resolves once on the pool, rejects loopback, link-local, site-local/ULA, unspecified, multicast and anything resolving to them; REST path answers 401/400 via `Responder`. `CheckerPrivateIpTest` (6). | — | — | — | — | `v2/service/Checker.java` |
-| P17 📌 | **PINNED 2026-09-11 by the maintainer — recorded, deliberately not scheduled.** ACTION-PLAN item 1, the SSL-Labs-parity posture checklist (padding-oracle family, named-CVE evidence from version/extension presence only, renegotiation, downgrade/SCSV, compression, ALPN, resumption, 0-RTT, DH hygiene, intolerance, HSTS/pinning). Detection-only by design; anything not decidable without an exploit attempt stays unimplemented. | P | L (many S/M) | P11, P13 | mostly live | new actions + probe JSON |
+| P17 📌 | **PINNED 2026-09-11 by the maintainer — recorded, deliberately not scheduled.** the SSL-Labs-parity posture checklist (`no-sneak-core/CLAUDE.md` → *Vulnerability-scanning backlog* since 2026-10-26; ACTION-PLAN item 1 before) (padding-oracle family, named-CVE evidence from version/extension presence only, renegotiation, downgrade/SCSV, compression, ALPN, resumption, 0-RTT, DH hygiene, intolerance, HSTS/pinning). Detection-only by design; anything not decidable without an exploit attempt stays unimplemented. | P | L (many S/M) | P11, P13 | mostly live | new actions + probe JSON |
 | ~~P18~~ | **FIXED 2026-09-11 (wave 1).** Ticks are applied to the parsed `NMapConfig` (`ScanPanel.ProbeSelection`), keyed by stored-record GUID, never spliced into the command; re-save updates the existing row. **Remaining, nmap side (P22):** a stored probe named exactly like a bundled one still runs both. | — | — | — | — | `ScanPanel.java` |
 | ~~P23~~ | **FIXED 2026-09-11 (wave 4 λ).** Not a classpath mismatch — every BC artifact is 1.86 — but a defect inside `bctls-jdk18on` 1.86 as published: its multi-release `versions/9/SSLEngineUtil` returns `ProvSSLEngine` while the un-versioned `ProvSSLContextSpi` calls the `SSLEngine` descriptor, so `createSSLEngine` throws on JDK ≥ 9 whenever BCJSSE (registered at position 2 by `SecUtil`) resolves `"TLS"`. `ProbeSecureCallback` now mints the `tls-connect` engine from `SunJSSE` explicitly; PQC stays on the BC TLS-API path. Also fixed: `sslUpgraded` was empty while zoxweb 2.4.0 signals handshake completion only there, so `https-version` could never complete. Live: `Server: gws` on google.com, `NOYFB` on xlogistx.io. `BcjsseEngineCreationTest` (3) includes a canary that fails once a consistent bctls is on the classpath — then remove the explicit provider. **Canary fired and workaround removed 2026-09-20** (`bctls` 1.85 on the classpath); `TlsConnectContextTest` (2) replaces it. | — | — | — | — | `runtime/ProbeSecureCallback.java` |
 | ~~P24~~ | **FIXED 2026-09-11 (wave 4 μ).** `Grade.CipherPosture` applies SSL Labs' tiers: insecure (RC4/NULL/EXPORT/DES/anon) → C; no forward secrecy (static RSA/ECDH) or 3DES → B; forward-secret CBC → advisory "CBC suites accepted: …; prefer AEAD", letter unchanged. Forward secrecy from `supported-cipher-suite-details`, name-inferred otherwise. `Grade.toString()` prints advisories. Live: xlogistx.io back to A with the CBC advisory; google.com stays C. `GradeTest` (37). | — | — | — | — | `grade/Grade.java` |

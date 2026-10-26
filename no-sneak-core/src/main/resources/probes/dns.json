@@ -1,5 +1,6 @@
 {
   "name": "dns",
+  "description": "DNS over UDP, one query to port 53",
   "service": "dns",
   "transport": "udp",
   "ports": [53],

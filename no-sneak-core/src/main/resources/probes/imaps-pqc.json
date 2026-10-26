@@ -1,5 +1,6 @@
 {
   "name": "imaps-pqc",
+  "description": "IMAPS direct TLS with PQC classification",
   "service": "imaps",
   "transport": "tcp",
   "ports": [993],

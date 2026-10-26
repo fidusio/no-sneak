@@ -1,5 +1,6 @@
 {
   "name": "https-scan",
+  "description": "Primary TLS assessment on 443/8443: PQC, certificate chain, revocation, version, cipher and group enumeration, then the HTTPS Server header",
   "service": "https",
   "transport": "tcp",
   "ports": [443, 8443],

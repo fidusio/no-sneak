@@ -1,5 +1,6 @@
 {
   "name": "mongodb",
+  "description": "MongoDB buildInfo command, records the server version",
   "service": "mongodb",
   "transport": "tcp",
   "ports": [27017, 27018, 27019],

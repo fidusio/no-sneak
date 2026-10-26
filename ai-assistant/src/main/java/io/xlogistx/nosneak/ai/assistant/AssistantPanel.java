@@ -145,6 +145,7 @@ public class AssistantPanel extends JPanel {
      */
     public void addSaveTarget(String label, BiConsumer<String, String> handler) {
         skillsPanel.addSaveTarget(label, handler);
+        chatPanel.addSaveTarget(label, handler);   // and a "Save as <label>" button on every reply (2026-10-26)
     }
 
     /**
@@ -159,7 +160,19 @@ public class AssistantPanel extends JPanel {
      *                           expected to show the message.
      */
     public void sendToChat(String text, String name) {
+        sendToChat(text, name, null);
+    }
+
+    /**
+     * {@link #sendToChat(String, String)} plus a request typed into the composer for the subject
+     * to review and send (2026-10-26): the scanner's Probe library attaches the probe definition
+     * and asks for a probe this way. {@code composerText} null or blank = attach only.
+     *
+     * @throws org.zoxweb.shared.security.AccessSecurityException as the two-argument form
+     */
+    public void sendToChat(String text, String name, String composerText) {
         chatPanel.attachText(text, name);
+        chatPanel.setComposerText(composerText);
         chatPanel.showPrompt();
         showPage(Page.CHAT);
     }

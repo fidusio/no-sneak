@@ -4,6 +4,8 @@ import org.junit.jupiter.api.Test;
 
 import javax.swing.*;
 import java.awt.*;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -16,14 +18,42 @@ import static org.junit.jupiter.api.Assertions.*;
 public class ChatBubbleSaveAsSkillTest {
 
     private static JButton findSaveAsSkill(Component root) {
-        if (root instanceof JButton b && "Save as skill".equals(b.getText())) return b;
+        return findButton(root, "Save as skill");
+    }
+
+    private static JButton findButton(Component root, String text) {
+        if (root instanceof JButton b && text.equals(b.getText())) return b;
         if (root instanceof Container c) {
             for (Component child : c.getComponents()) {
-                JButton found = findSaveAsSkill(child);
+                JButton found = findButton(child, text);
                 if (found != null) return found;
             }
         }
         return null;
+    }
+
+    /** 2026-10-26: a host save target ("probe") is one more button on assistant bubbles only. */
+    @Test
+    public void assistantBubbleCarriesOneButtonPerSaveTarget() {
+        AtomicInteger runs = new AtomicInteger();
+        Map<String, Runnable> saveAs = new LinkedHashMap<>();
+        saveAs.put("probe", runs::incrementAndGet);
+        JComponent bubble = AssistantUtil.chatBubble("a reply", false, null, null, null, null, saveAs);
+
+        JButton action = findButton(bubble, "Save as probe");
+        assertNotNull(action, "an assistant bubble must offer every registered save target");
+        assertNull(findSaveAsSkill(bubble), "no skill handler, no skill button");
+        action.doClick();
+        assertEquals(1, runs.get(), "clicking the target must run its action");
+    }
+
+    @Test
+    public void userBubbleNeverCarriesASaveTarget() {
+        Map<String, Runnable> saveAs = new LinkedHashMap<>();
+        saveAs.put("probe", () -> {
+        });
+        JComponent bubble = AssistantUtil.chatBubble("my prompt", true, null, null, null, null, saveAs);
+        assertNull(findButton(bubble, "Save as probe"));
     }
 
     @Test

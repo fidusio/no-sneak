@@ -8,23 +8,36 @@ this module.
 > single non-blocking core while the original packages stayed frozen beside it; on 2026-09-12 the
 > original packages (`nmap`, `probe`, `scanners`, `services`, `tools`), their tests and their
 > resources were deleted and the rebuild's package collapsed from `io.xlogistx.nosneak.v2` to
-> `io.xlogistx.nosneak`. Everything the deleted generation had was carried across first —
-> `V1-V2-MERGE-ANALYSIS.md` records what, and how. `ACTION-PLAN.md` is pre-merge history; its
-> only live part is the vulnerability-scanning checklist.
+> `io.xlogistx.nosneak`. Everything the deleted generation had was carried across first; the
+> analysis that proved it and the pre-merge action plan were deleted on 2026-10-26 as history
+> (the git log before that date has them). The one live thing the action plan held, the
+> vulnerability-scanning checklist, is *Vulnerability-scanning backlog* below.
 >
 > **Status (2026-09-20): the scan pipeline is fast and `-sV` is honest.** Adaptive deadlines,
 > streamed probes on a priority lane, a gate that honours its caps, first-positive discovery,
 > `--up-only`; `ParallelJoin` is now `CountdownMonitor`; the BCJSSE pin is gone; gated probes run
 > OCSP/CRL again (they silently never had); `postgres-db` no longer claims SSH servers;
-> `https-scan` also reads the `Server:` header. Design: *The scan pipeline* below; record:
-> `PLAN.md` 2026-09-19/20; open items: repo-root `PENDING-ISSUES.md` → *Status check (2026-09-20)*.
+> `https-scan` also reads the `Server:` header. Design: *The scan pipeline* below; open items:
+> repo-root `PENDING-ISSUES.md` → *Status check (2026-09-20)*.
 >
 > **Status (2026-09-22): the `tls-connect` tail no longer reverse-resolves its target.** The
 > 2026-09-20 "TLS-1.2-only host" timeout was a 4.6 s reverse DNS lookup inside the probe's own
 > deadline (zoxweb's `SSLContextInfo.newInstance()` calls `getHostName()` on the connect address);
 > `ProbeSecureCallback.namedAddress` pins the host string on the resolved address so the lookup
 > never happens. `https-scan` on that host 9.4–10.1 s → 4.8–5.3 s; the header `GET` is HTTP/1.1; a banner ends at its first binary byte (dropbear). 403 tests / 36 classes green.
-> Record: `PLAN.md` 2026-09-22; open items: `PENDING-ISSUES.md` → *Status check (2026-09-22)*.
+> Open items: `PENDING-ISSUES.md` → *Status check (2026-09-22)*.
+>
+> **Status (2026-10-26): the probe set was audited for redundancy at the maintainer's request.**
+> `https-classical.json` and `smtp-starttls.json` (unbundled since v1) are deleted — `https-pqc`
+> with `mode: "classical"` and `smtp-starttls-pqc` cover both. `postgres-tls` was broken, not
+> redundant: it opened a direct TLS session without PostgreSQL's SSLRequest, which only a
+> PostgreSQL 17 with direct SSL negotiation accepts. It now sends the SSLRequest, expects `S`, and
+> secures the same socket with the new **`tls-upgrade`** action (a `connect` opened with
+> `upgradable: true` runs on the JSSE-capable `ProbeSecureCallback` in plaintext; the upgrade is
+> zoxweb's `TCPSessionCallback.startTLS`), then reads the server version over TLS.
+> `TlsUpgradeEndToEndTest` drives it against a loopback server that speaks that negotiation. The
+> HTTPS trio (`https-scan` ⊃ `https-pqc`, `https-version`) is overlap by design: a fallback chain
+> for a failed Bouncy Castle handshake, kept.
 
 ---
 
@@ -33,7 +46,7 @@ this module.
 Assessment only, and that bounds the code: a probe **connects, exchanges the minimum the protocol
 needs, and records facts**. It does not exploit what it finds, guess credentials, fuzz, or try to
 evade logging, and the scanner stays rate-limited and bounded because a scan must never become the
-outage it was run to prevent. The vulnerability checklist in `ACTION-PLAN.md` is a *detection*
+outage it was run to prevent. The *Vulnerability-scanning backlog* below is a *detection*
 backlog — evidence from versions, extensions and negotiated parameters. Full rules: the repo root
 `CLAUDE.md` → *Operating scope*.
 
@@ -41,13 +54,17 @@ backlog — evidence from versions, extensions and negotiated parameters. Full r
 
 | Doc | Covers |
 |---|---|
-| `PLAN.md` | **Start here.** The dated engineering log: architecture decisions, each fix wave, and the running verification record |
-| `PROBE-CONFIG.md` | The reference: action library, candidate selection, bundled probes, result fields, tests, deferrals |
-| `PROBE-DEFINITION.md` | **The probe-definition guide — the file to hand an AI as a skill** to generate a `probe.json`: schema, every action incl. the deep-TLS ones, budgets, validation rules, recipes, worked examples, self-check |
-| `V1-V2-MERGE-ANALYSIS.md` | History of the merge: the code-verified comparison of the two generations, what the deleted one had, and how each item was carried across (paths in it are pre-merge) |
-
-| `ACTION-PLAN.md` | Pre-merge history and the SSL-Labs vulnerability-check backlog |
+| `PROBE-DEFINITION.md` | **The probe definition — the one document for the probe format**, and the file to hand an AI as a skill to generate a `probe.json`: schema, every action incl. the deep-TLS ones, budgets, validation rules, recipes, worked examples, self-check. (`PROBE-CONFIG.md`, which repeated its schema, was deleted on 2026-10-26; the engine-only notes it held are *Engine reference* below.) |
+  Since 2026-10-26 the pom also serves it from the classpath (`/probes/PROBE-DEFINITION.md`,
+  `ProbeDefinitionLoader.probeDefinition()`) for the desktop app's Probe library and its AI hand-off;
+  `bundledSource(name)` returns a bundled probe's JSON text, and `ProbeDefinition.description` is an
+  optional one-line key every bundled file now carries.
 | `README.md` | Module overview + the full scanner requirements document |
+
+(`PLAN.md`, `V1-V2-MERGE-ANALYSIS.md` and `ACTION-PLAN.md`, the documents generated around the
+v1/v2 merge, were deleted on 2026-10-26 at the maintainer's request; the vulnerability checklist the
+action plan carried is the *Vulnerability-scanning backlog* section below. The dated status blocks
+at the top of this file are the record now.)
 
 ## Architecture
 
@@ -62,7 +79,7 @@ ProbeChecker / NMapScanner ─▶ ProbeContext (live NIO connection, ProbeResult
                                    ▼ builds + drives
                              ProbeEngine → StateMachine<ProbeContext>
                                    ▼ each state runs one Action
-   connect · send · expect · starttls · tls-connect · tls-handshake · pqc-check · tls-facts
+   connect · send · expect · starttls · tls-connect · tls-upgrade · tls-handshake · pqc-check · tls-facts
    cert-chain-validate · revocation-check · enumerate-versions · enumerate-ciphers · record · done/fail
                                    ▼
                              ProbeResult (facts only)  ──▶  grade.Grade (rules layer: letter,
@@ -85,8 +102,8 @@ One scan is a chain of callback-linked stages on the caller's `NIOSocket` pools 
 (`no-sneak-net` `HostScanner` sweep for on-link CIDRs, TCP-ping/ICMP/ARP per host otherwise) →
 reverse DNS → TCP connect scan → UDP scan → probes → one `finish`. Every stage boundary is a
 `CountdownMonitor`, which is an atomic countdown, not a thread join: the last child to report runs the
-continuation on its own thread. Nothing parks. What the 2026-09-20 pass changed, and why (the
-measured record is `PLAN.md` → 2026-09-19/20; a `/24 × 1024 ports` went 136 s → 6 s):
+continuation on its own thread. Nothing parks. What the 2026-09-20 pass changed, and why (a
+`/24 × 1024 ports` went 136 s → 6 s):
 
 - **Adaptive connect deadline.** `connectTimeoutMs` = 10 × the host's discovery RTT, clamped to
   [`--min-rtt-timeout` (500 ms default), `-t`]. A silently dropped port used to hold a slot for the
@@ -130,8 +147,84 @@ Three distinct TLS paths — pick deliberately when writing a probe:
 | `tls-handshake` | Bouncy Castle on the already-open channel | PQC classification, cert facts, STARTTLS upgrades |
 | `tls-connect` | JSSE (`ProbeSecureCallback`, trust-all, RSA-capable) | talking *through* TLS (e.g. reading an HTTPS `Server:` header) |
 | `starttls` | plaintext → TLS mid-session, then BC | SMTP/IMAP/POP3/FTP-style upgrades |
+| `tls-upgrade` (2026-10-26) | plaintext → JSSE mid-session on a `connect` opened `upgradable` (zoxweb `TCPSessionCallback.startTLS`) | talking *through* TLS after a binary preamble: PostgreSQL's SSLRequest, then the StartupMessage over TLS (`postgres-tls`, `TlsUpgradeEndToEndTest`) |
 
 Only the BC path can classify PQC — JSSE does not surface the negotiated key-exchange group.
+
+## Engine reference
+
+> Folded in from `PROBE-CONFIG.md` on 2026-10-26, when that file was deleted: its schema and
+> action sections had become an unchecked copy of `PROBE-DEFINITION.md`, which is the one
+> probe-format document (the app shows it, the assistant receives it, `ProbeDefinitionGuideTest`
+> pins it to the loader). What follows is only the engine side.
+
+**Candidate selection (`ProbeChecker`).** Two tiers: tier 1 = the probes whose declared `ports`
+include the target, highest `priority` first; tier 2 = the remaining transport-compatible probes
+as a fallback (a service on a nonstandard port is still detected), minus the `portScoped` ones.
+Tier 1 always outranks tier 2. **match-first** (`check`, the default): every candidate runs
+concurrently, the highest-priority probe that reaches a clean `done` wins the instant no
+higher-priority candidate can still complete, the rest are aborted. **match-all** (`checkAll`,
+`--all`): every candidate runs and every completion is returned in priority order. The nmap
+scanner's catalog merges bundled and subject-authored definitions **by name**: a stored probe
+with a bundled name replaces it (warning names the shadowed probe), a second stored definition
+with a used name is ignored (warning), and `--probes` names that match nothing probe nothing.
+
+**Result fields (`ProbeResult`, facts only).** `service`, `service-version`, `service-<name>`
+(captures), `tls-state` (`NONE` / `DIRECT_TLS` / `STARTTLS_UPGRADED`), `pqc-status` (`PQC` /
+`CLASSICAL` / `NOT_READY` / `UNKNOWN`), `tls-version`, `cipher-suite`, `key-exchange-group`,
+`key-exchange-algorithm`, `cert-subject` / `-issuer` / `-not-before` / `-not-after`,
+`cert-validity`, `cert-signature-type` / `-algorithm`, `cert-public-key-type` / `-size`,
+`cert-signature-pqc`, `cert-hostname-match` + `-message`, `cert-chain-trust` + `-message`,
+`cert-chain-time-validity`, `cert-chain[]` (index, subject, issuer, dates, `time-valid`,
+`validity-state`, `self-signed`, `is-ca`, `role`), `revocation-status` / `-method` / `-date` /
+`-reason`, `supported-protocol-versions`, `supported-cipher-suites`,
+`supported-cipher-suite-details[]` (name, version, strength, key-exchange, authentication,
+encryption, mac, `forward-secrecy`), `server-cipher-preference` + `-mode`,
+`server-cipher-ranking`, `supported-groups`, `server-group-preference`, `complete`, `success`
+(a string, so `false` survives the default serializer), `error-message`, `note`, `duration-ms`,
+`connections[]`. The REST body adds `total-scanned`. Tri-state facts are **strings, not
+booleans** (rule 6 below).
+
+**Verdicts (`grade.Grade`).** `verdict()` is one `TrustVerdict` — `TRUSTED` / `EXPIRED` /
+`NOT_YET_VALID` / `UNTRUSTED_CHAIN` / `CHAIN_TIME_INVALID` / `REVOKED` / `UNKNOWN`, in that
+precedence; a trust failure grades **T**, `REVOKED` **F**. `letter()` is awarded only on evidence:
+`A` needs `enumerate-versions` to have run; a negotiated deprecated version still downgrades.
+Cipher tiers in SSL Labs' order: insecure (RC4, NULL, EXPORT, DES, anonymous) caps at **C**, weak
+(static RSA/ECDH key exchange, 3DES) caps at **B**, forward-secret CBC is an advisory only.
+`advisories()` never change the verdict (hostname mismatch; PQC key exchange under a classical
+signature). Pinned by `GradeTest`.
+
+**Enumeration budget.** A deep probe opens at most 5 (versions) + 44 (ciphers) + 2 (preference)
++ 10 (groups) (+ up to 10 ranking steps) child connections, bounded by
+`ProbeContext.MAX_ENUMERATION_CHILDREN` (64) and the probe's `overallTimeoutSec`; at most
+`maxInFlight` (default 8) are open at once through `Fanout.runBounded`, and on a gated checker
+every child is counted against the scan window through `GatedProbeTransport`.
+
+**CLI.** `java io.xlogistx.nosneak.ProbeChecker <host> <port> [timeoutSec] [--all|--first]
+[--tcp|--udp] [probe.json …]` — match-first over the bundled probes by default; explicit files run
+those probes only. The nmap CLI is `io.xlogistx.nosneak.nmap.NMap` (see *The scan pipeline*).
+
+**REST (`service/Checker`, `/check-qdz/{domain}/{detailed}`).** Fully asynchronous, and that is a
+correctness requirement: the handler runs on the same pool the probes need, so a blocking wait
+starves it. The handshake with `NIOHTTPServer` has two halves, both required: return
+`Boolean.FALSE` (the endpoint owns the response) and install a `ProtoSession` whose `canClose()`
+stays false until the response is written. A scheduled backstop answers `504`. The body is
+rendered with the include-defaults renderer. `Checker.checkQDZDirect("host:443")` is the
+server-free, blocking entry point for a `main` or a test; never call it from a pool worker.
+Verified: 32 concurrent requests on an 8-thread pool all `200` in about 6 s.
+
+**UDP scan (`-sU`, `nmap/UdpScanCallback`).** One connected ephemeral datagram socket per
+host:port, one datagram, one retransmit at half the budget; any reply → `open`, ICMP
+port-unreachable → `closed`, other unreachables → `filtered`, silence → `open|filtered`. Payloads
+(`UdpProbePayloads`): a recursive A query on 53, an NTPv4 request on 123, an empty datagram
+elsewhere — **no SNMP probe**, because sending `public` to see who answers is a credential
+guess. The probe stage runs `dns` only on UDP ports that answered.
+
+**Still deferred.** An `-O`-style open-port heuristic needs its own flag name (`-O` is rejected
+as nmap's fingerprint flag); a native raw-socket layer for accurate port state; `Checker`'s
+private-IP guard is a literal-prefix match (`10.`, `192.168.`, `172.16-31.`) that lets
+`127.0.0.1`, `169.254.169.254`, `[::1]` and inward-resolving names through — **fix before
+exposing the endpoint**; end-to-end runtime testing of the DM tools.
 
 ## Non-negotiable rules
 
@@ -171,7 +264,7 @@ io.xlogistx.nosneak
 ├── service/                Checker — REST /check-qdz/{domain}/{detailed}
 └── tools/                  DMTool · NoSneakUtil
 
-src/main/resources/probes/   18 bundled + 2 unbundled probe definitions
+src/main/resources/probes/   18 bundled probe definitions (the 2 unbundled ones were deleted 2026-10-26)
 src/test/java/io/xlogistx/nosneak/   403 tests in 36 classes, all green (2026-09-22) + NoSneakNIOHTTPServer harness. Pure and socket-free except
                                     nmap/NMapScannerEndToEndTest (a loopback listener) and nmap/ScanGateThroughputTest
                                     (measures the gate on real pools); model/ProbeDefinitionGuideTest pins
@@ -227,15 +320,97 @@ the launcher means the snapshot, not the code.
 Live verification is the primary gate for anything touching the network; the unit tests
 deliberately touch no sockets, save the two named above (loopback and local pools only).
 
+## Vulnerability-scanning backlog (SSL Labs parity checklist)
+
+> Moved here from `ACTION-PLAN.md` → *Pending Issues / Next Steps → item 1* on 2026-10-26, when
+> that file (pre-merge history otherwise) was deleted with `V1-V2-MERGE-ANALYSIS.md`. This is
+> the engine's largest remaining gap: nothing on it is implemented. It wants a new action (e.g.
+> `vuln-check`) plus registry, loader and `PROBE-DEFINITION.md` entries. Pinned as P17 in
+> `PENDING-ISSUES.md`: recorded, deliberately not scheduled.
+
+Goal: parity with the SSL Labs / `testssl.sh` posture report. All probes must honor the no-sneak
+rules (pure NIO callbacks, BC TLS API, exactly-once completion, soft-fail/bounded, never hang the
+scan).
+
+**Rules every check on this list must honour, on top of the engine rules:** each item is answered
+by *observation* — advertised version, extension presence, negotiated parameters, alert behaviour
+on an ordinary handshake — never by exploiting the weakness. No check may attempt to read peer
+memory, extract plaintext, corrupt session state, or drive a target into an error loop, and nothing
+on this list justifies an unbounded or unthrottled connection budget. Where a finding is not
+decidable without an exploit attempt (Heartbleed, Ticketbleed), report it from version/extension
+evidence with explicit confidence and stop there. Anything that cannot be established that way
+stays unimplemented.
+
+**a. Padding-oracle & CBC family**
+- [ ] POODLE (SSLv3 padding oracle)
+- [ ] POODLE-TLS (TLS CBC padding oracle — distinct from SSLv3)
+- [ ] Zombie POODLE
+- [ ] GOLDENDOODLE
+- [ ] Sleeping POODLE
+- [ ] OpenSSL 0-Length padding-oracle
+- [ ] BEAST (TLS 1.0 CBC)
+- [ ] OpenSSL Padding Oracle (CVE-2016-2107)
+
+**b. Named-CVE / implementation probes**
+- [ ] Heartbleed (CVE-2014-0160) + Heartbeat extension presence
+- [ ] Ticketbleed (CVE-2016-9244)
+- [ ] OpenSSL CCS injection (CVE-2014-0224)
+- [ ] ROBOT (RSA PKCS#1 v1.5 oracle)
+- [ ] DROWN (SSLv2) + SSL 2 handshake compatibility
+- [ ] SWEET32 (64-bit block ciphers)
+
+**c. Renegotiation**
+- [ ] Secure renegotiation (RFC 5746) supported
+- [ ] Secure client-initiated renegotiation
+- [ ] Insecure client-initiated renegotiation
+
+**d. Protocol posture / downgrade**
+- [ ] Downgrade prevention (TLS_FALLBACK_SCSV)
+- [ ] SSL/TLS compression (CRIME)
+- [ ] RC4 as an explicit posture item
+- [ ] Forward Secrecy robustness rating
+- [ ] ALPN / NPN advertised
+- [ ] Session resumption (caching) / (tickets)
+- [ ] OCSP stapling as a posture item (yes/no; we already *consume* stapled OCSP for revocation —
+      surface it here too)
+- [ ] TLS 1.3 0-RTT / early-data enabled
+
+**e. Key-exchange parameter hygiene**
+- [ ] Uses common DH primes
+- [ ] DH public server param (Ys) reuse
+- [ ] ECDH public server param reuse
+- [ ] Supported Named Groups *enumeration* (report the server's accepted set + preference; today
+      we only advertise our groups)
+
+**f. Intolerance / robustness probes**
+- [ ] Long handshake intolerance
+- [ ] TLS extension intolerance
+- [ ] TLS version intolerance
+- [ ] Incorrect SNI alerts
+
+**g. Pinning & transport (overlaps the HTTP-headers item)**
+- [ ] HSTS + preload status
+- [ ] HPKP, HPKP report-only, static pinning (legacy/deprecated — detect & report)
+
+**Alongside it, from the same list:** HTTP security-header analysis (HSTS, CSP, X-Frame-Options,
+X-Content-Type-Options, cookie Secure/HttpOnly/SameSite); the grading engine's remaining parity
+items (A+ needs HSTS etc., the intolerance/renegotiation/SCSV inputs above, key-size rules —
+letter, PQC readiness, trust verdict and advisories shipped in `grade.Grade` on 2026-09-11); and,
+lower priority, CNSA 2.0 timeline rules, HTML reports, further REST endpoints, connection pooling,
+integration tests against real servers.
+
 ## Next up
 
-1. **Vulnerability scanning** — the largest gap; nothing is implemented in either generation. The
-   SSL-Labs parity checklist in `ACTION-PLAN.md` → *Pending Issues → item 1* (padding-oracle
-   family, named-CVE probes, renegotiation, downgrade posture, DH/ECDH hygiene, intolerance) is
-   still authoritative. It wants a new action (e.g. `vuln-check`) plus registry + validator entries.
-2. **FSM traversal tests** — `ProbeContext` needs an injection seam to be driven by scripted
-   callbacks so each branch (banner match, `nomatch`, `timeout`, STARTTLS, reconnect) is assertable
-   without a live server. The only significant untested area.
+1. **Vulnerability scanning** — the largest gap; nothing is implemented. The SSL-Labs parity
+   checklist is the *Vulnerability-scanning backlog* section below (padding-oracle family,
+   named-CVE probes, renegotiation, downgrade posture, DH/ECDH hygiene, intolerance). It wants a
+   new action (e.g. `vuln-check`) plus registry + validator entries.
+2. ~~**FSM traversal tests**~~ — **done 2026-09-11:** `ProbeTransport` is the seam,
+   `runtime/ScriptedTransport` + `ManualScheduler` drive `ProbeContextTest` (banner match, split
+   reads, `nomatch`, `error`, both timeouts, the watchdog, reconnect, STARTTLS, cancel),
+   `TlsAnalysisContextTest` and `TlsEnumerationContextTest` the TLS actions; `TlsUpgradeEndToEndTest`
+   (2026-10-26) covers `tls-upgrade` on a loopback server. What still needs a live server: the
+   Bouncy Castle handshake bytes themselves and `tls-connect` over JSSE.
 3. **HTTP security headers + CNSA 2.0 compliance** — the remaining Sprint 4/5 features.
 4. **Merge chores** — done 2026-09-12 (packages collapsed, `/probes/` bundled, docs at the module
    root, `http_server_config.json` on `service.Checker`).
@@ -243,9 +418,8 @@ deliberately touch no sockets, save the two named above (loopback and local pool
    2026-09-12: the URL now comes only from `db-url=`, `NOSNEAK_DB_URL` or `-Dnosneak.db.url`). The rest
    is done: named-group enumeration, network OCSP + CRL, weak/insecure cipher candidates (now
    per-probe toggles), UDP scan, timing templates, `--top-ports`; `-O` and raw SYN scans are
-   rejected by policy, not deferred. **The v1 parity pass is complete (2026-09-12, see
-   `V1-V2-MERGE-ANALYSIS.md` → *Status after the fix pass*)** — nothing v1 had is missing from v2,
-   so the merge is now only the deletion/rename described there.
+   rejected by policy, not deferred. **The v1 parity pass is complete (2026-09-12)** — nothing
+   v1 had is missing, and the merge itself is done.
 
 > **Host discovery is no longer nmap's gap (2026-07-29).** `no-sneak-core` depends on
 > **`no-sneak-net`**. An on-link CIDR goes through **`HostScanner.sweep()`** — the module's
@@ -262,4 +436,3 @@ deliberately touch no sockets, save the two named above (loopback and local pool
 > Related: the executor and scheduler are **injected everywhere** (taken from the `NIOSocket`, or
 > passed explicitly); only the CLI `main` methods and `Checker.checkQDZDirect` name
 > `TaskUtil.default*`. The REST `/check-qdz` endpoint is fully async and has no blocking call.
-> See `v2/PLAN.md` for the accompanying defect pass.

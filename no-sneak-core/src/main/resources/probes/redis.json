@@ -1,5 +1,6 @@
 {
   "name": "redis",
+  "description": "Redis INFO server command, records redis_version",
   "service": "redis",
   "transport": "tcp",
   "ports": [6379],

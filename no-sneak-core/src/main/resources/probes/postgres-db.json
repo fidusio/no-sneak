@@ -1,5 +1,6 @@
 {
   "name": "postgres-db",
+  "description": "PostgreSQL SSLRequest, records the TLS and PQC posture",
   "service": "postgresql",
   "transport": "tcp",
   "ports": [5432],

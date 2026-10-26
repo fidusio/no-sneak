@@ -230,6 +230,11 @@ Not part of the redesign, but built on its pages; each is documented in `CLAUDE.
 - **Scan history**: multi-select, Delete takes the selection, **Delete all** clears the list.
 - **No probe ticked = no probing**: the chips are the only source of probing; the Service
   detection box mirrors them and is the all / none shortcut; the empty strip says so.
+- **Probe library** (2026-10-26): a table of every probe, bundled and stored, with a read-only
+  detail pane and a how-to block; the editor gained a mono font, inline Check and the name read
+  from the JSON; the probe definition (`PROBE-DEFINITION.md`) is shown in the app; *Write with
+  the assistant* attaches it and types the request, and every assistant reply offers *Save as
+  probe*. Plan page: https://claude.ai/artifact/1nkQY248cSF1zy2LqZWXet.
 
 ## Decisions taken in this plan (say so if any should change)
 

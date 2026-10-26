@@ -1,5 +1,6 @@
 {
   "name": "mysql",
+  "description": "MySQL handshake packet, records the server version",
   "service": "mysql",
   "transport": "tcp",
   "ports": [3306],

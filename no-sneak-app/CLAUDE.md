@@ -15,7 +15,12 @@ network scanner screen** over `no-sneak-core`; the PQC file-sharing screen is st
 > separate Backup page, `BACKUP` screen and sidebar item are gone). **Scan history** is
 > multi-select, Delete takes the selection and *Delete all* the whole list. **No probe ticked = no probing**: the chips are the only source of probing, the Service
 > detection box is their all / none shortcut, and the engine probes nothing for a tick set that
-> matches nothing. Live checks still owed by the maintainer are listed in `PENDING-ISSUES.md`.
+> matches nothing. **The Probe library** (2026-10-26, "the bundled probes can't be read, and it
+> doesn't explain how to create one") is a table of every probe, bundled and stored, with a
+> read-only detail pane, a how-to block, an editor with inline Check, the probe definition
+> (`PROBE-DEFINITION.md`) shown in the app, and *Write with the assistant* (the definition
+> attached, the request typed, *Save as probe* on the reply) — see *ScanPanel* below. Live
+> checks still owed by the maintainer are listed in `PENDING-ISSUES.md`.
 >
 > **2026-10-24 — UI redesign, Phase 1 (setup and login).** The maintainer asked for a more
 > intuitive UI, reviewed the nine-board design canvas, and approved the execution plan in
@@ -430,13 +435,14 @@ All tables are empty `DefaultTableModel` stubs; search and the actions column ar
 > view over all subjects/permissions/roles/grants.
 
 ### `ScanPanel`
-The scanner pages — the front end for the `no-sneak-core` scanning engine. Five cards: the three the
+The scanner pages — the front end for the `no-sneak-core` scanning engine. Six cards: the three the
 sidebar routes to (`SECTION_SCAN` = New scan, `SECTION_HISTORY` = History, `SECTION_PROBES` = Probe
-library, through `show(section)`) and two reached from within (a stored report, a probe editor).
-**Rebuilt on 2026-10-24 (Phase 3 of the redesign; board 2 of the canvas).** Constructed as
-`new ScanPanel(ctx, assistantPanel::sendToChat)`; the second argument is a `BiConsumer<String,String>`
-(content, name), so the panel can hand a report to the assistant without `no-sneak-app` reaching
-into it for anything else.
+library, through `show(section)`) and three reached from within (a stored report, the probe editor,
+the probe definition). **Rebuilt on 2026-10-24 (Phase 3 of the redesign; board 2 of the canvas).**
+Constructed as `new ScanPanel(ctx, assistantPanel::sendToChat)`; the second argument is a
+`ScanPanel.ChatHandoff` — `(text, name, composerText)`, the assistant's three-argument
+`sendToChat` since 2026-10-26 (a `BiConsumer` of content and name before) — so the panel can hand
+a report, or a request, to the assistant without `no-sneak-app` reaching into it for anything else.
 
 **New scan card.** A page header, then **`ui.scan.ScanFormPanel`** over a **`ui.scan.ScanResultView`**.
 
@@ -519,9 +525,50 @@ the `· probes:` suffix. Rows are still projections re-fetched by GUID before th
 content is read; the two counts come from the `hostsUp` / `openPorts` properties a run now records
 on the `ReportContent` (parsed from the report at save time), so older rows show a dash. *View*
 opens the stored report in a second `ScanResultView` with a *Back to history* link — the same
-tables as a fresh run. **Probe library / Edit probe** are unchanged (`probeToSave`, name from the
-JSON, update-by-name, `saveProbeFromEditor` for the assistant). `showResult(name, json)` feeds the
-scanner page a report from outside (renders, tests).
+tables as a fresh run. `showResult(name, json)` feeds the scanner page a report from outside
+(renders, tests).
+
+**Probe library (2026-10-26, on the maintainer's instruction).** `buildProbePanel` is the same
+shape as the history page: a head (title, *Write with the assistant*, the primary *New probe*), a
+bar (search, an All / Bundled / Mine `SegmentedControl`, the count, *Probe definition*), and a split
+card — left a table on `ui/scan/ProbeLibraryModel` (rows = `bundledProbes` + the stored probes,
+columns Name · Service · Ports · Transport · Priority · Source, Source a `BadgeLabel`, sorted by
+priority then name as the engine orders its catalog; `ProbeLibraryModel.matches` is the row filter:
+segment, then a query against name, service, description and exact port), right a detail
+`CardStack`: **howto** with nothing selected (what a probe is, and the three ways to add one as
+link buttons: copy a bundled probe, write with the assistant, new probe) and **probe** for a
+selected row (a `KeyValuePanel` of its facts — Description, service, transport, ports, priority,
+port-scoped, watchdog, states and start, source — the JSON read-only in the mono font, and the
+actions: *Copy to my probes* for a bundled row, *Edit* and a confirmed *Delete* for a stored one;
+double-click does the same). The bundled JSON comes from core's `ProbeDefinitionLoader.bundledSource(name)`,
+read once into `bundledSources` by `reloadProbes()` (public now, for the render harness). A stored
+probe whose JSON no longer parses keeps its row with the loader's reason in the detail pane. The
+selection survives a reload by name and source.
+
+**The probe editor** (`buildEditProbe`, card `Edit_probe`, opened by `openProbeEditor(row, title)`:
+*New probe* / *Edit probe* / *Copy of <name>*) is a mono, non-wrapping text area under a help
+line (*See the Probe definition, or let the assistant write it*, two link buttons) and the shadow
+note (a stored probe with a bundled name replaces that probe in scans). *Check* runs
+`ProbeLibraryModel.checkMessage` — the loader's verdict, *Valid: ssh · tcp 22, 2222 · 5 states from
+connect* or its reason — into an `InlineMessage`; the name is a label read from the JSON
+(`refreshEditName`), no field to disagree with it; Save goes through `probeToSave` as before
+(name from the JSON, update-by-name, a modal only on failure). `saveProbeFromEditor` is still
+the assistant's route in.
+
+**Probe definition** (`showProbeDefinition`, card `Probe_definition`): `PROBE-DEFINITION.md`
+in gui-audio's `MDViewerPanel`, loaded from the classpath on first use
+(`ProbeDefinitionLoader.probeDefinition()`; core's pom serves the module-root file at
+`/probes/PROBE-DEFINITION.md`), reached from the bar and the editor, back link to the library.
+
+**Write with the assistant** (`onWriteProbeWithAssistant`): a small dialog asks for the service
+and the port, then `sendToChat.send(probeDefinition, "Probe definition",
+ProbeLibraryModel.assistantPrompt(service, port))` attaches the definition and types the request
+(one JSON object in a fence, section 13 of the definition, a one-line description) into the
+composer, and the app goes to Chat. With no chat open the assistant's "Open a chat first" shows and
+the app goes to Chats. The reply carries a **Save as probe** button (the assistant's bubble
+save targets, registered by `AppShell.addSaveTarget("probe", scanPanel::saveProbeFromEditor)`),
+so the loop is: ask, send, click. Pinned by `ProbeLibraryModelTest` (rows, order, the broken
+stored row, the filter, the check message, the prompt).
 
 > **Two-way assistant wiring.** Out: the result views and the history rows call
 > `setSendToChat(content, name)` → the injected `BiConsumer` → `AssistantPanel.sendToChat`, then
@@ -964,24 +1011,21 @@ All target-only, because the model has nowhere to store them: per-identifier **s
   marking mandatory fields with a trailing `*` and everything else explicitly optional.
 
 ### Scan panel (`ScanPanel`)
-- **`ProbeContent` carries one param.** Just `content`. Everything the list and selector would
-  want to show or search on — `service`, `transport`, `ports`, `priority`, `port_scoped`,
-  `enabled` — means parsing every blob per row on the EDT. **This is time-sensitive:** H2P's
-  `ensureTable` is `CREATE TABLE IF NOT EXISTS` with no `ALTER TABLE`, so once a `probe_content`
-  table exists in a store, adding a param makes every save fail until the store is dropped or the
-  column added by hand. See the note in `ai-model/CLAUDE.md`.
-- **A scan cannot be cancelled.** `future.get` times out but the scan keeps running — pcap
-  handles, in-flight connects and the `HostScanner` session all continue with nothing holding a
-  reference. `IconUtil.StopIcon` is unused and waiting for this.
+- **`ProbeContent` carries one param.** Just `content`; the Probe library parses every stored
+  blob once per reload (`ProbeLibraryModel.rows`, off the EDT) to show service, ports and
+  priority. Adding columns is no longer a store hazard — H2P has done `ALTER TABLE ADD COLUMN`
+  for a new param since 2026-09-23 — so the only reason left to add them is a search that
+  should not parse. Not pressing.
+- ~~**A scan cannot be cancelled.**~~ **Done 2026-09-11:** the Stop button cancels through
+  `NMapScanner.ScanHandle`, and a timeout cancels too.
 - **Reports go on the wire as JSON.** `send to chat` attaches the stored render verbatim, so a
   `/24` is ~53 KB (~15k tokens). The `NORMAL` render is far more compact and more legible to a
   model, but the `ScanReport` is not stored — only its JSON — so switching means also persisting
   the normal render at scan time. Cheaper to decide before the store fills up.
-- **`ScanPanelTest` is an empty `try {} catch {}`** that passes unconditionally. The logic worth
-  testing moved into `NMap` / `ProbeDefinitionLoader` and is covered there, so this should
-  probably be deleted rather than filled in.
+- ~~**`ScanPanelTest` is an empty `try {} catch {}`**~~ — it pins `ProbeSelection` (ticks → config,
+  identity keys, no-ticks = no probing) since 2026-10-24.
 - **The probe editor's title field is now output, not input** — `fillProbe` overwrites it from the
-  parsed definition. It should be made read-only or relabelled so that reads as intentional.
+  parsed definition. **Done 2026-10-26:** the field is gone; the editor shows the parsed name as a label.
 
 ### ACL Tool (`SubjectSecManagerPanel`)
 - **All tables are empty stubs** and **search is not wired.** Bind the Subjects / Permissions /
@@ -1016,11 +1060,10 @@ ordered by priority.
   and `removeIdentifier`'s last-identifier guard was removed, so duplicates can be added and the
   only identifier can be (attempted to be) removed — it fails now only because the backend refuses.
   Restore the guards (or confirm the backend enforces both).
-- **`showEditAPIKey` calls `setText(null)`** for keys created without a label/description
-  (`getName()`/`getDescription()` return `null`). Null-coalesce to `""`. Low impact, defensive.
-- **External favicon fetch on the login screen** (`LoginPanel`). Startup pulls
-  `https://xlogistx.io/favicon.ico` (exceptions swallowed) — a minor privacy / supply-chain
-  "phone home." Bundle a local icon or drop it.
+- ~~**`showEditAPIKey` calls `setText(null)`**~~ — gone; no `setText(null)` remains in `SubjectPanel`
+  (verified 2026-10-26).
+- ~~**External favicon fetch on the login screen** (`LoginPanel`)~~ — gone with the redesign: the
+  app fetches nothing at start-up and `LoginPanel` is `UnlockPanel` now (verified 2026-10-26).
 
 ### Correctness issues found in the last review pass (`no-sneak-app`)
 
@@ -1048,9 +1091,9 @@ ordered by priority.
 - ~~**`Main.main` does not handle a failed `connect()`** on the `ds.*` param path~~ — the param
   path now prints the reason and exits with status 2 (no stack trace, no window); the setup
   screen still surfaces it in a dialog.
-- **`LoginPanel`'s Enter binding always runs `passwordAction()`** regardless of which card is
-  showing (`WHEN_ANCESTOR_OF_FOCUSED_COMPONENT`). Harmless while the API-key and passkey
-  selectors are hidden; wrong the moment the commented-out `applyMode()` lines are restored.
+- ~~**`LoginPanel`'s Enter binding always runs `passwordAction()`**~~ — obsolete: `LoginPanel` was
+  replaced by `UnlockPanel` in the 2026-10-24 redesign, which has one password form and no
+  ancestor-level Enter binding (verified 2026-10-26).
 
 > Considered and **not** treated as issues: menu items are unreachable while signed out (the whole
 > `JMenuBar` is hidden until auth); values render in `JTextField`s with no HTML, and AppID/domain

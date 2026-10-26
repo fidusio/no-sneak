@@ -55,4 +55,22 @@
 
     </dependencies>
 
+    <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+            <!-- PROBE-DEFINITION.md stays at the module root (it is a document people edit) and
+                 is also served from the classpath at /probes/PROBE-DEFINITION.md so the desktop
+                 app can show it and hand it to an AI assistant (2026-10-26). -->
+            <resource>
+                <directory>${project.basedir}</directory>
+                <includes>
+                    <include>PROBE-DEFINITION.md</include>
+                </includes>
+                <targetPath>probes</targetPath>
+            </resource>
+        </resources>
+    </build>
+
 </project>

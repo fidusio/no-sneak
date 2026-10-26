@@ -8,15 +8,13 @@ generations of the code — see *Status* below.
 
 **One code base (since 2026-09-12).** The engine was rebuilt from scratch on a single non-blocking
 core (`NIOSocket` + trigger `StateMachine`, nothing that blocks a thread on I/O); the rebuild has
-replaced the original packages, which are deleted. `V1-V2-MERGE-ANALYSIS.md` records what the
-deleted generation had and how it was carried across; `ACTION-PLAN.md` is pre-merge history.
+replaced the original packages, which are deleted (the merge analysis and the pre-merge action
+plan were deleted on 2026-10-26 as history; the git log keeps them).
 
 | Doc | Covers |
 |---|---|
-| `PLAN.md` (this directory) | dated engineering log: architecture decisions, fix waves, verification record |
-| `PROBE-CONFIG.md` (this directory) | probe DSL reference, action library, bundled probes, result fields, tests |
-| `PROBE-DEFINITION.md` (this directory) | the probe-definition guide — give it to an AI as a skill to generate a `probe.json` |
-| `ACTION-PLAN.md` (this directory) | pre-merge history + the vulnerability-check backlog |
+| `PROBE-DEFINITION.md` (this directory) | the probe definition: the one document for the probe format, also the file to give an AI as a skill to generate a `probe.json`; the app shows it and attaches it to the assistant |
+| `CLAUDE.md` (this directory) | module orientation plus the engine reference: candidate selection, result fields, verdicts, CLI, REST, deferrals |
 | this file | module overview + the full scanner requirements document (below) |
 
 ## What it does today
@@ -32,7 +30,7 @@ deleted generation had and how it was carried across; `ACTION-PLAN.md` is pre-me
   event-driven, rendered in five nmap-compatible output formats.
 
 Not yet implemented: the vulnerability-scanning framework (SSL-Labs parity checklist), HTTP
-security-header analysis, and CNSA 2.0 compliance rules. See `ACTION-PLAN.md`.
+security-header analysis, and CNSA 2.0 compliance rules. See `CLAUDE.md` → *Vulnerability-scanning backlog*.
 
 ## Entry points
 
@@ -52,7 +50,7 @@ endpoint is `service/Checker` (`/check-qdz/{domain}/{detailed}`).
 `xlogistx-common`, `xlogistx-core`, `xlogistx-shiro`, `xlogistx-http`, `xlogistx-opsec`,
 `xlogistx-datastore`, plus zoxweb (`org.zoxweb.*`) and Bouncy Castle. **Bouncy Castle is the only
 cryptographic library** and all reusable crypto helpers belong in `opsec/OPSecUtil` — see
-*Architectural Decisions* in `ACTION-PLAN.md`.
+*Non-negotiable rules* in `CLAUDE.md`.
 
 ## Building and testing
 
@@ -65,7 +63,7 @@ mvn -pl no-sneak-core test -DskipTests=false -Dtest='io.xlogistx.nosneak.**'
 
 If a TLS-intercepting proxy is active locally, Maven cannot reach central and every scanned
 certificate reads `UNTRUSTED_ROOT`; import the proxy's root into a copy of the JDK `cacerts` and
-point `javax.net.ssl.trustStore` at it. Details in `PROBE-CONFIG.md` → *Tests*.
+point `javax.net.ssl.trustStore` at it. Details in `CLAUDE.md` → *Build, test, verify*.
 
 ---
 

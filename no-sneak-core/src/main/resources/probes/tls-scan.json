@@ -1,5 +1,6 @@
 {
   "name": "tls-scan",
+  "description": "Deep TLS assessment on any port, labelled tls so a non-HTTP TLS service is not mislabelled",
   "service": "tls",
   "transport": "tcp",
   "ports": [],

@@ -1,6 +1,7 @@
 package io.xlogistx.nosneak.app.ui;
 
 import io.xlogistx.gui.*;
+import io.xlogistx.nosneak.app.ui.scan.ProbeLibraryModel;
 import io.xlogistx.nosneak.app.ui.scan.ScanFormPanel;
 import io.xlogistx.nosneak.app.ui.scan.ScanResultView;
 import io.xlogistx.nosneak.app.ui.utility.AppContext;
@@ -78,7 +79,25 @@ public class ScanPanel extends JPanel {
     private final JButton historyDeleteAll = new JButton("Delete all", new IconUtil.DeleteIcon(16));
     private final TableRowSorter<HistoryModel> historySorter = new TableRowSorter<>(historyModel);
     private final JLabel historyCount = new JLabel();
-    private ListSection<ProbeContent> probeList;
+    // The Probe library (2026-10-26): every probe a scan can run, bundled and stored, with a
+    // detail pane that shows the selected one read-only; see buildProbePanel.
+    private final ProbeLibraryModel libraryModel = new ProbeLibraryModel();
+    private final JTable libraryTable = new JTable(libraryModel);
+    private final TableRowSorter<ProbeLibraryModel> librarySorter = new TableRowSorter<>(libraryModel);
+    private final JTextField librarySearch = new JTextField();
+    private final SegmentedControl libraryFilter = new SegmentedControl("All", "Bundled", "Mine");
+    private final JLabel libraryCount = new JLabel();
+    private final CardStack libraryDetail = new CardStack();
+    private final JLabel probeTitle = new JLabel();
+    private final KeyValuePanel probeFacts = new KeyValuePanel(110);
+    private final JTextArea probeSource = new JTextArea();
+    private final InlineMessage probeProblem = new InlineMessage();
+    private final JButton copyProbe = new JButton("Copy to my probes", new IconUtil.CopyIcon(16));
+    private final JButton editProbe = new JButton("Edit", new IconUtil.EditIcon(16));
+    private final JButton deleteProbe = new JButton("Delete", new IconUtil.DeleteIcon(16));
+    /** The bundled files' JSON text by probe name, read once with the definitions. */
+    private Map<String, String> bundledSources = Map.of();
+    private MDViewerPanel definitionView;
     private List<ReportContent> scanResults = List.of();
     private List<ProbeContent> probes = List.of();
 
@@ -97,16 +116,29 @@ public class ScanPanel extends JPanel {
     private ReportContent selectedScan;
     private ProbeContent selectedProbe;
 
-    private JTextField viewProbeTitleArea;
+    // The probe editor (2026-10-26): the name is read from the JSON, Check validates inline
+    private final JLabel editTitle = new JLabel();
+    private final JLabel editName = new JLabel();
+    private final InlineMessage editCheck = new InlineMessage();
     private JTextArea viewProbeTextArea;
 
     /** Tick keys — see {@link ProbeSelection#bundledKey} and {@link ProbeSelection#storedKey}. */
     private final Set<String> tickedProbes = new HashSet<>();
     private List<ProbeDefinition> bundledProbes = List.of();
 
-    private final BiConsumer<String, String> sendToChat;
+    /**
+     * How this panel hands content to the assistant: a text attachment with a short label, and
+     * (2026-10-26) optionally a request typed into the composer. Null composer text = attach only.
+     * Throws {@link AccessSecurityException} when the assistant has nowhere to put it (no open chat).
+     */
+    @FunctionalInterface
+    public interface ChatHandoff {
+        void send(String text, String name, String composerText);
+    }
 
-    public ScanPanel(AppContext ctx, BiConsumer<String, String> sendToChat) {
+    private final ChatHandoff sendToChat;
+
+    public ScanPanel(AppContext ctx, ChatHandoff sendToChat) {
         this.ctx = ctx;
         this.sendToChat = sendToChat;
         this.stopButton = form.getStopButton();
@@ -120,6 +152,7 @@ public class ScanPanel extends JPanel {
         cardStack.add(buildResultPanel(), "Result");
         cardStack.add(buildViewScanResult(), "View_scan");
         cardStack.add(buildEditProbe(), "Edit_probe");
+        cardStack.add(buildProbeDefinitionCard(), "Probe_definition");
 
         refreshProbeChips();
 
@@ -158,7 +191,7 @@ public class ScanPanel extends JPanel {
         selectedScan = null;
         selectedProbe = null;
         if (viewProbeTextArea != null) viewProbeTextArea.setText("");
-        if (viewProbeTitleArea != null) viewProbeTitleArea.setText("");
+        editCheck.clear();
         tickedProbes.clear();
         // A scan the departing subject started must not keep probing on their behalf.
         onStop();
@@ -166,7 +199,7 @@ public class ScanPanel extends JPanel {
         probes = List.of();
         historyModel.setRows(scanResults);
         updateHistoryCount();
-        if (probeList != null) probeList.refresh();
+        refreshLibraryRows();
         refreshProbeChips();
         cardStack.show("Scan");
     }
@@ -527,19 +560,356 @@ public class ScanPanel extends JPanel {
         JOptionPane.showMessageDialog(this, new JScrollPane(text), "Usage", JOptionPane.INFORMATION_MESSAGE);
     }
 
+    /**
+     * The Probe library (2026-10-26, on the maintainer's instruction: "the bundled probes can't
+     * be read, and it doesn't explain how to create one"): a table of every probe a scan can run,
+     * bundled and stored, with the selected one read-only in a detail pane; with nothing selected
+     * the pane says what a probe is and the three ways to add one. Same shape as the history page.
+     */
     private JPanel buildProbePanel() {
-        probeList = ListSection.of(() -> probes)
-                .title("Probe List")
-                .label(ProbeContent::getName)
-                .addButton("+ add probe", () -> onEditProbe(new ProbeContent()))
-                .onEdit(p -> () -> onEditProbe(p))
-                .onRemove(p -> () -> onRemoveProbe(p))
-                .emptyText("No probes yet")
-                .scrollable()
-                .search()
-                .build();
+        JPanel out = new JPanel(new MigLayout("insets 20 24 24 24, wrap 1, gapy 14, fill", "[grow,fill]", "[][]0[grow,fill]"));
+        out.setBackground(UITokens.color("xlogistx.ground", null, 0xF4F4F7));
 
-        return probeList;
+        JPanel head = new JPanel(new MigLayout("insets 0, gapx 12", "[grow][][]"));
+        head.setOpaque(false);
+        JPanel titles = new JPanel(new MigLayout("insets 0, wrap 1, gapy 2"));
+        titles.setOpaque(false);
+        JLabel title = new JLabel("Probe library");
+        title.setFont(UITokens.font(Font.BOLD, 8f));
+        titles.add(title);
+        JLabel sub = new JLabel("The service probes a scan can run: the bundled set and your own. Select one to read it.");
+        sub.setForeground(UITokens.muted());
+        titles.add(sub);
+        head.add(titles, "wmin 0");
+        JButton withAssistant = new JButton("Write with the assistant", IconUtil.svgIcon("io/xlogistx/gui/icons/chat.svg", 16, UITokens.text()));
+        withAssistant.setToolTipText("Hand the assistant the probe definition and ask it for a probe");
+        withAssistant.addActionListener(_ -> onWriteProbeWithAssistant());
+        head.add(withAssistant);
+        JButton newProbe = UITokens.primary(new JButton("New probe", IconUtil.svgIcon("io/xlogistx/gui/icons/plus.svg", 14, Color.WHITE)));
+        newProbe.addActionListener(_ -> newProbe());
+        head.add(newProbe);
+        out.add(head, "growx");
+
+        JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", "[260!][][]push[]"));
+        bar.setOpaque(false);
+        librarySearch.putClientProperty("JTextField.placeholderText", "Search name, service, port");
+        librarySearch.putClientProperty("JTextField.leadingIcon", new IconUtil.SearchIcon(14));
+        bar.add(librarySearch, "growx");
+        libraryFilter.select(0);
+        libraryFilter.onChange(_ -> filterLibrary());
+        bar.add(libraryFilter);
+        libraryCount.setForeground(UITokens.muted());
+        libraryCount.setFont(UITokens.font(Font.PLAIN, -1f));
+        bar.add(libraryCount);
+        JButton definition = new JButton("Probe definition", IconUtil.svgIcon("io/xlogistx/gui/icons/book.svg", 16, UITokens.text()));
+        definition.setToolTipText("The contract a probe file follows, with examples");
+        definition.putClientProperty("JButton.buttonType", "toolBarButton");
+        definition.addActionListener(_ -> showProbeDefinition());
+        bar.add(definition);
+        out.add(bar, "growx");
+
+        Tables.style(libraryTable);
+        Tables.width(libraryTable, ProbeLibraryModel.COL_NAME, 170);
+        Tables.width(libraryTable, ProbeLibraryModel.COL_SERVICE, 100);
+        Tables.width(libraryTable, ProbeLibraryModel.COL_PORTS, 150);
+        Tables.width(libraryTable, ProbeLibraryModel.COL_TRANSPORT, 80);
+        Tables.width(libraryTable, ProbeLibraryModel.COL_PRIORITY, 70);
+        Tables.width(libraryTable, ProbeLibraryModel.COL_SOURCE, 90);
+        libraryTable.getColumnModel().getColumn(ProbeLibraryModel.COL_NAME).setCellRenderer(new MonoRenderer());
+        libraryTable.getColumnModel().getColumn(ProbeLibraryModel.COL_SOURCE).setCellRenderer(new SourceRenderer());
+        libraryTable.setRowSorter(librarySorter);
+        libraryTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        libraryTable.getSelectionModel().addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting()) showLibraryDetail(selectedLibraryRow());
+        });
+        libraryTable.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent e) {
+                if (e.getClickCount() != 2) return;
+                ProbeLibraryModel.Row row = selectedLibraryRow();
+                if (row == null) return;
+                if (row.stored()) onEditProbe(row.content());
+                else onCopyBundledProbe(row);
+            }
+        });
+        librarySearch.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            public void insertUpdate(javax.swing.event.DocumentEvent e) {
+                filterLibrary();
+            }
+
+            public void removeUpdate(javax.swing.event.DocumentEvent e) {
+                filterLibrary();
+            }
+
+            public void changedUpdate(javax.swing.event.DocumentEvent e) {
+                filterLibrary();
+            }
+        });
+
+        JScrollPane tableScroll = new JScrollPane(libraryTable);
+        tableScroll.setBorder(BorderFactory.createEmptyBorder());
+        tableScroll.getViewport().setBackground(UITokens.surface());
+        tableScroll.setMinimumSize(new Dimension(0, 0));
+
+        libraryDetail.add(buildLibraryHowTo(), "howto");
+        libraryDetail.add(buildLibraryProbeCard(), "probe");
+        JComponent detail = libraryDetail.view();
+        detail.setBackground(UITokens.surfaceAlt());
+        detail.setOpaque(true);
+        detail.setBorder(BorderFactory.createMatteBorder(0, 1, 0, 0, UITokens.border()));
+        detail.setMinimumSize(new Dimension(0, 0));
+        libraryDetail.show("howto");
+
+        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, tableScroll, detail);
+        split.setResizeWeight(0.58);
+        split.setBorder(BorderFactory.createLineBorder(UITokens.border()));
+        split.setDividerSize(6);
+        split.setMinimumSize(new Dimension(0, 0));
+        out.add(split, "grow, push");
+        return out;
+    }
+
+    /** The detail pane with nothing selected: what a probe is, and the three ways to add one. */
+    private JPanel buildLibraryHowTo() {
+        JPanel p = new JPanel(new MigLayout("insets 20, wrap 1, gapy 6", "[grow,fill]"));
+        p.setOpaque(false);
+        JLabel t = new JLabel("How to add a probe");
+        t.setFont(UITokens.font(Font.BOLD, 2f));
+        p.add(t, "gapbottom 4");
+        WrapLabel what = new WrapLabel("A probe is one JSON file: a small state machine that connects, sends the minimum the "
+                + "protocol needs, matches the reply and records the service. Select a probe on the left to read it. "
+                + "Three ways to add one:");
+        what.setWrapWidth(300);
+        what.setForeground(UITokens.muted());
+        p.add(what, "gapbottom 8");
+
+        JButton copy = UITokens.link(new JButton("Copy a bundled probe"));
+        copy.addActionListener(_ -> selectFirstBundledRow());
+        p.add(copy, "growx 0");
+        p.add(note("Pick one on the left, then Copy to my probes and change what you need."));
+
+        JButton ask = UITokens.link(new JButton("Write with the assistant"));
+        ask.addActionListener(_ -> onWriteProbeWithAssistant());
+        p.add(ask, "growx 0, gaptop 8");
+        p.add(note("It gets the probe definition and returns the JSON; one click on the reply saves it here."));
+
+        JButton fresh = UITokens.link(new JButton("New probe"));
+        fresh.addActionListener(_ -> newProbe());
+        p.add(fresh, "growx 0, gaptop 8");
+        p.add(note("Start from an empty editor, with the Probe definition one click away."));
+        return p;
+    }
+
+    private static WrapLabel note(String text) {
+        WrapLabel l = new WrapLabel(text);
+        l.setWrapWidth(290);
+        l.setForeground(UITokens.muted());
+        l.setBorder(BorderFactory.createEmptyBorder(0, 12, 0, 0));
+        return l;
+    }
+
+    /** The detail pane for a selected probe: its facts, its JSON read-only, and what you can do with it. */
+    private JPanel buildLibraryProbeCard() {
+        JPanel p = new JPanel(new MigLayout("insets 16, wrap 1, gapy 8, fill", "[grow,fill]", "[][][][grow,fill][]"));
+        p.setOpaque(false);
+        probeTitle.setFont(UITokens.font(Font.BOLD, 2f));
+        p.add(probeTitle);
+        p.add(probeFacts);
+        p.add(probeProblem, "hidemode 3");
+        probeSource.setEditable(false);
+        probeSource.setFont(UITokens.mono(-1f));
+        probeSource.setMargin(new Insets(10, 12, 10, 12));
+        JScrollPane sourceScroll = new JScrollPane(probeSource);
+        sourceScroll.setBorder(BorderFactory.createLineBorder(UITokens.border()));
+        sourceScroll.setMinimumSize(new Dimension(0, 0));
+        p.add(sourceScroll, "grow, push");
+        JPanel actions = new JPanel(new MigLayout("insets 0, gapx 8", "[][][]"));
+        actions.setOpaque(false);
+        copyProbe.setToolTipText("Open the editor with this probe's JSON as your draft");
+        copyProbe.addActionListener(_ -> onCopyBundledProbe(selectedLibraryRow()));
+        editProbe.addActionListener(_ -> {
+            ProbeLibraryModel.Row row = selectedLibraryRow();
+            if (row != null && row.stored()) onEditProbe(row.content());
+        });
+        deleteProbe.setForeground(UITokens.danger());
+        deleteProbe.addActionListener(_ -> {
+            ProbeLibraryModel.Row row = selectedLibraryRow();
+            if (row == null || !row.stored()) return;
+            int ok = JOptionPane.showConfirmDialog(this, "Delete the probe \"" + row.name() + "\"?", "Delete probe",
+                    JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
+            if (ok == JOptionPane.OK_OPTION) onRemoveProbe(row.content());
+        });
+        for (JButton b : new JButton[]{copyProbe, editProbe, deleteProbe}) {
+            b.putClientProperty("JButton.buttonType", "toolBarButton");
+            actions.add(b, "hidemode 3");
+        }
+        p.add(actions);
+        return p;
+    }
+
+    /** Fills the detail pane for {@code row}; null shows the how-to card. */
+    private void showLibraryDetail(ProbeLibraryModel.Row row) {
+        if (row == null) {
+            libraryDetail.show("howto");
+            return;
+        }
+        probeTitle.setText(row.name());
+        probeFacts.clear();
+        ProbeDefinition d = row.def();
+        if (d != null) {
+            WrapLabel description = probeFacts.put("Description", d.getDescription());
+            if (description != null) description.setWrapWidth(230);
+            probeFacts.put("Service", d.getService());
+            probeFacts.put("Transport", d.getTransport());
+            probeFacts.put("Ports", ProbeLibraryModel.ports(d));
+            probeFacts.put("Priority", String.valueOf(d.getPriority()));
+            probeFacts.put("Port-scoped", d.isPortScoped() ? "yes, declared ports only" : "no");
+            if (d.getOverallTimeoutSec() != null) probeFacts.put("Watchdog", d.getOverallTimeoutSec() + " s");
+            int states = d.getStates() == null ? 0 : d.getStates().size();
+            probeFacts.putMono("States", states + ", start at " + d.getStart());
+            probeProblem.clear();
+        } else {
+            probeProblem.error("This probe no longer loads: " + row.error());
+        }
+        probeFacts.put("Source", row.stored() ? "mine, stored under your account" : "bundled with no-sneak");
+        probeProblem.setVisible(probeProblem.hasMessage());
+        probeSource.setText(row.source());
+        probeSource.setCaretPosition(0);
+        copyProbe.setVisible(!row.stored());
+        editProbe.setVisible(row.stored());
+        deleteProbe.setVisible(row.stored());
+        libraryDetail.show("probe");
+    }
+
+    private ProbeLibraryModel.Row selectedLibraryRow() {
+        int row = libraryTable.getSelectedRow();
+        return row < 0 ? null : libraryModel.at(libraryTable.convertRowIndexToModel(row));
+    }
+
+    private void selectFirstBundledRow() {
+        for (int i = 0; i < libraryTable.getRowCount(); i++) {
+            if (!libraryModel.at(libraryTable.convertRowIndexToModel(i)).stored()) {
+                libraryTable.setRowSelectionInterval(i, i);
+                libraryTable.scrollRectToVisible(libraryTable.getCellRect(i, 0, true));
+                return;
+            }
+        }
+    }
+
+    /** Rebuilds the table from the bundled definitions and the stored probes (on the EDT; used by reset). */
+    private void refreshLibraryRows() {
+        refreshLibraryRows(ProbeLibraryModel.rows(bundledProbes, bundledSources, probes));
+    }
+
+    /** Installs rows built elsewhere (the reload builds them off the EDT); keeps the selection by name. */
+    private void refreshLibraryRows(List<ProbeLibraryModel.Row> rows) {
+        ProbeLibraryModel.Row before = selectedLibraryRow();
+        libraryModel.setRows(rows);
+        filterLibrary();
+        if (before != null) {
+            for (int i = 0; i < libraryTable.getRowCount(); i++) {
+                ProbeLibraryModel.Row r = libraryModel.at(libraryTable.convertRowIndexToModel(i));
+                if (r.stored() == before.stored() && r.name().equals(before.name())) {
+                    libraryTable.setRowSelectionInterval(i, i);
+                    return;
+                }
+            }
+        }
+        libraryTable.clearSelection();
+        showLibraryDetail(null);
+    }
+
+    private void filterLibrary() {
+        ProbeLibraryModel.Filter f = ProbeLibraryModel.Filter.values()[Math.max(0, libraryFilter.getSelectedIndex())];
+        String q = librarySearch.getText();
+        librarySorter.setRowFilter(new RowFilter<>() {
+            @Override
+            public boolean include(Entry<? extends ProbeLibraryModel, ? extends Integer> entry) {
+                return ProbeLibraryModel.matches(entry.getModel().at(entry.getIdentifier()), f, q);
+            }
+        });
+        int shown = libraryTable.getRowCount(), all = libraryModel.getRowCount();
+        libraryCount.setText(all == 0 ? "" : shown == all ? all + " probes" : shown + " of " + all + " probes");
+    }
+
+    /** Opens the editor on an empty draft. */
+    public void newProbe() {
+        openProbeEditor(new ProbeContent(), "New probe");
+    }
+
+    /** Opens the editor with a bundled probe's JSON as a new draft (2026-10-26). */
+    private void onCopyBundledProbe(ProbeLibraryModel.Row row) {
+        if (row == null || row.stored()) return;
+        ProbeContent draft = new ProbeContent();
+        draft.setContent(row.source());
+        openProbeEditor(draft, "Copy of " + row.name());
+    }
+
+    /**
+     * Hands the assistant the probe definition and a request for a probe (2026-10-26): a small
+     * dialog asks what to detect and where, then the Chat page opens with the request typed and
+     * the definition attached, so only Send is left. With no chat open the assistant's own
+     * message shows and the app goes to Chats, where one can be created.
+     */
+    private void onWriteProbeWithAssistant() {
+        JTextField service = new JTextField(18);
+        JTextField port = new JTextField(6);
+        JPanel ask = new JPanel(new MigLayout("insets 0, wrap 2, gapy 6", "[][grow,fill]"));
+        ask.add(new JLabel("Service"));
+        ask.add(service);
+        ask.add(new JLabel("Port"));
+        ask.add(port, "growx 0");
+        WrapLabel hint = new WrapLabel("The assistant gets PROBE-DEFINITION.md with the request and answers with one JSON object; "
+                + "the reply carries a Save as probe button.");
+        hint.setWrapWidth(360);
+        hint.setForeground(UITokens.muted());
+        ask.add(hint, "span 2, gaptop 6");
+        int ok = JOptionPane.showConfirmDialog(this, ask, "Write a probe with the assistant",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if (ok != JOptionPane.OK_OPTION) return;
+        String prompt = ProbeLibraryModel.assistantPrompt(service.getText(), port.getText());
+        try {
+            sendToChat.send(ProbeDefinitionLoader.probeDefinition(), "Probe definition", prompt);
+        } catch (AccessSecurityException e) {
+            JOptionPane.showMessageDialog(this, e.getMessage(), "Write with the assistant", JOptionPane.WARNING_MESSAGE);
+            ctx.nav().show(Navigator.Screen.CHATS);
+            return;
+        }
+        ctx.nav().show(Navigator.Screen.CHAT);
+    }
+
+    /** Shows PROBE-DEFINITION.md, the contract a probe file follows; rendered on first use. */
+    public void showProbeDefinition() {
+        if (definitionView.getMarkdown() == null || definitionView.getMarkdown().isEmpty()) {
+            definitionView.setMarkdown(ProbeDefinitionLoader.probeDefinition());
+        }
+        cardStack.show("Probe_definition");
+    }
+
+    private JPanel buildProbeDefinitionCard() {
+        definitionView = new MDViewerPanel();
+        return PanelBuilder.detail("Probe definition", () -> cardStack.show("Probe"), content -> {
+            JLabel sub = new JLabel("no-sneak-core/PROBE-DEFINITION.md: what a probe.json may contain, every action, the validation rules and worked examples.");
+            sub.setForeground(UITokens.muted());
+            content.add(sub, "gapbottom 6");
+            content.add(definitionView, "grow, push");
+        });
+    }
+
+    /** A "bundled" / "mine" badge in the Source column. */
+    private static final class SourceRenderer implements javax.swing.table.TableCellRenderer {
+        private final BadgeLabel bundled = new BadgeLabel("bundled", BadgeLabel.Tone.NEUTRAL);
+        private final BadgeLabel mine = new BadgeLabel("mine", BadgeLabel.Tone.ACCENT);
+        private final JPanel cell = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
+
+        @Override
+        public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
+            cell.removeAll();
+            cell.add("mine".equals(value) ? mine : bundled);
+            cell.setOpaque(true);
+            cell.setBackground(isSelected ? table.getSelectionBackground() : table.getBackground());
+            return cell;
+        }
     }
 
     /**
@@ -840,22 +1210,33 @@ public class ScanPanel extends JPanel {
         });
     }
 
-    private void reloadProbes() {
+    /** Re-reads the stored probes (and, once, the bundled set) off the EDT and refreshes the library and the chips. */
+    public void reloadProbes() {
         BackgroundTask.run(this, null, () -> {
             if (bundledProbes.isEmpty()) bundledProbes = ProbeDefinitionLoader.loadBundled();
-            return ctx.session().getAllProbes();
+            if (bundledSources.isEmpty()) {
+                Map<String, String> sources = new LinkedHashMap<>();
+                for (ProbeDefinition d : bundledProbes) sources.put(d.getName(), ProbeDefinitionLoader.bundledSource(d.getName()));
+                bundledSources = sources;
+            }
+            List<ProbeContent> stored = ctx.session().getAllProbes();
+            // the library's rows (every stored probe parsed once) are built here, off the EDT
+            return new ProbeLoad(stored, ProbeLibraryModel.rows(bundledProbes, bundledSources, stored));
         }, loaded -> {
-            probes = loaded;
+            probes = loaded.probes();
             // A tick for a row that no longer exists (deleted, or another subject's) is dropped
             // here rather than kept forever in the set.
             Set<String> live = new HashSet<>();
             for (ProbeDefinition d : bundledProbes) live.add(ProbeSelection.bundledKey(d.getName()));
             for (ProbeContent p : probes) live.add(ProbeSelection.storedKey(p));
             tickedProbes.retainAll(live);
-            probeList.refresh();
+            refreshLibraryRows(loaded.rows());
             refreshProbeChips();
         });
     }
+
+    /** What one probe reload produced: the stored rows and the library's rows built from them. */
+    private record ProbeLoad(List<ProbeContent> probes, List<ProbeLibraryModel.Row> rows) {}
 
     private void onViewScanResult(ReportContent row) {
         if (row == null) return;
@@ -895,49 +1276,122 @@ public class ScanPanel extends JPanel {
 
     private void onEditProbe(ProbeContent probeContent) {
         if (probeContent == null) return;
-        this.selectedProbe = probeContent;
-        viewProbeTextArea.setText(Objects.toString(probeContent.getContent(), ""));
-        viewProbeTitleArea.setText(Objects.toString(probeContent.getName(), ""));
-        viewProbeTextArea.setCaretPosition(0);
-        cardStack.show("Edit_probe");
+        openProbeEditor(probeContent, SUS.isEmpty(probeContent.getGUID()) ? "New probe" : "Edit probe");
     }
 
+    /** Shows the editor on {@code probeContent} (a stored row, or a fresh draft) under {@code title}. */
+    private void openProbeEditor(ProbeContent probeContent, String title) {
+        this.selectedProbe = probeContent;
+        editTitle.setText(title);
+        viewProbeTextArea.setText(Objects.toString(probeContent.getContent(), ""));
+        viewProbeTextArea.setCaretPosition(0);
+        editCheck.clear();
+        refreshEditName();
+        cardStack.show("Edit_probe");
+        viewProbeTextArea.requestFocusInWindow();
+    }
+
+    /** The name is whatever the JSON says; the label follows the draft so there is no field to disagree with it. */
+    private void refreshEditName() {
+        String name = null;
+        try {
+            name = ProbeDefinitionLoader.parse(fencedBlock(viewProbeTextArea.getText()), "draft").getName();
+        } catch (RuntimeException ignored) {
+            // not a valid probe yet; Check says why
+        }
+        editName.setText(name == null ? "Name: taken from the JSON once it is valid" : "Name: " + name);
+    }
+
+    /**
+     * The probe editor (2026-10-26): mono text with no wrapping, a Check button that reports
+     * inline, the name read from the JSON, and the two ways to get help one click away.
+     */
     private JPanel buildEditProbe() {
         viewProbeTextArea = new JTextArea();
         viewProbeTextArea.setEditable(true);
-        viewProbeTextArea.setLineWrap(true);
-        viewProbeTextArea.setWrapStyleWord(true);
+        viewProbeTextArea.setFont(UITokens.mono(-1f));
+        viewProbeTextArea.setTabSize(2);
+        viewProbeTextArea.setMargin(new Insets(10, 12, 10, 12));
 
-        viewProbeTitleArea = new JTextField();
+        JPanel content = new JPanel(new MigLayout("wrap 1, insets 10, gapy 6, fill", "[grow,fill]", "[][][][][][grow,fill]"));
+        JButton back = GUIUtil.iconButton(new IconUtil.BackIcon(32), true);
+        back.setToolTipText("Back to the library");
+        back.addActionListener(_ -> cardStack.show("Probe"));
+        content.add(back, "growx 0");
+        editTitle.setFont(PanelBuilder.title("").getFont());
+        content.add(editTitle, "gaptop 6");
+        {
+            JPanel help = new JPanel(new MigLayout("insets 0, gapx 4", "[][][][]"));
+            help.setOpaque(false);
+            JLabel one = new JLabel("One JSON object. See the");
+            one.setForeground(UITokens.muted());
+            help.add(one);
+            JButton definition = UITokens.link(new JButton("Probe definition"));
+            definition.setMargin(new Insets(0, 2, 0, 2));
+            definition.addActionListener(_ -> showProbeDefinition());
+            help.add(definition);
+            JLabel or = new JLabel(", or let the");
+            or.setForeground(UITokens.muted());
+            help.add(or);
+            JButton ask = UITokens.link(new JButton("assistant write it"));
+            ask.setMargin(new Insets(0, 2, 0, 2));
+            ask.addActionListener(_ -> onWriteProbeWithAssistant());
+            help.add(ask);
+            content.add(help);
+            WrapLabel shadow = new WrapLabel("A stored probe with a bundled probe's name replaces that probe in your scans "
+                    + "(the report says so); rename it in the JSON to keep both.");
+            shadow.setWrapWidth(640);
+            shadow.setForeground(UITokens.muted());
+            content.add(shadow, "gapbottom 4");
 
-        return PanelBuilder.detail("Edit Probe", () -> cardStack.show("Probe"), content -> {
-            JPanel body = new JPanel(new BorderLayout());
-
-            JButton save = new JButton("Save", new IconUtil.SaveIcon(16));
-            save.addActionListener(e -> {
+            JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", "[][][]push[]"));
+            bar.setOpaque(false);
+            JButton save = UITokens.primary(new JButton("Save", new IconUtil.SaveIcon(16, Color.WHITE)));
+            JButton check = new JButton("Check", IconUtil.svgIcon("io/xlogistx/gui/icons/check.svg", 16, UITokens.text()));
+            check.setToolTipText("Validate the draft the way the engine will");
+            check.addActionListener(_ -> checkDraft());
+            save.addActionListener(_ -> {
                 if (selectedProbe == null) return;
                 ProbeContent p;
                 try {
-                    p = probeToSave(selectedProbe, viewProbeTitleArea.getText().trim(), viewProbeTextArea.getText());
+                    p = probeToSave(selectedProbe, "", viewProbeTextArea.getText());
                 } catch (IllegalArgumentException ex) {
+                    editCheck.error(ex.getMessage());
                     JOptionPane.showMessageDialog(this, ex.getMessage(), "Not a valid probe", JOptionPane.ERROR_MESSAGE);
                     return;
                 }
-                // The name is the definition's, so show what actually got stored.
-                viewProbeTitleArea.setText(p.getName());
                 BackgroundTask.run(this, save, () -> ctx.session().saveProbe(p), saved -> {
                     selectedProbe = saved;
                     reloadProbes();
                     cardStack.show("Probe");
                 });
             });
-            content.add(save, "gapbottom 6");
+            bar.add(save);
+            bar.add(check);
+            editName.setForeground(UITokens.muted());
+            bar.add(editName);
+            bar.add(editCheck);
+            content.add(bar, "growx");
 
-            body.add(viewProbeTitleArea, BorderLayout.NORTH);
-            body.add(new JScrollPane(viewProbeTextArea), BorderLayout.CENTER);
+            JScrollPane scroll = new JScrollPane(viewProbeTextArea);
+            scroll.setBorder(BorderFactory.createLineBorder(UITokens.border()));
+            content.add(scroll, "grow, push, w 100%");
+        }
+        return content;
+    }
 
-            content.add(body, "grow, push");
-        });
+    /** The Check button: the loader's verdict on the draft, inline. */
+    private void checkDraft() {
+        if (viewProbeTextArea.getText().isBlank()) {
+            editCheck.info("Paste or type the JSON first.");
+            return;
+        }
+        try {
+            editCheck.ok(ProbeLibraryModel.checkMessage(viewProbeTextArea.getText()));
+        } catch (IllegalArgumentException e) {
+            editCheck.error(e.getMessage());
+        }
+        refreshEditName();
     }
 
     /**
@@ -1047,7 +1501,7 @@ public class ScanPanel extends JPanel {
     public void setSendToChat(String content, String name) {
         if (SUS.isEmpty(content) || sendToChat == null) return;
         try {
-            sendToChat.accept(content, SUS.isEmpty(name) ? "scan result" : name);
+            sendToChat.send(content, SUS.isEmpty(name) ? "scan result" : name, null);
         } catch (AccessSecurityException e) {
             JOptionPane.showMessageDialog(this, e.getMessage(), "Send to chat", JOptionPane.WARNING_MESSAGE);
             return;

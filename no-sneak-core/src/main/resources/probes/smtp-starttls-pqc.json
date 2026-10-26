@@ -1,5 +1,6 @@
 {
   "name": "smtp-starttls-pqc",
+  "description": "SMTP STARTTLS upgrade, then PQC classification",
   "service": "smtp",
   "transport": "tcp",
   "ports": [25, 587],

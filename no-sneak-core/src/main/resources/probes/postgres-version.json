@@ -1,5 +1,6 @@
 {
   "name": "postgres-version",
+  "description": "PostgreSQL plaintext StartupMessage, records the server version (trust auth only)",
   "service": "postgresql",
   "transport": "tcp",
   "ports": [5432],

@@ -4,8 +4,8 @@
 > NoSneak probe definition. It covers every action and every field a definition may use,
 > including the deep TLS assessment actions (§4.2) and their budgets (§3). Nothing here depends
 > on how the engine is implemented; a probe is data, and this document is the whole contract for
-> that data. The engineering reference for the engine itself is `PROBE-CONFIG.md` next to this
-> file; a probe author does not need it.
+> that data. The engine itself is described in `CLAUDE.md` next to this file (*Engine
+> reference*); a probe author does not need it.
 
 > **Purpose / how to use this file.** This is a complete specification for authoring a NoSneak
 > **protocol probe** as a single JSON document. Give this file to an AI as a skill, then ask it:
@@ -48,6 +48,7 @@ The document is a JSON object with these keys:
 | Key | Type | Required | Meaning |
 |-----|------|----------|---------|
 | `name` | string | yes | Unique probe id, e.g. `"imap-starttls-pqc"`. |
+| `description` | string | no | Describes what the probe does, for a reader, e.g. `"This probe checks whether imap-starttls-pqc is supported."`. The desktop app's Probe library shows it. Optional (2026-10-26); a file without it simply has none. |
 | `service` | string | yes | Service label recorded in the result, e.g. `"imap"`. |
 | `transport` | string | no (default `"tcp"`) | `"tcp"` or `"udp"`. On `"udp"` the engine binds an ephemeral datagram socket: `connect` fires `connected` at once, `send` writes one datagram, `expect` matches the reply. **TLS actions need `"tcp"`.** The bundled `dns` probe is the UDP example (§11.6). |
 | `ports` | array of int | yes | Ports this probe is associated with, e.g. `[143]`. Used to auto-select the probe per port (a checker may also run it regardless of ports). |
@@ -78,6 +79,7 @@ Each value in `states` is an object:
 | `mode` | string | `tls-handshake` | `"pqc"` (default) or `"classical"` (see §4 `tls-handshake`). |
 | `note` | string | `record` | Free-text annotation merged into the result's `note`. |
 | `port` | int | `connect`, `reconnect`, `tls-connect` | Connect to this port instead of the target port. |
+| `upgradable` | bool | `connect` | Open the connection on the TLS-capable channel, in plaintext, so a later `tls-upgrade` can secure the same connection after the protocol's preamble (PostgreSQL's SSLRequest). Default `false`. Such a connection carries application data over JSSE like `tls-connect`; `tls-handshake` and the deep actions (§4.2) do not run on it. |
 | `revocationTimeoutMs` | int | `revocation-check` | Bound on the active OCSP/CRL fetch. Default `5000`. Must be `> 0`. |
 | `includeSSLv3` | bool | `enumerate-versions` | Also offer SSLv3. Default `true` (observe everything). |
 | `includeTLS10` | bool | `enumerate-versions` | Also offer TLS 1.0. Default `true`. |
@@ -100,8 +102,11 @@ Every action below is built in. An action **must** ultimately cause exactly one 
 the **outcome labels** you must map in `on{}`.
 
 ### `connect`
-Opens a new TCP connection to `port` (the state's `port`, else the target port).
-- **Config:** `port` (optional).
+Opens a new TCP connection to `port` (the state's `port`, else the target port). With
+`upgradable: true` the connection is opened on the TLS-capable channel in plaintext, for a
+protocol whose TLS starts after a preamble: do the preamble with `send`/`expect`, then
+`tls-upgrade` (below).
+- **Config:** `port` (optional), `upgradable` (optional, default `false`).
 - **Outcomes:** `connected` · `error` · `timeout`.
 
 ### `send`
@@ -140,6 +145,19 @@ full handshake for PQC classification, certificate facts and the deep actions. U
 when you need to *talk* through TLS; use `tls-handshake` when you need facts about the TLS itself.
 `connected` fires only after the handshake completes.
 - **Config:** `port` (optional).
+- **Outcomes:** `connected` · `error` · `timeout`.
+
+### `tls-upgrade`
+Secures the **current connection in place** with the same JSSE handshake `tls-connect` uses,
+after a plaintext preamble. The connection must come from a `connect` with `upgradable: true`;
+any other connection fires `error`. On success the session is in secure mode (`send`/`expect`
+ride the TLS session) and the result records `STARTTLS_UPGRADED` with the negotiated version and
+cipher. Use it for a protocol that negotiates TLS with its own request before the ClientHello and
+then expects application data: the bundled `postgres-tls` sends the SSLRequest, expects `S`,
+upgrades, then sends the StartupMessage and captures the server version over TLS (§11.7). For a
+textual STARTTLS followed only by TLS *facts*, `starttls` + `tls-handshake` is the richer path
+(PQC classification, certificate facts, the deep actions).
+- **Config:** none.
 - **Outcomes:** `connected` · `error` · `timeout`.
 
 ### `tls-handshake`
@@ -345,7 +363,7 @@ A probe is rejected at load time unless:
 1. `start` names a state that exists.
 2. Every value in every `on{}` map names a state that exists (no dangling transitions).
 3. Every `action` is one of: `connect`, `send`, `expect`, `starttls`, `tls-connect`,
-   `tls-handshake`, `pqc-check`, `tls-facts`, `cert-chain-validate`, `revocation-check`,
+   `tls-upgrade`, `tls-handshake`, `pqc-check`, `tls-facts`, `cert-chain-validate`, `revocation-check`,
    `enumerate-versions`, `enumerate-ciphers`, `enumerate-groups`, `record`, `reconnect`, `done`,
    `fail`.
 4. At least one terminal state (`done` or `fail`) is **reachable** from `start`.
@@ -642,6 +660,133 @@ transport differs.
 
 ---
 
+### 11.7 PostgreSQL over TLS (SSLRequest, `tls-upgrade`, version) — port 5432 (the bundled `postgres-tls`)
+
+The server decides TLS with its own one-byte answer to an SSLRequest, so the connection starts in
+plaintext on the TLS-capable channel (`upgradable`), the preamble is an ordinary `send`/`expect`, and
+`tls-upgrade` secures the same socket before the StartupMessage goes out over it.
+
+```json
+{
+  "name": "postgres-tls",
+  "description": "PostgreSQL SSLRequest, then TLS in place and the server version over it (trust auth only)",
+  "service": "postgresql",
+  "transport": "tcp",
+  "ports": [
+    5432
+  ],
+  "priority": 54,
+  "start": "connect",
+  "states": {
+    "connect": {
+      "action": "connect",
+      "upgradable": true,
+      "on": {
+        "connected": "sslRequest",
+        "error": "fail",
+        "timeout": "fail"
+      }
+    },
+    "sslRequest": {
+      "action": "send",
+      "data": "hex:0000000804d2162f",
+      "on": {
+        "sent": "sslResponse",
+        "error": "fail"
+      }
+    },
+    "sslResponse": {
+      "action": "expect",
+      "patterns": [
+        {
+          "regex": "^S$",
+          "outcome": "ssl"
+        },
+        {
+          "regex": "^N$",
+          "outcome": "plain"
+        }
+      ],
+      "on": {
+        "ssl": "tls",
+        "plain": "recordPlain",
+        "nomatch": "fail",
+        "error": "fail",
+        "timeout": "fail"
+      }
+    },
+    "tls": {
+      "action": "tls-upgrade",
+      "on": {
+        "connected": "startup",
+        "error": "fail",
+        "timeout": "fail"
+      }
+    },
+    "startup": {
+      "action": "send",
+      "data": "hex:00000029000300007573657200706f73746772657300646174616261736500706f7374677265730000",
+      "on": {
+        "sent": "reply",
+        "error": "fail"
+      }
+    },
+    "reply": {
+      "action": "expect",
+      "patterns": [
+        {
+          "regex": "server_version\\x00([0-9][^\\x00]*)\\x00",
+          "outcome": "ver",
+          "capture": "version"
+        },
+        {
+          "regex": "^R\\x00\\x00\\x00[\\x08\\x0a\\x0c\\x17]",
+          "outcome": "pg"
+        },
+        {
+          "regex": "(?i)^E[\\s\\S]{0,400}?(?:FATAL|password|pg_hba|no encryption|SSL|database)",
+          "outcome": "pg"
+        }
+      ],
+      "on": {
+        "ver": "record",
+        "pg": "recordNoVer",
+        "nomatch": "fail",
+        "timeout": "fail",
+        "error": "fail"
+      }
+    },
+    "record": {
+      "action": "record",
+      "note": "postgresql-tls",
+      "on": {
+        "done": "done"
+      }
+    },
+    "recordNoVer": {
+      "action": "record",
+      "note": "postgresql-tls-auth-required",
+      "on": {
+        "done": "done"
+      }
+    },
+    "recordPlain": {
+      "action": "record",
+      "note": "postgresql-no-tls",
+      "on": {
+        "done": "done"
+      }
+    },
+    "done": {
+      "action": "done"
+    },
+    "fail": {
+      "action": "fail"
+    }
+  }
+}
+```
+
 ## 12. Author self-check (before returning the JSON)
 
 - [ ] Output is a **single strict JSON object** — no comments, no trailing commas, all keys/strings quoted.
@@ -669,7 +814,7 @@ transport differs.
 
 When asked to create a probe, respond with **only the JSON object** (optionally in a single fenced
 ```json block), nothing else — no prose, no comments inside the JSON. The result must load and pass
-the validation in §8 as-is. Application data *through* an established TLS session **is** supported
+the validation in §8 as-is. Give it a `description` (§2) so a reader knows what it does. Application data *through* an established TLS session **is** supported
 for **implicit/direct TLS** via `tls-connect` (then `send`/`expect`/`capture` ride the TLS session).
 UDP request/response is supported (`"transport": "udp"`, §11.6). If the protocol needs a
 capability still not covered by the actions in §4 (e.g. QUIC/DTLS, a

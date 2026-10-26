@@ -388,6 +388,16 @@ public class ProbeContext {
      * {@code connectedFinished} is deferred until after the handshake.
      */
     public void openSecureConnection(int port) {
+        openSecureConnection(port, true);
+    }
+
+    /**
+     * {@link #openSecureConnection(int)}, or — {@code tlsNow} false (2026-10-26, {@code connect}
+     * with {@code upgradable}) — the same JSSE-capable channel opened in <b>plaintext</b>, for a
+     * protocol whose TLS starts after a preamble: {@code send}/{@code expect} run over it as
+     * they do over the raw path, and {@link #upgradeSecureConnection()} secures it in place.
+     */
+    public void openSecureConnection(int port, boolean tlsNow) {
         connectionIndex++;
         currentPort = port;
         mode = Mode.SECURE_CONNECTING;
@@ -400,13 +410,40 @@ public class ProbeContext {
         pqcSM = null;
         arm();
         try {
-            ProbeSecureCallback cb = new ProbeSecureCallback(
-                    this, new IPAddress(target.getInetAddress(), port), connectionIndex, false);
+            ProbeSecureCallback cb = tlsNow
+                    ? new ProbeSecureCallback(this, new IPAddress(target.getInetAddress(), port), connectionIndex, false)
+                    : new ProbeSecureCallback(this, new IPAddress(target.getInetAddress(), port), connectionIndex);
             currentSecureCallback = cb;
             currentCallback = null; // raw ingress identity checks now reject stray events
             currentKey = transport.open(cb, timeoutSec);
         } catch (Exception e) {
             if (log.isEnabled()) log.getLogger().info("secure connect error: " + e);
+            fireArmed("error");
+        }
+    }
+
+    /**
+     * tls-upgrade (2026-10-26): secure the current plaintext-started connection in place. Only
+     * a connection opened by {@code connect} with {@code upgradable: true} can be upgraded; any
+     * other current connection fires {@code error}. The handshake completing arrives as
+     * {@link #onSecureConnected}, which records the TLS facts as {@code STARTTLS_UPGRADED}.
+     */
+    public void upgradeSecureConnection() {
+        ProbeSecureCallback cb = currentSecureCallback;
+        mode = Mode.SECURE_CONNECTING;
+        tlsUpgrade = true;
+        receivedData = false;
+        accumulator.reset();
+        arm();
+        if (cb == null || !secure) {
+            if (log.isEnabled()) log.getLogger().info("tls-upgrade without an upgradable connection");
+            fireArmed("error");
+            return;
+        }
+        try {
+            cb.upgrade();
+        } catch (Exception e) {
+            if (log.isEnabled()) log.getLogger().info("tls-upgrade error: " + e);
             fireArmed("error");
         }
     }
@@ -1316,6 +1353,14 @@ public class ProbeContext {
     }
 
     // ==================== Secure (JSSE) NIO ingress (from ProbeSecureCallback) ====================
+
+    /** The plaintext-start connection is up (no TLS yet): {@code connect} with {@code upgradable}. */
+    void onPlainConnected(ProbeSecureCallback cb) {
+        guarded(() -> {
+            if (cb != currentSecureCallback) return;
+            fireArmed("connected");
+        });
+    }
 
     /** TLS handshake completed on the secure channel. */
     void onSecureConnected(ProbeSecureCallback cb) {

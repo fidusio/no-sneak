@@ -26,6 +26,7 @@ import java.awt.image.BufferedImage;
 import java.io.File;
 import java.util.*;
 import java.util.List;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 import static io.xlogistx.nosneak.ai.assistant.AssistantUtil.chatBubble;
@@ -39,6 +40,8 @@ public class ChatPanel extends JPanel {
     private Runnable onNewChat;
     private Runnable onOpenHistory;
     private Consumer<String> onSaveAsSkill;
+    /** The host's save targets (label to handler), one "Save as <label>" button per assistant bubble. */
+    private final Map<String, BiConsumer<String, String>> saveTargets = new LinkedHashMap<>();
 
     private final CardStack promptCards = new CardStack();
 
@@ -117,6 +120,25 @@ public class ChatPanel extends JPanel {
 
     public void setOnSaveAsSkill(Consumer<String> onSaveAsSkill) {
         this.onSaveAsSkill = onSaveAsSkill;
+    }
+
+    /**
+     * Offers a host destination on every assistant reply (2026-10-26): the bubble gets a
+     * "Save as <label>" button that hands the reply's markdown to {@code handler} as
+     * {@code (name = "", content)}. A handler that throws has refused the content; its message
+     * is shown and nothing else happens, so the reply stays where it is.
+     */
+    public void addSaveTarget(String label, BiConsumer<String, String> handler) {
+        if (label != null && handler != null) saveTargets.put(label, handler);
+    }
+
+    /**
+     * Fills the composer with {@code text} (2026-10-26), the way another screen prepares a
+     * request for the subject to send: appended at the caret when something is already typed,
+     * so nothing the subject wrote is lost. Blank text is ignored.
+     */
+    public void setComposerText(String text) {
+        insertIntoComposer(text);
     }
 
     /**
@@ -719,10 +741,26 @@ public class ChatPanel extends JPanel {
     }
 
     private void addMessage(String response, boolean user, Integer latency, Integer inTokens, Integer outTokens) {
+        Map<String, Runnable> saveAs = null;
+        if (!user && !saveTargets.isEmpty()) {
+            saveAs = new LinkedHashMap<>();
+            for (Map.Entry<String, BiConsumer<String, String>> target : saveTargets.entrySet()) {
+                String label = target.getKey();
+                BiConsumer<String, String> handler = target.getValue();
+                saveAs.put(label, () -> {
+                    try {
+                        handler.accept("", response);
+                    } catch (RuntimeException refused) {
+                        JOptionPane.showMessageDialog(this, refused.getMessage(),
+                                "Not a valid " + label, JOptionPane.ERROR_MESSAGE);
+                    }
+                });
+            }
+        }
         JComponent bubble = chatBubble(response, user, latency, inTokens, outTokens,
                 user ? null : () -> {
                     if (onSaveAsSkill != null) onSaveAsSkill.accept(response);
-                });
+                }, saveAs);
         String cons = user
                 ? "wmin 0, wmax 60%, alignx trailing"
                 : "growx, wmin 0, wmax 92%, alignx leading";

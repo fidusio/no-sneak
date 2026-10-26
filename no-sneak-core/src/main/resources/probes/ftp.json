@@ -1,5 +1,6 @@
 {
   "name": "ftp",
+  "description": "FTP 220 greeting banner",
   "service": "ftp",
   "transport": "tcp",
   "ports": [21],

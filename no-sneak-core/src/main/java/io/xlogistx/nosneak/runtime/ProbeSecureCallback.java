@@ -48,6 +48,26 @@ public class ProbeSecureCallback extends TCPSessionCallback {
 
     private final ProbeContext context;
     private final int connectionIndex;
+    /** True when the connection starts in plaintext and {@link #upgrade()} secures it later. */
+    private final boolean plainStart;
+
+    /**
+     * A connection that starts in <b>plaintext</b> on this JSSE-capable channel (2026-10-26):
+     * {@code connect} with {@code upgradable: true}. The protocol's preamble goes through the
+     * ordinary {@code send}/{@code expect}, then {@link #upgrade()} runs the handshake on the
+     * same socket — PostgreSQL's SSLRequest followed by TLS. The framework's own
+     * {@code startTLS} builds the trust-all context from the pinned remote address.
+     */
+    public ProbeSecureCallback(ProbeContext context, IPAddress address, int connectionIndex) {
+        super(address);
+        this.context = context;
+        this.connectionIndex = connectionIndex;
+        this.plainStart = true;
+        // the plain read loop in the base flips the buffer before accept(ByteBuffer) unless we
+        // say we will; accept() below flips, drains and clears in both modes
+        this.implWillFlipBuffer = true;
+        setRemoteAddress(namedAddress(address.getInetAddress(), address.getPort()));
+    }
 
     public ProbeSecureCallback(ProbeContext context, IPAddress address, int connectionIndex,
                                boolean certValidationEnabled)
@@ -55,6 +75,7 @@ public class ProbeSecureCallback extends TCPSessionCallback {
         super(address);
         this.context = context;
         this.connectionIndex = connectionIndex;
+        this.plainStart = false;
         // The framework uses the SSLContextInfo address as the connect target, so it must be
         // resolved (an unresolved address throws UnresolvedAddressException at connect) — and it
         // must carry a host name, see namedAddress(). Trust-all (certValidationEnabled=false) so
@@ -128,7 +149,22 @@ public class ProbeSecureCallback extends TCPSessionCallback {
 
     @Override
     protected void connectedFinished() throws IOException {
-        announceSecureConnected();
+        if (plainStart) {
+            // the socket is up, no TLS yet: the probe's preamble can start
+            context.onPlainConnected(this);
+        } else {
+            announceSecureConnected();
+        }
+    }
+
+    /**
+     * Secures the plaintext connection in place (the {@code tls-upgrade} action). The base
+     * runs the client handshake on the existing socket and announces it through
+     * {@link #sslUpgraded}; the next inbound bytes after that are decrypted application data.
+     */
+    public void upgrade() throws NoSuchAlgorithmException, KeyManagementException, IOException {
+        if (!plainStart) throw new IllegalStateException("not a plaintext-start connection");
+        startTLS(false);
     }
 
     @Override

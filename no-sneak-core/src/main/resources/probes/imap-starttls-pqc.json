@@ -1,5 +1,6 @@
 {
   "name": "imap-starttls-pqc",
+  "description": "IMAP STARTTLS upgrade, then PQC classification",
   "service": "imap",
   "transport": "tcp",
   "ports": [143],
