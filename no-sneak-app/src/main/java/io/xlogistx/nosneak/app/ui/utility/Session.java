@@ -3,12 +3,14 @@ package io.xlogistx.nosneak.app.ui.utility;
 import io.xlogistx.nosneak.app.NoSneakStore;
 import io.xlogistx.nosneak.data.ProbeContent;
 import io.xlogistx.nosneak.data.ReportContent;
+import io.xlogistx.nosneak.net.util.NSNetUtil;
 import io.xlogistx.shiro.SubjectSwap;
 import io.xlogistx.shiro.authc.DomainUsernamePasswordToken;
 import io.xlogistx.shiro.ds.DSAuthorizingRealm;
 import io.xlogistx.shiro.ds.ShiroDSDomainSecurityManager;
 import org.apache.shiro.subject.Subject;
 import org.zoxweb.server.net.NIOSocket;
+import org.zoxweb.server.net.OUIDB;
 import org.zoxweb.server.security.CryptoUtil;
 import org.zoxweb.server.security.HashUtil;
 import org.zoxweb.server.task.TaskUtil;
@@ -17,7 +19,9 @@ import org.zoxweb.shared.api.APIDataStore;
 import org.zoxweb.shared.app.AppIDDefault;
 import org.zoxweb.shared.crypto.CIPassword;
 import org.zoxweb.shared.crypto.CryptoConst;
+import org.zoxweb.shared.data.DataContent;
 import org.zoxweb.shared.data.PropertyImpl;
+import org.zoxweb.shared.db.QueryMatchString;
 import org.zoxweb.shared.filters.FilterType;
 import org.zoxweb.shared.io.SharedIOUtil;
 import org.zoxweb.shared.security.*;
@@ -26,6 +30,8 @@ import org.zoxweb.shared.util.*;
 import javax.crypto.SecretKey;
 import java.beans.PropertyChangeListener;
 import java.beans.PropertyChangeSupport;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.security.NoSuchAlgorithmException;
@@ -116,6 +122,151 @@ public class Session {
         APIConfigInfo cfg = rawStore.getAPIConfigInfo();
         SecurityController sc = cfg != null ? cfg.getSecurityController() : null;
         return sc != null ? sc.runAsSystem(work) : work.get();
+    }
+
+    // ---------------------------------------------------------------- MAC vendors (2026-10-25)
+
+    /** {@code full_name} of the one {@link DataContent} row that holds the Wireshark manuf file. */
+    public static final String MAC_VENDOR_CONTENT_NAME = "Mac-Vendor-Content";
+
+    /** A supplier that may fail with I/O, for the manuf download seam. */
+    @FunctionalInterface
+    interface IOSupplier<T> {
+        T get() throws IOException;
+    }
+
+    /** Where the manuf bytes come from when the store has none; a test replaces it so it never reaches wireshark.org. */
+    private IOSupplier<byte[]> macVendorSource = () -> OUIDB.getRawContent(OUIDB.WIRESHARK_MANUF_URL);
+    private volatile boolean macVendorsLoaded;
+
+    void setMacVendorSource(IOSupplier<byte[]> source) {
+        this.macVendorSource = Objects.requireNonNull(source);
+    }
+
+    /** True once {@link #loadMacVendors()} has filled the table in this process. */
+    public boolean macVendorsLoaded() {
+        return macVendorsLoaded;
+    }
+
+    /**
+     * Fills {@link NSNetUtil#MAC_VENDORS} from the store, after a login (maintainer, 2026-10-25):
+     * the store holds one {@link DataContent} named {@link #MAC_VENDOR_CONTENT_NAME} with the
+     * Wireshark manuf file as its data and {@link OUIDB#WIRESHARK_MANUF_URL} as its source id. When
+     * the row is missing the file is downloaded once, stored, and loaded; when present its bytes
+     * are loaded without any download. The row is app-wide, shared by every subject: it is read and
+     * written in the store's system context ({@link #runAsSystem}), so it has no owner and the
+     * subject who happened to log in first does not own it. Loads once per process; later calls
+     * return at once.
+     *
+     * @throws IOException when the store has no copy and the download fails or is not a manuf file
+     *                     (nothing is stored then; the next login tries again)
+     */
+    public void loadMacVendors() throws IOException {
+        if (macVendorsLoaded) return;
+        byte[] data;
+        try {
+            data = runAsSystem(this::macVendorData);
+        } catch (UncheckedIOException e) {
+            throw e.getCause();
+        }
+        NSNetUtil.MAC_VENDORS.load(data);
+        macVendorsLoaded = true;
+    }
+
+    /**
+     * What the Settings page shows about the stored vendor list: the entries in the live table,
+     * when the row was first stored and when a sync last replaced it (0 = never synced).
+     */
+    public record MacVendorStatus(int entries, long storedTs, long syncedTs) {
+        public boolean stored() {
+            return storedTs > 0;
+        }
+    }
+
+    /** Property on the row stamped by {@link #syncMacVendors()}; the store's own {@code last_update_ts} is set on insert too. */
+    private static final String MAC_VENDOR_SYNCED_TS = "synced_ts";
+
+    /** The stored list's timestamps (a projected read, the 3 MB body is not loaded) and the live table's size. */
+    public MacVendorStatus macVendorStatus() {
+        long[] ts = runAsSystem(() -> {
+            List<DataContent> rows = rawStore.search(DataContent.NVC_DATA_CONTENT,
+                    List.of("full_name", "source_id", "creation_ts", "properties"), macVendorQuery());
+            DataContent row = rows != null && !rows.isEmpty() ? rows.get(0) : null;
+            return row != null ? new long[]{row.getCreationTime(), syncedTs(row)} : new long[]{0, 0};
+        });
+        return new MacVendorStatus(NSNetUtil.MAC_VENDORS.size(), ts[0], ts[1]);
+    }
+
+    private static long syncedTs(DataContent row) {
+        Object v = row.getProperties() != null ? row.getProperties().getValue(MAC_VENDOR_SYNCED_TS) : null;
+        return v instanceof Number n ? n.longValue() : 0;
+    }
+
+    /**
+     * On demand, from the Settings page's Sync section (2026-10-25): downloads the current list,
+     * replaces the stored row's bytes (or creates the row), and loads them into the live table.
+     * A body that is not a manuf file is refused and the stored copy is kept.
+     *
+     * @throws IOException when the download fails or is not a manuf file
+     */
+    public MacVendorStatus syncMacVendors() throws IOException {
+        byte[] data;
+        try {
+            data = runAsSystem(this::downloadAndStoreMacVendors);
+        } catch (UncheckedIOException e) {
+            throw e.getCause();
+        }
+        NSNetUtil.MAC_VENDORS.load(data);
+        macVendorsLoaded = true;
+        return macVendorStatus();
+    }
+
+    private static QueryMatchString macVendorQuery() {
+        return new QueryMatchString("full_name", MAC_VENDOR_CONTENT_NAME, Const.RelationalOperator.EQUAL);
+    }
+
+    /** The stored row with its body, or null. System context only. */
+    private DataContent macVendorRow() {
+        List<DataContent> rows = rawStore.search(DataContent.NVC_DATA_CONTENT, null, macVendorQuery());
+        return rows != null && !rows.isEmpty() ? rows.get(0) : null;
+    }
+
+    /** The stored manuf bytes, or the freshly downloaded and stored ones. System context only. */
+    private byte[] macVendorData() {
+        DataContent row = macVendorRow();
+        byte[] data = row != null ? row.getData() : null;
+        return data != null && data.length > 0 ? data : downloadAndStoreMacVendors();
+    }
+
+    /** Downloads, checks, and stores the list as the one row (created or replaced). System context only. */
+    private byte[] downloadAndStoreMacVendors() {
+        byte[] data;
+        try {
+            data = macVendorSource.get();
+            // an error page or a captive portal answers 200 with something that is not a manuf file
+            if (data == null || new OUIDB().load(data).size() == 0) {
+                throw new IOException("the vendor list from " + OUIDB.WIRESHARK_MANUF_URL + " is empty or not a manuf file");
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        DataContent row = macVendorRow();
+        if (row == null) {
+            row = new DataContent();
+            row.setName(MAC_VENDOR_CONTENT_NAME);
+            row.setFullName(MAC_VENDOR_CONTENT_NAME);
+        }
+        row.setSourceID(OUIDB.WIRESHARK_MANUF_URL);
+        row.setData(data);
+        if (SUS.isEmpty(row.getGUID())) {
+            rawStore.insert(row);
+        } else {
+            long now = System.currentTimeMillis();
+            row.setLastTimeUpdated(now);
+            row.getProperties().add(new NVLong(MAC_VENDOR_SYNCED_TS, now));
+            rawStore.update(row);
+        }
+        return data;
     }
 
     /** A {@link Proxy} over the store's interfaces that wraps each call in a {@link SubjectSwap} of the current subject. */
@@ -785,6 +936,24 @@ public class Session {
 
     public void deleteScanResult(ReportContent reportContent) {
         ds.delete(reportContent, true);
+    }
+
+    /** The history page's Delete over a multi-selection (2026-10-25): one delete per row, in order. */
+    public void deleteScanResults(Collection<ReportContent> reportContents) {
+        for (ReportContent rc : reportContents) deleteScanResult(rc);
+    }
+
+    /**
+     * Deletes every scan in the signed-in subject's history (the history page's <i>Delete all</i>,
+     * 2026-10-25): the projected rows of {@link #getAllScanResults()} carry the GUIDs, one delete
+     * each through the subject view, so only this subject's scans go.
+     *
+     * @return how many were deleted; 0 when signed out
+     */
+    public int deleteAllScanResults() {
+        List<ReportContent> all = getAllScanResults();
+        for (ReportContent rc : all) ds.delete(rc, true);
+        return all.size();
     }
 
     public ReportContent getScanResult(String guid) {

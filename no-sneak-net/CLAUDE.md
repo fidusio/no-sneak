@@ -7,7 +7,7 @@ named subpackage:
 | Package | Contents | Exported |
 |---|---|---|
 | `…net.common` | the public API — both interfaces, every record, enum, and value type | yes |
-| `…net.util` | `IpMacCache`, `SweepDriver`, `SweepTargets`, `PassiveLearning`, `PendingResolve`, `PendingCall`, `RecvErrors` — stateful, non-API helper types | yes |
+| `…net.util` | `IpMacCache`, `SweepDriver`, `SweepTargets`, `PassiveLearning`, `PendingResolve`, `PendingCall`, `RecvErrors` — stateful, non-API helper types; `NSNetUtil` (module version + `MAC_VENDORS`, the process-wide zoxweb `OUIDB` that the no-sneak app fills from its store after a login, 2026-10-25 — empty until then) | yes |
 | `…net.codecs` | shared codecs: ARP, ICMPv4/v6 echo, NS/NA, IPv6 header, checksums (§5) | yes |
 | `…net.platform.linux` | libc via FFM (§6) | **no** |
 | `…net.platform.darwin` | libc via FFM (§7) | **no** |

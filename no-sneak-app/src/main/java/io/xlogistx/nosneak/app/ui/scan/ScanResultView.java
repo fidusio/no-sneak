@@ -102,13 +102,14 @@ public class ScanResultView extends JPanel {
         hosts.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) showHost(selectedHost());
         });
-        hosts.getColumnModel().getColumn(5).setCellRenderer(new PostureRenderer());
+        hosts.getColumnModel().getColumn(HostsModel.COL_POSTURE).setCellRenderer(new PostureRenderer());
         Tables.width(hosts, 0, 220);
-        Tables.width(hosts, 1, 70);
-        Tables.width(hosts, 2, 60);
-        Tables.width(hosts, 3, 220);
-        Tables.width(hosts, 4, 180);
-        Tables.width(hosts, 5, 150);
+        Tables.width(hosts, HostsModel.COL_VENDOR, 160);
+        Tables.width(hosts, 2, 70);
+        Tables.width(hosts, HostsModel.COL_OPEN, 60);
+        Tables.width(hosts, 4, 220);
+        Tables.width(hosts, 5, 180);
+        Tables.width(hosts, HostsModel.COL_POSTURE, 150);
         JScrollPane hostsScroll = new JScrollPane(hosts);
         hostsScroll.setBorder(BorderFactory.createEmptyBorder());
         detail.setBackground(UITokens.surfaceAlt());
@@ -251,10 +252,20 @@ public class ScanResultView extends JPanel {
             addr.setFont(addr.getFont().deriveFont(Font.BOLD));
             detail.add(addr);
             String sub = (h.hostname() != null ? h.hostname() + " · " : "") + h.openPorts().size() + " open ports"
-                    + (h.mac() != null ? " · " + h.mac() : "") + (h.latencyMs() >= 0 ? " · " + h.latencyMs() + " ms" : "");
+                    + (h.latencyMs() >= 0 ? " · " + h.latencyMs() + " ms" : "");
             JLabel subLabel = new JLabel(sub);
             subLabel.setForeground(UITokens.muted());
             detail.add(subLabel, "gaptop -8");
+
+            // network adapter (2026-10-26): the MAC when discovery learnt one, its vendor when the
+            // engine named it (put skips a null vendor)
+            if (h.mac() != null) {
+                detail.add(section("Network adapter"));
+                KeyValuePanel adapter = new KeyValuePanel(110);
+                adapter.putMono("MAC", h.mac());
+                adapter.put("Vendor", h.macVendor());
+                detail.add(adapter, "growx");
+            }
 
             // ports
             detail.add(section("Ports"));
@@ -351,7 +362,11 @@ public class ScanResultView extends JPanel {
     // ---- models ----
 
     private static final class HostsModel extends AbstractTableModel {
-        private static final String[] COLS = {"Host", "Status", "Open", "Services", "TLS", "PQC readiness"};
+        /** Vendor (2026-10-25) sits next to the host it describes; the PQC verdict stays last. */
+        private static final String[] COLS = {"Host", "Vendor", "Status", "Open", "Services", "TLS", "PQC readiness"};
+        static final int COL_VENDOR = 1;
+        static final int COL_OPEN = 3;
+        static final int COL_POSTURE = 6;
         private List<ReportView.Host> rows = List.of();
 
         void setHosts(List<ReportView.Host> hosts) {
@@ -379,10 +394,11 @@ public class ScanResultView extends JPanel {
             ReportView.Host h = rows.get(r);
             return switch (c) {
                 case 0 -> h.hostname() != null ? h.address() + "  " + h.hostname() : h.address();
-                case 1 -> h.up() ? "up" : "down";
-                case 2 -> h.openPorts().size();
-                case 3 -> h.serviceList();
-                case 4 -> {
+                case COL_VENDOR -> h.macVendor() != null ? h.macVendor() : "";
+                case 2 -> h.up() ? "up" : "down";
+                case COL_OPEN -> h.openPorts().size();
+                case 4 -> h.serviceList();
+                case 5 -> {
                     ReportView.Port t = h.worstTlsPort();
                     yield t != null ? t.tlsSummary() : "";
                 }
@@ -391,7 +407,7 @@ public class ScanResultView extends JPanel {
         }
 
         public Class<?> getColumnClass(int c) {
-            return c == 2 ? Integer.class : c == 5 ? ReportView.Posture.class : String.class;
+            return c == COL_OPEN ? Integer.class : c == COL_POSTURE ? ReportView.Posture.class : String.class;
         }
     }
 

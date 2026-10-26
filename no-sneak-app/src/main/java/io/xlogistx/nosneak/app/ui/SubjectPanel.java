@@ -3,6 +3,7 @@ package io.xlogistx.nosneak.app.ui;
 import io.xlogistx.datastore.h2p.H2PDataStore;
 import io.xlogistx.gui.GUIUtil;
 import io.xlogistx.gui.IconUtil;
+import io.xlogistx.gui.WrapLabel;
 import io.xlogistx.gui.*;
 import io.xlogistx.nosneak.app.NoSneakMain;
 import io.xlogistx.nosneak.app.ui.utility.*;
@@ -30,6 +31,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
+import java.text.NumberFormat;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.*;
 
 import static io.xlogistx.gui.PanelBuilder.*;
@@ -100,15 +105,16 @@ public class SubjectPanel extends JPanel {
         setLayout(new BorderLayout());
         this.ctx = ctx;
 
-        // Phase 5 of the redesign (2026-10-24): Profile and Backup sit in the shared page frame;
-        // Credentials already has its own two-card layout (Phase 4)
+        // Phase 5 of the redesign (2026-10-24): Profile and Settings sit in the shared page frame;
+        // Credentials already has its own two-card layout (Phase 4). Backup and Restore are
+        // blocks of the Settings page since 2026-10-26 (they had a page of their own before).
         PagePanel profilePage = new PagePanel("Profile", "Your account: name, date of birth, identifiers and addresses.");
         profilePage.card(scroll(buildProfileArea()));
         cardStack.add(profilePage, "Profile");
         cardStack.add(buildCredentials(), "Credentials");
-        PagePanel backupPage = new PagePanel("Backup", "Export this store to an encrypted archive, or restore one into it.");
-        backupPage.card(scroll(buildBackupArea()));
-        cardStack.add(backupPage, "Backup");
+        PagePanel settingsPage = new PagePanel("Settings", "Reference data this installation keeps up to date, and the store's backup.");
+        settingsPage.card(scroll(buildSettingsArea()));
+        cardStack.add(settingsPage, SECTION_SETTINGS);
         cardStack.show(SECTION_PROFILE);
 
         // Panels are built once (before login). Refresh on both login and logout: the Session
@@ -177,19 +183,22 @@ public class SubjectPanel extends JPanel {
     /** The sections the application's sidebar routes to (2026-10-24); the toggle column is gone. */
     public static final String SECTION_PROFILE = "Profile";
     public static final String SECTION_CREDENTIALS = "Credentials";
-    public static final String SECTION_BACKUP = "Backup";
+    public static final String SECTION_SETTINGS = "Settings";
 
     /** Shows one of the {@code SECTION_*} cards. */
     public void show(String section) {
         cardStack.show(section);
+        if (SECTION_SETTINGS.equals(section)) refreshSyncStatus();
     }
 
-    // ============================ Backup ============================
+    // ============================ Settings ============================
 
-    private static final String[] RESTORE_MODES = {"Merge into this store", "Replace this store"};
+    private final JLabel syncStatus = new JLabel(" ");
 
-    private JPanel buildBackupArea() {
+    private JPanel buildSettingsArea() {
         JPanel area = new JPanel(new MigLayout("wrap 1, insets 0", "[grow,fill]"));
+        area.add(buildSync());
+        area.add(new JSeparator(), "gaptop 8, gapbottom 8");
         area.add(buildDBBackup());
         area.add(new JSeparator(), "gaptop 8, gapbottom 8");
         area.add(buildDBRestore());
@@ -198,6 +207,77 @@ public class SubjectPanel extends JPanel {
         anchor.add(area, BorderLayout.NORTH);
         return anchor;
     }
+
+    /**
+     * The Sync section (2026-10-25): the MAC vendor list is downloaded at the first sign-in and
+     * kept in the store for every account; this replaces it with the current one on demand
+     * ({@link Session#syncMacVendors}).
+     */
+    private JPanel buildSync() {
+        JPanel panel = new JPanel(new MigLayout("wrap 1, insets 12, gapy 6", "[grow,fill]"));
+
+        panel.add(PanelBuilder.title("Sync"));
+
+        // WrapLabel, not a wrapping JTextArea: its height is computed at the wrap width, so the
+        // block does not come out too tall on first show (the Phase 1 lesson)
+        WrapLabel note = new WrapLabel("""
+                MAC vendors — the Wireshark vendor list (wireshark.org, manuf) names the manufacturer \
+                of each host's network adapter in scan reports. It is downloaded at the first sign-in \
+                and kept in this data store, shared by every account.
+
+                Sync downloads the current list and replaces the stored copy. Wireshark publishes a \
+                new one about once a week.""");
+        note.setWrapWidth(480);
+        note.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
+        panel.add(note, "growx 0");
+
+        JButton sync = new JButton("Sync MAC vendors",
+                IconUtil.svgIcon("io/xlogistx/gui/icons/refresh.svg", 16, UITokens.text()));
+        syncStatus.setForeground(UIManager.getColor("Label.disabledForeground"));
+
+        sync.addActionListener(_ -> onSyncMacVendors(sync));
+        panel.add(sync, "growx 0");
+        panel.add(syncStatus);
+
+        return panel;
+    }
+
+    private void onSyncMacVendors(JButton sync) {
+        syncStatus.setText("Downloading the vendor list…");
+        BackgroundTask.run(this, sync, () -> {
+            try {
+                return ctx.session().syncMacVendors();
+            } catch (IOException e) {
+                throw new AccessSecurityException("Could not download the vendor list from wireshark.org: " + e.getMessage(), e);
+            }
+        }, status -> syncStatus.setText("Synced. " + syncStatusText(status)));
+    }
+
+    /** Re-reads the stored list's timestamps off the EDT and shows them. */
+    private void refreshSyncStatus() {
+        if (!ctx.session().isAuthenticated()) {
+            syncStatus.setText(" ");
+            return;
+        }
+        BackgroundTask.run(this, null, () -> ctx.session().macVendorStatus(), status -> syncStatus.setText(syncStatusText(status)));
+    }
+
+    static String syncStatusText(Session.MacVendorStatus status) {
+        if (!status.stored()) return "No stored list yet — it is downloaded at sign-in, or sync now.";
+        StringBuilder sb = new StringBuilder();
+        sb.append(NumberFormat.getIntegerInstance(Locale.US).format(status.entries())).append(" vendors loaded · stored ")
+                .append(day(status.storedTs()));
+        if (status.syncedTs() > status.storedTs()) sb.append(" · last sync ").append(day(status.syncedTs()));
+        return sb.toString();
+    }
+
+    private static String day(long epochMs) {
+        return LocalDate.ofInstant(Instant.ofEpochMilli(epochMs), ZoneId.systemDefault()).toString();
+    }
+
+    // ==================== Backup and Restore (Settings blocks) ====================
+
+    private static final String[] RESTORE_MODES = {"Merge into this store", "Replace this store"};
 
     private JPanel buildDBRestore() {
         JPanel panel = new JPanel(new MigLayout("wrap 1, insets 12, gapy 6", "[grow,fill]"));

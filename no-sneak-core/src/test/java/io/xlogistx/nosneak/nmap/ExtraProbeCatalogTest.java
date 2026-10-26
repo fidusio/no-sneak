@@ -10,6 +10,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class ExtraProbeCatalogTest {
@@ -140,6 +141,20 @@ public class ExtraProbeCatalogTest {
         assertEquals(50, named.getFirst().getPriority(), "the first definition is the one used");
         assertTrue(report.warnings.stream().anyMatch(w -> w.contains("duplicate stored probe 'my-echo'")),
                 report.warnings.toString());
+    }
+
+    /**
+     * 2026-10-26: a requested set that matches nothing probes nothing — the checker is null, the
+     * engine's "no probing" state — instead of silently running the whole catalog.
+     */
+    @Test
+    public void onlyUnknownNamesProbeNothing() throws Exception {
+        NMapConfig cfg = new NMapConfig().target("10.0.0.1").probe("nope").probe("nor-this");
+        ScanReport report = new ScanReport();
+
+        assertNull(build(cfg, report));
+        assertTrue(report.warnings.stream().anyMatch(w -> w.contains("nothing probed")), report.warnings.toString());
+        assertTrue(report.warnings.stream().anyMatch(w -> w.contains("nope")), report.warnings.toString());
     }
 
     @Test

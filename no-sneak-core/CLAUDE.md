@@ -98,7 +98,10 @@ measured record is `PLAN.md` → 2026-09-19/20; a `/24 × 1024 ports` went 136 s
   identification overlaps the filtered-port timeouts. `probeStage` itself now covers only UDP.
   Candidate starts are admitted on the gate's **priority lane** (`ConnectionGate.submitFirst`):
   same window and pacer, but ahead of the queued port connects — without it the first `-sV` run
-  showed every probe waiting 30–58 s behind ~20k queued connects.
+  showed every probe waiting 30–58 s behind ~20k queued connects. A bare `-sV` runs the whole
+  catalog; `--probes` names a subset, and (2026-10-26) a named set that matches nothing **probes
+  nothing** — `buildChecker` returns a null checker with the warning *nothing probed* — rather
+  than falling back to everything (`ExtraProbeCatalogTest.onlyUnknownNamesProbeNothing`).
 - **`ScanGate` honours caps above 1000/s.** zoxweb `RateController` paces in whole milliseconds, so
   every cap ≥ 1000/s had collapsed to one launch per ms (`-T4`/`-T5` were no faster than `-T3`).
   The gate now spends a quantum of `maxPerSec/1000` launches per slot — still leaky, still
@@ -162,6 +165,9 @@ io.xlogistx.nosneak
 ├── nmap/                   NMapScanner (staged; adaptive deadline, streamed probes) · NMap CLI (+ formatCommand, the
 │                           inverse of parseCommand for the app's scan form, 2026-10-24; NMapFormatCommandTest) · PortScanCallback (ms deadline
 │                           + releaseWith) · UdpScanCallback · ReverseDnsCallback · ScanGate (window + per-slot quantum) · output/
+│                           ScanReport's host JSON carries `macVendor` (2026-10-25): the manuf full name from
+│                           NSNetUtil.MAC_VENDORS (no-sneak-net), a table the app fills from its store after a
+│                           login; absent when the table does not know the prefix (ScanReportMacVendorTest)
 ├── service/                Checker — REST /check-qdz/{domain}/{detailed}
 └── tools/                  DMTool · NoSneakUtil
 

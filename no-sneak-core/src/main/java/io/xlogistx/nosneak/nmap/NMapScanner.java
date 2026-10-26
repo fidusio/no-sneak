@@ -1144,9 +1144,11 @@ public final class NMapScanner {
             }
         }
         if (subset.isEmpty()) {
-            report.warnings.add("no requested probe matched; falling back to all "
-                    + catalog.size() + " probes");
-            return new ProbeChecker(nio, catalog, gate).timeoutInSec(to);
+            // A named set that matches nothing probes nothing (2026-10-26): the caller asked for
+            // specific probes, so running the whole catalog instead would be a scan nobody asked
+            // for. A null checker is the engine's "no probing" state (see the callers).
+            report.warnings.add("no requested probe matched; nothing probed");
+            return null;
         }
         return new ProbeChecker(nio, subset, gate).timeoutInSec(to);
     }

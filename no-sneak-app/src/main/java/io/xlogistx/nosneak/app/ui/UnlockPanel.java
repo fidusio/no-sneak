@@ -441,6 +441,11 @@ public class UnlockPanel extends JPanel {
         return signMessage.hasMessage() ? signMessage.getText() : "";
     }
 
+    /** A neutral note under the sign-in fields; the host shows one while it loads after a login. */
+    public void signInfo(String text) {
+        signMessage.info(text);
+    }
+
     private void applySignMode() {
         signForm.showGroup(REGISTER, registering);
         signButton.setText(registering ? "Register" : "Sign in");

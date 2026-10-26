@@ -214,6 +214,23 @@ the installed Roboto; footer status; remove the unreferenced `src/main/resources
 
 ---
 
+## After the plan — additions on the maintainer's instructions (2026-10-25/26, uncommitted)
+
+Not part of the redesign, but built on its pages; each is documented in `CLAUDE.md` and
+`PENDING-ISSUES.md` → *Status check (2026-10-24)*:
+
+- **MAC vendors.** The engine's `macVendor` (zoxweb `OUIDB`, filled from the Wireshark manuf
+  file that the store keeps as the app-wide `DataContent` *Mac-Vendor-Content*, loaded after
+  login) shows as a **Vendor** column in Hosts and a **Network adapter** block (MAC, Vendor) in
+  the host detail pane. **Account → Settings** is a new page (`SETTINGS`, gear icon added to
+  gui-audio) whose **Sync** section re-downloads the list on demand.
+- **Backup moved under Settings** (2026-10-26): the Backup and Restore blocks are the second and
+  third blocks of the Settings page; the Backup page, `BACKUP` screen, sidebar item and View-menu
+  entry are gone. Mentions of a Backup page earlier in this plan are history.
+- **Scan history**: multi-select, Delete takes the selection, **Delete all** clears the list.
+- **No probe ticked = no probing**: the chips are the only source of probing; the Service
+  detection box mirrors them and is the all / none shortcut; the empty strip says so.
+
 ## Decisions taken in this plan (say so if any should change)
 
 1. **DomainAppID and Passkey leave the login screen** (dead UI; the session API has no domain).

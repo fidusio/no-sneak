@@ -93,6 +93,9 @@ public class ScanFormPanel extends JPanel {
             b.setOpaque(false);
             b.addActionListener(_ -> fieldsChanged());
         }
+        serviceDetection.addActionListener(_ -> {
+            if (serviceDetectionToggled != null) serviceDetectionToggled.accept(serviceDetection.isSelected());
+        });
         add(options, "growx");
 
         // row 3: timing · knobs · probes
@@ -273,11 +276,22 @@ public class ScanFormPanel extends JPanel {
         return message;
     }
 
-    /** Ticks Service detection (a ticked probe implies {@code -sV}). */
+    /** Ticks Service detection programmatically (the chips mirror into it); the toggle listener is not told. */
     public void setServiceDetection(boolean on) {
         if (serviceDetection.isSelected() == on) return;
         serviceDetection.setSelected(on);
         fieldsChanged();
+    }
+
+    private java.util.function.Consumer<Boolean> serviceDetectionToggled;
+
+    /**
+     * Told when the <i>user</i> clicks Service detection (2026-10-26): the owner turns a tick into
+     * "all probes" and an untick into "none", since the ticked probes are the only source of
+     * probing. Programmatic changes ({@link #setServiceDetection}, a parsed command) do not fire it.
+     */
+    public void onServiceDetectionToggled(java.util.function.Consumer<Boolean> listener) {
+        this.serviceDetectionToggled = listener;
     }
 
     /**

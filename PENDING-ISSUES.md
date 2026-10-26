@@ -474,11 +474,50 @@ app's store is the encrypted H2 file today and **PostgreSQL is the next datastor
 `no-sneak-core` `NoSneakUtil`'s Mongo branch (D9) is legacy, not to be extended. The redesign
 is closed; new work starts after this session.
 
-**Open after Phase 5:** the rest of the maintainer's run-through on a display (unlock, the scan
-form and history are done; still to try: a stored report from history, API keys, Providers, a
-chat with chips, a capture, Profile, Backup, Access control); the commit of the redesign (both
-repos); and, from before the redesign, the ACL tables are still empty stubs and the job-queue
-page is not offered.
+**MAC vendors (2026-10-25, built to the maintainer's spec, uncommitted):** the maintainer added
+`NSNetUtil.MAC_VENDORS` (a zoxweb `OUIDB`) and a `macVendor` field in `ScanReport`'s host JSON
+(now the manuf *description*: the short name is an 8-char abbreviation). The table is filled
+**after a login**, before the shell shows (`AppFrame.loadMacVendorsThenShow` →
+`Session.loadMacVendors`): the store's `DataContent` named `Mac-Vendor-Content` holds the Wireshark
+manuf file (`source_id` = `OUIDB.WIRESHARK_MANUF_URL`, `data` = the bytes); missing → downloaded once
+with `OUIDB.getRawContent`, parsed in a throw-away table to make sure it is a manuf file, stored,
+loaded; present → loaded, no network. The row is app-wide (system context, no owner) so every
+subject shares it. A failed download warns once and the app still starts. The result view shows a
+**Vendor** column and `mac (vendor)` in the host detail. Tests: `ScanReportMacVendorTest`,
+`SessionMacVendorsTest` (real store, download behind a seam), `ReportViewTest`. **Still to do by the
+maintainer:** one live run (first login downloads, a LAN scan names vendors, the next login does
+not download, and **Account → Settings → Sync MAC vendors** replaces the stored list). The Settings
+page (new `SETTINGS` screen, `SubjectPanel.SECTION_SETTINGS`, gear icon added to gui-audio) holds
+the **Sync** section: `Session.syncMacVendors()` downloads, replaces the row (`last_update_ts`
+stamped) and re-loads the live table in place — `OUIDB.load` only adds or replaces entries, so a
+scan in flight keeps resolving; `macVendorStatus()` feeds the page's status line. Same day, on
+request: **Delete all** on the scan history toolbar (`Session.deleteAllScanResults`, confirmed,
+subject-scoped; `SessionScanHistoryTest`), and the history table is **multi-select**: Delete
+removes every selected row after one confirm (`Session.deleteScanResults`), the single-row
+actions grey out while several rows are selected.
+
+**2026-10-26, maintainer's spec, uncommitted:** (1) **no probe ticked, no probing** —
+`ProbeSelection.applyTo` turns `-sV` off and drops any `--probes` when the chip set is empty; the
+*Service detection* box mirrors the chips and, clicked by the user, means all (every bundled and
+stored probe ticked) or none; the chip strip's empty text says nothing is probed. Engine side:
+`NMapScanner.buildChecker` with a requested set that matches nothing returns a null checker
+(nothing probed, warning) instead of the whole catalog. (2) The host detail pane shows a
+**Network adapter** block (MAC, Vendor) when a MAC was learnt; the MAC left the subtitle. Tests:
+`ScanPanelTest` (two new), `ExtraProbeCatalogTest.onlyUnknownNamesProbeNothing`. Live run owed:
+no chips → a scan with no probe traffic; tick Service detection → all chips appear. (3) **Backup
+moved under Settings** — the Backup and Restore blocks follow Sync on the Settings page;
+`Screen.BACKUP`, `SECTION_BACKUP`, the sidebar item and the View-menu entry are removed. Rendered
+and checked; no test touched the screen.
+
+**Open after Phase 5 (updated 2026-10-26):** the rest of the maintainer's run-through on a
+display (unlock, the scan form and history are done; still to try: a stored report from history,
+API keys, Providers, a chat with chips, a capture, Profile, Settings with Backup and Restore,
+Access control); the **live
+checks owed** for the 2026-10-25/26 additions — first login downloads the vendor list and a LAN
+scan names vendors, the next login does not download, *Settings → Sync* replaces the list, a scan
+with no chips sends no probe traffic and ticking Service detection fills the strip; the commit of
+those additions (no-sneak, and io-xlogistx for `settings.svg`); and, from before the redesign,
+the ACL tables are still empty stubs and the job-queue page is not offered.
 
 ## Status check (2026-10-21, Windows dev box) — the store follows the datastore's deployment model
 

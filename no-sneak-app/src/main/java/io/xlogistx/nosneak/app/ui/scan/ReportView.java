@@ -79,8 +79,9 @@ public final class ReportView {
         }
     }
 
+    /** {@code macVendor} is the engine's vendor name for the MAC (2026-10-25), null when the report has none. */
     public record Host(String host, String ip, String hostname, boolean up, String reason, String mac,
-                       long latencyMs, List<Port> ports) {
+                       String macVendor, long latencyMs, List<Port> ports) {
 
         /** The address to show: the resolved IP, else the target as typed. */
         public String address() {
@@ -183,7 +184,7 @@ public final class ReportView {
         List<Port> ports = new ArrayList<>();
         for (NVGenericMap p : maps(h, "ports")) ports.add(port(p));
         return new Host(str(h, "host"), str(h, "ip"), str(h, "hostname"), bool(h, "up"), str(h, "reason"),
-                str(h, "mac"), lngOr(h, "latencyMs", -1), Collections.unmodifiableList(ports));
+                str(h, "mac"), str(h, "macVendor"), lngOr(h, "latencyMs", -1), Collections.unmodifiableList(ports));
     }
 
     private static final Pattern GRADE = Pattern.compile("grade=(\\S+)\\s+pqc=(\\S+)\\s+trust=(\\S+)(?:\\s+advisories=\\[(.*)\\])?");

@@ -20,7 +20,7 @@ public class Navigator {
     public enum Screen {
         SCAN_NEW, SCAN_HISTORY, PROBES,
         CHAT, CHATS, CAPTURE, SKILLS, PROVIDERS,
-        PROFILE, API_KEYS, BACKUP,
+        PROFILE, API_KEYS, SETTINGS,
         ACL
     }
 

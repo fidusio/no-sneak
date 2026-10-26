@@ -65,17 +65,39 @@ class ScanPanelTest {
         assertEquals("Redis TLS handshake", ScanPanel.ProbeSelection.describe(sel));
     }
 
+    /**
+     * 2026-10-26, maintainer: no ticked probe means no probing at all, even when the command
+     * carries {@code -sV} or {@code --probes} — a bare {@code -sV} would otherwise run the whole
+     * catalog. The user picks a set, or all.
+     */
     @Test
-    void noTicksLeaveTheConfigUntouched() {
+    void noTicksMeanNoProbingWhateverTheCommandSays() {
+        for (String typed : new String[]{"10.0.0.1", "10.0.0.1 -sV", "10.0.0.1 -sV --probes ssh"}) {
+            NMapConfig cfg = NMap.parseCommand(typed);
+            ScanPanel.ProbeSelection.Selection sel =
+                    ScanPanel.ProbeSelection.select(bundled("ssh"), List.of(stored("g1", "x")), Set.of());
+            ScanPanel.ProbeSelection.applyTo(cfg, sel);
+
+            assertFalse(cfg.probeScan, typed);
+            assertTrue(cfg.probeNames.isEmpty(), typed);
+            assertTrue(cfg.extraProbes.isEmpty(), typed);
+            assertEquals("", ScanPanel.ProbeSelection.describe(sel));
+        }
+    }
+
+    @Test
+    void allTickedNamesEveryProbe() {
         NMapConfig cfg = NMap.parseCommand("10.0.0.1");
+        ProbeContent mine = stored("g1", "mine");
+        Set<String> all = Set.of(ScanPanel.ProbeSelection.bundledKey("ssh"), ScanPanel.ProbeSelection.bundledKey("http"),
+                ScanPanel.ProbeSelection.storedKey(mine));
         ScanPanel.ProbeSelection.Selection sel =
-                ScanPanel.ProbeSelection.select(bundled("ssh"), List.of(stored("g1", "x")), Set.of());
+                ScanPanel.ProbeSelection.select(bundled("ssh", "http"), List.of(mine), all);
         ScanPanel.ProbeSelection.applyTo(cfg, sel);
 
-        assertFalse(cfg.probeScan);
-        assertTrue(cfg.probeNames.isEmpty());
-        assertTrue(cfg.extraProbes.isEmpty());
-        assertEquals("", ScanPanel.ProbeSelection.describe(sel));
+        assertTrue(cfg.probeScan);
+        assertEquals(Set.of("ssh", "http", "mine"), Set.copyOf(cfg.probeNames));
+        assertEquals(1, cfg.extraProbes.size());
     }
 
     @Test

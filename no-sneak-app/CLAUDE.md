@@ -5,6 +5,18 @@ and the **`ui`** package that wires together the screens, navigation, and the se
 layer. It began as a UX prototype but now runs a **real** session/access layer and a **working
 network scanner screen** over `no-sneak-core`; the PQC file-sharing screen is still a placeholder.
 
+> **2026-10-25/26 — after the redesign (uncommitted).** Four additions on the maintainer's
+> instructions, each documented in its section below and in `PENDING-ISSUES.md` → *Status check
+> (2026-10-24)*: **MAC vendors** — after a login `Session.loadMacVendors()` finds or downloads the
+> Wireshark manuf file as the store's app-wide `DataContent` *Mac-Vendor-Content* and loads it into
+> `NSNetUtil.MAC_VENDORS`, so the engine's `macVendor` shows as a Vendor column and a *Network
+> adapter* block; *Account → Settings → Sync* (`SECTION_SETTINGS`, `syncMacVendors`) refreshes it on
+> demand, and since 2026-10-26 **Backup and Restore are blocks of that Settings page** (the
+> separate Backup page, `BACKUP` screen and sidebar item are gone). **Scan history** is
+> multi-select, Delete takes the selection and *Delete all* the whole list. **No probe ticked = no probing**: the chips are the only source of probing, the Service
+> detection box is their all / none shortcut, and the engine probes nothing for a tick set that
+> matches nothing. Live checks still owed by the maintainer are listed in `PENDING-ISSUES.md`.
+>
 > **2026-10-24 — UI redesign, Phase 1 (setup and login).** The maintainer asked for a more
 > intuitive UI, reviewed the nine-board design canvas, and approved the execution plan in
 > **`UI-REDESIGN-PLAN.md`** (read it before continuing the redesign). Phase 1 is done: one window
@@ -16,7 +28,9 @@ network scanner screen** over `no-sneak-core`; the PQC file-sharing screen is st
 > `FormPanel`, `DirectoryField`, `InlineMessage`, `BadgeLabel`, `SplashSidePanel`, `UITokens`,
 > four icons) went into **io-xlogistx/gui-audio** per the maintainer's rule: *generic panels go to
 > xlogistx-gui-audio, only no-sneak screens and wiring stay here.* Phases 2–5 (sidebar shell,
-> form-driven scan with tabular results, lists and assistant pages, polish) are still to do.
+> form-driven scan with tabular results, lists and assistant pages, polish) followed the same day
+> and the next; the plan file carries a status block per phase, and the redesign was committed on
+> 2026-10-25.
 >
 > **2026-10-21 — the store follows the datastore's deployment model.** User instruction: *the
 > model how to set up the local H2 database changed, read it from the datastore project*. The
@@ -163,22 +177,26 @@ when the subject attaches one to a chat themselves. Nothing here uploads, phones
 
 ```
 io.xlogistx.nosneak.app
-├── Main.java                      ← entry point; opens the installation (ds.location/ds.store-password or setup screen) + JFrame
+├── NoSneakMain.java               ← entry point; ds.location/ds.store-password (+ subject=/password=) or the unlock screen; AppFrame swaps unlock ↔ shell, loads the MAC vendors after login (2026-10-25)
 ├── NoSneakStore.java              ← vault + encrypted H2 + shiro.ini: create (H2PSetup) / open (attached manager) / secure / bootstrap / grantAppUser / setRegistrarPassword (2026-10-21)
 └── ui/                            ← UI (screens, menu, session/access wiring)
     ├── AppShell.java              ← the signed-in window: HeaderBar + SideNavPanel + CardLayout host (2026-10-24), mounts ai-assistant's AssistantPanel
     ├── UnlockPanel.java           ← the pre-auth screen (2026-10-24): step 1 open/create the store, step 2 sign in / register; replaced LoginPanel + DataStoreSetupPanel
     ├── PQCRegistryPanel.java      ← PQC file-sharing registry view
-    ├── SubjectPanel.java          ← subject account view (master–detail)
-    ├── SubjectSecManagerPanel.java← ACL admin view (master–detail)
-    ├── ScanPanel.java             ← network scanner: command box, probe selector, results, probe editor
+    ├── SubjectPanel.java          ← Account pages in the PagePanel frame: Profile, Credentials (API keys), Settings (Sync of the MAC vendor list, Backup, Restore)
+    ├── SubjectSecManagerPanel.java← Access control (admin) page; tabs are stubs
+    ├── ScanPanel.java             ← scanner wiring: ScanFormPanel + ScanResultView, probe chips (the only source of probing, 2026-10-26), history JTable (multi-select, Delete / Delete all), probe editor
+    ├── scan/
+    │   ├── ScanFormPanel.java     ← the form that generates the command line (and follows an edited one); Service detection = all / none of the chips
+    │   ├── ScanResultView.java    ← header counts + Hosts (Vendor column) / Services / Raw JSON, host detail with the Network adapter block
+    │   └── ReportView.java        ← the engine's JSON parsed into records (pure; ReportViewTest)
     ├── MenuBarFactory.java        ← builds the application menu bar
     ├── assistant/                 ← app-side bindings for the ai-assistant module
     │   ├── SessionAICredentialSource.java ← the subject's API keys + which are assistant-enabled (AICredentialSource)
     │   └── AssistantStorage.java  ← AIRepository impl (chats + skills + provider configs), GUID-keyed over the H2P APIDataStore
     └── utility/
         ├── AppContext.java        ← per-app service locator (Session + Navigator)
-        ├── Session.java           ← auth (unbound Shiro subject) + identifiers + credentials + profile + addresses + the subject view of the store
+        ├── Session.java           ← auth (unbound Shiro subject) + identifiers + credentials + profile + addresses + the subject view of the store + the app-wide MAC vendor record (loadMacVendors / syncMacVendors, system context)
         ├── Navigator.java         ← top-level screen switching over a CardLayout
         └── AppPrefs.java          ← java.util.prefs of the OS user: last store location + last chooser directory (2026-10-22)
 
@@ -217,8 +235,10 @@ built lazily around the store:
   Open / Create, or by `launchApp` when the manager came from the parameters — creates the single
   `AppContext`, builds the menu bar via `MenuBarFactory`, constructs `AppShell` (every signed-in
   screen), hands the panel its `Session` (`unlock.bindSession`) and subscribes to
-  `session().onAuthChange(...)`: **authenticated** → menu bar installed, content pane = the
-  `AppShell`; **signed out** → menu bar removed, `unlock.resetForSignIn()`, content pane = the
+  `session().onAuthChange(...)`: **authenticated** → `loadMacVendorsThenShow()` (2026-10-25: a
+  `BackgroundTask` runs `Session.loadMacVendors()` with *Loading MAC vendors…* under the sign-in
+  fields, then) menu bar installed, content pane = the `AppShell` — a failed download is shown
+  once as a warning and the app still starts; **signed out** → menu bar removed, `unlock.resetForSignIn()`, content pane = the
   unlock panel again, at its sign-in step. A second `storeOpened` is ignored: **the store is fixed
   for the life of the process**; switching installations means a restart, as before.
 - With parameters, `launchApp` also calls `unlock.markStoreOpened(location)`, so the window opens
@@ -257,7 +277,7 @@ and a **Sign out** button that confirms and calls `session().logout()`), one **`
 |---|---|
 | Scan | New scan → `SCAN_NEW` → `ScanPanel.show(SECTION_SCAN)`; History → `SCAN_HISTORY` → `SECTION_HISTORY`; Probe library → `PROBES` → `SECTION_PROBES` |
 | Assistant | Chat / Chats / Capture / Skills / Providers → `CHAT` … `PROVIDERS` → `AssistantPanel.showPage(Page.CHAT …)` |
-| Account | Profile / API keys / Backup → `PROFILE` / `API_KEYS` / `BACKUP` → `SubjectPanel.show(SECTION_PROFILE / SECTION_CREDENTIALS / SECTION_BACKUP)` |
+| Account | Profile / API keys / Settings → `PROFILE` / `API_KEYS` / `SETTINGS` → `SubjectPanel.show(SECTION_PROFILE / SECTION_CREDENTIALS / SECTION_SETTINGS)` |
 | Admin | Access control → `ACL` → `SubjectSecManagerPanel` (visible only for the super-admin: `nav.setSectionVisible("admin", …)` on every login) |
 
 Footer of the sidebar: **Help and about** (`MenuBarFactory.showDescription`) and the version line.
@@ -300,10 +320,22 @@ are wired to `Session` for real. Because the panel is built once (before login),
 `credentials.refresh()` / `populateProfile()` — repopulating on login, clearing on logout (the
 `Session` getters return empty when signed out).
 
-Since 2026-10-24 (Phase 5 of the redesign) the Profile and Backup sections sit in gui-audio's
+Since 2026-10-24 (Phase 5 of the redesign) the Profile and Settings sections sit in gui-audio's
 `PagePanel` — page title and description over the ground, the existing content in one white card
 that scrolls — and the old in-form "Profile" title and description line are gone; Credentials
 has its own two-card layout (Phase 4).
+
+**Settings** (`SECTION_SETTINGS`, sidebar *Account → Settings*, 2026-10-25, asked for by the
+maintainer) is a `PagePanel` with three blocks separated by rules: **Sync**, **Backup** and
+**Restore** — the last two moved here from their own Backup page on 2026-10-26 on the
+maintainer's instruction (the `BACKUP` screen, its sidebar item and its View-menu entry are
+gone; `buildDBBackup` / `buildDBRestore` are unchanged). Each block is a note, one button and a
+muted status line. Sync's button runs `Session.syncMacVendors()` on a `BackgroundTask` (download the current Wireshark list, replace the
+stored row, load it into the live table); a failure is the usual error dialog with the reason and
+the stored copy is kept. The status line (`syncStatusText`: *58,575 vendors loaded · stored
+2026-10-25 · last sync …*, or *No stored list yet*) is re-read off the EDT each time the page is
+shown (`show(SECTION_SETTINGS)` → `refreshSyncStatus`, a projected read that skips the 3 MB body).
+Other reference data this installation keeps belongs in further blocks on this page.
 
 The **Profile** screen is itself a nested `CardStack` (`profileCards`, built by
 `buildProfileArea`) with a **profile** card (the form) and an **editAddress** detail card.
@@ -432,9 +464,18 @@ into it for anything else.
   stored probe (grouped, an *All* per group, the bundled tooltip of service · ports); ticked probes
   show as chips (`ChipPanel`; a stored one carries a *mine* badge) and a chip's × unticks it. The
   ticks are still `tickedProbes`, keyed as before (`b:<name>` / `s:<guid>`), still applied to the
-  parsed config by `ProbeSelection.applyTo` — never spliced into the command — and ticking any probe
-  ticks Service detection, since the probe stage returns early without `-sV`. `ProbeSelection`
-  itself is unchanged and `ScanPanelTest` still pins every rule.
+  parsed config by `ProbeSelection.applyTo` — never spliced into the command. **The ticks are the
+  only source of probing (maintainer, 2026-10-26): no chip, no probing.** `applyTo` with an empty
+  selection sets `probeScan` false and clears any `--probes` the command carried (a bare `-sV`
+  would otherwise run the engine's whole catalog); a non-empty one implies `-sV` and names the
+  set. The *Service detection* box mirrors the chips both ways (`refreshProbeChips`) and is the
+  all / none shortcut when the user clicks it: a tick with no chips ticks every bundled and stored
+  probe (`tickAllProbes`, through `ScanFormPanel.onServiceDetectionToggled`, which programmatic
+  `setServiceDetection` does not fire), an untick clears them. The empty chip strip says so. The
+  engine side of the rule is in `NMapScanner.buildChecker`: a requested set that matches nothing
+  now probes nothing (null checker, warning *nothing probed*) instead of falling back to all.
+  `ScanPanelTest.noTicksMeanNoProbingWhateverTheCommandSays` / `allTickedNamesEveryProbe` and
+  core `ExtraProbeCatalogTest.onlyUnknownNamesProbeNothing` pin it.
 - **Run.** `onRun` builds `form.toConfig()`, applies the ticks, and records as the report's `command`
   the field's text (or the config's print when the field was empty). Invalid input is an inline
   message, not a dialog. The worker is `runScan` as before (wait budget, Stop through the handle, a
@@ -447,7 +488,10 @@ into it for anything else.
   `ReportViewTest` reads a hand-written sample and a report the engine itself rendered): header with
   name, command, time, duration, the state badge, the four counts (hosts up, open ports, TLS
   endpoints, PQC ready), Copy (the raw JSON) and Send to assistant; then **Hosts** (address and
-  hostname, status, open count, services, the worst TLS endpoint's version · key exchange, and the
+  hostname, the MAC's **vendor** when the engine named it — the report's `macVendor`, 2026-10-25,
+  blank otherwise; the detail pane has a **Network adapter** block (2026-10-26) with MAC and
+  Vendor rows when a MAC was learnt —, status, open count,
+  services, the worst TLS endpoint's version · key exchange, and the
   **posture** — the engine's own letter from the port's `grade` field, with *Hybrid PQC* /
   *Classical* / *Not ready* from `pqc`, coloured by tone; selecting a row fills the detail pane:
   ports with version · probe, the worst TLS port's protocol / key exchange / cipher / certificate /
@@ -459,7 +503,13 @@ into it for anything else.
 `Session.getAllScanResults()` — Scan (name), Command (mono, muted), When, Hosts up, Open ports —
 sorted newest first, a search box that filters every column (`RowFilter`), a count label, and a
 toolbar acting on the selected row: View, Scan again, Copy command, Copy result, Send to
-assistant, Delete (confirmed). Double-click views. **Scan again** (2026-10-25, asked for during
+assistant, Delete (confirmed). **The table is multi-select** (2026-10-25): with several rows
+selected the single-row actions grey out and Delete reads *Delete N*, confirms once and removes
+them all (`Session.deleteScanResults`); `selectedHistoryRow()` is null unless exactly one row is
+selected. And **Delete all** (2026-10-25), enabled whenever the list has
+rows rather than by the selection: after a confirm naming the count, `Session.deleteAllScanResults()`
+deletes every projected row through the subject view (so only this subject's scans go) and the
+list reloads empty (`SessionScanHistoryTest`). Double-click views. **Scan again** (2026-10-25, asked for during
 the run-through; also a header button on the stored report's view, `ScanResultView.onRerun`)
 puts the report's saved `command`, `probes` (names mapped back to ticks by
 `ProbeSelection.keysForNames`: bundled by name, stored by name, deleted ones dropped) and name
@@ -561,8 +611,29 @@ Authentication/session state built on `PropertyChangeSupport`, holding the share
   `AssistantStorage` use this view; the manager's `getDataStore()` is for system work only.
 - `asSubject(Supplier|Runnable)` — the same swap around arbitrary work.
 - `runAsSystem(Supplier)` — the store controller's system context, for the whole-store
-  dump/restore in `SubjectPanel` (the store refuses those from a subject).
+  dump/restore in `SubjectPanel` (the store refuses those from a subject) and for the one
+  **app-wide record** below.
 Signed out, `subject` is null, the swap binds nothing, and the store returns no rows.
+
+**MAC vendors (2026-10-25, maintainer's spec).** `loadMacVendors()` runs after a login, before
+the shell is shown (`NoSneakMain.AppFrame.loadMacVendorsThenShow`): in the system context it
+looks for the `DataContent` whose `full_name` is `Mac-Vendor-Content` (`MAC_VENDOR_CONTENT_NAME`);
+missing → `OUIDB.getRawContent(OUIDB.WIRESHARK_MANUF_URL)` downloads the Wireshark manuf file
+(3.2 MB, ~58k entries), which is stored as that row (`source_id` = the URL, `data` = the bytes)
+after a throw-away `OUIDB` has parsed it to at least one entry (an error page is refused and not
+stored); either way the bytes go into `NSNetUtil.MAC_VENDORS.load(...)`, the process-wide table
+`ScanReport` consults for the host JSON's `macVendor`. The row has **no owner** on purpose: read
+and written under `runAsSystem`, so every subject shares it and the first one to log in does not
+own it — the one exception to the "everything is subject-scoped" rule in *Data boundary*. Loads
+once per process; a download failure throws `IOException`, nothing is stored, the next login tries
+again. The download sits behind a package-private seam (`setMacVendorSource`) so
+`SessionMacVendorsTest` runs against a real store without reaching wireshark.org.
+`syncMacVendors()` (the Settings page's Sync button) downloads again on demand, replaces the row's
+bytes (`update` on the full row, a `synced_ts` property stamped on it — the store sets
+`last_update_ts` on insert too, so that column cannot tell a sync from the first store) or creates
+it, and `load`s the live table — which only adds or replaces entries, so a scan running at that
+moment keeps resolving. `macVendorStatus()` is the projected read behind the page's status line
+(entries in the live table, `creation_ts`, the `synced_ts` property).
 
 Result convention: the account/auth mutators return **`void`** and **throw
 `AccessSecurityException`** on failure — the exception message is the human-readable reason the
@@ -746,7 +817,7 @@ update from landing a millisecond apart on a fresh row. See the timestamp note i
 
 ### `Navigator`
 Routes a `Screen` (`SCAN_NEW, SCAN_HISTORY, PROBES, CHAT, CHATS, CAPTURE, SKILLS, PROVIDERS,
-PROFILE, API_KEYS, BACKUP, ACL` — the sidebar's items, in order) to a `Route(card, section)`:
+PROFILE, API_KEYS, SETTINGS, ACL` — the sidebar's items, in order) to a `Route(card, section)`:
 `show(screen)` flips the `CardLayout` to the card, runs the section `Runnable` (the panel's
 `show(section)` / `showPage(page)`), records `current()` and tells the `onShow` listeners;
 `sync(screen)` records a move a panel made by itself and tells the listeners without running the

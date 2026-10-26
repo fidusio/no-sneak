@@ -23,7 +23,7 @@ public class ReportViewTest {
               "command": "10.0.0.0/24 -p 1-1024 -sV", "cancelled": false,
               "hosts": [
                 {"host": "10.0.0.12", "ip": "10.0.0.12", "hostname": "nas.lan", "up": true, "reason": "arp-reply",
-                 "mac": "00:11:22:33:44:55", "latencyMs": 1,
+                 "mac": "00:11:22:33:44:55", "macVendor": "Example Networks Inc", "latencyMs": 1,
                  "portStats": {"open": 2, "closed": 1022, "filtered": 0},
                  "ports": [
                    {"port": 22, "protocol": "tcp", "state": "open", "reason": "connected", "rttMs": 2,
@@ -64,6 +64,8 @@ public class ReportViewTest {
         assertEquals("10.0.0.12", nas.address());
         assertEquals("nas.lan", nas.hostname());
         assertEquals("00:11:22:33:44:55", nas.mac());
+        assertEquals("Example Networks Inc", nas.macVendor());
+        assertNull(r.hosts().get(1).macVendor(), "no field in the report, nothing invented");
         assertEquals("ssh, https", nas.serviceList());
         ReportView.Port https = nas.ports().get(1);
         assertTrue(https.hasTls());

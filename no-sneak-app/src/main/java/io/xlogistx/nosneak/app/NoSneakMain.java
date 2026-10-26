@@ -5,6 +5,7 @@ import com.formdev.flatlaf.FlatLightLaf;
 import com.formdev.flatlaf.fonts.roboto.FlatRobotoFont;
 import com.openhtmltopdf.util.XRLog;
 import io.xlogistx.datastore.h2p.H2PDataStore;
+import io.xlogistx.gui.BackgroundTask;
 import io.xlogistx.gui.IconUtil;
 import io.xlogistx.gui.UITokens;
 import io.xlogistx.nosneak.app.ui.AppShell;
@@ -22,6 +23,7 @@ import javax.swing.*;
 import java.awt.*;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.io.IOException;
 
 public class NoSneakMain {
 
@@ -140,7 +142,43 @@ public class NoSneakMain {
             shell = new AppShell(ctx);
             menuBar = shell.menuBar();
             unlock.bindSession(ctx.session());
-            ctx.session().onAuthChange(e -> showSignedIn((boolean) e.getNewValue()));
+            ctx.session().onAuthChange(e -> {
+                if ((boolean) e.getNewValue()) loadMacVendorsThenShow();
+                else showSignedIn(false);
+            });
+        }
+
+        private boolean macVendorWarningShown;
+
+        /**
+         * After a login (2026-10-25): fill the MAC vendor table from the store, downloading the
+         * Wireshark list once when the store has none ({@link Session#loadMacVendors}), then show
+         * the application. A download failure is shown once and the app starts without vendor
+         * names; the next login tries again.
+         */
+        private void loadMacVendorsThenShow() {
+            if (ctx.session().macVendorsLoaded()) {
+                showSignedIn(true);
+                return;
+            }
+            unlock.signInfo("Loading MAC vendors…");
+            BackgroundTask.run(this, null, () -> {
+                try {
+                    ctx.session().loadMacVendors();
+                    return null;
+                } catch (IOException e) {
+                    return e.getMessage() != null ? e.getMessage() : e.toString();
+                }
+            }, failure -> {
+                if (failure != null && !macVendorWarningShown) {
+                    macVendorWarningShown = true;
+                    JOptionPane.showMessageDialog(this,
+                            "The MAC vendor list could not be downloaded: " + failure
+                                    + "\nScan reports will not name vendors until the next sign-in with a connection.",
+                            "MAC vendors", JOptionPane.WARNING_MESSAGE);
+                }
+                showSignedIn(true);
+            });
         }
 
         private void showSignedIn(boolean signedIn) {

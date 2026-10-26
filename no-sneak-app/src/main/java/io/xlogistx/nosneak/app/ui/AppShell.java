@@ -85,7 +85,7 @@ public class AppShell extends JPanel {
         navigator.register(Screen.PROVIDERS, CARD_ASSISTANT, () -> assistantPanel.showPage(AssistantPanel.Page.PROVIDERS));
         navigator.register(Screen.PROFILE, CARD_ACCOUNT, () -> subjectPanel.show(SubjectPanel.SECTION_PROFILE));
         navigator.register(Screen.API_KEYS, CARD_ACCOUNT, () -> subjectPanel.show(SubjectPanel.SECTION_CREDENTIALS));
-        navigator.register(Screen.BACKUP, CARD_ACCOUNT, () -> subjectPanel.show(SubjectPanel.SECTION_BACKUP));
+        navigator.register(Screen.SETTINGS, CARD_ACCOUNT, () -> subjectPanel.show(SubjectPanel.SECTION_SETTINGS));
         navigator.register(Screen.ACL, CARD_ADMIN, null);
         ctx.setNavigator(navigator);
 
@@ -205,7 +205,7 @@ public class AppShell extends JPanel {
         nav.section("account", "Account");
         nav.item(Screen.PROFILE.name(), icon("user"), "Profile");
         nav.item(Screen.API_KEYS.name(), icon("key"), "API keys");
-        nav.item(Screen.BACKUP.name(), icon("archive"), "Backup");
+        nav.item(Screen.SETTINGS.name(), icon("settings"), "Settings");
 
         nav.section(SECTION_ADMIN, "Admin");
         nav.item(Screen.ACL.name(), icon("shield"), "Access control");

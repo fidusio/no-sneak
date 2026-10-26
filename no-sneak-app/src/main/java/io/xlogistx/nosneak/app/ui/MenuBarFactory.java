@@ -62,7 +62,7 @@ public class MenuBarFactory {
         view.addSeparator();
         view.add(page("Profile", Navigator.Screen.PROFILE));
         view.add(page("API keys", Navigator.Screen.API_KEYS));
-        view.add(page("Backup", Navigator.Screen.BACKUP));
+        view.add(page("Settings", Navigator.Screen.SETTINGS));
         view.addSeparator();
         view.add(page("Access control", Navigator.Screen.ACL));
 

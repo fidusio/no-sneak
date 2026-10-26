@@ -75,6 +75,7 @@ public class ScanPanel extends JPanel {
 
     private final HistoryModel historyModel = new HistoryModel();
     private final JTable historyTable = new JTable(historyModel);
+    private final JButton historyDeleteAll = new JButton("Delete all", new IconUtil.DeleteIcon(16));
     private final TableRowSorter<HistoryModel> historySorter = new TableRowSorter<>(historyModel);
     private final JLabel historyCount = new JLabel();
     private ListSection<ProbeContent> probeList;
@@ -189,13 +190,19 @@ public class ScanPanel extends JPanel {
         head.add(sub);
         out.add(head, "growx");
 
-        probeChips.setEmptyText("none · service detection still identifies services");
+        probeChips.setEmptyText("none · no probing (tick Service detection for all)");
         probeChips.addAction("Add probe", this::showProbeMenu);
         probeChips.onRemove(key -> {
             tickedProbes.remove(key);
             refreshProbeChips();
         });
         form.setProbeControl(probeChips);
+        // the Service detection box is the all / none shortcut for the chips (2026-10-26)
+        form.onServiceDetectionToggled(on -> {
+            if (on) tickAllProbes();
+            else tickedProbes.clear();
+            refreshProbeChips();
+        });
         form.getHelpButton().addActionListener(_ -> showUsage());
         stopButton.addActionListener(_ -> onStop());
         form.getRunButton().addActionListener(_ -> onRun(form.getRunButton()));
@@ -346,12 +353,19 @@ public class ScanPanel extends JPanel {
         }
 
         /**
-         * Applies the selection to the parsed config. Ticking implies {@code -sV}: the probe
-         * stage returns early when {@code probeScan} is false, so ticked probes with no
-         * {@code -sV} would silently do nothing. Names never pass through the command string.
+         * Applies the selection to the parsed config. The selection is the only source of
+         * probing (maintainer, 2026-10-26): ticked probes imply {@code -sV} and name the set;
+         * <b>no ticks mean no probing</b>, whatever {@code -sV} or {@code --probes} the command
+         * carried (a bare {@code -sV} would otherwise run the engine's whole catalog). Names never
+         * pass through the command string.
          */
         static void applyTo(NMapConfig cfg, Selection sel) {
-            if (sel.isEmpty()) return;
+            if (sel.isEmpty()) {
+                cfg.probeScan(false);
+                cfg.probeNames.clear();
+                cfg.extraProbes.clear();
+                return;
+            }
             cfg.probeScan(true);
             for (String name : sel.bundledNames()) cfg.probe(name);
             for (ProbeDefinition d : sel.stored()) {
@@ -442,7 +456,12 @@ public class ScanPanel extends JPanel {
             if (tickedProbes.contains(row.key())) chips.add(new ChipPanel.Chip(row.key(), row.label(), row.stored() ? "mine" : null));
         }
         probeChips.setChips(chips);
-        if (!chips.isEmpty()) form.setServiceDetection(true); // ticking implies -sV, as applyTo does
+        form.setServiceDetection(!chips.isEmpty()); // -sV mirrors the chips both ways, as applyTo does
+    }
+
+    /** Every bundled and stored probe ticked: what the Service detection box means on its own. */
+    private void tickAllProbes() {
+        for (ProbeRow row : probeRows()) tickedProbes.add(row.key());
     }
 
     /** The Add probe menu: a check item per bundled and stored probe, grouped, with an All per group. */
@@ -551,7 +570,7 @@ public class ScanPanel extends JPanel {
         head.add(newScan);
         out.add(head, "growx");
 
-        JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", "[260!][]push[][][][][][]"));
+        JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", "[260!][]push[][][][][][][]"));
         bar.setOpaque(false);
         JTextField search = new JTextField();
         search.putClientProperty("JTextField.placeholderText", "Search by name, target or command");
@@ -573,6 +592,12 @@ public class ScanPanel extends JPanel {
             b.setEnabled(false);
             bar.add(b);
         }
+        // Delete all (2026-10-25): enabled whenever the history has rows, not by the selection
+        historyDeleteAll.setForeground(UITokens.danger());
+        historyDeleteAll.putClientProperty("JButton.buttonType", "toolBarButton");
+        historyDeleteAll.setEnabled(false);
+        historyDeleteAll.setToolTipText("Delete every scan in your history");
+        bar.add(historyDeleteAll);
         out.add(bar, "growx");
 
         Tables.style(historyTable);
@@ -584,9 +609,14 @@ public class ScanPanel extends JPanel {
         historyTable.getColumnModel().getColumn(1).setCellRenderer(new MonoRenderer());
         historyTable.setRowSorter(historySorter);
         historySorter.setSortKeys(List.of(new RowSorter.SortKey(2, SortOrder.DESCENDING)));
+        // Multi-selection (2026-10-25): Delete takes every selected row; the single-row actions
+        // need exactly one, so they grey out while several are selected
+        historyTable.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
         historyTable.getSelectionModel().addListSelectionListener(e -> {
-            boolean on = historyTable.getSelectedRow() >= 0;
-            for (JButton b : new JButton[]{view, again, copyCommand, copyResult, send, delete}) b.setEnabled(on);
+            int selected = historyTable.getSelectedRowCount();
+            for (JButton b : new JButton[]{view, again, copyCommand, copyResult, send}) b.setEnabled(selected == 1);
+            delete.setEnabled(selected >= 1);
+            delete.setText(selected > 1 ? "Delete " + selected : "Delete");
         });
         historyTable.addMouseListener(new java.awt.event.MouseAdapter() {
             @Override
@@ -619,11 +649,21 @@ public class ScanPanel extends JPanel {
         copyResult.addActionListener(_ -> onCopyScanResult(selectedHistoryRow()));
         send.addActionListener(_ -> onSendScanResult(selectedHistoryRow()));
         delete.addActionListener(_ -> {
-            ReportContent row = selectedHistoryRow();
-            if (row == null) return;
-            int ok = JOptionPane.showConfirmDialog(this, "Delete the scan \"" + row.getName() + "\"?", "Delete scan",
+            List<ReportContent> rows = selectedHistoryRows();
+            if (rows.isEmpty()) return;
+            String what = rows.size() == 1 ? "the scan \"" + rows.get(0).getName() + "\""
+                    : "the " + rows.size() + " selected scans";
+            int ok = JOptionPane.showConfirmDialog(this, "Delete " + what + "?", "Delete scan" + (rows.size() == 1 ? "" : "s"),
                     JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
-            if (ok == JOptionPane.OK_OPTION) onRemoveScanResult(row);
+            if (ok == JOptionPane.OK_OPTION) onRemoveScanResults(rows);
+        });
+        historyDeleteAll.addActionListener(_ -> {
+            int all = historyModel.getRowCount();
+            if (all == 0) return;
+            int ok = JOptionPane.showConfirmDialog(this,
+                    "Delete all " + all + " scan" + (all == 1 ? "" : "s") + " in your history? This cannot be undone.",
+                    "Delete all scans", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
+            if (ok == JOptionPane.OK_OPTION) onRemoveAllScanResults();
         });
 
         JScrollPane scroll = new JScrollPane(historyTable);
@@ -633,15 +673,25 @@ public class ScanPanel extends JPanel {
         return out;
     }
 
+    /** The lead selected row, for the single-row actions; null when none or several are selected. */
     private ReportContent selectedHistoryRow() {
+        if (historyTable.getSelectedRowCount() != 1) return null;
         int row = historyTable.getSelectedRow();
         return row < 0 ? null : historyModel.at(historyTable.convertRowIndexToModel(row));
+    }
+
+    /** Every selected row, in table order. */
+    private List<ReportContent> selectedHistoryRows() {
+        List<ReportContent> out = new ArrayList<>();
+        for (int row : historyTable.getSelectedRows()) out.add(historyModel.at(historyTable.convertRowIndexToModel(row)));
+        return out;
     }
 
     private void updateHistoryCount() {
         int shown = historyTable.getRowCount();
         int all = historyModel.getRowCount();
         historyCount.setText(all == 0 ? "No scans yet" : shown == all ? all + " scans" : shown + " of " + all + " scans");
+        historyDeleteAll.setEnabled(all > 0);
     }
 
     /** The history rows: projections, re-fetched by GUID before anything reads their content. */
@@ -833,9 +883,14 @@ public class ScanPanel extends JPanel {
         return out;
     }
 
-    private void onRemoveScanResult(ReportContent reportContent) {
-        BackgroundTask.runCatching(this, null, () -> ctx.session().deleteScanResult(reportContent),
+    private void onRemoveScanResults(List<ReportContent> rows) {
+        BackgroundTask.runCatching(this, null, () -> ctx.session().deleteScanResults(rows),
                 this::reloadScanResults);
+    }
+
+    /** Every scan of the signed-in subject, after the confirm; the list reloads empty. */
+    private void onRemoveAllScanResults() {
+        BackgroundTask.run(this, historyDeleteAll, () -> ctx.session().deleteAllScanResults(), _ -> reloadScanResults());
     }
 
     private void onEditProbe(ProbeContent probeContent) {

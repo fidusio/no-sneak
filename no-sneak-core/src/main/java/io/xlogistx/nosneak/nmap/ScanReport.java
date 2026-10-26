@@ -1,15 +1,10 @@
 package io.xlogistx.nosneak.nmap;
 
 import io.xlogistx.nosneak.grade.Grade;
-import org.zoxweb.shared.util.NVBoolean;
-import org.zoxweb.shared.util.NVDouble;
-import org.zoxweb.shared.util.NVGenericMap;
-import org.zoxweb.shared.util.NVGenericMapList;
-import org.zoxweb.shared.util.NVInt;
-import org.zoxweb.shared.util.NVLong;
-import org.zoxweb.shared.util.NVStringList;
-import java.util.Map;
+import io.xlogistx.nosneak.net.util.NSNetUtil;
 import io.xlogistx.nosneak.result.ProbeResult;
+import org.zoxweb.shared.net.OUIVendor;
+import org.zoxweb.shared.util.*;
 
 import java.time.Instant;
 import java.time.ZoneId;
@@ -17,6 +12,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 /**
  * Result of a staged {@link NMapScanner} run: run-level metadata plus one {@link HostReport} per
@@ -182,7 +178,15 @@ public final class ScanReport {
             if (hostname != null) m.add("hostname", hostname);
             m.add(new NVBoolean("up", up));
             if (reason != null) m.add("reason", reason);
-            if (mac != null) m.add("mac", mac);
+            if (mac != null){
+                m.add("mac", mac);
+                // The manuf short name is an 8-char abbreviation (IntelCor); the description is the
+                // full vendor name. The table is filled by the app from its store after a login.
+                OUIVendor vendor = NSNetUtil.MAC_VENDORS.lookup(mac);
+                if (vendor != null) {
+                    m.add("macVendor", vendor.getDescription());
+                }
+            }
             if (latencyMs >= 0) m.add(new NVLong("latencyMs", latencyMs));
             if (startTimeMs > 0) m.add("startTime", isoTime(startTimeMs));
             if (endTimeMs > 0) m.add("endTime", isoTime(endTimeMs));

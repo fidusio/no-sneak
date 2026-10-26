@@ -11,7 +11,12 @@
 > on the maintainer's behalf and what is still open (old installations are refused). The **Mongo
 > path is deprecated** (2026-10-25): the store is the encrypted H2 file, PostgreSQL is the next
 > datastore target. The Swing UI was redesigned on 2026-10-24/25 — `no-sneak-app/UI-REDESIGN-PLAN.md`
-> and the *Status check (2026-10-24)* section of `PENDING-ISSUES.md` carry it; uncommitted.
+> and the *Status check (2026-10-24)* section of `PENDING-ISSUES.md` carry it; committed on
+> 2026-10-25. **After it, uncommitted (2026-10-25/26, same section, dated blocks):** MAC vendor
+> names in scan reports (the Wireshark manuf file kept in the store as a `DataContent`, loaded into
+> `NSNetUtil.MAC_VENDORS` after login, *Account → Settings → Sync* to refresh it), Delete all and
+> multi-select on the scan history, **no probe ticked = no probing**, and a Network adapter block
+> (MAC, vendor) in the host detail pane.
 
 Assessment tooling for what a network endpoint exposes — TLS posture, **post-quantum
 readiness**, and running services — plus a Swing front-end and an AI-assistant layer.
