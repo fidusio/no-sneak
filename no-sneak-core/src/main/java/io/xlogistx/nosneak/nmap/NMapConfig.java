@@ -1,5 +1,7 @@
 package io.xlogistx.nosneak.nmap;
 
+import org.zoxweb.shared.util.GetDescription;
+import org.zoxweb.shared.util.GetDisplayName;
 import io.xlogistx.nosneak.model.ProbeDefinition;
 
 import java.util.ArrayList;
@@ -148,7 +150,7 @@ public final class NMapConfig {
      *   T5         1024        10000           2 s
      * </pre>
      */
-    public enum Timing {
+    public enum Timing implements GetDisplayName, GetDescription {
         T0(1, 1, 15), T1(4, 10, 15), T2(16, 50, 10),
         T3(DEFAULT_MAX_IN_FLIGHT, DEFAULT_MAX_PER_SEC, DEFAULT_TIMEOUT_SEC),
         T4(512, 5000, 3), T5(1024, 10000, 2);
@@ -161,6 +163,25 @@ public final class NMapConfig {
             this.maxInFlight = maxInFlight;
             this.maxPerSec = maxPerSec;
             this.timeoutSec = timeoutSec;
+        }
+
+        /** The {@code -T} token, which is also the label the desktop form shows (2026-10-26). */
+        @Override
+        public String getDisplayName() {
+            return name();
+        }
+
+        /**
+         * The three knobs in words, the segment's tooltip on the desktop form (2026-10-27):
+         * {@code "256 in flight, 2000 per second, 5 s timeout (default)"}.
+         */
+        @Override
+        public String getDescription() {
+            String s = maxInFlight + " in flight, " + maxPerSec + " per second, " + timeoutSec + " s timeout";
+            if (this == T3) s += " (default)";
+            else if (ordinal() < T3.ordinal()) s += " (gentler: fragile or monitored segments)";
+            else s += " (faster: lab networks you own)";
+            return s;
         }
 
         /** How many of the three knobs a configuration shares with this template (0..3). */

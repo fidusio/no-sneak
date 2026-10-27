@@ -3,24 +3,38 @@ package io.xlogistx.nosneak.ai.assistant.panels;
 import io.xlogistx.gui.*;
 import io.xlogistx.nosneak.ai.AIProvider;
 import io.xlogistx.nosneak.ai.assistant.AssistantContext;
+import io.xlogistx.nosneak.ai.assistant.AssistantPanel;
 import io.xlogistx.nosneak.ai.model.AIChat;
-import org.zoxweb.shared.util.SUS;
+import net.miginfocom.swing.MigLayout;
 
 import javax.swing.*;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
+import javax.swing.table.DefaultTableCellRenderer;
+import javax.swing.table.TableRowSorter;
 import java.awt.*;
+import java.util.List;
+import java.util.regex.Pattern;
 
 import static io.xlogistx.nosneak.ai.assistant.panels.PanelSupport.bindProviderModels;
-import static io.xlogistx.nosneak.ai.assistant.panels.PanelSupport.blankTo;
 import static io.xlogistx.nosneak.ai.assistant.panels.PanelSupport.deleteConfirm;
 import static io.xlogistx.nosneak.ai.assistant.panels.PanelSupport.fillProviders;
 import static io.xlogistx.nosneak.ai.assistant.panels.PanelSupport.selectProvider;
 import static io.xlogistx.nosneak.ai.assistant.panels.PanelSupport.timestamp;
 
+/**
+ * The list of chats — the Chat page itself since the merge of 2026-10-26 (the open conversation
+ * is {@link ChatPanel}'s other card): a {@link PagePanel} head with the one primary action
+ * (New chat), a toolbar (search, count, Open / Edit / Delete on the selected row) and a styled
+ * table on {@link ChatHistoryModel}, newest update first; double-click opens. The create and
+ * edit forms are two further cards in the same frame. Opening a chat is
+ * {@code context.setCurrentChat}, which the Chat page listens to.
+ */
 public class ChatHistoryPanel extends JPanel {
 
     private final AssistantContext ctx;
 
-    private Runnable onChatOpened;
+    private Runnable onFormClosed;
 
     public ChatHistoryPanel(AssistantContext ctx) {
         this.ctx = ctx;
@@ -28,12 +42,28 @@ public class ChatHistoryPanel extends JPanel {
         add(buildHistoryCards());
     }
 
-    public void setOnChatOpened(Runnable onChatOpened) {
-        this.onChatOpened = onChatOpened;
+    /** Told when a form (Edit chat's Save or Cancel, New chat's Cancel) returns to the list. */
+    public void setOnFormClosed(Runnable onFormClosed) {
+        this.onFormClosed = onFormClosed;
+    }
+
+    /** Back to the list from a form, and tell the owner. */
+    private void closeForm() {
+        selectedChat = null;
+        historyCards.show("list");
+        if (onFormClosed != null) onFormClosed.run();
+    }
+
+    /** The facts line of a chat: {@code provider · model · N messages}. */
+    public String facts(AIChat chat) {
+        return historyModel.facts(chat);
     }
 
     private final CardStack historyCards = new CardStack();
-    private ListSection<AIChat> historyList;
+    private final ChatHistoryModel historyModel = new ChatHistoryModel(this::providerName);
+    private final JTable historyTable = new JTable(historyModel);
+    private final TableRowSorter<ChatHistoryModel> historySorter = new TableRowSorter<>(historyModel);
+    private final JLabel historyCount = new JLabel();
 
     private final JTextField editPromptName = new JTextField();
     private final JComboBox<String> editProviderSelector = new JComboBox<>();
@@ -53,24 +83,116 @@ public class ChatHistoryPanel extends JPanel {
     }
 
     public JPanel buildHistoryPanel() {
-        historyList = ListSection.of(ctx::getAllChats)
-                .title("Chat History")
-                .addButton("+ New Chat", this::startNewChat)
-                .label(chat -> blankTo(chat.getTitle(), "Untitled chat"))
-                .sublabel(this::chatSublabel)
-                .onEdit(c -> () -> onEditPrompt(c))
-                .onRemove(c -> () -> onRemovePrompt(c))
-                .action(new ListSection.RowAction<>(new IconUtil.NextIcon(16), "Open Chat", c -> () -> onOpenChat(c)))
-                .emptyText("No chats yet")
-                .scrollable()
-                .search("search")
-                .build();
+        PagePanel page = new PagePanel(AssistantPanel.Page.CHAT.getDisplayName(),
+                "Every chat you had with the assistant, kept in this store under your account only. Open one to continue it, or start a new one.");
+        JButton newChat = UITokens.primary(new JButton("New chat", IconUtil.svgIcon("io/xlogistx/gui/icons/plus.svg", 14, Color.WHITE)));
+        newChat.addActionListener(_ -> startNewChat());
+        page.action(newChat);
 
-        return historyList;
+        JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", "[260!][]push[][][]"));
+        bar.setOpaque(false);
+        JTextField search = new JTextField();
+        search.putClientProperty("JTextField.placeholderText", "Search by title, provider or model");
+        search.putClientProperty("JTextField.leadingIcon", new IconUtil.SearchIcon(14));
+        bar.add(search, "growx");
+        historyCount.setForeground(UITokens.muted());
+        historyCount.setFont(UITokens.font(Font.PLAIN, -1f));
+        bar.add(historyCount);
+        JButton open = new JButton("Open", new IconUtil.NextIcon(16));
+        JButton edit = new JButton("Edit", new IconUtil.EditIcon(16));
+        JButton delete = new JButton("Delete", new IconUtil.DeleteIcon(16));
+        delete.setForeground(UITokens.danger());
+        for (JButton b : new JButton[]{open, edit, delete}) {
+            b.putClientProperty("JButton.buttonType", "toolBarButton");
+            b.setEnabled(false);
+            bar.add(b);
+        }
+        page.row(bar);
+
+        Tables.style(historyTable);
+        Tables.width(historyTable, ChatHistoryModel.COL_TITLE, 320);
+        Tables.width(historyTable, ChatHistoryModel.COL_PROVIDER, 140);
+        Tables.width(historyTable, ChatHistoryModel.COL_MODEL, 200);
+        Tables.width(historyTable, ChatHistoryModel.COL_MESSAGES, 90);
+        Tables.width(historyTable, ChatHistoryModel.COL_CREATED, 140);
+        Tables.width(historyTable, ChatHistoryModel.COL_UPDATED, 140);
+        TimestampRenderer when = new TimestampRenderer();
+        historyTable.getColumnModel().getColumn(ChatHistoryModel.COL_CREATED).setCellRenderer(when);
+        historyTable.getColumnModel().getColumn(ChatHistoryModel.COL_UPDATED).setCellRenderer(when);
+        historyTable.setRowSorter(historySorter);
+        historySorter.setSortKeys(List.of(new RowSorter.SortKey(ChatHistoryModel.COL_UPDATED, SortOrder.DESCENDING)));
+        historyTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        historyTable.getSelectionModel().addListSelectionListener(_ -> {
+            boolean one = historyTable.getSelectedRowCount() == 1;
+            for (JButton b : new JButton[]{open, edit, delete}) b.setEnabled(one);
+        });
+        historyTable.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent e) {
+                if (e.getClickCount() == 2) onOpenChat(selectedRow());
+            }
+        });
+        open.addActionListener(_ -> onOpenChat(selectedRow()));
+        edit.addActionListener(_ -> editChat(selectedRow()));
+        delete.addActionListener(_ -> onRemovePrompt(selectedRow()));
+        search.getDocument().addDocumentListener(new DocumentListener() {
+            public void insertUpdate(DocumentEvent e) {
+                filter();
+            }
+
+            public void removeUpdate(DocumentEvent e) {
+                filter();
+            }
+
+            public void changedUpdate(DocumentEvent e) {
+                filter();
+            }
+
+            private void filter() {
+                String q = search.getText().trim();
+                historySorter.setRowFilter(q.isEmpty() ? null : RowFilter.regexFilter("(?i)" + Pattern.quote(q)));
+                updateCount();
+            }
+        });
+        JScrollPane scroll = new JScrollPane(historyTable);
+        scroll.setBorder(BorderFactory.createEmptyBorder());
+        scroll.getViewport().setBackground(UITokens.surface());
+        page.card(scroll);
+        updateCount();
+        return page;
+    }
+
+    /** The selected chat, or null when no row is selected. */
+    private AIChat selectedRow() {
+        int row = historyTable.getSelectedRow();
+        return row < 0 ? null : historyModel.rowAt(historyTable.convertRowIndexToModel(row));
+    }
+
+    private void updateCount() {
+        int shown = historyTable.getRowCount();
+        int all = historyModel.getRowCount();
+        historyCount.setText(all == 0 ? "No chats yet" : shown == all ? all + " chats" : shown + " of " + all + " chats");
+    }
+
+    /** The provider column's text for a config reference: the provider's name, or null when unknown. */
+    private String providerName(String ref) {
+        AIProvider provider = ctx.lookupProvider(ref);
+        return provider != null ? provider.getName() : null;
+    }
+
+    /** {@code yyyy-MM-dd HH:mm} for the two timestamp columns, muted like the scan history's. */
+    private static final class TimestampRenderer extends DefaultTableCellRenderer {
+        @Override
+        public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
+            super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+            setText(value instanceof Long l ? timestamp(l) : "");
+            if (!isSelected) setForeground(UITokens.muted());
+            return this;
+        }
     }
 
     public JPanel buildChatEditor() {
-        JButton save = new JButton("Save", new IconUtil.SaveIcon(16));
+        JButton save = UITokens.primary(new JButton("Save", IconUtil.svgIcon("io/xlogistx/gui/icons/save.svg", 14, Color.WHITE)));
         editModelSelector.setEditable(true);
         bindProviderModels(ctx, editProviderSelector, editModelSelector);
 
@@ -85,21 +207,17 @@ public class ChatHistoryPanel extends JPanel {
             selectedChat.setModel(model.toString());
             selectedChat.setProvider(provider.toString());
             BackgroundTask.runCatching(this, save, () -> ctx.saveChat(selectedChat), () -> {
-                historyCards.show("list");
                 refreshHistory();
+                closeForm();
             });
         });
 
-        return PanelBuilder.detail("Edit Chat", () -> historyCards.show("list"), panel -> {
-            PanelBuilder.addRow(panel, "Name", editPromptName);
-            PanelBuilder.addRow(panel, "Provider", editProviderSelector);
-            PanelBuilder.addRow(panel, "Model", editModelSelector);
-            PanelBuilder.addRow(panel, "", save);
-        });
+        return chatForm("Edit chat", "Rename the chat, or change the provider and model it talks to.",
+                editPromptName, editProviderSelector, editModelSelector, save);
     }
 
     public JPanel buildChatCreator() {
-        JButton create = new JButton("Create", new IconUtil.PlusIcon(16));
+        JButton create = UITokens.primary(new JButton("Create", IconUtil.svgIcon("io/xlogistx/gui/icons/plus.svg", 14, Color.WHITE)));
         createModelSelector.setEditable(true);
         bindProviderModels(ctx, createProviderSelector, createModelSelector);
 
@@ -114,38 +232,40 @@ public class ChatHistoryPanel extends JPanel {
             temp.setModel(model.toString());
             temp.setProvider(provider.toString());
             BackgroundTask.runCatching(this, create, () -> ctx.saveChat(temp), () -> {
-                ctx.setCurrentChat(temp);
                 refreshHistory();
                 historyCards.show("list");
-                if (onChatOpened != null) onChatOpened.run();
+                ctx.setCurrentChat(temp); // the Chat page shows the conversation on this
             });
         });
 
-        return PanelBuilder.detail("Create Chat", () -> historyCards.show("list"), panel -> {
-            PanelBuilder.addRow(panel, "Name", createPromptName);
-            PanelBuilder.addRow(panel, "Provider", createProviderSelector);
-            PanelBuilder.addRow(panel, "Model", createModelSelector);
-            PanelBuilder.addRow(panel, "", create);
-        });
+        return chatForm("New chat", "Name it and pick the provider and model it will talk to.",
+                createPromptName, createProviderSelector, createModelSelector, create);
     }
 
-    /**
-     * The row's second line. Everything but the title lives here so the search box filters on
-     * titles rather than on the timestamps every row carries.
-     */
-    private String chatSublabel(AIChat chat) {
-        AIProvider provider = ctx.lookupProvider(chat.getProvider());
-        StringBuilder sb = new StringBuilder(
-                (provider != null) ? provider.getName() : blankTo(chat.getProvider(), "no provider"));
-
-        String model = SUS.trimOrNull(chat.getModel());
-        if (model != null) sb.append("  ·  ").append(model);
-
-        int messages = chat.getMessages().size();
-        sb.append("  ·  ").append(messages).append(messages == 1 ? " message" : " messages");
-        sb.append("  ·  created ").append(timestamp(chat.getCreationTime()));
-        sb.append("  ·  updated ").append(timestamp(chat.getLastTimeUpdated()));
-        return sb.toString();
+    /** The create / edit form in the page frame: three rows and a primary button beside Cancel, which returns to the list. */
+    private JPanel chatForm(String title, String description, JTextField name, JComboBox<String> provider,
+                            JComboBox<String> model, JButton primary) {
+        PagePanel page = new PagePanel(title, description);
+        JPanel form = new JPanel(new MigLayout("insets 20, wrap 2, gapx 16, gapy 10", "[right][360!]"));
+        form.setOpaque(false);
+        form.add(new JLabel("Name"));
+        form.add(name, "growx");
+        form.add(new JLabel("Provider"));
+        form.add(provider, "growx");
+        form.add(new JLabel("Model"));
+        form.add(model, "growx");
+        JButton cancel = new JButton("Cancel");
+        cancel.addActionListener(_ -> closeForm());
+        JPanel actions = new JPanel(new MigLayout("insets 0, gapx 8"));
+        actions.setOpaque(false);
+        actions.add(primary);
+        actions.add(cancel);
+        form.add(actions, "skip 1, gaptop 8");
+        JPanel top = new JPanel(new BorderLayout());
+        top.setOpaque(false);
+        top.add(form, BorderLayout.NORTH);
+        page.card(top);
+        return page;
     }
 
     public void startNewChat() {
@@ -155,14 +275,15 @@ public class ChatHistoryPanel extends JPanel {
         historyCards.show("creator");
     }
 
-    private void onEditPrompt(AIChat chat) {
+    /** Opens the Edit chat form on {@code chat} (the list's Edit, or the conversation's). */
+    public void editChat(AIChat chat) {
+        if (chat == null) return;
         this.selectedChat = chat;
         fillProviders(ctx, editProviderSelector);
         editPromptName.setText(chat.getTitle());
         selectProvider(ctx, editProviderSelector, chat.getProvider());
         editModelSelector.setSelectedItem(chat.getModel());
         historyCards.show("editor");
-
     }
 
     public void refreshProviderCombos() {
@@ -172,7 +293,7 @@ public class ChatHistoryPanel extends JPanel {
 
     private void onRemovePrompt(AIChat chat) {
         if (chat == null) return;
-        int res = JOptionPane.showConfirmDialog(this, deleteConfirm(chat.getTitle(), "chat"),
+        int res = JOptionPane.showConfirmDialog(this, deleteConfirm(ChatHistoryModel.title(chat), "chat"),
                 "Delete chat", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
         if (res != JOptionPane.OK_OPTION) return;
         BackgroundTask.runCatching(this, null, () -> ctx.deleteChat(chat), () -> {
@@ -182,16 +303,28 @@ public class ChatHistoryPanel extends JPanel {
     }
 
     private void onOpenChat(AIChat chat) {
-        ctx.setCurrentChat(chat);
-        if (onChatOpened != null) onChatOpened.run();
+        if (chat == null) return;
+        ctx.setCurrentChat(chat); // the Chat page shows the conversation on this
     }
 
+    /** Re-reads the chats (EDT-safe) and keeps the selected row by GUID when it survives. */
     public void refreshHistory() {
         if (!SwingUtilities.isEventDispatchThread()) {
             SwingUtilities.invokeLater(this::refreshHistory);
             return;
         }
-        if (historyList != null) historyList.refresh();
+        AIChat keep = selectedRow();
+        historyModel.setRows(ctx.getAllChats());
+        updateCount();
+        if (keep != null && keep.getGUID() != null) {
+            for (int i = 0; i < historyModel.getRowCount(); i++) {
+                if (keep.getGUID().equals(historyModel.rowAt(i).getGUID())) {
+                    int view = historyTable.convertRowIndexToView(i);
+                    historyTable.setRowSelectionInterval(view, view);
+                    break;
+                }
+            }
+        }
     }
 
     public void reset() {

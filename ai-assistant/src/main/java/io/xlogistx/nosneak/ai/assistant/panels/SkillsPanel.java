@@ -1,18 +1,17 @@
 package io.xlogistx.nosneak.ai.assistant.panels;
 
-import io.xlogistx.gui.BackgroundTask;
-import io.xlogistx.gui.CardStack;
-import io.xlogistx.gui.ListSection;
+import io.xlogistx.gui.*;
 import io.xlogistx.nosneak.ai.assistant.AssistantContext;
-import io.xlogistx.gui.MDEditorPanel;
-import io.xlogistx.gui.UITokens;
-import net.miginfocom.swing.MigLayout;
+import io.xlogistx.nosneak.ai.assistant.AssistantPanel;
 import io.xlogistx.nosneak.ai.model.AISkill;
-import org.zoxweb.shared.util.SUS;
-
+import net.miginfocom.swing.MigLayout;
 import org.zoxweb.shared.util.GetName;
 
 import javax.swing.*;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
+import javax.swing.table.DefaultTableCellRenderer;
+import javax.swing.table.TableRowSorter;
 import java.awt.*;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -20,10 +19,19 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.regex.Pattern;
 
 import static io.xlogistx.nosneak.ai.assistant.panels.PanelSupport.blankTo;
 import static io.xlogistx.nosneak.ai.assistant.panels.PanelSupport.deleteConfirm;
+import static io.xlogistx.nosneak.ai.assistant.panels.PanelSupport.timestamp;
 
+/**
+ * The Skills page (re-laid out 2026-10-26 in the house list look, after Chat History and
+ * Capture): a {@link PagePanel} head with the one primary action (New skill), a toolbar (search,
+ * count, Edit / Delete on the selected row) and a styled table on {@link SkillsTableModel}, by
+ * name; double-click edits. The one markdown editor is framed in a page of its own (New skill /
+ * Edit skill) that replaces the list while it is open.
+ */
 public class SkillsPanel extends JPanel {
     private final AssistantContext ctx;
 
@@ -63,83 +71,155 @@ public class SkillsPanel extends JPanel {
     }
 
     private final CardStack skillsCards = new CardStack();
-    private ListSection<AISkill> skillsList;
+    private final JPanel editorHost = new JPanel(new BorderLayout());
+    private final SkillsTableModel skillsModel = new SkillsTableModel();
+    private final JTable skillsTable = new JTable(skillsModel);
+    private final TableRowSorter<SkillsTableModel> skillsSorter = new TableRowSorter<>(skillsModel);
+    private final JLabel skillsCount = new JLabel();
     private MDEditorPanel skillEditor;
     private AISkill selectedSkill;
 
     /**
-     * The Skills page (board 7 of the redesign canvas, 2026-10-24): the list on the left, the
-     * markdown editor on the right. The right-hand stack keeps the old card names —
-     * {@code "list"} is now the placeholder shown while no skill is open — so every
-     * {@code skillsCards.show("list")} after a save, a cancel or a reset still lands on the right
-     * thing without touching those call sites.
+     * Two cards: {@code "list"} (the page with the table) and {@code "editor"} (the one
+     * {@link MDEditorPanel}, re-framed in a titled page on every open by {@link #showEditorPage}).
      */
     public JComponent buildSkillCards() {
-        JLabel placeholder = new JLabel("Select a skill to edit it, or create one.", SwingConstants.CENTER);
-        placeholder.setForeground(UITokens.muted());
-        JPanel empty = new JPanel(new BorderLayout());
-        empty.setOpaque(false);
-        empty.add(placeholder, BorderLayout.CENTER);
-
-        skillsCards.add(empty, "list");
-        skillsCards.add(buildSkillEditor(), "editor");
+        skillsCards.add(buildSkillPanel(), "list");
+        skillEditor = buildSkillEditor();
+        skillsCards.add(editorHost, "editor");
         skillsCards.show("list");
-
-        JPanel left = buildSkillPanel();
-        left.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(UITokens.border()),
-                BorderFactory.createEmptyBorder(8, 8, 8, 8)));
-        left.setBackground(UITokens.surface());
-        JPanel right = new JPanel(new BorderLayout());
-        right.setBackground(UITokens.surface());
-        right.setBorder(BorderFactory.createLineBorder(UITokens.border()));
-        right.add(skillsCards.view(), BorderLayout.CENTER);
-
-        JPanel page = new JPanel(new MigLayout("insets 20 24 24 24, gapx 20, fill", "[320::420,fill][grow,fill]", "[grow,fill]"));
-        page.setBackground(UITokens.color("xlogistx.ground", null, 0xF4F4F7));
-        page.add(left, "wmin 0, hmin 0, growy");
-        page.add(right, "wmin 0, hmin 0, growy");
-        return page;
+        return skillsCards.view();
     }
 
     public JPanel buildSkillPanel() {
-        skillsList = ListSection.of(ctx::getAllSkills)
-                .title("Skills")
-                .addButton("+ New Skill", this::onAddSkill)
-                .label(SkillsPanel::skillLabel)
-                .sublabel(skill -> SUS.trimOrNull(skill.getDescription()))
-                .onEdit(c -> () -> onEditSkill(c))
-                .onRemove(c -> () -> onRemoveSkill(c))
-                .emptyText("No Skills yet")
-                .scrollable()
-                .search("search")
-                .build();
+        PagePanel page = new PagePanel(AssistantPanel.Page.SKILLS.getDisplayName(),
+                "Instructions the assistant can carry into a chat: an md skill goes with the message, a prompt skill is pasted into the composer.");
+        JButton newSkill = UITokens.primary(new JButton("New skill", IconUtil.svgIcon("io/xlogistx/gui/icons/plus.svg", 14, Color.WHITE)));
+        newSkill.addActionListener(_ -> onAddSkill());
+        page.action(newSkill);
 
-        return skillsList;
+        JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", "[260!][]push[][]"));
+        bar.setOpaque(false);
+        JTextField search = new JTextField();
+        search.putClientProperty("JTextField.placeholderText", "Search by name, type or description");
+        search.putClientProperty("JTextField.leadingIcon", new IconUtil.SearchIcon(14));
+        bar.add(search, "growx");
+        skillsCount.setForeground(UITokens.muted());
+        skillsCount.setFont(UITokens.font(Font.PLAIN, -1f));
+        bar.add(skillsCount);
+        JButton edit = new JButton("Edit", new IconUtil.EditIcon(16));
+        JButton delete = new JButton("Delete", new IconUtil.DeleteIcon(16));
+        delete.setForeground(UITokens.danger());
+        for (JButton b : new JButton[]{edit, delete}) {
+            b.putClientProperty("JButton.buttonType", "toolBarButton");
+            b.setEnabled(false);
+            bar.add(b);
+        }
+        page.row(bar);
+
+        Tables.style(skillsTable);
+        Tables.width(skillsTable, SkillsTableModel.COL_NAME, 220);
+        Tables.width(skillsTable, SkillsTableModel.COL_TYPE, 110);
+        Tables.width(skillsTable, SkillsTableModel.COL_DESCRIPTION, 460);
+        Tables.width(skillsTable, SkillsTableModel.COL_UPDATED, 140);
+        skillsTable.getColumnModel().getColumn(SkillsTableModel.COL_TYPE).setCellRenderer(new MutedRenderer(false));
+        skillsTable.getColumnModel().getColumn(SkillsTableModel.COL_UPDATED).setCellRenderer(new MutedRenderer(true));
+        skillsTable.setRowSorter(skillsSorter);
+        skillsSorter.setSortKeys(List.of(new RowSorter.SortKey(SkillsTableModel.COL_NAME, SortOrder.ASCENDING)));
+        skillsTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        skillsTable.getSelectionModel().addListSelectionListener(_ -> {
+            boolean one = skillsTable.getSelectedRowCount() == 1;
+            edit.setEnabled(one);
+            delete.setEnabled(one);
+        });
+        skillsTable.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent e) {
+                if (e.getClickCount() == 2) onEditSkill(selectedRow());
+            }
+        });
+        edit.addActionListener(_ -> onEditSkill(selectedRow()));
+        delete.addActionListener(_ -> onRemoveSkill(selectedRow()));
+        search.getDocument().addDocumentListener(new DocumentListener() {
+            public void insertUpdate(DocumentEvent e) {
+                filter();
+            }
+
+            public void removeUpdate(DocumentEvent e) {
+                filter();
+            }
+
+            public void changedUpdate(DocumentEvent e) {
+                filter();
+            }
+
+            private void filter() {
+                String q = search.getText().trim();
+                skillsSorter.setRowFilter(q.isEmpty() ? null : RowFilter.regexFilter("(?i)" + Pattern.quote(q)));
+                updateCount();
+            }
+        });
+        JScrollPane scroll = new JScrollPane(skillsTable);
+        scroll.setBorder(BorderFactory.createEmptyBorder());
+        scroll.getViewport().setBackground(UITokens.surface());
+        page.card(scroll);
+        updateCount();
+        return page;
     }
 
-    public JPanel buildSkillEditor() {
-        skillEditor = new MDEditorPanel();
-        skillEditor.setTitle("Skill instructions");
-        skillEditor.withName("Name", "");
-        skillEditor.withDescription("Description", "");
-        skillEditor.setValidator(this::validateSkill);
-        skillEditor.setOnCommit(this::onSaveSkill);
-        skillEditor.setOnCancel(() -> {
+    /** The selected skill, or null when no row is selected. */
+    private AISkill selectedRow() {
+        int row = skillsTable.getSelectedRow();
+        return row < 0 ? null : skillsModel.rowAt(skillsTable.convertRowIndexToModel(row));
+    }
+
+    private void updateCount() {
+        int shown = skillsTable.getRowCount();
+        int all = skillsModel.getRowCount();
+        skillsCount.setText(all == 0 ? "No skills yet" : shown == all ? all + (all == 1 ? " skill" : " skills") : shown + " of " + all + " skills");
+    }
+
+    /** The type column plain, or a {@code yyyy-MM-dd HH:mm} stamp; both muted like the scan history's. */
+    private static final class MutedRenderer extends DefaultTableCellRenderer {
+        private final boolean stamp;
+
+        MutedRenderer(boolean stamp) {
+            this.stamp = stamp;
+        }
+
+        @Override
+        public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
+            super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+            if (stamp) setText(value instanceof Long l ? timestamp(l) : "");
+            if (!isSelected) setForeground(UITokens.muted());
+            return this;
+        }
+    }
+
+    public MDEditorPanel buildSkillEditor() {
+        MDEditorPanel editor = new MDEditorPanel();
+        editor.setTitle("Skill instructions");
+        editor.withName("Name", "");
+        editor.withDescription("Description", "");
+        UITokens.primary(editor.getSaveButton()).setIcon(new IconUtil.SaveIcon(16, Color.WHITE)); // the page's primary, like Create / Save on the chat forms
+        editor.setValidator(this::validateSkill);
+        editor.setOnCommit(this::onSaveSkill);
+        editor.setOnCancel(() -> {
             selectedSkill = null;
             skillsCards.show("list");
         });
-        return skillEditor;
+        return editor;
     }
 
-    /**
-     * Name and type share the first line: the type decides whether the composer attaches the
-     * skill or pastes it, so it belongs with the identity rather than down in the description.
-     */
-    private static String skillLabel(AISkill skill) {
-        String name = blankTo(skill.getName(), "Untitled skill");
-        AISkill.SkillType type = skill.getSkillType();
-        return (type == null) ? name : name + "  ·  " + type.getName();
+    /** Frames the one editor in a titled page and shows it; the editor keeps its own Save / Cancel. */
+    private void showEditorPage(String title, String description) {
+        PagePanel page = new PagePanel(title, description);
+        page.card(skillEditor);
+        editorHost.removeAll();
+        editorHost.add(page, BorderLayout.CENTER);
+        editorHost.revalidate();
+        editorHost.repaint();
+        skillsCards.show("editor");
     }
 
     /**
@@ -171,7 +251,7 @@ public class SkillsPanel extends JPanel {
                 if (selectedSkill != null) {
                     int ok = JOptionPane.showConfirmDialog(this,
                             "Save this text as a " + label + " instead of updating skill \""
-                                    + blankTo(selectedSkill.getName(), "Untitled skill")
+                                    + blankTo(selectedSkill.getName(), SkillsTableModel.UNTITLED)
                                     + "\"?\nThe skill itself will not be changed.",
                             "Save as " + label, JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE);
                     if (ok != JOptionPane.OK_OPTION) {
@@ -236,7 +316,10 @@ public class SkillsPanel extends JPanel {
 
     private void showSkillEditor(AISkill skill, String saveText) {
         showSkillEditorFields(skill, saveText);
-        skillsCards.show("editor");
+        if (skill == null)
+            showEditorPage("New skill", "Name it, pick what it is, and write the instructions in markdown. Save as sends the text elsewhere instead.");
+        else
+            showEditorPage("Edit skill", "Change the name, type, description or instructions. Cancel discards the edits.");
     }
 
     public boolean startSkillFromResponse(String markdown) {
@@ -249,7 +332,7 @@ public class SkillsPanel extends JPanel {
         selectedSkill = null;
         showSkillEditorFields(null, "Create");
         skillEditor.setMarkdown(markdown);
-        skillsCards.show("editor");
+        showEditorPage("New skill", "The assistant's reply, ready to keep as a skill: name it and save.");
         return true;
     }
 
@@ -275,7 +358,7 @@ public class SkillsPanel extends JPanel {
 
     private void onRemoveSkill(AISkill skill) {
         if (skill == null) return;
-        int res = JOptionPane.showConfirmDialog(this, deleteConfirm(skill.getName(), "skill"),
+        int res = JOptionPane.showConfirmDialog(this, deleteConfirm(SkillsTableModel.title(skill), "skill"),
                 "Delete skill", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
         if (res != JOptionPane.OK_OPTION) return;
         BackgroundTask.runCatching(this, null, () -> ctx.deleteSkill(skill), () -> {
@@ -285,12 +368,20 @@ public class SkillsPanel extends JPanel {
         });
     }
 
+    /** Re-reads the skills (EDT-safe) and keeps the selected row by GUID. */
     public void refreshSkills() {
         if (!SwingUtilities.isEventDispatchThread()) {
             SwingUtilities.invokeLater(this::refreshSkills);
             return;
         }
-        if (skillsList != null) skillsList.refresh();
+        AISkill keep = selectedRow();
+        skillsModel.setRows(ctx.getAllSkills());
+        int model = keep == null ? -1 : skillsModel.indexOf(keep.getGUID());
+        if (model >= 0) {
+            int view = skillsTable.convertRowIndexToView(model);
+            skillsTable.setRowSelectionInterval(view, view);
+        }
+        updateCount();
     }
 
     public void reset() {

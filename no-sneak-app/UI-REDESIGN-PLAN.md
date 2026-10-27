@@ -55,8 +55,9 @@ existing `*Demo` classes) and a JUnit `FormPanelTest` that constructs a form hea
 
 New `ui/UnlockPanel.java` (replaces `DataStoreSetupPanel` and `LoginPanel`, both deleted):
 
-- Layout: `SplashSidePanel` (NoSneak title, tagline from `MenuBarFactory.TAGLINE`, the three data
-  promises, version/Java/OS footer) on the left, a centred card with a `StepperPanel` on the right.
+- Layout: `SplashSidePanel` (NoSneak title, tagline from `MenuBarFactory.TAGLINE` — wired for
+  real on 2026-10-27, with the three promises reworded to match the About card and the Help —,
+  version/Java/OS footer) on the left, a centred card with a `StepperPanel` on the right.
 - **Step 1 "Open store"**: `DirectoryField` (pre-filled from `AppPrefs.storeLocation()` when it
   still exists), vault password (`PanelBuilder.passwordField`), an `InlineMessage` saying
   "Existing vault found: enter its password." or "No vault here: a new vault, database and
@@ -221,13 +222,45 @@ Not part of the redesign, but built on its pages; each is documented in `CLAUDE.
 
 - **MAC vendors.** The engine's `macVendor` (zoxweb `OUIDB`, filled from the Wireshark manuf
   file that the store keeps as the app-wide `DataContent` *Mac-Vendor-Content*, loaded after
-  login) shows as a **Vendor** column in Hosts and a **Network adapter** block (MAC, Vendor) in
+  login) shows as a **Vendor** column in Hosts (and, since 2026-10-27, the **MAC** beside it,
+  both blank when the report has none) and a **Network adapter** block (MAC, Vendor) in
   the host detail pane. **Account → Settings** is a new page (`SETTINGS`, gear icon added to
   gui-audio) whose **Sync** section re-downloads the list on demand.
 - **Backup moved under Settings** (2026-10-26): the Backup and Restore blocks are the second and
   third blocks of the Settings page; the Backup page, `BACKUP` screen, sidebar item and View-menu
   entry are gone. Mentions of a Backup page earlier in this plan are history.
 - **Scan history**: multi-select, Delete takes the selection, **Delete all** clears the list.
+- **Chat History** (2026-10-26, "still rendered with the old look and feel"): the assistant's
+  history page now has the scan history's shape — `PagePanel` head with the primary *New chat*,
+  a toolbar (search, count, Open / Edit / Delete) and a table on `ChatHistoryModel`; the New
+  chat / Edit chat forms are page-framed cards with Create / Save beside Cancel.
+- **Capture** (2026-10-26, "do the same for the Capture page"): the assistant's Capture page in
+  the same shape — `PagePanel` head with *Define area* and the primary *Capture (N)*, two
+  toolbar-over-table columns (`CaptureAreaModel`, the name edited in place; `CaptureTableModel`
+  with thumbnails, newest first) and a preview page with *Back* / *Send to chat*.
+- **Skills** (2026-10-26, "do the same for the Skills page"): a full-width table page
+  (`SkillsTableModel`: Skill · Type · Description · Updated, search, count, Edit / Delete, the
+  primary *New skill*); the one markdown editor is framed as a *New skill* / *Edit skill* page
+  that replaces the list, its Save / Create the page's primary button.
+- **Providers** (2026-10-26, "do the same for the Providers page"): four pages in the same
+  shape — the table (`ProvidersTableModel`: Provider · Type · Endpoint · Default model · Models ·
+  Last sync, search, count, Edit / Remove, the primary *Add provider*), the key picker
+  (`ProviderKeysTableModel`, Back / *New key* / *Use this key*), the new-key form and the
+  provider form (primary Save or *Add to assistant* beside Cancel); the assistant mounts the
+  panel without a scroll pane now.
+- **Chat, merged with Chat History** (2026-10-26, "do the same for the Chat page and make sure
+  there is not overlapping with the Chat history or maybe they should be merged"): one sidebar
+  item, *Chat*. The list of chats (the Chat History table, its New chat / Edit chat forms) is
+  the page; opening a row shows the conversation as a page that replaces it — title and
+  `provider · model · N messages` from the chat, head actions *All chats* / *Edit* / *Chat as
+  PDF* / *New chat*, a row with the model combo, filter and the two checkboxes, the transcript
+  over the composer in the card, *Send* the one primary. The old "No chat selected" card, the
+  Chat header's New Chat, `Screen.CHAT_HISTORY` and `Page.HISTORY` are gone; the sidebar lands
+  on the open conversation, or on the list when none is open.
+- **One label per page** (2026-10-26): `Navigator.Screen`, `AssistantPanel.Page`,
+  `ProbeLibraryModel.Filter` and `NMapConfig.Timing` implement zoxweb's `GetDisplayName`; the
+  sidebar, the page titles, the View menu and the two segmented controls all read it
+  (`ScreenLabelsTest`).
 - **No probe ticked = no probing**: the chips are the only source of probing; the Service
   detection box mirrors them and is the all / none shortcut; the empty strip says so.
 - **Probe library** (2026-10-26): a table of every probe, bundled and stored, with a read-only

@@ -151,6 +151,11 @@ Three distinct TLS paths — pick deliberately when writing a probe:
 
 Only the BC path can classify PQC — JSSE does not surface the negotiated key-exchange group.
 
+> `NMapConfig.Timing implements GetDisplayName` (2026-10-26): the display name is the `-T` token, which
+> is what the desktop form's segmented control shows; nothing in the engine reads it. Since 2026-10-27
+> it also implements `GetDescription`: the three knobs in words plus the template's role (*256 in
+> flight, 2000 per second, 5 s timeout (default)*), the segment's tooltip on the form.
+
 ## Engine reference
 
 > Folded in from `PROBE-CONFIG.md` on 2026-10-26, when that file was deleted: its schema and

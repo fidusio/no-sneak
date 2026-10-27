@@ -1,7 +1,7 @@
 # no-sneak
 
 > **Picking this project up?** `PENDING-ISSUES.md` at the repo root is the open-work index: its
-> *Open now (2026-10-26)* section is the whole open list, and everything under *History* is the
+> *Open now (2026-10-27)* section is the whole open list, and everything under *History* is the
 > dated record (kept because sources cite its finding numbers). Since 2026-10-21 the app's store
 > follows the datastore's deployment model: a first run is `H2PSetup command=create` (vault with the operator as
 > super-admin, encrypted H2 file, the no-sneak app, `shiro.ini`), every run opens the vault and
@@ -20,7 +20,12 @@
 > the app and asks the assistant for a probe (*Save as probe* on the reply); probes carry an
 > optional one-line `description`. Same day: the two unbundled probe files were deleted as
 > redundant and `postgres-tls` was fixed with a new `tls-upgrade` action (SSLRequest, then TLS
-> in place, then the version over it).
+> in place, then the version over it). **2026-10-27** (same section, dated block): Chat and Chat
+> History merged into one Chat page, a MAC column on the Hosts tab, Help and About rewritten, a
+> status bar that shows the MAC vendor list's state, the Profile, API Keys and Settings pages
+> re-laid out, and gui-audio's **`ComponentRef`** under every enum-driven control (sidebar, View
+> menu, segmented controls, assistant pages, navigator routes, tabs, list rows, chips) with
+> descriptions on the UI enums as tooltips.
 
 Assessment tooling for what a network endpoint exposes — TLS posture, **post-quantum
 readiness**, and running services — plus a Swing front-end and an AI-assistant layer.

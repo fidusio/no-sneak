@@ -8,6 +8,11 @@ import io.xlogistx.gui.UITokens;
 import io.xlogistx.gui.WrapLabel;
 import net.miginfocom.swing.MigLayout;
 
+import io.xlogistx.gui.ComponentRef;
+import org.zoxweb.shared.util.GetDescription;
+import org.zoxweb.shared.util.GetDisplayName;
+import java.util.EnumMap;
+import java.util.Map;
 import javax.swing.*;
 import javax.swing.table.AbstractTableModel;
 import javax.swing.table.DefaultTableCellRenderer;
@@ -25,6 +30,45 @@ import java.util.function.Consumer;
  * scanner page, another a stored report opened from history.
  */
 public class ScanResultView extends JPanel {
+
+    /** The result's three tabs (2026-10-27): the display name is the tab's title, the description its tooltip. */
+    public enum Tab implements GetDisplayName, GetDescription {
+        HOSTS("Hosts", "Every host of the run: address, MAC and vendor, status, open ports, services, TLS and PQC readiness; select one for its detail"),
+        SERVICES("Services", "Every open port of the run, flat: host, port, service, version and what it said"),
+        RAW("Raw JSON", "The report exactly as the engine wrote it");
+
+        private final String displayName;
+        private final String description;
+
+        Tab(String displayName, String description) {
+            this.displayName = displayName;
+            this.description = description;
+        }
+
+        @Override
+        public String getDisplayName() {
+            return displayName;
+        }
+
+        @Override
+        public String getDescription() {
+            return description;
+        }
+    }
+
+    /** One ref per tab: the tab's content is the component, the constant the source. */
+    private final Map<Tab, ComponentRef<Tab>> tabRefs = new EnumMap<>(Tab.class);
+
+    private void tab(JTabbedPane tabs, Tab t, JComponent content) {
+        ComponentRef<Tab> ref = new ComponentRef<>(content, t);
+        tabRefs.put(t, ref);
+        tabs.addTab(ref.getDisplayName(), null, content, ref.getDescription());
+    }
+
+    /** The tab's ref: its content as the component, its title and tooltip the constant's. */
+    public ComponentRef<Tab> tab(Tab t) {
+        return tabRefs.get(t);
+    }
 
     private static final String EMPTY = "empty";
     private static final String CONTENT = "content";
@@ -103,13 +147,21 @@ public class ScanResultView extends JPanel {
             if (!e.getValueIsAdjusting()) showHost(selectedHost());
         });
         hosts.getColumnModel().getColumn(HostsModel.COL_POSTURE).setCellRenderer(new PostureRenderer());
-        Tables.width(hosts, 0, 220);
-        Tables.width(hosts, HostsModel.COL_VENDOR, 160);
-        Tables.width(hosts, 2, 70);
-        Tables.width(hosts, HostsModel.COL_OPEN, 60);
-        Tables.width(hosts, 4, 220);
-        Tables.width(hosts, 5, 180);
-        Tables.width(hosts, HostsModel.COL_POSTURE, 150);
+        hosts.getColumnModel().getColumn(HostsModel.COL_MAC).setCellRenderer(new MonoRenderer(true));
+        hosts.getColumnModel().getColumn(HostsModel.COL_VENDOR).setCellRenderer(new MonoRenderer(false));
+        Tables.width(hosts, 0, 170);
+        Tables.width(hosts, HostsModel.COL_MAC, 150);
+        Tables.width(hosts, HostsModel.COL_VENDOR, 150);
+        // the split pane shares the width out by preferred size; an address and a MAC must stay
+        // readable whole, the rest is in the detail pane
+        hosts.getColumnModel().getColumn(0).setMinWidth(105);
+        hosts.getColumnModel().getColumn(HostsModel.COL_MAC).setMinWidth(135);
+        hosts.getColumnModel().getColumn(HostsModel.COL_VENDOR).setMinWidth(100);
+        Tables.width(hosts, HostsModel.COL_STATUS, 60);
+        Tables.width(hosts, HostsModel.COL_OPEN, 50);
+        Tables.width(hosts, HostsModel.COL_SERVICES, 180);
+        Tables.width(hosts, HostsModel.COL_TLS, 160);
+        Tables.width(hosts, HostsModel.COL_POSTURE, 140);
         JScrollPane hostsScroll = new JScrollPane(hosts);
         hostsScroll.setBorder(BorderFactory.createEmptyBorder());
         detail.setBackground(UITokens.surfaceAlt());
@@ -125,7 +177,7 @@ public class ScanResultView extends JPanel {
         split.setBorder(BorderFactory.createEmptyBorder());
         split.setDividerSize(6);
         split.setMinimumSize(new Dimension(0, 0));
-        tabs.addTab("Hosts", split);
+        tab(tabs, Tab.HOSTS, split);
 
         Tables.width(services, 0, 160);
         Tables.width(services, 1, 90);
@@ -134,7 +186,7 @@ public class ScanResultView extends JPanel {
         Tables.width(services, 4, 200);
         JScrollPane servicesScroll = new JScrollPane(services);
         servicesScroll.setBorder(BorderFactory.createEmptyBorder());
-        tabs.addTab("Services", servicesScroll);
+        tab(tabs, Tab.SERVICES, servicesScroll);
 
         raw.setEditable(false);
         raw.setFont(UITokens.mono(-1f));
@@ -143,7 +195,7 @@ public class ScanResultView extends JPanel {
         rawScroll.setBorder(BorderFactory.createEmptyBorder());
         rawScroll.setMinimumSize(new Dimension(0, 0));
         servicesScroll.setMinimumSize(new Dimension(0, 0));
-        tabs.addTab("Raw JSON", rawScroll);
+        tab(tabs, Tab.RAW, rawScroll);
         tabs.setMinimumSize(new Dimension(0, 0));
 
         content.add(tabs, BorderLayout.CENTER);
@@ -362,11 +414,19 @@ public class ScanResultView extends JPanel {
     // ---- models ----
 
     private static final class HostsModel extends AbstractTableModel {
-        /** Vendor (2026-10-25) sits next to the host it describes; the PQC verdict stays last. */
-        private static final String[] COLS = {"Host", "Vendor", "Status", "Open", "Services", "TLS", "PQC readiness"};
-        static final int COL_VENDOR = 1;
-        static final int COL_OPEN = 3;
-        static final int COL_POSTURE = 6;
+        /**
+         * MAC (2026-10-27, "show the mac and macVendor if they are not null") and Vendor
+         * (2026-10-25) sit next to the host they describe, blank when the report has none; the
+         * PQC verdict stays last.
+         */
+        private static final String[] COLS = {"Host", "MAC", "Vendor", "Status", "Open", "Services", "TLS", "PQC readiness"};
+        static final int COL_MAC = 1;
+        static final int COL_VENDOR = 2;
+        static final int COL_STATUS = 3;
+        static final int COL_OPEN = 4;
+        static final int COL_SERVICES = 5;
+        static final int COL_TLS = 6;
+        static final int COL_POSTURE = 7;
         private List<ReportView.Host> rows = List.of();
 
         void setHosts(List<ReportView.Host> hosts) {
@@ -394,11 +454,12 @@ public class ScanResultView extends JPanel {
             ReportView.Host h = rows.get(r);
             return switch (c) {
                 case 0 -> h.hostname() != null ? h.address() + "  " + h.hostname() : h.address();
+                case COL_MAC -> h.mac() != null ? h.mac() : "";
                 case COL_VENDOR -> h.macVendor() != null ? h.macVendor() : "";
-                case 2 -> h.up() ? "up" : "down";
+                case COL_STATUS -> h.up() ? "up" : "down";
                 case COL_OPEN -> h.openPorts().size();
-                case 4 -> h.serviceList();
-                case 5 -> {
+                case COL_SERVICES -> h.serviceList();
+                case COL_TLS -> {
                     ReportView.Port t = h.worstTlsPort();
                     yield t != null ? t.tlsSummary() : "";
                 }
@@ -480,6 +541,27 @@ public class ScanResultView extends JPanel {
     }
 
     /** The posture column: the label in its tone's colour, bold. */
+    /**
+     * The MAC column in the mono face, like the detail pane's, and the Vendor column in the plain
+     * one; both carry the full value as a tooltip, since the split pane truncates them at narrow
+     * window widths.
+     */
+    private static final class MonoRenderer extends DefaultTableCellRenderer {
+        private final boolean mono;
+
+        MonoRenderer(boolean mono) {
+            this.mono = mono;
+        }
+
+        @Override
+        public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
+            super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+            if (mono) setFont(UITokens.mono(-1f));
+            setToolTipText(value != null && !value.toString().isEmpty() ? value.toString() : null);
+            return this;
+        }
+    }
+
     private static final class PostureRenderer extends DefaultTableCellRenderer {
         @Override
         public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {

@@ -128,6 +128,8 @@ public class Session {
 
     /** {@code full_name} of the one {@link DataContent} row that holds the Wireshark manuf file. */
     public static final String MAC_VENDOR_CONTENT_NAME = "Mac-Vendor-Content";
+    /** Property event fired after the live vendor table was (re)filled: by the post-login load or a sync. */
+    public static final String MAC_VENDORS_EVENT = "macVendors";
 
     /** A supplier that may fail with I/O, for the manuf download seam. */
     @FunctionalInterface
@@ -171,6 +173,7 @@ public class Session {
         }
         NSNetUtil.MAC_VENDORS.load(data);
         macVendorsLoaded = true;
+        pcs.firePropertyChange(MAC_VENDORS_EVENT, null, NSNetUtil.MAC_VENDORS.size());
     }
 
     /**
@@ -218,6 +221,7 @@ public class Session {
         }
         NSNetUtil.MAC_VENDORS.load(data);
         macVendorsLoaded = true;
+        pcs.firePropertyChange(MAC_VENDORS_EVENT, null, NSNetUtil.MAC_VENDORS.size());
         return macVendorStatus();
     }
 
@@ -910,6 +914,15 @@ public class Session {
      */
     public void onCredentialsChange(PropertyChangeListener l) {
         pcs.addPropertyChangeListener("credentials", l);
+    }
+
+    /**
+     * Registers a listener for the {@link #MAC_VENDORS_EVENT} event, fired (off the EDT, with the
+     * table's size as the new value) after {@link #loadMacVendors()} filled the vendor table and
+     * after every {@link #syncMacVendors()}; the shell's status bar shows the list's state from it.
+     */
+    public void onMacVendorsChange(PropertyChangeListener l) {
+        pcs.addPropertyChangeListener(MAC_VENDORS_EVENT, l);
     }
 
     /**

@@ -1,5 +1,7 @@
 package io.xlogistx.nosneak.app.ui.scan;
 
+import org.zoxweb.shared.util.GetDescription;
+import org.zoxweb.shared.util.GetDisplayName;
 import io.xlogistx.nosneak.data.ProbeContent;
 import io.xlogistx.nosneak.model.ProbeDefinition;
 import io.xlogistx.nosneak.model.ProbeDefinitionLoader;
@@ -50,8 +52,30 @@ public final class ProbeLibraryModel extends AbstractTableModel {
         }
     }
 
-    /** The All / Bundled / Mine segment. */
-    public enum Filter {ALL, BUNDLED, MINE}
+    /** The All / Bundled / Mine segment: the display name is the segment's text, the description its tooltip (2026-10-27). */
+    public enum Filter implements GetDisplayName, GetDescription {
+        ALL("All", "Every probe: the bundled ones and yours"),
+        BUNDLED("Bundled", "The probes that ship with the app, read-only"),
+        MINE("Mine", "The probes stored under your account");
+
+        private final String displayName;
+        private final String description;
+
+        Filter(String displayName, String description) {
+            this.displayName = displayName;
+            this.description = description;
+        }
+
+        @Override
+        public String getDescription() {
+            return description;
+        }
+
+        @Override
+        public String getDisplayName() {
+            return displayName;
+        }
+    }
 
     public static final String[] COLS = {"Name", "Service", "Ports", "Transport", "Priority", "Source"};
     public static final int COL_NAME = 0, COL_SERVICE = 1, COL_PORTS = 2, COL_TRANSPORT = 3, COL_PRIORITY = 4, COL_SOURCE = 5;

@@ -1,6 +1,6 @@
 # Pending issues
 
-*The open-work index for the repo. The first section is the whole open list as of 2026-10-26;
+*The open-work index for the repo. The first section is the whole open list as of 2026-10-27;
 everything under* History *is the dated record of how it got here and is not an open list. Per-area
 detail lives in the module `CLAUDE.md` files, named below.*
 
@@ -8,7 +8,7 @@ detail lives in the module `CLAUDE.md` files, named below.*
 > does and does not do (assessment and detection only — no exploitation, credential attacks, DoS,
 > or evasion). Nothing on this list may cross that line.
 
-## Open now (2026-10-26)
+## Open now (2026-10-27)
 
 **Maintainer's own items**
 1. **Live checks owed**, in the order the features landed:
@@ -21,7 +21,11 @@ detail lives in the module `CLAUDE.md` files, named below.*
      the probe's user; otherwise `postgresql-tls-auth-required`, still a completed identification).
 2. **Run-through on a display** of the pages not yet tried since the redesign: a stored report
    opened from history, API keys, Providers, a chat with chips, a capture, Profile, Settings
-   (Backup and Restore), Access control.
+   (Backup and Restore), Access control. Since 2026-10-27 that includes what was re-laid out or
+   added that day and only checked by headless renders: the merged Chat page, the Profile and
+   API Keys forms, the Settings blocks, the About card and Help text, the status bar's vendor
+   line after a real *Sync*, and the **tooltips** (sidebar items, View menu, T0 to T5, the
+   All / Bundled / Mine and result tabs, Access Control tabs), which a static render cannot show.
 3. **Decisions parked with the maintainer:** run tier 2 only after tier 1 fails (the match-first
    sweep's ~18 simultaneous connections lose the `ssh` verdict on hosts with OpenSSH
    `MaxStartups 10:30:100`; measured 2 of 13 SSH hosts on the `/24`); the sibling TCP-ping aborts
@@ -36,7 +40,9 @@ detail lives in the module `CLAUDE.md` files, named below.*
 - The assistant's job-queue page is a stub and is not offered in the sidebar.
 - Register needs a confirmation dialog; the Technical / Simple tier toggle is not wired; an
   identifier has no status (primary / alias / verified; blocked on `PrincipalIdentifier` holding
-  only the id string); no mandatory-field convention across the profile and address forms.
+  only the id string); the required marks (`FormPanel.requiredField`) are on the password and
+  API-key forms only, the Profile name form marks nothing and the address form says in a note
+  that a label or a street is enough.
 - A scan report goes to the assistant as its full JSON (a `/24` is ~53 KB, ~15k tokens); the
   compact `NORMAL` render would need to be stored at scan time. Decide before stores fill up.
 - A copied API-key secret stays on the clipboard; add a guarded auto-clear (~60 s).
@@ -599,16 +605,47 @@ negotiation) pins it. Live check owed: `postgres-tls` against a real PostgreSQL 
 (the version arrives only when `trust` auth applies to the probe's user; otherwise the note is
 `postgresql-tls-auth-required`, which is still a completed identification).
 
-**Open after Phase 5 (updated 2026-10-26):** the rest of the maintainer's run-through on a
+**2026-10-27, maintainer's requests, uncommitted:** (1) **Chat and Chat History merged** into
+one Chat page (the list is the page, a row opens the conversation as a page with *All chats*,
+*Edit*, *Chat as PDF* and *New chat* in its head; `Page.HISTORY` and `Screen.CHAT_HISTORY` are
+gone; the duplicated *Save as probe* on every reply fixed on the way); `NEW_SCAN` renamed `SCAN`
+by the maintainer. (2) The Hosts tab shows a **MAC** column beside Vendor. (3) **Help** rewritten
+to the sidebar's pages; **About** rebuilt as a card (tagline, the summary of what it will and
+won't do, Version / Java / Platform / Vault / Store, a line about the tooltips, a Help link);
+the sidebar footer's version line opens About; the header chip's tooltip and the About Store row
+share `MenuBarFactory.STORE_NOTE`; the **status bar** shows *Signed in as …* and the MAC vendor
+list's state (the new `Session.onMacVendorsChange` event after the login-time load and every
+sync; the Settings Sync line follows the same event); the Settings **Backup / Restore** notes
+list what the store holds and the archive name carries the day; the **Profile** page is three
+blocks (Name form with a status line, Identifiers and Addresses with descriptions) and **API
+Keys** is a page frame with *Add API key* in the head and stacked forms for change-password,
+edit-key and the add dialog; the sign-in splash's tagline comes from `MenuBarFactory.TAGLINE`.
+(4) gui-audio: `ListSection`'s description became a `WrapLabel` (it was a JTextArea one line
+high on first show); `HeaderBar.setStatus` takes a tooltip. (5) **`ComponentRef`** (the
+maintainer's class, reshaped: a source accessor, live read-through of `GetName` /
+`GetDescription` / `GetDisplayName` with fallbacks, display-name and description overrides) is
+now what every enum-driven control is built on: `SegmentedControl` (text = display name, tooltip
+= description, `selectedSource()`), `SideNavPanel.item(option, icon)`, the View menu, the
+assistant's page cards, the navigator's routes (the shell registers panels, the navigator adds
+the cards), the scan result tabs (`ScanResultView.Tab`) and the Access Control tabs
+(`SubjectSecManagerPanel.View`), `ListSection.rowRefs()` and `ChipPanel.chipRefs()`. The four
+UI enums (`Navigator.Screen`, `AssistantPanel.Page`, `ProbeLibraryModel.Filter`,
+`NMapConfig.Timing`) implement `GetDescription`, so the sidebar, the View menu and the T0 to T5
+segments carry tooltips. Tests: gui-audio `ComponentRefTest`, `SegmentedControlTest`,
+`SideNavPanelTest`, `RowRefsTest` (14); app `ScreenLabelsTest` pins every description;
+`SessionMacVendorsTest` pins the event. Every page rendered headless and read. **Live checks
+owed:** the tooltips appear on hover; the status bar after a real *Sync*; *Save changes* on
+Profile shows *Saved.*; a backup lands as `<db>-backup-<date>.zip`.
+
+**Open after Phase 5 (updated 2026-10-27):** the rest of the maintainer's run-through on a
 display (unlock, the scan form and history are done; still to try: a stored report from history,
 API keys, Providers, a chat with chips, a capture, Profile, Settings with Backup and Restore,
-Access control); the **live
+Access control, and the 2026-10-27 re-layouts and tooltips above); the **live
 checks owed** for the 2026-10-25/26 additions — first login downloads the vendor list and a LAN
 scan names vendors, the next login does not download, *Settings → Sync* replaces the list, a scan
 with no chips sends no probe traffic and ticking Service detection fills the strip, the Probe
-library's assistant round trip (ask, send, Save as probe) and a copied bundled probe; the commit of
-those additions (no-sneak, and io-xlogistx for `settings.svg`); and, from before the redesign,
-the ACL tables are still empty stubs and the job-queue page is not offered.
+library's assistant round trip (ask, send, Save as probe) and a copied bundled probe; and, from
+before the redesign, the ACL tables are still empty stubs and the job-queue page is not offered.
 
 ## Status check (2026-10-21, Windows dev box) — the store follows the datastore's deployment model
 

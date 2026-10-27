@@ -15,9 +15,10 @@ has chosen to use.
 > (`clearProviders` / `resetPanel`) is a data-isolation control. Nothing here sends telemetry, and no code
 > path may attach stored data the subject did not choose.
 
-> **Implementation status.** This document is the UI design spec; the sidebar labels have drifted
-> from it (`AssistantPanel` currently uses **Chat / Capture / Job Queue / History / Skills /
-> Providers** toggle buttons rather than the nav table in §1). What is wired today:
+> **Implementation status.** This document is the UI design spec; the pages have drifted from
+> it (`AssistantPanel` has **Chat / Capture / Job Queue / Skills / Providers** behind the host's
+> sidebar rather than the nav table in §1; Chat History merged into Chat on 2026-10-26, §2 / §4).
+> What is wired today:
 >
 > - **A provider is its own persisted record, not a key.** The unit is
 >   **`AIProviderConfig`** (an `ai-model` DAO: `keyGUID` / `providerType` / `baseURL` /
@@ -36,15 +37,17 @@ has chosen to use.
 >   migration** that runs only when the subject has zero configs: every `assistant-enabled`
 >   credential gets a config minted from its `provider` / `base-url` properties, so keys linked
 >   before this change survive it.
-> - **The Providers page is a four-card `CardStack`** (`list` / `add` / `create` / `form`).
->   The list rows carry **edit** (`onEditProvider` → the form, pre-filled) and **remove**
+> - **The Providers page is a four-card `CardStack`** (`list` / `add` / `create` / `form`),
+>   each card a page in the house list look since 2026-10-26 (§6). The list's toolbar carries
+>   **Edit** (`onEditProvider` → the form, pre-filled) and **Remove**
 >   (`onRemoveProvider`), which deletes the *config* and only calls `setEnabled(key,false)` when
 >   `context.configsUsing(keyGUID) == 0` — `assistant-enabled` is **derived** now, so a stale
->   flag cannot resurrect a provider at the next login. **+ Add Provider** opens the `add`
->   picker, which lists **every** credential the source offers, unfiltered on purpose (a key
->   stays pickable because it can back more than one provider). Selecting a row opens the same
->   `form` on a new config seeded from the key's metadata; **+ New Key** (`create`) makes a
->   credential first via `AICredentialSource.addAPIKey`, then lands on the form. Saving
+>   flag cannot resurrect a provider at the next login. **Add provider** opens the `add`
+>   picker, a table of **every** credential the source offers, unfiltered on purpose (a key
+>   stays pickable because it can back more than one provider). **Use this key** (or a
+>   double-click) opens the same `form` on a new config seeded from the key's metadata;
+>   **New key** (`create`) makes a credential first via `AICredentialSource.addAPIKey`, then
+>   lands on the form. Saving
 >   (`onSaveProviderConfig`) persists the config, enables the key, builds the provider, runs
 >   discovery, and registers it. There is no separate provider-type prompt any more — the type
 >   is a required field on the form.
@@ -86,17 +89,19 @@ has chosen to use.
 > - **List rows are label + sublabel, and search covers both.** The shared `ListSection` grew
 >   `.description(...)` (a wrapping blurb under the panel title) and `.sublabel(...)` (a muted
 >   second line per row). The rule here: the **label is the searchable identity**, the sublabel
->   carries the metadata. Chat History = title / `provider · model · N messages · created ·
->   updated`; Skills = `name · <skill type>` / description; Providers = config label /
->   `type · baseURL · default model · N models · last sync`; the key picker = key name /
->   `provider · baseURL · used by N providers`. `ListSection.filter()` matches label **or**
+>   carries the metadata. (Chat History, Skills and Providers left `ListSection` for tables on
+>   2026-10-26, §4 / §5 / §6; the Providers table's columns are what its sublabel used to say —
+>   `type · baseURL · default model · N models · last sync` — and the key picker's are
+>   `provider · baseURL · used by N providers`.) `ListSection.filter()` matches label **or**
 >   sublabel, so moving metadata off the label does not drop it out of search.
-> - **History has create / edit / delete + persistence.** `buildHistoryCards` is a nested
->   `CardStack` (`list` / `editor` / `creator`). `+ New Prompt` opens a Create form
->   (name + provider + model), a row's edit opens a pre-filled Edit form (both persist via
->   `context.saveChat`), and remove calls `context.deleteChat`. The list source is
->   `context.getAllChats()` (→ `AIRepository.getAllChats()`), refreshed by the public EDT-safe
->   `refreshHistory()`, which `no-sneak-app` calls on both login and logout.
+> - **The list of chats has create / edit / delete + persistence** (the Chat page's list since
+>   the merge of 2026-10-26; the Chat History page before). `ChatHistoryPanel.buildHistoryCards`
+>   is a nested `CardStack` (`list` / `editor` / `creator`). **New chat** opens the Create form
+>   (name + provider + model), the toolbar's Edit opens a pre-filled Edit form (both persist via
+>   `context.saveChat`), and Delete calls `context.deleteChat` after a confirm. The list is a
+>   table on `ChatHistoryModel` over `context.getAllChats()` (→ `AIRepository.getAllChats()`),
+>   refreshed by the public EDT-safe `refreshHistory()`, which `no-sneak-app` calls on both login
+>   and logout (§4, since 2026-10-26).
 > - **Skills have create / edit / delete + persistence, and are typed.** `buildSkillCards` is a
 > nested `CardStack` of exactly two cards (`list` / `editor`). The list source is
 > `context.getAllSkills()` (→ `AIRepository.getAllSkills()`), refreshed by `refreshSkills()`.
@@ -254,21 +259,28 @@ has chosen to use.
 >   Capture page. The old instant-capture path (`capture`/`shootArea`/`onCaptureButton`/
 >   `defaultArea`, the commented-out composer camera button, `CaptureSupport.shoot`) is
 >   **deleted**.
-> - **The Capture page is built** (`panels/CapturePanel`): two tabs under a **fixed toolbar**
->   (**Define area** / **Capture (N)**, visible on both tabs; N = all defined areas, disabled
->   at 0). The *Capture area selection* tab holds **session-scoped** `io.xlogistx.gui.CaptureArea` rows
->   (name, description = display, rectangle — held in `AssistantContext`'s `CaptureAreaSet`,
->   never persisted, cleared by `resetContext()`), each with rename (inline editor — Define
->   area lands on it with the default name selected), redraw (re-runs the overlay, keeps
->   name/identity), and remove. The *Captures* tab lists persisted `AICapture` rows —
->   thumbnail, name, `fromArea · WxH · KB · HH:mm` — with send-to-chat, open (preview card),
->   rename, delete. `fromArea` is a **copied string label**, so deleting the area leaves
+> - **The Capture page is built** (`panels/CapturePanel`; re-laid out 2026-10-26 in the house
+>   list look, after Chat History): a `PagePanel` head (title from `Page.CAPTURE`, the two
+>   actions **Define area** and the primary **Capture (N)**; N = all defined areas, disabled at
+>   0) over two columns split 38/62. *Areas* (left) is a toolbar (count, **Rename / Redraw /
+>   Remove** on the selected row) over a `Tables.style`d table on **`CaptureAreaModel`** —
+>   Area · Display · Region — of the **session-scoped** `io.xlogistx.gui.CaptureArea`s (held in
+>   `AssistantContext`'s `CaptureAreaSet`, never persisted, cleared by `resetContext()`); the
+>   name is edited **in place** in the Area column (`setValueAt`, a blank keeps the old name;
+>   Define area lands in that editor with the default name selected), Redraw re-runs the overlay
+>   keeping name/identity. *Captures* (right) is a toolbar (count, **Open / Send to chat /
+>   Rename / Delete** on the selected row, **Delete all**) over a table on
+>   **`CaptureTableModel`** — thumbnail (62 px rows, the camera glyph when a row has none) ·
+>   Capture · Area · Size · Bytes · Taken, newest first; double-click opens. Open replaces the
+>   whole page with a **preview page** (`PagePanel`: the name, `area · WxH · KB · taken <ts>`,
+>   **Back** and the primary **Send to chat**, the image in the card). Both models are pure
+>   (`CaptureModelsTest`). `fromArea` is a **copied string label**, so deleting the area leaves
 >   captures intact. Capture (N) runs `CaptureSupport.shootAndSave` — the same sweep the chat
 >   send path uses: one hide/settle/restore cycle around a single
 >   `CaptureAreaSet.takeSnapShots` sweep (one cached `Robot`; unset or empty rectangles are
 >   silently skipped per the library contract, and the panel warns "N of M areas could not be
 >   captured" when the snapshot count comes up short), saves each via `ctx.saveCapture`, and
->   flips to the Captures tab; there is **no job queue integration by
+>   reloads the Captures table; there is **no job queue integration by
 >   design** (deferred with the queue itself). Selection runs through
 >   `panels/RegionOverlay.select()` — **multi-monitor**: one undecorated always-on-top `JWindow`
 >   per `GraphicsDevice` (translucency with per-pixel → opacity → solid fallback), rubber-band
@@ -282,10 +294,10 @@ has chosen to use.
 >   itself is not yet safe for that:** when `ctx.getCapture` misses it falls back to the
 >   projected row, so `onRenameCapture` can write an image-less row straight back over the
 >   stored one (see the rough edges). The
->   capture card is **not** wrapped in an outer `JScrollPane` (same reason as Skills: the tabs
->   scroll themselves and need a bounded viewport). Search was deliberately dropped from the
->   capture lists — rows are hand-rolled (checkbox/thumbnail slots don't fit `ListSection`) and
->   the lists are session-sized. Note macOS needs Screen Recording permission for
+>   panel is **not** wrapped in an outer `JScrollPane` (the two tables scroll themselves and
+>   need a bounded viewport). There is no search box on either table: the areas are
+>   session-sized and the captures toolbar has no room for one at 1280 px wide. Note macOS
+>   needs Screen Recording permission for
 >   `Robot.createScreenCapture` — without it captures come back blank with no exception.
 > - **The module has two outward hooks, and they are the whole coupling to the scanner.**
 >   **`AssistantPanel.sendToChat(text, name)`** attaches plain text as a pending `AISource`
@@ -401,10 +413,10 @@ has chosen to use.
 >   instance, and `onRenameCapture` saves it, so `ds.update` writes a null `image` over the
 >   stored png. Exactly what the method's own javadoc says must never happen. The read paths
 >   (view, send-to-chat) are safe; only the save path needs to bail instead.
-> - **`previewed == capture` breaks across a refresh.** `getAllCaptures()` hands out fresh
->   instances per read, so once `refreshCaptures()` has run, deleting or renaming the capture
->   being previewed no longer matches and the preview card stays open on a dead row.
->   `AssistantContext.deleteChat` already solved this by matching on instance **or GUID**.
+> - ~~**`previewed == capture` breaks across a refresh.**~~ **Moot since 2026-10-26:** the
+>   preview is a page of its own and the list's Rename / Delete are not reachable while it is
+>   open; the panel keeps no `previewed` field. (`getAllCaptures()` still hands out fresh
+>   instances per read; `refreshCaptures()` keeps the selection by GUID.)
 > - **Multi-file attach order is nondeterministic.** `chooseImage` fires one `BackgroundTask` per
 >   selected file and `SwingWorker.done()` order is not submission order, so "compare the first
 >   with the second" depends on which decode finished first. Read them in one task.
@@ -463,12 +475,18 @@ split out of `AssistantPanel`, which is now just wiring:
 | `AssistantMDDecoder` | Provider payload → renderable markdown (see §10.1) |
 | `AssistantUtil` | `chatBubble(...)` — a rounded bubble around an `io.xlogistx.gui.MDViewerPanel` |
 | `io.xlogistx.gui.MDEditorPanel` | Split markdown editor: editor left, live `MDViewerPanel` preview right (see §5.1). **Lives in `io-xlogistx/gui-audio` since 2026-10-22**; only its test stays here |
-| `panels/ChatPanel` | The Prompt page: transcript, composer, `+` popup (skills / images / capture), pending image list, `onSend`, `attachText` |
-| `panels/ChatHistoryPanel` | History list + create/edit cards |
-| `panels/SkillsPanel` | Skills list + the `MDEditorPanel` editor card |
-| `panels/ProvidersPanel` | The four-card Providers page |
+| `panels/ChatPanel` | The Chat page (merged with Chat History 2026-10-26): two cards — the list of chats (`ChatHistoryPanel`) and the conversation page (`PagePanel` titled by the chat, re-framed by `showConversation()`): head actions, options row, transcript over the composer; `+` popup (skills / images / capture), `onSend`, `attachText`; `showCurrent()` is what the sidebar lands on |
+| `panels/ChatHistoryPanel` | The list of chats, the Chat page's `list` card: `PagePanel` head (title from `Page.CHAT`, the primary New chat), toolbar, table on `ChatHistoryModel`, plus the New chat / Edit chat form cards (house list look since 2026-10-26); `editChat`, `startNewChat`, `setOnFormClosed` |
+| `panels/ChatHistoryModel` | The chat list's rows (title, provider, model, messages, created, updated) and the conversation's `facts` line; pure, `ChatHistoryModelTest` |
+| `panels/SkillsPanel` | The Skills page: `PagePanel` head (New skill), toolbar, table on `SkillsTableModel`, and the one `MDEditorPanel` framed as a New skill / Edit skill page (house list look since 2026-10-26) |
+| `panels/SkillsTableModel` | The Skills table's rows (name, type, description, updated); pure, `SkillsTableModelTest` |
+| `panels/ProvidersPanel` | The four-page Providers card stack: the table page, the key picker page, the new-key form, the provider form (house list look since 2026-10-26) |
+| `panels/ProvidersTableModel` | The providers table's rows (`Row` computed once per refresh by `rowOf`: label, type, endpoint, default model, model count, last sync); pure, `ProviderTableModelsTest` |
+| `panels/ProviderKeysTableModel` | The key picker's rows (`Row`: key, provider or *choose provider*, endpoint, used-by count); pure, `ProviderTableModelsTest` |
 | `panels/JobQueuePanel` | Stub (see the status block) |
-| `panels/CapturePanel` | The two-tab Capture page (see the status block) |
+| `panels/CapturePanel` | The Capture page: `PagePanel` head (Define area, Capture (N)), the Areas and Captures toolbar-over-table columns, the preview page (house list look since 2026-10-26; see the status block) |
+| `panels/CaptureAreaModel` | The Areas table's rows (name edited in place, display, region); pure, `CaptureModelsTest` |
+| `panels/CaptureTableModel` | The Captures table's rows (thumbnail, name, area, size, bytes, taken); pure, `CaptureModelsTest` |
 | `panels/CaptureSupport` | Capture helpers: select/shootAndSave, png encode + jpeg thumbnail, icon scaling, sublabel/byte/time formatting |
 | `panels/RegionOverlay` | Blocking multi-monitor drag-select overlay; `select()` must run off the EDT |
 | `panels/PanelSupport` | Shared row/format helpers (`timestamp`, `deleteConfirm`, provider combos, `showErrorDialog`) |
@@ -491,19 +509,19 @@ array or an intended "capture nothing" turns into "capture everything".
 > pages were re-laid out side by side and the composer gained chips; nothing in the wiring, the
 > DAOs or the send path changed.
 > - **Providers** (board 8): the provider list on the left, the picker / new-key / form cards on
->   the right. `providerCards` keeps its card names — `"list"` is now a placeholder ("Select a
->   provider to edit it, or add one") — so every `providerCards.show("list")` still lands right.
->   The form scrolls inside its card; the panel implements `Scrollable` and fills the host's
->   viewport (the host mounts it in a `JScrollPane`), otherwise the placeholder sat below the fold.
-> - **Skills** (board 7): the list (320–420 px) on the left, the `MDEditorPanel` on the right;
->   `skillsCards` keeps `"list"` as the placeholder the same way. The editor's `JSplitPane` gets a
->   real viewport height from the page's `[grow,fill]` row.
-> - **Capture** (board 6): capture areas and captures **side by side** instead of two tabs; each
->   half has a header (*Capture areas · this session only*, *Captures · stored under your
->   account*). The preview card still replaces the captures list while a capture is open, and
->   `showAreas()` now means "close the preview" (areas are always on screen); the two toggle
->   buttons exist only as the selected-state bookkeeping those methods keep. *Delete all* is
->   always visible.
+>   the right. Re-laid out again on 2026-10-26 in the house list look (§6): the four cards are
+>   four pages (table, key picker, new-key form, provider form) that replace one another;
+>   `providerCards` keeps its card names, so every `providerCards.show("list")` still lands on
+>   the table. The panel no longer implements `Scrollable` and the host mounts it without a
+>   `JScrollPane` — the tables scroll themselves and the forms fit.
+> - **Skills** (board 7): the list (320–420 px) on the left, the `MDEditorPanel` on the right.
+>   Re-laid out again on 2026-10-26 in the house list look (§5): a full-width table page, and
+>   the editor as a page of its own that replaces it; `skillsCards` keeps `"list"` / `"editor"`,
+>   and the editor's `JSplitPane` still gets a real viewport height from the page card.
+> - **Capture** (board 6): capture areas and captures **side by side** instead of two tabs.
+>   Re-laid out again on 2026-10-26 in the house list look (the Capture status bullet above):
+>   each half is a toolbar over a table card, the preview is a page of its own (Back / Send to
+>   chat), and the old toggle buttons and `showAreas()` are gone. *Delete all* is always visible.
 > - **Chat composer chips** (board 4): a `ChipPanel` **inside the composer bar**, above the input
 >   box, lists what goes with the next message — md skills (*skill*), attached images (*image*),
 >   capture areas ticked to shoot on send (*shot on send*) — each removable from its ×
@@ -511,20 +529,35 @@ array or an intended "capture nothing" turns into "capture everything".
 >   `refreshSkillTooltip`). Text sources are not repeated: they keep their full view at the end of
 >   the transcript. The row is hidden while empty, and it lives in the composer bar, so the rule
 >   that nothing sits between the transcript and the composer holds.
-> - The *Chats* (history) page and the job-queue stub are untouched.
+> - The *Chats* (history) page and the job-queue stub were untouched then; **Chat History
+>   followed on 2026-10-26** (the maintainer: "it is still rendered with the old look and
+>   feel") — see §4 — and **Capture, Skills and Providers the same day** ("do the same for
+>   the Capture page", then "for the Skills page", "for the Providers page"; the Capture status
+>   bullet below, §5 and §6). **Last, the Chat page itself, merged with Chat History** ("do the
+>   same for the Chat page and make sure there is not overlapping with the Chat history or
+>   maybe they should be merged" — merged, the maintainer's call): one sidebar item, the list of
+>   chats is the page and the open conversation replaces it (§2, §4).
 
 ## 1. Window shape
 
 The host application (`no-sneak-app`'s `AppShell`) owns the window: its one sidebar lists the
-assistant's pages under an **Assistant** section — Chat, Chats, Capture, Skills, Providers — and
-routes each to `AssistantPanel.showPage(Page)`. `AssistantPanel` itself is **wiring only** since
-2026-10-24: the six page panels behind one `CardStack`, no navigation column of its own
-(`PanelBuilder.buildDefaultSplitPanel` and the `JToggleButton`s are gone).
+assistant's pages under an **Assistant** section — Chat, Capture, Skills, Providers (Chat History
+merged into Chat on 2026-10-26) — and routes each to `AssistantPanel.showPage(Page)`.
+`AssistantPanel` itself is **wiring only** since
+2026-10-24: the five page panels behind one `CardStack`, no navigation column of its own
+(`PanelBuilder.buildDefaultSplitPanel` and the `JToggleButton`s are gone). Since 2026-10-27 each
+card is registered as a gui-audio `ComponentRef<Page>` over its constant (`page(Page, card)`: the
+ref's name is the card key, so `showPage` and `resetPanel` flip by it); `page(Page)` / `pages()`
+hand the refs to a host that wants a page's component, title or description. Since 2026-10-26
+`Page implements GetDisplayName`: each page's title at the top of its panel (`ChatHistoryPanel`,
+`CapturePanel`, `SkillsPanel`, `ProvidersPanel`, `JobQueuePanel`) reads `Page.X.getDisplayName()`,
+and the host's `Navigator.Screen` carries the same words, pinned by the app's `ScreenLabelsTest`.
+Since 2026-10-27 `Page` also implements `GetDescription` (one line per page, the same as the
+screen's, pinned by the same test); the host shows it as the sidebar tooltip.
 
 | `Page` | Panel | Refreshed on the way in |
 |---|---|---|
-| `CHAT` | `ChatPanel` | — |
-| `HISTORY` | `ChatHistoryPanel` | `refreshHistory()` |
+| `CHAT` | `ChatPanel` | `showCurrent()`: the open conversation, or the list of chats refreshed (`refreshHistory()`) when none is open |
 | `CAPTURE` | `CapturePanel` | `refreshAreas()` + `refreshCaptures()` |
 | `SKILLS` | `SkillsPanel` | `refreshSkills()` |
 | `PROVIDERS` | `ProvidersPanel` | `refreshList()` only — not `refreshProviderViews()`, which repopulates the chat editor's provider combo and would reset a selection that card is still holding |
@@ -537,8 +570,8 @@ to the chat, `sendToChat` from the scanner, *Save as skill* from a bubble — it
 too, and the host hears it through `setOnPageShown(Consumer<Page>)` to move its sidebar
 highlight (`Navigator.sync`). `getPage()` is the page showing now.
 
-Page-level actions live in each page's own toolbar (`New Chat`, `Add skill`, `+ Add Provider`,
-`Define area`), never in the host's sidebar.
+Page-level actions live in each page's own head or toolbar (`New chat`, `New skill`, `Add
+provider`, `Define area`), never in the host's sidebar.
 
 ---
 
@@ -585,6 +618,27 @@ are buttons that paste their text into the composer for the subject to edit befo
 > the next `refreshPrompt()` and never goes out with the flattened history. See the status block
 > at the top for the mechanics.
 
+> **Layout (2026-10-26, the house list look; merged with Chat History the same day).** `ChatPanel`
+> is a two-card `CardStack`: **`list`** is the `ChatHistoryPanel` (§4 — the table of chats with
+> its New chat / Edit chat forms; this is what the page shows with no chat open, and what the
+> sidebar lands on then, refreshed), **`chat`** is the open conversation as a page that replaces
+> the list. `showConversation()` re-frames the once-built pieces in a fresh `PagePanel` the way
+> the Skills page re-frames its editor: the title is the chat's (`ChatHistoryModel.title`,
+> *Untitled chat* when blank), the description its facts line (`ChatHistoryModel.facts`:
+> `provider · model · N messages`), the head actions are plain toolbar buttons — **All chats**
+> (back to the list, refreshed), **Edit** (the §4 Edit form, which returns here on Save or
+> Cancel), **Chat as PDF** (`showChatAsPDF`), **New chat** (the §4 Create form; Cancel returns
+> here, Create opens the new chat) — then a row with the model combo, the model filter and the
+> *Send history* / *Auto-copy code* checkboxes, and the card: the transcript over the composer
+> bar (a line above it; the one primary button of the page is **Send**). The old empty card ("No
+> chat selected", New Chat, Open Chat History) and the Chat header's own New Chat are gone with
+> the merge: `New chat` lives on the list's head and the conversation's head, nothing else. The
+> `currentChat` event drives the cards: a chat (open from the list, Create) shows the
+> conversation, null (reset, delete of the open chat) shows the list — `saveChat` does not fire
+> it, so a reply landing while the subject is on the list does not move them. Forms opened from
+> the conversation return to it through `ChatHistoryPanel.setOnFormClosed` and a
+> `returnToConversation` flag; forms opened from the list return to the list.
+
 Header shows the prompt title plus a compact binding:
 - one model → `key · model` (mono chip)
 - several → `N models` (and `· best <model>` once one is marked)
@@ -628,18 +682,31 @@ Every past prompt: title, the models it ran against, an `N models` badge, the wi
 marked, date, message count. **Rename and delete live only here** (inline rename field; red confirm
 strip for delete) — not in the prompt header.
 
-> **Implementation status.** The row is a **two-line** `ListSection` row: the label is the chat
-> title alone (blank → `Untitled chat`), and `chatSublabel` supplies
-> `provider · model · N messages · created <ts> · updated <ts>` (`timestamp(...)`,
-> `yyyy-MM-dd HH:mm` local, `n/a` for an unset stamp). The provider half resolves through
-> `context.lookupProvider(...)` because `AIChat.provider` holds a **config GUID** now — a raw
-> ref would render as a GUID. Keeping the timestamps off the label is what makes the search box
-> filter on titles; they stay findable because `filter()` also matches the sublabel. Note
-> `ListSection.Builder.label(...)` is a **setter, not an accumulator** — calling it twice
-> silently discards the first lambda. The "updated" half is only meaningful because
-> `AssistantStorage` stamps `lastTimeUpdated` on the update branch; the store itself never bumps
-> it (see `ai-model/CLAUDE.md`). The list is `.scrollable()` + `.search(...)`, filtering
-> client-side over its supplier.
+> **Implementation status (re-laid out 2026-10-26 in the house list look, the shape of the
+> app's scan history page; the same day the page merged into Chat — the list *is* the Chat page
+> now, the open conversation replaces it, §2).** `ChatHistoryPanel.buildHistoryPanel` is a
+> `PagePanel` (title from `Page.CHAT`, a one-line description, the primary **New chat** as the
+> page action), a
+> toolbar row (search over title / provider / model, the count — *No chats yet* / *N chats* /
+> *shown of N chats* — and **Open / Edit / Delete** on the selected row, enabled for exactly one
+> selection) and a white card holding a `Tables.style`d `JTable` on **`ChatHistoryModel`**:
+> Chat · Provider · Model · Messages · Created · Updated, sorted newest update first, double-click
+> opens. The model is pure (`ChatHistoryModelTest`): a blank title reads `Untitled chat`, the
+> provider column resolves the config GUID through `context.lookupProvider(...)` and falls back
+> to the raw reference (`no provider` when blank), the message count is `getMessages().size()`
+> (still the full chat graph per row, see `no-sneak-app/LOADING.md`), and the two timestamp
+> columns are `Long`s rendered `yyyy-MM-dd HH:mm` by a muted renderer so they sort as numbers.
+> `refreshHistory()` (EDT-safe) re-reads `getAllChats()` and keeps the selected row by GUID. The
+> **New chat** and **Edit chat** forms are the other two cards of the panel's `CardStack`, each a
+> `PagePanel` with the three rows (Name, Provider, Model) and a primary Create / Save beside
+> Cancel, which returns to the list (`closeForm`, which also tells `setOnFormClosed` — the Chat
+> page uses it to return to the conversation a form was opened from); `editChat(chat)` and
+> `startNewChat()` open the forms from outside, and opening a chat is just
+> `context.setCurrentChat`, which `ChatPanel` listens to. The old `PanelBuilder.detail`
+> back-arrow forms are gone. The panel is the `list` card of `ChatPanel`, mounted without a
+> `JScrollPane`: the table scrolls itself.
+> The "updated" column is only meaningful because `AssistantStorage` stamps `lastTimeUpdated` on
+> the update branch; the store itself never bumps it (see `ai-model/CLAUDE.md`).
 
 ---
 
@@ -657,13 +724,19 @@ Its instructions are prepended to the system prompt for **every model in the run
 Data-access options: `Scan data`, `Scan data and host inventory`, `Findings only`,
 `Queue items only`, `No app data`.
 
-> **Implementation status.** `buildSkillCards` (`list` / `editor`) implements
-> **create / edit / delete + persistence** against `AIRepository` (`getAllSkills` / `saveSkill` /
-> `deleteSkill`). Rows are two-line: `skillLabel` puts **name and type on the first line**
-> (`network-recon · md skill`) because the type is what decides whether the composer attaches
-> the skill or pastes it — it belongs with the identity, not buried in the description — and the
-> description is the sublabel (run through `SUS.trimOrNull`, so a whitespace-only one collapses
-> the row back to a single line). The DAO carries `name` / `description` / `content` (the
+> **Implementation status (re-laid out 2026-10-26 in the house list look, after Chat History
+> and Capture).** `buildSkillCards` (`list` / `editor`) implements **create / edit / delete +
+> persistence** against `AIRepository` (`getAllSkills` / `saveSkill` / `deleteSkill`). The list
+> is a `PagePanel` (title from `Page.SKILLS`, a one-line description, the primary **New skill**),
+> a toolbar (search over name / type / description, the count, **Edit / Delete** on the selected
+> row) and a `Tables.style`d table on **`SkillsTableModel`** — Skill · Type · Description ·
+> Updated, by name, double-click edits. The model is pure (`SkillsTableModelTest`): a blank name
+> reads `Untitled skill`, the Type column is the `SkillType`'s own name (`md skill` /
+> `prompt skill` — what decides whether the composer attaches the skill or pastes it), and
+> `refreshSkills()` (EDT-safe) keeps the selected row by GUID. The editor replaces the list as a
+> page of its own (**New skill** / **Edit skill**; `showEditorPage` wraps the one `MDEditorPanel`
+> in a fresh `PagePanel` on every open, and its Save / Create is styled as the page's primary
+> button). The DAO carries `name` / `description` / `content` (the
 > instructions) / `skillType`, with the content a plain `String` — so **markdown skills are just
 > the string**
 > (no file reference; `MDEditorPanel`'s *Open file* loads a `.md` off disk **into the editor
@@ -783,15 +856,21 @@ provider badge (Anthropic / OpenAI / Ollama / …), the discovery endpoint
   and unlinks the credential only when nothing else uses it. Confirm copy: "The key stays in your
   NoSneak credentials."
 
-> **Implementation status.** A provider is an `AIProviderConfig` row (see the status block at the
+> **Implementation status (re-laid out 2026-10-26 in the house list look, after Chat History,
+> Capture and Skills).** A provider is an `AIProviderConfig` row (see the status block at the
 > top), so **one credential can back several providers** and the row's identity is the config's
-> editable label. `providerSublabel` renders
-> `providerType · baseURL · default <model> · N models · <last sync>` — that model count and
-> `never synced` are currently the *only* signal that a key was rejected, because discovery
-> failures are swallowed (see the rough edges). A per-row **Refresh** is still **not built**:
-> re-discovery happens on login, and as a side effect of saving the provider form.
-> The `✕` runs `onRemoveProvider` → `deleteProviderConfig` + `getProviders().unregister(id)`,
-> and calls `setEnabled(key,false)` only when `configsUsing(keyGUID)` hits zero.
+> editable label. The list is a `PagePanel` (title from `Page.PROVIDERS`, the footer note as its
+> description, the primary **Add provider**), a toolbar (search over every column, the count,
+> **Edit / Remove** on the selected row) and a `Tables.style`d table on
+> **`ProvidersTableModel`** — Provider · Type · Endpoint · Default model · Models · Last sync, by
+> name, double-click edits. Each row is a `ProvidersTableModel.Row` computed once by `rowOf`
+> when `refreshList()` runs (EDT-safe, keeps the selection by provider ID), so the catalog is
+> read per refresh, never per paint; the model count and *never synced* are currently the
+> *only* signal that a key was rejected, because discovery failures are swallowed (see the rough
+> edges). A per-row **Refresh** is still **not built**: re-discovery happens on login, and as a
+> side effect of saving the provider form. **Remove** runs `onRemoveProvider` →
+> `deleteProviderConfig` + `getProviders().unregister(id)`, and calls `setEnabled(key,false)`
+> only when `configsUsing(keyGUID)` hits zero.
 > `AIProviderConfig.enabled` exists but is effectively **write-only `true`** — the form always
 > sets it, and nothing in the UI can disable a provider without deleting its config.
 
@@ -802,18 +881,22 @@ scheme** (`auth-type`, e.g. `Bearer`), and an optional **header name** (`header-
 
 ### Add provider = pick a key, or create one through the source
 
-`+ Add Provider` opens a **picker** sub-page (back-arrow header) listing the credentials the source
-offers — **unfiltered**, because a key that already backs one provider can back another. Rows read
-key name over `provider · baseURL · used by N providers`; that count comes from `providersUsing`,
-which walks the **registrar** rather than the store, since the sublabel renders per row on the EDT.
-Selecting a row opens the provider **form** (`buildProviderForm`) on a new config seeded from the
-key's `provider` / `base-url` properties: Key (read-only) / Label / Provider type / Base URL /
-Default model — the **Default model row is hidden on the add path** (`hidemode 3`), because
+**Add provider** opens the **picker** page (*Add a provider*: Back and the primary **New key**
+in its head, a count and **Use this key** in its toolbar) — a table on `ProviderKeysTableModel`
+of the credentials the source offers, **unfiltered**, because a key that already backs one
+provider can back another. Columns: Key · Provider (or *choose provider* when the stored type is
+not one the assistant knows) · Endpoint · Used by; that count comes from `providersUsing`, which
+walks the **registrar** rather than the store, once per key when `refreshKeys()` builds the rows
+on the page's open. **Use this key** (or a double-click) opens the provider **form**
+(`buildProviderForm`, framed by `showProviderForm` as an *Add provider* or *Edit provider* page)
+on a new config seeded from the key's `provider` / `base-url` properties: Key (read-only) / Label
+/ Provider type / Base URL / Default model, with the primary Save (*Add to assistant* on the add
+path) beside Cancel — the **Default model row is hidden on the add path** (`hidemode 3`), because
 discovery has not run yet and the combo would be empty; it appears once the provider is edited
-after its first save. Below the picker, **New Key** opens a `create` card
-(`buildCreateProviderKey`) for a
-key NoSneak doesn't have yet: Label / Provider (the known types) / API Key / optional Base URL — no
-domain/app-id scope fields, that's Credentials vocabulary. It creates through
+after its first save. **New key** opens the `create` page (`buildCreateProviderKey`, *New
+provider key*) for a key NoSneak doesn't have yet: Label / Provider (the known types) / API key /
+optional Base URL, *Add to assistant* beside Cancel — no domain/app-id scope fields, that's
+Credentials vocabulary. It creates through
 `AICredentialSource.addAPIKey` (→ `Session.storeAPIKey` with `external = true` +
 `setAssistantEnabled`), then lands on the same form. The key is a full NoSneak credential —
 visible, editable, and deletable in Credentials, and key mutations made here reach that page
@@ -821,8 +904,8 @@ live: `Session` fires a `"credentials"` event that `SubjectPanel` refreshes on. 
 itself never deletes a credential — key deletion lives on the Credentials page's edit-API-key
 card (and its list rows), deliberately outside this module.
 
-Footer note on the list: keys come from NoSneak credentials; adding one here lets the assistant use it
-and discover its models; it is never stored separately.
+The page's description (the footer note of the old list): keys come from NoSneak credentials;
+adding one here lets the assistant use it and discover its models; it is never stored separately.
 
 ---
 

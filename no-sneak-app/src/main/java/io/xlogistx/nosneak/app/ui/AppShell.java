@@ -1,6 +1,7 @@
 package io.xlogistx.nosneak.app.ui;
 
 
+import io.xlogistx.gui.BackgroundTask;
 import io.xlogistx.gui.HeaderBar;
 import io.xlogistx.gui.IconUtil;
 import io.xlogistx.gui.SideNavPanel;
@@ -39,10 +40,6 @@ import java.io.File;
  */
 public class AppShell extends JPanel {
 
-    private static final String CARD_SCAN = "scan";
-    private static final String CARD_ASSISTANT = "assistant";
-    private static final String CARD_ACCOUNT = "account";
-    private static final String CARD_ADMIN = "admin";
     private static final String SECTION_ADMIN = "admin";
 
     private final CardLayout cards = new CardLayout();
@@ -69,33 +66,29 @@ public class AppShell extends JPanel {
         assistantPanel.addSaveTarget("probe", scanPanel::saveProbeFromEditor);
         managerPanel = new SubjectSecManagerPanel(ctx);
 
-        content.add(scanPanel, CARD_SCAN);
-        content.add(assistantPanel, CARD_ASSISTANT);
-        content.add(subjectPanel, CARD_ACCOUNT);
-        content.add(managerPanel, CARD_ADMIN);
-
+        // the navigator adds each panel to the content host as a card the first time a screen
+        // names it (2026-10-27); a route is a ComponentRef over that panel keyed by the Screen
         navigator = new Navigator(cards, content);
-        navigator.register(Screen.SCAN_NEW, CARD_SCAN, () -> scanPanel.show(ScanPanel.SECTION_SCAN));
-        navigator.register(Screen.SCAN_HISTORY, CARD_SCAN, () -> scanPanel.show(ScanPanel.SECTION_HISTORY));
-        navigator.register(Screen.PROBES, CARD_SCAN, () -> scanPanel.show(ScanPanel.SECTION_PROBES));
-        navigator.register(Screen.CHAT, CARD_ASSISTANT, () -> assistantPanel.showPage(AssistantPanel.Page.CHAT));
-        navigator.register(Screen.CHATS, CARD_ASSISTANT, () -> assistantPanel.showPage(AssistantPanel.Page.HISTORY));
-        navigator.register(Screen.CAPTURE, CARD_ASSISTANT, () -> assistantPanel.showPage(AssistantPanel.Page.CAPTURE));
-        navigator.register(Screen.SKILLS, CARD_ASSISTANT, () -> assistantPanel.showPage(AssistantPanel.Page.SKILLS));
-        navigator.register(Screen.PROVIDERS, CARD_ASSISTANT, () -> assistantPanel.showPage(AssistantPanel.Page.PROVIDERS));
-        navigator.register(Screen.PROFILE, CARD_ACCOUNT, () -> subjectPanel.show(SubjectPanel.SECTION_PROFILE));
-        navigator.register(Screen.API_KEYS, CARD_ACCOUNT, () -> subjectPanel.show(SubjectPanel.SECTION_CREDENTIALS));
-        navigator.register(Screen.SETTINGS, CARD_ACCOUNT, () -> subjectPanel.show(SubjectPanel.SECTION_SETTINGS));
-        navigator.register(Screen.ACL, CARD_ADMIN, null);
+        navigator.register(Screen.SCAN, scanPanel, () -> scanPanel.show(ScanPanel.SECTION_SCAN));
+        navigator.register(Screen.SCAN_HISTORY, scanPanel, () -> scanPanel.show(ScanPanel.SECTION_HISTORY));
+        navigator.register(Screen.PROBES, scanPanel, () -> scanPanel.show(ScanPanel.SECTION_PROBES));
+        navigator.register(Screen.CHAT, assistantPanel, () -> assistantPanel.showPage(AssistantPanel.Page.CHAT));
+        navigator.register(Screen.CAPTURE, assistantPanel, () -> assistantPanel.showPage(AssistantPanel.Page.CAPTURE));
+        navigator.register(Screen.SKILLS, assistantPanel, () -> assistantPanel.showPage(AssistantPanel.Page.SKILLS));
+        navigator.register(Screen.PROVIDERS, assistantPanel, () -> assistantPanel.showPage(AssistantPanel.Page.PROVIDERS));
+        navigator.register(Screen.PROFILE, subjectPanel, () -> subjectPanel.show(SubjectPanel.SECTION_PROFILE));
+        navigator.register(Screen.API_KEYS, subjectPanel, () -> subjectPanel.show(SubjectPanel.SECTION_CREDENTIALS));
+        navigator.register(Screen.SETTINGS, subjectPanel, () -> subjectPanel.show(SubjectPanel.SECTION_SETTINGS));
+        navigator.register(Screen.ACL, managerPanel, null);
         ctx.setNavigator(navigator);
 
         // the assistant moves itself (a chat opened from history, a report sent from the scanner):
         // the card is already the assistant's or about to be, so only the sidebar needs telling
         assistantPanel.setOnPageShown(page -> {
             Screen s = screenFor(page);
-            if (s != null && isShowing(CARD_ASSISTANT)) navigator.sync(s);
+            if (s != null && navigator.isShowing(assistantPanel)) navigator.sync(s);
         });
-        navigator.onShow(s -> nav.select(s.name()));
+        navigator.onShow(nav::select); // by the Screen itself: the item's ref carries it
 
         menus = new MenuBarFactory(ctx);
         header = buildHeader();
@@ -115,7 +108,7 @@ public class AppShell extends JPanel {
                 assistantPanel.reloadProviders();
                 assistantPanel.refreshHistory();
                 assistantPanel.refreshSkills();
-                navigator.show(Screen.SCAN_NEW);
+                navigator.show(Screen.SCAN);
             } else {
                 // the frame swaps this shell out for the unlock screen; the next subject must
                 // not see anything of the previous one when it is swapped back in
@@ -124,11 +117,11 @@ public class AppShell extends JPanel {
                 assistantPanel.refreshSkills();
                 assistantPanel.clearProviders();
                 assistantPanel.resetPanel();
-                navigator.show(Screen.SCAN_NEW);
+                navigator.show(Screen.SCAN);
             }
         });
 
-        navigator.show(Screen.SCAN_NEW);
+        navigator.show(Screen.SCAN);
     }
 
     /** The menu bar that goes with this shell (File / View / Help); the frame installs it while signed in. */
@@ -150,22 +143,10 @@ public class AppShell extends JPanel {
         }
     }
 
-    private boolean isShowing(String card) {
-        for (Component c : content.getComponents()) {
-            if (c.isVisible()) {
-                if (c == assistantPanel) return CARD_ASSISTANT.equals(card);
-                if (c == scanPanel) return CARD_SCAN.equals(card);
-                if (c == subjectPanel) return CARD_ACCOUNT.equals(card);
-                if (c == managerPanel) return CARD_ADMIN.equals(card);
-            }
-        }
-        return false;
-    }
-
-    private static Screen screenFor(AssistantPanel.Page page) {
+    /** The sidebar screen of an assistant page, null for the job queue (not offered); package-private for {@code ScreenLabelsTest}. */
+    static Screen screenFor(AssistantPanel.Page page) {
         return switch (page) {
             case CHAT -> Screen.CHAT;
-            case HISTORY -> Screen.CHATS;
             case CAPTURE -> Screen.CAPTURE;
             case SKILLS -> Screen.SKILLS;
             case PROVIDERS -> Screen.PROVIDERS;
@@ -175,9 +156,12 @@ public class AppShell extends JPanel {
 
     private HeaderBar buildHeader() {
         HeaderBar h = new HeaderBar(IconUtil.svgIcon("io/xlogistx/gui/icons/shield.svg", 20, UITokens.accent()), "NoSneak");
+        // The chip names the vault directory; the tooltip says what is inside it, in the About
+        // card's words (2026-10-27), since the chip itself has room for one line.
         File store = AppPrefs.storeLocation();
         h.setStatus(IconUtil.svgIcon("io/xlogistx/gui/icons/lock.svg", 14, UITokens.muted()),
-                (store != null ? store.getAbsolutePath() : "store") + " · vault open");
+                (store != null ? store.getAbsolutePath() : "store") + " · vault open",
+                MenuBarFactory.STORE_NOTE + " Settings > Backup saves a copy.");
         JButton signOut = new JButton("Sign out", IconUtil.svgIcon("io/xlogistx/gui/icons/logout.svg", 16, UITokens.text()));
         signOut.putClientProperty("JButton.buttonType", "toolBarButton");
         signOut.addActionListener(_ -> {
@@ -191,41 +175,60 @@ public class AppShell extends JPanel {
 
     private void buildSidebar() {
         nav.section("scan", "Scan");
-        nav.item(Screen.SCAN_NEW.name(), icon("scan"), "New scan");
-        nav.item(Screen.SCAN_HISTORY.name(), icon("clock"), "History");
-        nav.item(Screen.PROBES.name(), icon("flask"), "Probe library");
+        item(Screen.SCAN, "scan");
+        item(Screen.SCAN_HISTORY, "clock");
+        item(Screen.PROBES, "flask");
 
         nav.section("assistant", "Assistant");
-        nav.item(Screen.CHAT.name(), icon("chat"), "Chat");
-        nav.item(Screen.CHATS.name(), icon("list"), "Chats");
-        nav.item(Screen.CAPTURE.name(), icon("capture"), "Capture");
-        nav.item(Screen.SKILLS.name(), icon("book"), "Skills");
-        nav.item(Screen.PROVIDERS.name(), icon("plug"), "Providers");
+        item(Screen.CHAT, "chat");
+        item(Screen.CAPTURE, "capture");
+        item(Screen.SKILLS, "book");
+        item(Screen.PROVIDERS, "plug");
 
         nav.section("account", "Account");
-        nav.item(Screen.PROFILE.name(), icon("user"), "Profile");
-        nav.item(Screen.API_KEYS.name(), icon("key"), "API keys");
-        nav.item(Screen.SETTINGS.name(), icon("settings"), "Settings");
+        item(Screen.PROFILE, "user");
+        item(Screen.API_KEYS, "key");
+        item(Screen.SETTINGS, "settings");
 
         nav.section(SECTION_ADMIN, "Admin");
-        nav.item(Screen.ACL.name(), icon("shield"), "Access control");
+        item(Screen.ACL, "shield");
         nav.setSectionVisible(SECTION_ADMIN, false);
 
         nav.onSelect(key -> navigator.show(Screen.valueOf(key)));
 
-        nav.footerAction(icon("help"), "Help and about", menus::showDescription);
-        JLabel version = new JLabel(NoSneakMain.VERSION.getName() + " " + NoSneakMain.VERSION.version()
-                + " · Java " + System.getProperty("java.version"));
+        // Help opens the page-by-page description; the version line is the About entry (2026-10-27),
+        // so the Java / platform / store facts live in the About card instead of the sidebar.
+        nav.footerAction(icon("help"), "Help", menus::showDescription);
+        JButton version = UITokens.link(new JButton(NoSneakMain.VERSION.getName() + " " + NoSneakMain.VERSION.version()));
         version.setFont(UITokens.mono(-2f));
         version.setForeground(UITokens.muted());
-        version.setBorder(BorderFactory.createEmptyBorder(6, 12, 0, 12));
+        version.setHorizontalAlignment(SwingConstants.LEFT);
+        version.setBorder(BorderFactory.createEmptyBorder(6, 12, 2, 12));
+        version.setToolTipText("About " + NoSneakMain.VERSION.getName() + ": version, Java, platform, store");
+        version.addActionListener(_ -> menus.showAbout());
         nav.footer(version);
+    }
+
+    /**
+     * A sidebar item for a screen (2026-10-27): a {@code ComponentRef} over the constant, so its
+     * name is the key, its display name the text and its description the tooltip.
+     */
+    private void item(Screen screen, String iconName) {
+        nav.item(screen, icon(iconName));
     }
 
     private static Icon icon(String name) {
         return IconUtil.svgIcon("io/xlogistx/gui/icons/" + name + ".svg", 16, UITokens.text());
     }
 
+    /**
+     * The status bar (2026-10-27): who is signed in on the left, the MAC vendor list's state on
+     * the right in the Settings page's own words ({@link SubjectPanel#syncStatusText}) — the one
+     * piece of session state the header and the pages do not already show. It reads "loading…"
+     * from sign-in until {@link Session#onMacVendorsChange} says the table is filled (the login
+     * screen loads it before the shell appears, so the subject rarely sees that), and follows
+     * every sync from Settings. The old static "Ready" said nothing.
+     */
     private JPanel buildFooter() {
         JPanel footer = new JPanel(new BorderLayout());
         footer.setBorder(BorderFactory.createCompoundBorder(
@@ -233,23 +236,38 @@ public class AppShell extends JPanel {
                 BorderFactory.createEmptyBorder(4, 12, 4, 12)));
         footer.setBackground(UITokens.surface());
 
-        JLabel session = new JLabel("signed out");
-        JLabel status = new JLabel("Ready");
+        JLabel session = new JLabel("Signed out");
+        JLabel vendors = new JLabel(" ");
         session.setForeground(UITokens.muted());
-        status.setForeground(UITokens.muted());
+        vendors.setForeground(UITokens.muted());
         session.setFont(UITokens.font(Font.PLAIN, -1f));
-        status.setFont(UITokens.font(Font.PLAIN, -1f));
+        vendors.setFont(UITokens.font(Font.PLAIN, -1f));
+        vendors.setToolTipText("The Wireshark manufacturer list that names each host's vendor in scan reports. Settings > Sync refreshes it.");
 
+        Runnable refreshVendors = () -> {
+            if (!ctx.session().isAuthenticated()) {
+                vendors.setText(" ");
+                return;
+            }
+            if (!ctx.session().macVendorsLoaded()) {
+                vendors.setText("MAC vendors: loading…");
+                return;
+            }
+            BackgroundTask.run(this, null, () -> ctx.session().macVendorStatus(),
+                    status -> vendors.setText("MAC vendors: " + SubjectPanel.syncStatusText(status)));
+        };
         ctx.session().onAuthChange(e -> {
             if ((boolean) e.getNewValue()) {
-                session.setText("subject: " + ctx.session().getPrincipalID());
+                session.setText("Signed in as " + ctx.session().getPrincipalID());
             } else {
-                session.setText("signed out");
+                session.setText("Signed out");
             }
+            refreshVendors.run();
         });
+        ctx.session().onMacVendorsChange(_ -> SwingUtilities.invokeLater(refreshVendors));
 
         footer.add(session, BorderLayout.WEST);
-        footer.add(status, BorderLayout.EAST);
+        footer.add(vendors, BorderLayout.EAST);
 
         return footer;
     }

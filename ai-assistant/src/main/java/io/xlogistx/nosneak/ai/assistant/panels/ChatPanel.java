@@ -33,23 +33,36 @@ import static io.xlogistx.nosneak.ai.assistant.AssistantUtil.chatBubble;
 import static io.xlogistx.nosneak.ai.assistant.panels.PanelSupport.fillModels;
 import static io.xlogistx.nosneak.ai.assistant.panels.PanelSupport.showErrorDialog;
 
+/**
+ * The Chat page (merged with Chat History on 2026-10-26, in the house list look): the list of
+ * chats — {@link ChatHistoryPanel}, with its New chat / Edit chat forms — is the page, and the
+ * open conversation is a page that replaces it (All chats goes back). The sidebar lands on the
+ * conversation when a chat is open, on the list otherwise ({@link #showCurrent()}).
+ */
 public class ChatPanel extends JPanel {
 
     private final AssistantContext ctx;
 
-    private Runnable onNewChat;
-    private Runnable onOpenHistory;
     private Consumer<String> onSaveAsSkill;
     /** The host's save targets (label to handler), one "Save as <label>" button per assistant bubble. */
     private final Map<String, BiConsumer<String, String>> saveTargets = new LinkedHashMap<>();
 
-    private final CardStack promptCards = new CardStack();
+    /** {@code list} = the chats (and their forms), {@code chat} = the open conversation. */
+    private final CardStack chatCards = new CardStack();
+    private final ChatHistoryPanel history;
+    /** Holds the conversation page, rebuilt per {@link #showConversation()} (the title is the chat's). */
+    private final JPanel chatHost = new JPanel(new BorderLayout());
+    /** Set when a form (Edit, New chat) was opened from the conversation, so closing it returns there. */
+    private boolean returnToConversation;
+    /** The conversation page's once-built pieces, re-framed by every {@link #showConversation()}. */
+    private JPanel headActions;
+    private JPanel options;
+    private JPanel surface;
 
     private JPanel transcript;
     private JScrollPane transcriptScroll;
     private JTextArea composer;
 
-    private JLabel chatTitle;
     private JComboBox<String> modelSelector;
     private JTextField modelFilterField;
 
@@ -101,21 +114,19 @@ public class ChatPanel extends JPanel {
         this.ctx = ctx;
         setLayout(new BorderLayout());
 
-        promptCards.add(buildEmptyChat(), "empty");
-        promptCards.add(buildPromptPanel(), "prompt");
+        history = new ChatHistoryPanel(ctx);
+        history.setOnFormClosed(() -> {
+            if (returnToConversation && ctx.currentChat() != null) showConversation();
+            else returnToConversation = false;
+        });
+        buildConversation();
 
-        promptCards.show("empty");
-        add(promptCards.view());
+        chatCards.add(history, "list");
+        chatCards.add(chatHost, "chat");
+        chatCards.show("list");
+        add(chatCards.view());
 
         ctx.onChange("currentChat", _ -> refreshPrompt());
-    }
-
-    public void setOnNewChat(Runnable onNewChat) {
-        this.onNewChat = onNewChat;
-    }
-
-    public void setOnOpenHistory(Runnable onOpenHistory) {
-        this.onOpenHistory = onOpenHistory;
     }
 
     public void setOnSaveAsSkill(Consumer<String> onSaveAsSkill) {
@@ -164,8 +175,55 @@ public class ChatPanel extends JPanel {
         refreshSkillTooltip();
     }
 
-    public void showPrompt() {
-        promptCards.show("prompt");
+    /**
+     * What the sidebar lands on: the open conversation when there is one, else the list of chats,
+     * refreshed on the way in.
+     */
+    public void showCurrent() {
+        if (ctx.currentChat() != null) {
+            showConversation();
+        } else {
+            history.refreshHistory();
+            chatCards.show("list");
+        }
+    }
+
+    /**
+     * Shows the current chat as a page (EDT-safe): a fresh {@link PagePanel} titled by the chat,
+     * its facts line under it, the head actions, the options row and the transcript-and-composer
+     * card. The pieces are built once and re-framed here, the way the Skills page re-frames its
+     * one editor. With no current chat the list shows instead.
+     */
+    public void showConversation() {
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(this::showConversation);
+            return;
+        }
+        AIChat chat = ctx.currentChat();
+        if (chat == null) {
+            chatCards.show("list");
+            return;
+        }
+        returnToConversation = false;
+        PagePanel page = new PagePanel(ChatHistoryModel.title(chat), history.facts(chat));
+        page.action(headActions);
+        page.row(options);
+        page.card(surface);
+        chatHost.removeAll();
+        chatHost.add(page, BorderLayout.CENTER);
+        chatHost.revalidate();
+        chatHost.repaint();
+        chatCards.show("chat");
+    }
+
+    /** Re-reads the chats into the list (EDT-safe). */
+    public void refreshHistory() {
+        history.refreshHistory();
+    }
+
+    /** Repopulates the provider combos of the New chat / Edit chat forms. */
+    public void refreshProviderCombos() {
+        history.refreshProviderCombos();
     }
 
     public void clearModels() {
@@ -222,54 +280,14 @@ public class ChatPanel extends JPanel {
         refreshSkillTooltip();
     }
 
-    public JPanel buildEmptyChat() {
-        JLabel title = new JLabel("No chat selected");
-        title.setFont(title.getFont().deriveFont(Font.BOLD, title.getFont().getSize2D() + 4f));
-        title.setAlignmentX(Component.CENTER_ALIGNMENT);
-
-        JLabel hint = new JLabel("Start a new chat, or pick one up from your history");
-        hint.setForeground(UIManager.getColor("Label.disabledForeground"));
-        hint.setAlignmentX(Component.CENTER_ALIGNMENT);
-
-        JButton newChat = new JButton("New Chat", new IconUtil.PlusIcon(16));
-        newChat.addActionListener(_ -> openChatCreator());
-
-        JButton openHistory = new JButton("Open Chat History");
-        openHistory.putClientProperty("JButton.buttonType", "borderless");
-        openHistory.addActionListener(_ -> {
-            if (onOpenHistory != null) onOpenHistory.run();
-        });
-
-        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 0));
-        buttons.setOpaque(false);
-        buttons.add(newChat);
-        buttons.add(openHistory);
-        buttons.setAlignmentX(Component.CENTER_ALIGNMENT);
-
-        JPanel stack = new JPanel();
-        stack.setLayout(new BoxLayout(stack, BoxLayout.Y_AXIS));
-        stack.setOpaque(false);
-        stack.add(title);
-        stack.add(Box.createVerticalStrut(6));
-        stack.add(hint);
-        stack.add(Box.createVerticalStrut(16));
-        stack.add(buttons);
-
-        JPanel out = new JPanel(new GridBagLayout());
-        out.add(stack);
-        return out;
-    }
-
-    private void openChatCreator() {
-        if (onNewChat != null) onNewChat.run();
-    }
-
-    public JPanel buildPromptPanel() {
+    /**
+     * Builds the conversation page's pieces once: the head actions (All chats, Edit, Chat as PDF,
+     * New chat — plain toolbar buttons, the page's one primary is Send), the options row (model,
+     * filter, Send history, Auto-copy code) and the card (transcript over the composer bar).
+     */
+    private void buildConversation() {
         transcript = new JPanel(new MigLayout("wrap 1, insets 14, gapy 10", "[grow]"));
-
-        AIChat chat = ctx.currentChat();
-        String titleText = (chat != null && chat.getTitle() != null) ? chat.getTitle() : "Default chat";
-        chatTitle = PanelBuilder.title(titleText);
+        transcript.setBackground(UITokens.surface());
 
         modelSelector = new JComboBox<>();
         modelSelector.setEditable(true);
@@ -297,26 +315,53 @@ public class ChatPanel extends JPanel {
         autoCopyCode.setToolTipText(
                 "Checked: the code blocks of every new reply are copied to the clipboard as it arrives.");
 
-        JButton newChat = new JButton("New Chat", new IconUtil.PlusIcon(16));
-        newChat.setToolTipText("Create a new chat");
-        newChat.addActionListener(_ -> openChatCreator());
-
-        JButton chatToPDF = GUIUtil.iconButton(new IconUtil.PDFIcon(16, Color.WHITE));
+        JButton allChats = new JButton("All chats", new IconUtil.BackIcon(16));
+        allChats.setToolTipText("Back to the list of chats");
+        allChats.addActionListener(_ -> {
+            history.refreshHistory();
+            chatCards.show("list");
+        });
+        JButton edit = new JButton("Edit", new IconUtil.EditIcon(16));
+        edit.setToolTipText("Rename this chat, or change its provider and model");
+        edit.addActionListener(_ -> {
+            AIChat chat = ctx.currentChat();
+            if (chat == null) return;
+            returnToConversation = true;
+            history.editChat(chat);
+            chatCards.show("list");
+        });
+        JButton chatToPDF = new JButton("Chat as PDF", new IconUtil.PDFIcon(16));
         chatToPDF.setToolTipText("Show the whole chat as a PDF");
         chatToPDF.addActionListener(_ -> showChatAsPDF(chatToPDF));
+        JButton newChat = new JButton("New chat", new IconUtil.PlusIcon(16));
+        newChat.setToolTipText("Create a new chat");
+        newChat.addActionListener(_ -> {
+            returnToConversation = true;
+            history.startNewChat();
+            chatCards.show("list");
+        });
+        for (JButton b : new JButton[]{allChats, edit, chatToPDF, newChat}) b.putClientProperty("JButton.buttonType", "toolBarButton");
+        headActions = new JPanel(new MigLayout("insets 0, gapx 8"));
+        headActions.setOpaque(false);
+        headActions.add(allChats);
+        headActions.add(edit);
+        headActions.add(chatToPDF);
+        headActions.add(newChat);
 
-        JPanel titlePanel = new JPanel(new FlowLayout());
-        titlePanel.add(chatTitle);
-        titlePanel.add(modelSelector);
-        titlePanel.add(modelFilterField);
-        titlePanel.add(sendFullHistory);
-        titlePanel.add(autoCopyCode);
-        titlePanel.add(newChat);
-        titlePanel.add(chatToPDF);
+        JLabel modelLabel = new JLabel("Model");
+        modelLabel.setForeground(UITokens.muted());
+        options = new JPanel(new MigLayout("insets 0, gapx 8", "[][][200!]push[][]"));
+        options.setOpaque(false);
+        options.add(modelLabel);
+        options.add(modelSelector, "wmin 220");
+        options.add(modelFilterField, "growx");
+        options.add(sendFullHistory);
+        options.add(autoCopyCode);
 
         transcriptScroll = new JScrollPane(transcript,
                 JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
         transcriptScroll.setBorder(BorderFactory.createEmptyBorder());
+        transcriptScroll.getViewport().setBackground(UITokens.surface());
         transcriptScroll.getVerticalScrollBar().setUnitIncrement(16);
 
         composer = new JTextArea(1, 20);
@@ -374,11 +419,15 @@ public class ChatPanel extends JPanel {
         inputBox.add(addSkillHolder, BorderLayout.WEST);
         inputBox.add(composerScroll, BorderLayout.CENTER);
 
-        sendButton = new JButton("Send");
+        sendButton = UITokens.primary(new JButton("Send"));
         sendButton.addActionListener(_ -> onSend());
 
+        // the card's footer: a line above it, the card's own ground
         JPanel composerBar = new JPanel(new BorderLayout(8, 6));
-        composerBar.setBorder(BorderFactory.createEmptyBorder(8, 14, 12, 14));
+        composerBar.setBackground(UITokens.surface());
+        composerBar.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(1, 0, 0, 0, UITokens.border()),
+                BorderFactory.createEmptyBorder(8, 14, 12, 14)));
         composerBar.add(inputBox, BorderLayout.CENTER);
         composerBar.add(sendButton, BorderLayout.EAST);
         // what goes with the next message, as removable chips inside the composer bar (2026-10-24):
@@ -403,11 +452,10 @@ public class ChatPanel extends JPanel {
             }
         });
 
-        JPanel panel = new JPanel(new BorderLayout());
-        panel.add(titlePanel, BorderLayout.NORTH);
-        panel.add(transcriptScroll, BorderLayout.CENTER);
-        panel.add(composerBar, BorderLayout.SOUTH);
-        return panel;
+        surface = new JPanel(new BorderLayout());
+        surface.setOpaque(false);
+        surface.add(transcriptScroll, BorderLayout.CENTER);
+        surface.add(composerBar, BorderLayout.SOUTH);
     }
 
     private void applyModelFilter() {
@@ -426,8 +474,6 @@ public class ChatPanel extends JPanel {
         }
 
         AIChat chat = ctx.currentChat();
-        promptCards.show(chat == null ? "empty" : "prompt");
-        chatTitle.setText(chat != null && chat.getTitle() != null ? chat.getTitle() : "Default chat");
         fillModels(ctx, modelSelector, chat != null ? chat.getProvider() : null);
 
         transcript.removeAll();
@@ -450,6 +496,10 @@ public class ChatPanel extends JPanel {
         refreshPendingPanel();
         transcript.revalidate();
         transcript.repaint();
+        // "currentChat" fires on open / create (a chat), and on reset / delete of the open chat
+        // (null): the first shows the conversation, the second the list
+        if (chat == null) chatCards.show("list");
+        else showConversation();
     }
 
     /**
@@ -462,14 +512,14 @@ public class ChatPanel extends JPanel {
     private void showChatAsPDF(JComponent owner) {
         AIChat chat = ctx.currentChat();
         if (chat == null) {
-            JOptionPane.showMessageDialog(this, "Open a chat first (Chat History > + New Chat)", "Chat as PDF", JOptionPane.INFORMATION_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Open a chat first (Chat > New chat)", "Chat as PDF", JOptionPane.INFORMATION_MESSAGE);
             return;
         }
         if (chat.getMessages().size() == 0) {
             JOptionPane.showMessageDialog(this, "This chat has no messages yet.", "Chat as PDF", JOptionPane.INFORMATION_MESSAGE);
             return;
         }
-        String title = chat.getTitle() != null ? chat.getTitle() : "Default chat";
+        String title = ChatHistoryModel.title(chat);
         AssistantUtil.showAsPDF(owner, title + " — PDF", () -> chatToMarkdown(ctx, chat, title));
     }
 
@@ -541,7 +591,7 @@ public class ChatPanel extends JPanel {
 
         AIChat chat = ctx.currentChat();
         if (chat == null) {
-            JOptionPane.showMessageDialog(this, "Open a chat first (Chat History > + New Chat)",
+            JOptionPane.showMessageDialog(this, "Open a chat first (Chat > New chat)",
                     "Send", JOptionPane.INFORMATION_MESSAGE);
             return;
         }
@@ -1310,7 +1360,7 @@ public class ChatPanel extends JPanel {
         if (text == null || text.isBlank())
             throw new AccessSecurityException("There is nothing to send.");
         if (ctx.currentChat() == null)
-            throw new AccessSecurityException("Open a chat first (Chat History > + New Chat)");
+            throw new AccessSecurityException("Open a chat first (Chat > New chat)");
         pendingSources.add(SourceSupport.fromText(text, name));
         refreshSkillTooltip();
         composer.requestFocusInWindow();
@@ -1324,6 +1374,8 @@ public class ChatPanel extends JPanel {
         tickedAreas.clear();
         clearPendingSources();
         composer.setText("");
-        promptCards.show("empty");
+        history.reset();
+        returnToConversation = false;
+        chatCards.show("list");
     }
 }

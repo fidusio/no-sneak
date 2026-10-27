@@ -77,6 +77,8 @@ public class SessionMacVendorsTest {
         // first login: nothing stored, so the list is downloaded once, stored and loaded
         Session first = new Session(dsm);
         first.setMacVendorSource(source);
+        AtomicInteger events = new AtomicInteger();
+        first.onMacVendorsChange(e -> events.set((Integer) e.getNewValue()));
         first.loginUsernamePassword(OPERATOR, OPERATOR_PWD.toCharArray());
         try {
             first.loadMacVendors();
@@ -85,6 +87,8 @@ public class SessionMacVendorsTest {
         }
         assertTrue(first.macVendorsLoaded());
         assertEquals(1, downloads.get());
+        assertEquals(NSNetUtil.MAC_VENDORS.size(), events.get(), "the load fires the macVendors event with the table's size");
+        assertTrue(events.get() > 0);
         assertEquals("Test Vendor Inc", NSNetUtil.MAC_VENDORS.lookupDescription("FC:FF:F2:00:00:01"));
         assertEquals("Other Company Ltd", NSNetUtil.MAC_VENDORS.lookupDescription("FC:FF:F3:0A:BB:CC"), "/28 prefix");
         assertNull(NSNetUtil.MAC_VENDORS.lookup("FC:FF:F3:1A:BB:CC"), "outside the /28");
@@ -95,9 +99,11 @@ public class SessionMacVendorsTest {
         assertEquals(OUIDB.WIRESHARK_MANUF_URL, rows.get(0).getSourceID());
         assertArrayEquals(MANUF, rows.get(0).getData());
 
-        // the same session does not load twice
+        // the same session does not load twice, and does not fire again
+        events.set(-1);
         first.loadMacVendors();
         assertEquals(1, downloads.get());
+        assertEquals(-1, events.get(), "no event when nothing was loaded");
 
         // a later session (next start) finds the row: no download
         Session later = new Session(dsm);

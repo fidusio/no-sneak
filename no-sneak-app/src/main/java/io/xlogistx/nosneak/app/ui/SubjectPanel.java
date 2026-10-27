@@ -108,11 +108,11 @@ public class SubjectPanel extends JPanel {
         // Phase 5 of the redesign (2026-10-24): Profile and Settings sit in the shared page frame;
         // Credentials already has its own two-card layout (Phase 4). Backup and Restore are
         // blocks of the Settings page since 2026-10-26 (they had a page of their own before).
-        PagePanel profilePage = new PagePanel("Profile", "Your account: name, date of birth, identifiers and addresses.");
+        PagePanel profilePage = new PagePanel(Navigator.Screen.PROFILE.getDisplayName(), "Your account: name, date of birth, identifiers and addresses.");
         profilePage.card(scroll(buildProfileArea()));
         cardStack.add(profilePage, "Profile");
         cardStack.add(buildCredentials(), "Credentials");
-        PagePanel settingsPage = new PagePanel("Settings", "Reference data this installation keeps up to date, and the store's backup.");
+        PagePanel settingsPage = new PagePanel(Navigator.Screen.SETTINGS.getDisplayName(), "Reference data this installation keeps up to date, and the store's backup.");
         settingsPage.card(scroll(buildSettingsArea()));
         cardStack.add(settingsPage, SECTION_SETTINGS);
         cardStack.show(SECTION_PROFILE);
@@ -160,6 +160,7 @@ public class SubjectPanel extends JPanel {
         // API keys can also be created and deleted from the AI assistant's Providers page, so the
         // credential rows refresh on the session's credentials event, not only on this panel's
         // own mutations. Fired off the EDT — hop before touching Swing.
+        ctx.session().onMacVendorsChange(_ -> SwingUtilities.invokeLater(this::refreshSyncStatus));
         ctx.session().onCredentialsChange(_ -> SwingUtilities.invokeLater(() -> {
             passwordSection.refresh();
             apiKeySection.refresh();
@@ -211,7 +212,9 @@ public class SubjectPanel extends JPanel {
     /**
      * The Sync section (2026-10-25): the MAC vendor list is downloaded at the first sign-in and
      * kept in the store for every account; this replaces it with the current one on demand
-     * ({@link Session#syncMacVendors}).
+     * ({@link Session#syncMacVendors}). Its status line is the same text as the status bar's
+     * (2026-10-27): re-read when the page is shown and whenever {@link Session#onMacVendorsChange}
+     * says the table was filled — by the post-login load or a sync — so it never shows a stale state.
      */
     private JPanel buildSync() {
         JPanel panel = new JPanel(new MigLayout("wrap 1, insets 12, gapy 6", "[grow,fill]"));
@@ -221,9 +224,11 @@ public class SubjectPanel extends JPanel {
         // WrapLabel, not a wrapping JTextArea: its height is computed at the wrap width, so the
         // block does not come out too tall on first show (the Phase 1 lesson)
         WrapLabel note = new WrapLabel("""
-                MAC vendors — the Wireshark vendor list (wireshark.org, manuf) names the manufacturer \
-                of each host's network adapter in scan reports. It is downloaded at the first sign-in \
-                and kept in this data store, shared by every account.
+                MAC vendors — the Wireshark manufacturer list (wireshark.org, manuf) names the vendor \
+                of each host's network adapter in scan reports: the MAC and Vendor columns of the Hosts \
+                tab and the Network adapter block of the host detail. It is downloaded once at the \
+                first sign-in and kept in this store for every account; the status bar at the bottom \
+                of the window shows its state.
 
                 Sync downloads the current list and replaces the stored copy. Wireshark publishes a \
                 new one about once a week.""");
@@ -233,7 +238,7 @@ public class SubjectPanel extends JPanel {
 
         JButton sync = new JButton("Sync MAC vendors",
                 IconUtil.svgIcon("io/xlogistx/gui/icons/refresh.svg", 16, UITokens.text()));
-        syncStatus.setForeground(UIManager.getColor("Label.disabledForeground"));
+        syncStatus.setForeground(UITokens.muted());
 
         sync.addActionListener(_ -> onSyncMacVendors(sync));
         panel.add(sync, "growx 0");
@@ -242,6 +247,7 @@ public class SubjectPanel extends JPanel {
         return panel;
     }
 
+    /** The "last sync" day in the status line says it was synced; the event-driven refresh shows it. */
     private void onSyncMacVendors(JButton sync) {
         syncStatus.setText("Downloading the vendor list…");
         BackgroundTask.run(this, sync, () -> {
@@ -250,13 +256,20 @@ public class SubjectPanel extends JPanel {
             } catch (IOException e) {
                 throw new AccessSecurityException("Could not download the vendor list from wireshark.org: " + e.getMessage(), e);
             }
-        }, status -> syncStatus.setText("Synced. " + syncStatusText(status)));
+        }, status -> syncStatus.setText(syncStatusText(status)));
     }
 
-    /** Re-reads the stored list's timestamps off the EDT and shows them. */
+    /**
+     * Re-reads the stored list's timestamps off the EDT and shows them; "loading" while the
+     * post-login load is still filling the table (the login screen waits for it, so this is rare).
+     */
     private void refreshSyncStatus() {
         if (!ctx.session().isAuthenticated()) {
             syncStatus.setText(" ");
+            return;
+        }
+        if (!ctx.session().macVendorsLoaded()) {
+            syncStatus.setText("Loading the vendor list…");
             return;
         }
         BackgroundTask.run(this, null, () -> ctx.session().macVendorStatus(), status -> syncStatus.setText(syncStatusText(status)));
@@ -279,30 +292,44 @@ public class SubjectPanel extends JPanel {
 
     private static final String[] RESTORE_MODES = {"Merge into this store", "Replace this store"};
 
+    /** A block's note: a WrapLabel at the Sync block's width (its height is right on first show). */
+    private static WrapLabel blockNote(String text) {
+        WrapLabel note = new WrapLabel(text);
+        note.setWrapWidth(480);
+        note.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
+        return note;
+    }
+
+    /** A block's muted status line. */
+    private static JLabel blockStatus() {
+        JLabel status = new JLabel(" ");
+        status.setForeground(UITokens.muted());
+        return status;
+    }
+
+    /**
+     * The Restore block (2026-10-26; note and status in the Sync block's shape since 2026-10-27):
+     * loads a backup archive into the store in Merge or Replace mode and signs the subject out.
+     */
     private JPanel buildDBRestore() {
         JPanel panel = new JPanel(new MigLayout("wrap 1, insets 12, gapy 6", "[grow,fill]"));
 
         panel.add(PanelBuilder.title("Restore"));
-
-        JTextArea note = new JTextArea("""
-                Loads a backup archive back into the data store.
+        panel.add(blockNote("""
+                Loads a backup archive back into this store: accounts and their API keys, scan reports, \
+                chats, captures, skills, probes and the MAC vendor list, all under the accounts that \
+                owned them. The vault is not touched; sealed values in the archive open only with the \
+                vault they were exported under.
 
                 Merge keeps what is already here and adds or overwrites records from the archive. \
                 Replace clears the store first, so it ends up holding exactly what the archive holds.
 
                 You are signed out when the restore finishes — the account you are signed in as may \
-                have been rewritten or removed by it.""");
-        note.setEditable(false);
-        note.setOpaque(false);
-        note.setLineWrap(true);
-        note.setWrapStyleWord(true);
-        note.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
-        panel.add(note, "width 100::480");
+                have been rewritten or removed by it. Sign in again to carry on."""), "growx 0");
 
         JComboBox<String> mode = new JComboBox<>(RESTORE_MODES);
         JButton restore = new JButton("Restore backup", new IconUtil.RollbackIcon(16));
-        JLabel status = new JLabel(" ");
-        status.setForeground(UIManager.getColor("Label.disabledForeground"));
+        JLabel status = blockStatus();
 
         restore.addActionListener(_ -> onRestoreBackup(restore, status, mode.getSelectedIndex()));
         panel.add(mode, "growx 0, width 240!");
@@ -360,28 +387,25 @@ public class SubjectPanel extends JPanel {
                 });
     }
 
+    /**
+     * The Backup block (2026-10-26; note and status in the Sync block's shape since 2026-10-27):
+     * dumps the whole store to a zip archive named after the store and the day.
+     */
     private JPanel buildDBBackup() {
         JPanel panel = new JPanel(new MigLayout("wrap 1, insets 12, gapy 6", "[grow,fill]"));
 
         panel.add(PanelBuilder.title("Backup"));
-
-        JTextArea note = new JTextArea("""
-                Exports every record in the data store — subjects, credentials, chats and skills — \
-                as a zip archive.
+        panel.add(blockNote("""
+                Exports every record in this store — accounts and their API keys, scan reports, chats, \
+                captures, skills, probes and the MAC vendor list — as one zip archive.
 
                 The archive itself is not encrypted; the sealed values in it (API keys and other \
                 secrets) can only be opened again with this installation's vault, so keep the file \
-                somewhere you would keep the vault, and keep the vault.""");
-        note.setEditable(false);
-        note.setOpaque(false);
-        note.setLineWrap(true);
-        note.setWrapStyleWord(true);
-        note.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
-        panel.add(note, "width 100::480");
+                somewhere you would keep the vault, and keep the vault. Scan reports in it carry \
+                your network's layout, so treat it as sensitive."""), "growx 0");
 
         JButton export = new JButton("Export backup", new IconUtil.SaveIcon(16));
-        JLabel status = new JLabel(" ");
-        status.setForeground(UIManager.getColor("Label.disabledForeground"));
+        JLabel status = blockStatus();
 
         export.addActionListener(_ -> onExportBackup(export, status));
         panel.add(export, "growx 0");
@@ -400,7 +424,7 @@ public class SubjectPanel extends JPanel {
         JFileChooser chooser = new JFileChooser();
         chooser.setDialogTitle("Export backup");
         chooser.setCurrentDirectory(AppPrefs.fileDirectory());
-        chooser.setSelectedFile(new File(NoSneakMain.dbName + "-backup.zip"));
+        chooser.setSelectedFile(new File(NoSneakMain.dbName + "-backup-" + LocalDate.now() + ".zip"));
         if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
 
         File target = chooser.getSelectedFile();
@@ -430,22 +454,35 @@ public class SubjectPanel extends JPanel {
 
     // ============================ Profile & identifiers ============================
 
+    /** The Profile page's content: the profile card or the address detail, both 480 px wide like the Settings blocks. */
     private JPanel buildProfileArea() {
         profileCards.add(buildProfile(), "profile");
         profileCards.add(buildEditAddress(), "editAddress");
         profileCards.show("profile");
 
-        JPanel anchor = new JPanel(new BorderLayout());
-        anchor.add(profileCards.view(), BorderLayout.WEST);
+        JPanel anchor = new JPanel(new MigLayout("insets 0", "[480!]"));
+        anchor.setOpaque(false);
+        anchor.add(profileCards.view(), "growx, aligny top");
         JPanel p = new JPanel(new BorderLayout());
+        p.setOpaque(false);
         p.add(anchor, BorderLayout.NORTH);
         return p;
     }
 
-    private JPanel buildProfile() {
+    private final JLabel profileStatus = blockStatus();
 
+    /**
+     * The profile card (re-laid out 2026-10-27 in the Settings page's shape): three blocks
+     * separated by rules — <b>Name</b> (a {@link FormPanel} with the page's one primary action,
+     * Save changes, and a status line instead of a dialog), <b>Identifiers</b> and
+     * <b>Addresses</b> (the two {@link ListSection}s, each with a description of what the list
+     * is for).
+     */
+    private JPanel buildProfile() {
         identifiers = ListSection.of(() -> ctx.session().getAllPrincipalIDForLoggedInUser())
                 .title("Identifiers")
+                .description("The names you can sign in with: usernames and email addresses. Deleting the one "
+                        + "you signed in with moves your account to another of them.")
                 .addButton("+ Add identifier", this::onAddIdentifier)
                 .label(PrincipalIdentifier::getPrincipalID)
                 .onRemove(p -> () -> onRemoveIdentifier(p))
@@ -453,6 +490,7 @@ public class SubjectPanel extends JPanel {
 
         addressSection = ListSection.of(() -> ctx.session().getAllAddresses())
                 .title("Addresses")
+                .description("Postal addresses kept with your account, for your own records; nothing reads them.")
                 .addButton("+ Add address", this::onAddAddress)
                 .label(this::addressLabel)
                 .onEdit(p -> () -> onEditAddress(p))
@@ -460,20 +498,30 @@ public class SubjectPanel extends JPanel {
                 .emptyText("No addresses yet")
                 .build();
 
+        FormPanel form = new FormPanel();
+        form.field("First name", firstName);
+        form.field("Last name", lastName);
+        form.field("Date of birth", dob, "Optional, as yyyy-mm-dd.");
+        saveProfile.setText("Save changes");
+        UITokens.primary(saveProfile);
         saveProfile.addActionListener(_ -> onSaveProfile());
 
-        return PanelBuilder.buildJPanelWithFields(
-                new JLabel("First name"),
-                firstName,
-                new JLabel("Last name"),
-                lastName,
-                new JLabel("Date of birth — optional"),
-                dob,
-                saveProfile,
-                identifiers,
-                addressSection
+        JPanel name = new JPanel(new MigLayout("wrap 1, insets 12, gapy 6", "[grow,fill]"));
+        name.setOpaque(false);
+        name.add(PanelBuilder.title("Name"));
+        name.add(blockNote("How the account is shown; kept in this store under your account and nowhere else."), "growx 0");
+        name.add(form, "growx");
+        name.add(saveProfile, "growx 0, gaptop 10");
+        name.add(profileStatus);
 
-        );
+        JPanel card = new JPanel(new MigLayout("wrap 1, insets 0", "[grow,fill]"));
+        card.setOpaque(false);
+        card.add(name);
+        card.add(new JSeparator(), "gaptop 8, gapbottom 8");
+        card.add(identifiers, "gapx 12 12");
+        card.add(new JSeparator(), "gaptop 16, gapbottom 8");
+        card.add(addressSection, "gapx 12 12, gapbottom 12");
+        return card;
     }
 
     private void onSaveProfile() {
@@ -481,9 +529,10 @@ public class SubjectPanel extends JPanel {
         fields.put("firstName", firstName.getText());
         fields.put("lastName", lastName.getText());
         fields.put("dob", dob.getText());
-        BackgroundTask.runCatching(this, null,
+        profileStatus.setText("Saving…");
+        BackgroundTask.runCatching(this, saveProfile,
                 () -> ctx.session().saveProfile(fields),
-                () -> JOptionPane.showMessageDialog(this, "Profile saved."));
+                () -> profileStatus.setText("Saved."));
     }
 
     private void populateProfile() {
@@ -579,29 +628,24 @@ public class SubjectPanel extends JPanel {
      * The address detail card (fields + Save), reached by "+ Add address" or a per-row Edit.
      */
     private JPanel buildEditAddress() {
-        JButton save = new JButton("Save address", new IconUtil.SaveIcon(16));
+        JButton save = UITokens.primary(new JButton("Save address", new IconUtil.SaveIcon(16)));
         save.addActionListener(_ -> onSaveAddress(save));
 
-        addrCountry.setPreferredSize(new Dimension(
-                addrStreet.getPreferredSize().width,
-                addrCountry.getPreferredSize().height));
+        // the same stacked form as the Name block (2026-10-27); Back returns to the profile card
+        FormPanel form = new FormPanel();
+        form.field("Label", addrLabel, "A name for it: Home, Work…");
+        form.field("Street", addrStreet);
+        form.field("City", addrCity);
+        form.field("State / region", addrRegion);
+        form.field("Postal code", addrPostCode);
+        form.field("Country", addrCountry);
 
         return PanelBuilder.detail("Address",
                 () -> profileCards.show("profile"),
                 panel -> {
-                    panel.add(new JLabel("Label — e.g. Home, Work"));
-                    panel.add(addrLabel);
-                    panel.add(new JLabel("Street"));
-                    panel.add(addrStreet);
-                    panel.add(new JLabel("City"));
-                    panel.add(addrCity);
-                    panel.add(new JLabel("State / region"));
-                    panel.add(addrRegion);
-                    panel.add(new JLabel("Postal code"));
-                    panel.add(addrPostCode);
-                    panel.add(new JLabel("Country"));
-                    panel.add(addrCountry);
-                    panel.add(save, "gaptop 10");
+                    panel.add(blockNote("A label or a street is enough to save it."), "growx, wmin 0");
+                    panel.add(form, "growx, wmin 0");
+                    panel.add(save, "gaptop 12");
                 });
     }
 
@@ -677,6 +721,8 @@ public class SubjectPanel extends JPanel {
         credentialCards.add(buildEditAPIKey(), "editAPI");
         credentialCards.show("list");
 
+        // 2026-10-27: the page frame of every other page (title, description, the one primary
+        // action in the head — Add API key, which was a button inside the list), the two cards below
         JPanel left = buildCredentialList();
         left.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(UITokens.border()),
@@ -687,51 +733,49 @@ public class SubjectPanel extends JPanel {
         right.setBorder(BorderFactory.createLineBorder(UITokens.border()));
         right.add(credentialCards.view(), BorderLayout.CENTER);
 
-        JPanel p = new JPanel(new MigLayout("insets 20 24 24 24, gapx 20, fill", "[grow 45,fill][grow 55,fill]", "[grow,fill]"));
-        p.setBackground(UITokens.color("xlogistx.ground", null, 0xF4F4F7));
-        p.add(left, "wmin 0, hmin 0, aligny top, growy");
-        p.add(right, "wmin 0, hmin 0, aligny top, growy");
-        return p;
+        JPanel split = new JPanel(new MigLayout("insets 0, gapx 20, fill", "[grow 45,fill][grow 55,fill]", "[grow,fill]"));
+        split.setOpaque(false);
+        split.add(left, "wmin 0, hmin 0, aligny top, growy");
+        split.add(right, "wmin 0, hmin 0, aligny top, growy");
+
+        PagePanel page = new PagePanel(Navigator.Screen.API_KEYS.getDisplayName(),
+                "Your password, and the third-party API keys the assistant borrows; it holds none of its own.");
+        JButton addKey = UITokens.primary(new JButton("Add API key", new IconUtil.PlusIcon(16)));
+        addKey.addActionListener(_ -> onAddAPIKey());
+        page.action(addKey);
+        page.add(split, "grow, push");
+        return page;
     }
 
     private JPanel buildCredentialList() {
 
         passwordSection = ListSection.of(() -> ctx.session().getAllCredentialForUserByType(CredentialInfo.Type.PASSWORD).stream().filter(CIPassword.class::isInstance).map(CIPassword.class::cast).toList())
                 .title("Password")
+                .description("The password you sign in with. The vault password is a different one and is not kept here.")
                 .label(SubjectPanel::passwordLabel)
                 .onEdit(_ -> () -> credentialCards.show("changePassword"))
                 .build();
 
         apiKeySection = ListSection.of(() -> ctx.session().getAllCredentialForUserByType(CredentialInfo.Type.API_KEY).stream().filter(SubjectAPIKey.class::isInstance).map(SubjectAPIKey.class::cast).toList())
                 .title("API keys")
-                .addButton("+ Add API Key", this::onAddAPIKey)
+                .description("Keys of third-party AI providers, kept sealed in this store under your account. "
+                        + "The assistant's Providers page picks among them; a key is never sent anywhere but to its own provider.")
                 .label(p -> {
                     String label = p.getName();
                     return (label == null || label.isBlank()) ? "API key" : "API key — " + label;
                 })
                 .onEdit(p -> () -> onEditAPIKey(p))
                 .onRemove(p -> () -> onDeleteAPIKey(p))
-                .emptyText("No api keys yet")
+                .emptyText("No API keys yet")
                 .build();
 
-        JLabel header = PanelBuilder.title("Credentials");
-        JLabel desc = new JLabel("One password, plus any number of API keys.");
-
-        JPanel content = new JPanel();
-        content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
-        content.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
-        for (JComponent c : new JComponent[]{header, desc, passwordSection, apiKeySection}) {
-            c.setAlignmentX(Component.LEFT_ALIGNMENT);
-        }
-        content.add(header);
-        content.add(Box.createVerticalStrut(2));
-        content.add(desc);
-        content.add(Box.createVerticalStrut(12));
+        JPanel content = new JPanel(new MigLayout("wrap 1, insets 4, gapy 12", "[grow,fill]"));
+        content.setOpaque(false);
         content.add(passwordSection);
-        content.add(Box.createVerticalStrut(12));
         content.add(apiKeySection);
 
         JPanel p = new JPanel(new BorderLayout());
+        p.setOpaque(false);
         p.add(content, BorderLayout.NORTH);   // hug the top; leftover space stays at the bottom
         return p;
     }
@@ -799,72 +843,30 @@ public class SubjectPanel extends JPanel {
         addRow(generateCard, "Description", genDescription);
         addRow(generateCard, "API Key", copyRow);
 
-        // --- Enter-existing card: label + paste field ---
-        JTextField inLabel = textField("e.g. Claude prod");
-        JTextField inDescription = textField("What this key is for");
-        JTextField inAppID = textField("e.g. nosneak");
-        JTextField inDomainID = textField("e.g. xlogistx.io");
-        JPasswordField inKey = new JPasswordField(28);
-        inKey.putClientProperty("JTextField.placeholderText", "Your API key");
-
-        inProvider.setEditable(true);
-        inProvider.setSelectedItem(null);
-        if (inProvider.getEditor().getEditorComponent() instanceof JTextField providerEditor) {
-            providerEditor.putClientProperty("JTextField.placeholderText", "Select or type a provider");
-        }
-        JTextField inBaseURI = textField("e.g. https://api.anthropic.com");
-        JTextField inAuthScheme = textField("e.g. Bearer Token");
-        JTextField inHeaderName = textField("e.g. x-api-key");
-
-        JPanel inputCard = new JPanel(new MigLayout(
-                "wrap 2, insets 12, gapx 10, gapy 6",
-                "[left][grow,fill]"));
-
-        addSection(inputCard, "Key");
-        addRow(inputCard, "Label*", inLabel);
-        addRow(inputCard, "Description", inDescription);
-        addRow(inputCard, "API Key*", PanelBuilder.passwordField(inKey));
-
-        addSection(inputCard, "Scope");
-        addRow(inputCard, "App ID", inAppID);
-        addRow(inputCard, "Domain ID", inDomainID);
-
-        addSection(inputCard, "Provider endpoint");
-        addRow(inputCard, "Provider", inProvider);
-        addRow(inputCard, "Base URL", inBaseURI);
-        //addRow(inputCard, "API auth Type", inAuthScheme);
-        //addRow(inputCard, "Header Name", inHeaderName);
-
+        // --- Enter-existing card: the stacked form (2026-10-27), see newAddKeyForm ---
+        AddKeyForm in = newAddKeyForm();
 
         // --- cards (the generate card stays registered for when local keys return) ---
         CardStack cards = new CardStack();
         cards.add(generateCard, "generate");
-        cards.add(inputCard, "input");
+        cards.add(in.panel, "input");
         cards.show("input");
 
-        JLabel requiredLegend = new JLabel("* required");
-        requiredLegend.setFont(requiredLegend.getFont().deriveFont(requiredLegend.getFont().getSize2D() - 2f));
-        requiredLegend.setForeground(UIManager.getColor("Label.disabledForeground"));
-
-        JPanel dialog = PanelBuilder.buildJPanelWithFields(
-                PanelBuilder.title("Add third party API key"),
-                cards.view(), requiredLegend);
-
         String[] actions = {"Create key", "Cancel"};
-        int result = JOptionPane.showOptionDialog(this, dialog, "Add API key",
+        int result = JOptionPane.showOptionDialog(this, cards.view(), "Add API key",
                 JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE, null, actions, actions[0]);
         if (result != 0) return;   // Cancel or dialog closed
 
         boolean generating = false; //generateButton.isSelected();
-        String label = generating ? genLabel.getText() : inLabel.getText();
-        String description = generating ? genDescription.getText() : inDescription.getText();
-        String appId = generating ? "" : inAppID.getText().trim();
-        String domainId = generating ? "" : inDomainID.getText().trim();
-        String key = generating ? genKey.getText() : new String(inKey.getPassword()).trim();
+        String label = generating ? genLabel.getText() : in.label.getText();
+        String description = generating ? genDescription.getText() : in.description.getText();
+        String appId = generating ? "" : in.appID.getText().trim();
+        String domainId = generating ? "" : in.domainID.getText().trim();
+        String key = generating ? genKey.getText() : new String(in.key.getPassword()).trim();
         String provider = generating ? "" : comboText(inProvider);
-        String baseURI = generating ? "" : inBaseURI.getText().trim();
-        String authScheme = generating ? "" : inAuthScheme.getText().trim();
-        String headerName = generating ? "" : inHeaderName.getText().trim();
+        String baseURI = generating ? "" : in.baseURI.getText().trim();
+        String authScheme = generating ? "" : in.authScheme.getText().trim();
+        String headerName = generating ? "" : in.headerName.getText().trim();
 
         if (!generating && (label.isBlank() || key.isBlank())) {
             JOptionPane.showMessageDialog(this,
@@ -889,21 +891,66 @@ public class SubjectPanel extends JPanel {
     }
 
 
+    /** The add dialog's form and its fields (one object so the dialog and the render harness share it). */
+    private static final class AddKeyForm {
+        final JPanel panel;
+        final JTextField label = textField("e.g. Claude prod");
+        final JTextField description = textField("What this key is for");
+        final JPasswordField key = new JPasswordField(28);
+        final JTextField appID = textField("e.g. nosneak");
+        final JTextField domainID = textField("e.g. xlogistx.io");
+        final JTextField baseURI = textField("e.g. https://api.anthropic.com");
+        final JTextField authScheme = textField("e.g. Bearer Token");
+        final JTextField headerName = textField("e.g. x-api-key");
+
+        AddKeyForm(JComboBox<String> provider) {
+            key.putClientProperty("JTextField.placeholderText", "Your API key");
+            FormPanel form = new FormPanel();
+            form.row(PanelBuilder.title("Add a third-party API key"), "growx");
+            form.row(blockNote("The key is sealed in this store under your account and sent only to its own provider."), "growx, wmin 0");
+            form.row(PanelBuilder.sectionHeader("Key"), "growx, gaptop 10");
+            form.requiredField("Label", label);
+            form.field("Description", description);
+            form.requiredField("API key", PanelBuilder.passwordField(key));
+            form.row(PanelBuilder.sectionHeader("Scope"), "growx, gaptop 10");
+            form.field("App ID", appID);
+            form.field("Domain ID", domainID, "Both, or neither.");
+            form.row(PanelBuilder.sectionHeader("Provider endpoint"), "growx, gaptop 10");
+            form.field("Provider", provider, "Pick one, or type the name of another.");
+            form.field("Base URL", baseURI);
+            panel = new JPanel(new MigLayout("insets 12", "[480!]")); // the note's wrap width
+            panel.setOpaque(false);
+            panel.add(form, "growx");
+        }
+    }
+
+    private AddKeyForm newAddKeyForm() {
+        inProvider.setEditable(true);
+        inProvider.setSelectedItem(null);
+        if (inProvider.getEditor().getEditorComponent() instanceof JTextField providerEditor) {
+            providerEditor.putClientProperty("JTextField.placeholderText", "Select or type a provider");
+        }
+        return new AddKeyForm(inProvider);
+    }
+
     // ============================ Change password ============================
 
+    /** The change-password card (the stacked form since 2026-10-27; Back returns to the placeholder). */
     private JPanel buildChangePassword() {
-        JButton submit = new JButton("Change password", new IconUtil.SaveIcon(16));
+        JButton submit = UITokens.primary(new JButton("Change password", new IconUtil.SaveIcon(16)));
         submit.addActionListener(_ -> onChangePassword(submit));
+
+        FormPanel form = new FormPanel();
+        form.requiredField("Current password", PanelBuilder.passwordField(currentPwd));
+        form.requiredField("New password", PanelBuilder.passwordField(newPwd));
+        form.requiredField("Confirm new password", PanelBuilder.passwordField(confirmPwd), "Type the new password again.");
 
         return PanelBuilder.detail("Change password",
                 () -> credentialCards.show("list"),
                 panel -> {
-
-                    PanelBuilder.addRow(panel, "Current password", PanelBuilder.passwordField(currentPwd));
-                    PanelBuilder.addRow(panel, "New password", PanelBuilder.passwordField(newPwd));
-                    PanelBuilder.addRow(panel, "Confirm new password", PanelBuilder.passwordField(confirmPwd));
-
-                    panel.add(submit, "gaptop 10");
+                    panel.add(blockNote("The password you sign in with. The vault password is changed outside the app."), "growx, wmin 0");
+                    panel.add(form, "growx, wmin 0");
+                    panel.add(submit, "gaptop 12");
                 });
     }
 
@@ -960,40 +1007,40 @@ public class SubjectPanel extends JPanel {
         keyProvider.setEditable(true);
         keyURI.setEditable(true);
 
-        JPanel keyView = new JPanel(new FlowLayout(FlowLayout.LEFT));
-
+        // the secret with its Copy and Show buttons on one line (the rotate button stays out, see CLAUDE.md)
+        JPanel keyView = new JPanel(new MigLayout("insets 0, gapx 4", "[grow,fill][][]"));
+        keyView.setOpaque(false);
         keyView.add(editKeySecret);
-        //keyView.add(rotateKey);
         keyView.add(copyKey);
         keyView.add(showKey);
-        //keyView.add(submit);
+
+        // the stacked form since 2026-10-27, with the add dialog's sections
+        UITokens.primary(submit);
+        FormPanel form = new FormPanel();
+        form.row(PanelBuilder.sectionHeader("Key"), "growx");
+        form.requiredField("Label", editKeyLabel);
+        form.field("Description", editKeyDescription);
+        form.requiredField("API key", keyView, "Copy it, or show it; it cannot be edited here. Delete the key and add the new one instead.");
+        form.row(PanelBuilder.sectionHeader("Scope"), "growx, gaptop 10");
+        form.field("App ID", keyAppID);
+        form.field("Domain ID", keyDomainID, "Both, or neither.");
+        form.row(PanelBuilder.sectionHeader("Provider endpoint"), "growx, gaptop 10");
+        form.field("Provider", keyProvider, "Pick one, or type the name of another.");
+        form.field("Base URL", keyURI);
+
+        JButton deleteKey = new JButton("Delete", new IconUtil.DeleteIcon(16));
+        deleteKey.setToolTipText("Permanently delete this API key");
+        deleteKey.addActionListener(_ -> onDeleteAPIKey(selectedKey));
+        JPanel actions = new JPanel(new MigLayout("insets 0, gapx 8"));
+        actions.setOpaque(false);
+        actions.add(submit);
+        actions.add(deleteKey);
 
         return PanelBuilder.detail("Edit API key",
                 () -> credentialCards.show("list"),
                 panel -> {
-
-                    PanelBuilder.addSection(panel, "KEY");
-                    PanelBuilder.addRow(panel, "Label*", editKeyLabel);
-                    PanelBuilder.addRow(panel, "Description", editKeyDescription);
-                    PanelBuilder.addRow(panel, "API KEY*", keyView);
-
-                    PanelBuilder.addSection(panel, "SCOPE");
-                    PanelBuilder.addRow(panel, "App ID", keyAppID);
-                    PanelBuilder.addRow(panel, "Domain ID", keyDomainID);
-
-                    PanelBuilder.addSection(panel, "PROVIDER ENDPOINT");
-                    PanelBuilder.addRow(panel, "Provider", keyProvider);
-                    PanelBuilder.addRow(panel, "Base URL", keyURI);
-
-                    JButton deleteKey = new JButton("Delete", new IconUtil.DeleteIcon(16));
-                    deleteKey.setToolTipText("Permanently delete this API key");
-                    deleteKey.addActionListener(_ -> onDeleteAPIKey(selectedKey));
-
-                    JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
-                    actions.setOpaque(false);
-                    actions.add(submit);
-                    actions.add(deleteKey);
-                    PanelBuilder.addRow(panel, "", actions);
+                    panel.add(form, "growx, wmin 0");
+                    panel.add(actions, "gaptop 12");
                 }
         );
     }

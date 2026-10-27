@@ -203,11 +203,17 @@ public class UnlockPanel extends JPanel {
 
     // ---- building ----
 
+    /**
+     * The left half of the sign-in window: the same promises as the About card and the Help
+     * (2026-10-27 — tagline from {@link MenuBarFactory#TAGLINE}; keep the three points in step
+     * with the Help's "What it will and won't do" / "Your data stays yours"). The footer keeps
+     * the Java and platform facts because About is not reachable before sign-in.
+     */
     private JComponent buildSplash() {
         List<String> points = List.of(
-                "Scans run from this machine under its own address. Nothing hides, nothing floods.",
-                "Results stay in a local encrypted store opened with your own vault password.",
-                "The assistant only sees a report when you attach it, under your own provider key.");
+                "Scans run from this machine under its own address. Nothing hides, nothing floods, nothing breaks in.",
+                "Reports, chats, captures and skills stay in a local encrypted store, opened with your own vault password and kept under your account.",
+                "The assistant runs on a provider you configure with your own API key, and sees a report only when you attach it.");
         String footer = NoSneakMain.VERSION.getName() + " " + NoSneakMain.VERSION.version()
                 + " · Java " + System.getProperty("java.version")
                 + " · " + System.getProperty("os.name") + " " + System.getProperty("os.arch");
@@ -215,7 +221,8 @@ public class UnlockPanel extends JPanel {
                 IconUtil.svgIcon("io/xlogistx/gui/icons/shield.svg", 26, new Color(0xA9A8F0)),
                 "NoSneak",
                 "What does your network expose, and how good is its posture?",
-                "TLS and post-quantum readiness, certificate trust, running services and live hosts. It looks and reports. It never breaks in.",
+                MenuBarFactory.TAGLINE + ". TLS and certificate trust, running services, live hosts with their MAC and vendor. "
+                        + "It looks and reports; it never breaks in.",
                 points, footer);
     }
 

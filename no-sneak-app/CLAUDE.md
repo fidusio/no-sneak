@@ -9,7 +9,7 @@ network scanner screen** over `no-sneak-core`; the PQC file-sharing screen is st
 > instructions, each documented in its section below and in `PENDING-ISSUES.md` → *Status check
 > (2026-10-24)*: **MAC vendors** — after a login `Session.loadMacVendors()` finds or downloads the
 > Wireshark manuf file as the store's app-wide `DataContent` *Mac-Vendor-Content* and loads it into
-> `NSNetUtil.MAC_VENDORS`, so the engine's `macVendor` shows as a Vendor column and a *Network
+> `NSNetUtil.MAC_VENDORS`, so the engine's `mac` / `macVendor` show as MAC and Vendor columns (MAC since 2026-10-27) and a *Network
 > adapter* block; *Account → Settings → Sync* (`SECTION_SETTINGS`, `syncMacVendors`) refreshes it on
 > demand, and since 2026-10-26 **Backup and Restore are blocks of that Settings page** (the
 > separate Backup page, `BACKUP` screen and sidebar item are gone). **Scan history** is
@@ -193,7 +193,7 @@ io.xlogistx.nosneak.app
     ├── ScanPanel.java             ← scanner wiring: ScanFormPanel + ScanResultView, probe chips (the only source of probing, 2026-10-26), history JTable (multi-select, Delete / Delete all), probe editor
     ├── scan/
     │   ├── ScanFormPanel.java     ← the form that generates the command line (and follows an edited one); Service detection = all / none of the chips
-    │   ├── ScanResultView.java    ← header counts + Hosts (Vendor column) / Services / Raw JSON, host detail with the Network adapter block
+    │   ├── ScanResultView.java    ← header counts + Hosts (MAC and Vendor columns, blank when the report has none) / Services / Raw JSON, host detail with the Network adapter block
     │   └── ReportView.java        ← the engine's JSON parsed into records (pure; ReportViewTest)
     ├── MenuBarFactory.java        ← builds the application menu bar
     ├── assistant/                 ← app-side bindings for the ai-assistant module
@@ -271,21 +271,46 @@ unlock screen, then put the new vault password back in the configuration.
 ### `AppShell`
 The signed-in application (rebuilt 2026-10-24, Phase 2 of the redesign): a `BorderLayout` of
 gui-audio's **`HeaderBar`** (north: shield + "NoSneak", a mono chip with the open store's
-directory from `AppPrefs.storeLocation()` and "vault open", then the subject — initial avatar,
+directory from `AppPrefs.storeLocation()` and "vault open" — its tooltip is
+`MenuBarFactory.STORE_NOTE`, the About card's Store row, plus a pointer to *Settings > Backup*
+(2026-10-27) —, then the subject — initial avatar,
 principal, a *super-admin* badge when `ShiroDSDomainSecurityManager.isSuperAdminSubject` says so —
 and a **Sign out** button that confirms and calls `session().logout()`), one **`SideNavPanel`**
-(west), the `CardLayout` content host (centre) and the footer (south: `subject: …` / `Ready`).
+(west), the `CardLayout` content host (centre) and the status bar (south — 2026-10-27: *Signed
+in as …* / *Signed out* on the left; on the right the MAC vendor list's state in the Settings
+page's words, `MAC vendors: 52,000 vendors loaded · stored 2026-10-21 …`, *loading…* until
+`Session.onMacVendorsChange` fires, blank when signed out; the old static *Ready* is gone).
 
-**One navigation layer now.** The sidebar's sections and items are the whole page list:
+**One navigation layer now.** The sidebar's sections and items are the whole page list; since
+2026-10-26 the item labels come from the enum itself (`Screen implements GetDisplayName` — and
+`GetDescription` since 2026-10-27: one line per page, the tooltip of its sidebar item
+(`AppShell.item(screen, icon)` → `SideNavPanel.item(screen, icon)`, a `ComponentRef` over the
+constant: its name is the key, so `navigator.onShow(nav::select)` syncs by the `Screen` itself)
+and of its View-menu entry; `ScreenLabelsTest` pins that every
+screen has one and that the assistant's `Page` says the same —, the
+maintainer's cleanup: `NEW_SCAN` — `SCAN` since 2026-10-27 — and `CHAT_HISTORY` replaced `SCAN_NEW` and `CHATS`; later that
+day `CHAT_HISTORY` went altogether when Chat History merged into the Chat page), and so do
+**the page titles and the View-menu items** (one exception: the View menu calls `CHAT`
+*Assistant chat*, 2026-10-27): `ScanPanel`'s three headers, the Profile and
+Settings `PagePanel`s, the API Keys header and the Access Control page all read
+`Screen.<X>.getDisplayName()`, so one string names a page in the sidebar, at the top of the page
+and in the menu. The assistant's own pages (`ai-assistant`, which cannot see `Navigator`) take
+their titles from `AssistantPanel.Page.getDisplayName()`, and `ScreenLabelsTest` pins that each
+assistant page and its `Screen` (`AppShell.screenFor`, package-private for the test) carry the same
+words, that every screen label is distinct, and that the two segment enums (`ProbeLibraryModel.Filter`,
+`NMapConfig.Timing`) label themselves. The remaining GUI enums are not label sources:
+`ReportView.Tone` is a colour, `Session.APIKeyInfo` is a property key.
 
-| Section | Items → `Navigator.Screen` → card · section |
+| Section | Items (`Screen.getDisplayName()`) → `Navigator.Screen` → card · section |
 |---|---|
-| Scan | New scan → `SCAN_NEW` → `ScanPanel.show(SECTION_SCAN)`; History → `SCAN_HISTORY` → `SECTION_HISTORY`; Probe library → `PROBES` → `SECTION_PROBES` |
-| Assistant | Chat / Chats / Capture / Skills / Providers → `CHAT` … `PROVIDERS` → `AssistantPanel.showPage(Page.CHAT …)` |
-| Account | Profile / API keys / Settings → `PROFILE` / `API_KEYS` / `SETTINGS` → `SubjectPanel.show(SECTION_PROFILE / SECTION_CREDENTIALS / SECTION_SETTINGS)` |
-| Admin | Access control → `ACL` → `SubjectSecManagerPanel` (visible only for the super-admin: `nav.setSectionVisible("admin", …)` on every login) |
+| Scan | Scan → `SCAN` → `ScanPanel.show(SECTION_SCAN)`; Scan History → `SCAN_HISTORY` → `SECTION_HISTORY`; Probe Library → `PROBES` → `SECTION_PROBES` |
+| Assistant | Chat / Capture / Skills / Providers → `CHAT` / `CAPTURE` / `SKILLS` / `PROVIDERS` → `AssistantPanel.showPage(Page.CHAT …)`; Chat is the list of chats and the open conversation in one page (merged 2026-10-26) |
+| Account | Profile / API Keys / Settings → `PROFILE` / `API_KEYS` / `SETTINGS` → `SubjectPanel.show(SECTION_PROFILE / SECTION_CREDENTIALS / SECTION_SETTINGS)` |
+| Admin | Access Control → `ACL` → `SubjectSecManagerPanel` (visible only for the super-admin: `nav.setSectionVisible("admin", …)` on every login) |
 
-Footer of the sidebar: **Help and about** (`MenuBarFactory.showDescription`) and the version line.
+Footer of the sidebar: **Help** (`MenuBarFactory.showDescription`) and the version line, a muted
+link that opens About (`showAbout`; since 2026-10-27 the line is name + version only, the Java /
+platform / store facts are in the About card).
 `navigator.onShow` keeps the sidebar highlight in step; a click on an item is
 `navigator.show(Screen.valueOf(key))`. When the assistant moves itself (a chat opened from
 history, a capture sent to the chat, `sendToChat` from the scanner) `AssistantPanel.setOnPageShown`
@@ -297,9 +322,9 @@ placeholder is **no longer registered** as a card (the class remains, unreferenc
 Every panel is constructed here, when the store opens and before anyone signs in — the navigator
 controls visibility only, never construction. On **login** the shell sets the header subject,
 shows or hides the Admin section, calls `assistantPanel.reloadProviders()` + `refreshHistory()` +
-`refreshSkills()` and lands on **`SCAN_NEW`**; on **logout** it clears the subject,
+`refreshSkills()` and lands on **`SCAN`**; on **logout** it clears the subject,
 `refreshHistory()` + `refreshSkills()` (empty-owner → cleared) + `clearProviders()` +
-`resetPanel()` and returns the cards to `SCAN_NEW`, so nothing of the previous subject is on
+`resetPanel()` and returns the cards to `SCAN`, so nothing of the previous subject is on
 screen when `NoSneakMain.AppFrame` swaps the shell back in. `menuBar()` hands the frame the
 `MenuBarFactory` menu that goes with the shell.
 
@@ -334,57 +359,81 @@ has its own two-card layout (Phase 4).
 maintainer) is a `PagePanel` with three blocks separated by rules: **Sync**, **Backup** and
 **Restore** — the last two moved here from their own Backup page on 2026-10-26 on the
 maintainer's instruction (the `BACKUP` screen, its sidebar item and its View-menu entry are
-gone; `buildDBBackup` / `buildDBRestore` are unchanged). Each block is a note, one button and a
+gone). On 2026-10-27 `buildDBBackup` / `buildDBRestore` took the Sync block's shape (`blockNote`, a
+`WrapLabel` at 480 px, and `blockStatus`, muted), their notes list what the store holds (accounts
+and API keys, scan reports, chats, captures, skills, probes, the MAC vendor list), Backup warns
+that reports carry the network's layout, and the default archive name carries the day
+(`<db>-backup-<yyyy-MM-dd>.zip`). Each block is a note, one button and a
 muted status line. Sync's button runs `Session.syncMacVendors()` on a `BackgroundTask` (download the current Wireshark list, replace the
 stored row, load it into the live table); a failure is the usual error dialog with the reason and
 the stored copy is kept. The status line (`syncStatusText`: *58,575 vendors loaded · stored
-2026-10-25 · last sync …*, or *No stored list yet*) is re-read off the EDT each time the page is
-shown (`show(SECTION_SETTINGS)` → `refreshSyncStatus`, a projected read that skips the 3 MB body).
+2026-10-25 · last sync …*, or *No stored list yet*; the status bar at the bottom of the window
+shows the same text) is re-read off the EDT each time the page is shown (`show(SECTION_SETTINGS)`
+→ `refreshSyncStatus`, a projected read that skips the 3 MB body) and, since 2026-10-27, on every
+`Session.onMacVendorsChange` event (the post-login load, a sync), with *Loading the vendor list…*
+while the table is not filled yet. The note names where the vendor shows up (Hosts tab columns,
+Network adapter block) and points at the status bar.
 Other reference data this installation keeps belongs in further blocks on this page.
 
 The **Profile** screen is itself a nested `CardStack` (`profileCards`, built by
-`buildProfileArea`) with a **profile** card (the form) and an **editAddress** detail card.
+`buildProfileArea`, a 480 px column like the Settings blocks) with a **profile** card and an
+**editAddress** detail card. Re-laid out on 2026-10-27 in the Settings page's shape. The same day
+gui-audio's `ListSection` description became a `WrapLabel` wrapped at the section's width (it was
+a wrapping `JTextArea`: one line high until laid out once, and stretched by BoxLayout after).
 
-- **Profile** (card key `profile`) — First/Last name, Date of birth, an **Identifiers** list, an
-  **Addresses** list, plus **Save Changes**. Wrapped in a `JScrollPane`.
-  - **Identifiers** — a `ListSection` bound to `Session.getAllPrincipalIDForLoggedInUser()`.
-    **+ Add identifier** prompts for a value → `Session.addIdentifier`; per-row **Remove** (trash
-    icon) → `Session.removeIdentifier`. Both surface the thrown `SecurityException`'s message on
-    failure.
-  - **Addresses** — a `ListSection` bound to `Session.getAllAddresses()`. **+ Add address** opens
-    the **editAddress** card blank; each row's **Edit** (pencil) opens it pre-filled; **Remove**
-    (trash) confirms then `Session.deleteAddress`. The editAddress card (`buildEditAddress`, via
-    `PanelBuilder.detail` for a back arrow) has Label / Street / City / State-region / Postal
-    fields, a **Country** combo (from `DataConst.COUNTRIES`), and **Save address** — Add stores a
-    fresh `NVGenericMap` via `Session.addAddress`, Edit mutates the selected map in place and
-    persists via `Session.changeAddressDetails`. Save requires at least a **Label or Street**
-    (blocks with a "Missing information" dialog otherwise).
-  - **Save Changes** collects only name/DOB and calls `Session.saveProfile(...)`;
-    `populateProfile()` reads them back via `Session.loadProfile`.
-- **Credentials** (card key `Credentials`; the sidebar's **API keys** page, re-laid out on
-  2026-10-24 as board 5 of the redesign: the list card on the left, the editor on the right. The
-  right-hand `credentialCards` stack keeps its card names — `"list"` is now the placeholder shown
-  while nothing is being edited — so every `credentialCards.show("list")` after a save, a delete
-  or a logout still lands on the right thing) — a nested `CardStack` (`credentialCards`) with three
-  views: a **list**, a **change-password** form, and an **edit-API-key** form (`editAPI`). The
-  list card stacks **two** `ListSection`s in a `BorderLayout` (Password `NORTH`, API keys
-  `CENTER`), each with an empty-state row ("No password set" / "No API keys yet"):
+- **Profile** (card key `profile`) — three blocks separated by rules, in the Settings page's
+  shape (`blockNote` / `blockStatus`):
+  - **Name** — a `FormPanel` (First name, Last name, Date of birth with the *yyyy-mm-dd* hint),
+    the page's one primary button **Save changes** (`Session.saveProfile(...)`, name/DOB only;
+    `populateProfile()` reads them back via `Session.loadProfile`) and a muted status line
+    (*Saving…* / *Saved.*) in place of the old dialog.
+  - **Identifiers** — a `ListSection` bound to `Session.getAllPrincipalIDForLoggedInUser()`, with
+    a description (the names you sign in with; deleting the current one moves the account to
+    another). **+ Add identifier** prompts for a value → `Session.addIdentifier`; per-row
+    **Remove** (trash icon) → `Session.removeIdentifier`. Both surface the thrown
+    `SecurityException`'s message on failure.
+  - **Addresses** — a `ListSection` bound to `Session.getAllAddresses()`, with a description
+    (for your own records; nothing reads them). **+ Add address** opens the **editAddress** card
+    blank; each row's **Edit** (pencil) opens it pre-filled; **Remove** (trash) confirms then
+    `Session.deleteAddress`. The editAddress card (`buildEditAddress`, via `PanelBuilder.detail`
+    for a back arrow) is a `FormPanel` — Label (hint *Home, Work…*) / Street / City /
+    State-region / Postal code / a **Country** combo (from `DataConst.COUNTRIES`) — with a note
+    that a label or a street is enough and the primary **Save address**: Add stores a fresh
+    `NVGenericMap` via `Session.addAddress`, Edit mutates the selected map in place and persists
+    via `Session.changeAddressDetails`. Save requires at least a **Label or Street** (blocks
+    with a "Missing information" dialog otherwise).
+- **Credentials** (card key `Credentials`; the sidebar's **API Keys** page). Since 2026-10-27 it
+  is a `PagePanel` like every other page: title, description ("Your password, and the third-party
+  API keys the assistant borrows; it holds none of its own.") and the page's one primary action
+  **Add API key** in the head (it was a button inside the list), over the two cards of board 5 of
+  the redesign: the list card on the left, the editor on the right. The right-hand
+  `credentialCards` stack keeps its card names — `"list"` is the placeholder shown while nothing
+  is being edited — so every `credentialCards.show("list")` after a save, a delete or a logout
+  still lands on the right thing. Three views: a **list**, a **change-password** form, and an
+  **edit-API-key** form (`editAPI`). The list card stacks **two** `ListSection`s, each with a
+  description (the password you sign in with, the vault password being a different one; keys of
+  third-party AI providers kept sealed under your account, picked by the assistant's Providers
+  page, sent only to their own provider) and an empty-state row ("No API keys yet"):
   - **Password section** (no add button) — the Password row's **Edit** (pencil) flips to the
-    change-password form (current/new/confirm → `Session.changePassword` via `BackgroundTask`).
+    change-password form: a `FormPanel` (current / new / confirm, all required, with a note that
+    the vault password is changed outside the app) and the primary **Change password** →
+    `Session.changePassword` via `BackgroundTask`.
   - **API keys section** — one row per key (`"API key — " + SubjectAPIKey.getName()`); the row's
-    **Edit** opens the `editAPI` card. **+ Add API Key** opens the add dialog. The **Generate
-    local** path is hidden, so the dialog opens on the **Add third party key** form — a sectioned
-    form (`Key` / `Scope` / `Provider endpoint`, built with `PanelBuilder.addSection` + `addRow`):
-    **Label**, **Description**, the **API Key** in a masked `JPasswordField` (reveal button),
-    App Id / Domain ID, a **Provider** editable combo (Claude / OpenAI / Gemini, or type your
-    own), and a **Base URL**. On **Create key** it stores via `Session.storeAPIKey(label,
-    description, domainID, appID, rawKey, provider, baseURI, authScheme, headerName, external)`
-    with `external = true`; the AppID filters validate the optional domain/app-id pair (invalid →
+    **Edit** opens the `editAPI` card. **Add API key** (page head) opens the add dialog. The
+    **Generate local** path is hidden, so the dialog opens on the **Add a third-party API key**
+    form — `SubjectPanel.AddKeyForm`, a `FormPanel` 480 px wide with section headers `Key` /
+    `Scope` / `Provider endpoint` (the render harness paints it through `newAddKeyForm()`):
+    **Label** (required), **Description**, the **API key** (required) in a masked
+    `JPasswordField` (reveal button), App ID / Domain ID (hint: both, or neither), a
+    **Provider** editable combo (Claude / OpenAI / Gemini / Grok, or type your own), and a
+    **Base URL**. On **Create key** it stores via `Session.storeAPIKey(label, description,
+    domainID, appID, rawKey, provider, baseURI, authScheme, headerName, external)` with
+    `external = true`; the AppID filters validate the optional domain/app-id pair (invalid →
     `SecurityException`), provider/baseURI go to the property bag, and the list refreshes.
     `storeAPIKey` enforces a non-blank key.
     > Known rework: broader mandatory-field validation (label/description) on this dialog is still
     > to come, and the dialog currently closes on click even on error.
-  - The `editAPI` card is fully wired: the secret shows in a masked `JPasswordField` with a
+  - The `editAPI` card (the same `FormPanel` sections as the add form since 2026-10-27, the secret with its Copy and Show buttons on one line, the primary **Save** beside **Delete**) is fully wired
     **Show/Hide** toggle (`VisibleIcon`/`InvisibleIcon`, re-masked on every open) and a **Copy**
     button; editable **Label** / **Description**, **App ID** / **Domain ID**, and **Provider**
     (its own editable `keyProvider` combo — **not** the add dialog's `inProvider`; see the
@@ -419,7 +468,9 @@ The **Profile** screen is itself a nested `CardStack` (`profileCards`, built by
 ### `SubjectSecManagerPanel`
 The `ACL` page (sidebar: Admin → Access control, super-admin only) — an admin view over the
 access-control model (the UI front for zoxweb's `DomainSecurityManager`). Since 2026-10-24 its
-five views are **tabs** of one `JTabbedPane` in a `PagePanel` card instead of a toggle column, each a header +
+five views are **tabs** of one `JTabbedPane` in a `PagePanel` card instead of a toggle column (since
+2026-10-27 an enum `View implements GetDisplayName, GetDescription` names and explains them: title and
+tooltip through a `ComponentRef` per tab, `view(View)`), each a header +
 description + search bar + `JTable` (wrapped in a `JScrollPane`, with a trailing unlabeled
 actions column reserved for per-row controls):
 
@@ -449,7 +500,9 @@ a report, or a request, to the assistant without `no-sneak-app` reaching into it
 - **The form generates the command, and the command refills the form.** Targets (whitespace
   separated), Ports (a `-p` spec; empty = the engine's default list), Name, the option boxes
   (Service detection `-sV`, Host discovery only `-sn`, Skip ping `-Pn`, Live hosts only
-  `--up-only`, Open ports only `--open`), a `SegmentedControl` for the `-T` template, Max in flight,
+  `--up-only`, Open ports only `--open`), a `SegmentedControl` built from `NMapConfig.Timing.values()`
+  for the `-T` template (the enum's display name is its `-T` token; `timing.selected(values())` gives
+  the template back, 2026-10-26), Max in flight,
   Min RTT timeout, the probe chips, and the **Command** field. The command is the truth and the form
   a view over it: `toConfig()` parses the field (`NMap.parseCommand`) so flags the form has no
   control for — `-PR`, `--dns-servers`, `-sU` — survive, then lays the fields over it; every field
@@ -502,7 +555,9 @@ a report, or a request, to the assistant without `no-sneak-app` reaching into it
   *Classical* / *Not ready* from `pqc`, coloured by tone; selecting a row fills the detail pane:
   ports with version · probe, the worst TLS port's protocol / key exchange / cipher / certificate /
   chain / groups offered, and the verdict in words from the PQC status, the trust verdict and the
-  engine's advisories), **Services** (every open port flat) and **Raw JSON**. Nothing here grades:
+  engine's advisories), **Services** (every open port flat) and **Raw JSON** — the three are the
+  enum `ScanResultView.Tab` (2026-10-27): title and tooltip through a `ComponentRef` per tab,
+  `tab(Tab)` hands the content back. Nothing here grades:
   `grade.Grade` in the core wrote the letter per port; the view only picks the worst per host.
 
 **History / stored report (Phase 4, same day; board 3).** A `JTable` over
@@ -530,7 +585,8 @@ tables as a fresh run. `showResult(name, json)` feeds the scanner page a report 
 
 **Probe library (2026-10-26, on the maintainer's instruction).** `buildProbePanel` is the same
 shape as the history page: a head (title, *Write with the assistant*, the primary *New probe*), a
-bar (search, an All / Bundled / Mine `SegmentedControl`, the count, *Probe definition*), and a split
+bar (search, an All / Bundled / Mine `SegmentedControl` built from `ProbeLibraryModel.Filter.values()`
+— the enum carries its labels, 2026-10-26 —, the count, *Probe definition*), and a split
 card — left a table on `ui/scan/ProbeLibraryModel` (rows = `bundledProbes` + the stored probes,
 columns Name · Service · Ports · Transport · Priority · Source, Source a `BadgeLabel`, sorted by
 priority then name as the engine orders its catalog; `ProbeLibraryModel.matches` is the row filter:
@@ -565,13 +621,14 @@ and the port, then `sendToChat.send(probeDefinition, "Probe definition",
 ProbeLibraryModel.assistantPrompt(service, port))` attaches the definition and types the request
 (one JSON object in a fence, section 13 of the definition, a one-line description) into the
 composer, and the app goes to Chat. With no chat open the assistant's "Open a chat first" shows and
-the app goes to Chats. The reply carries a **Save as probe** button (the assistant's bubble
+the app goes to Chat all the same, which then lands on the list of chats (New chat is there, since
+the merge of 2026-10-26). The reply carries a **Save as probe** button (the assistant's bubble
 save targets, registered by `AppShell.addSaveTarget("probe", scanPanel::saveProbeFromEditor)`),
 so the loop is: ask, send, click. Pinned by `ProbeLibraryModelTest` (rows, order, the broken
 stored row, the filter, the check message, the prompt).
 
 > **Two-way assistant wiring.** Out: the result views and the history rows call
-> `setSendToChat(content, name)` → the injected `BiConsumer` → `AssistantPanel.sendToChat`, then
+> `setSendToChat(content, name)` → the injected `ChatHandoff` → `AssistantPanel.sendToChat`, then
 > `ctx.nav().show(Screen.CHAT)`. A missing chat throws a `SecurityException` whose message the
 > panel shows. In: `AppShell` registers `assistantPanel.addSaveTarget("probe",
 > scanPanel::saveProbeFromEditor)`, which puts **probe** in the skill editor's "Save as" combo —
@@ -581,10 +638,21 @@ stored row, the filter, the check message, the prompt).
 ### `MenuBarFactory` & the navigation model
 Builds the `JMenuBar` of the signed-in window: **File** (Sign out, with the same confirmation
 as the header button), **View** (one item per `Navigator.Screen`, in sidebar order, for keyboard
-discoverability — it mirrors the sidebar and adds nothing), **Help** (Help = the bundled
-`app-description.md` in an `MDViewerPanel`; About = version / Java / platform card). Both
-dialogs are modeless and owned by the application window. `showDescription()` / `showAbout()`
-are public so the sidebar's *Help and about* can open them. The old *Tools* / *Mode* menus and
+discoverability — it mirrors the sidebar and adds nothing; since 2026-10-27 each item is a
+`ComponentRef` over its `Screen` (`page(screen)` / `page(label, screen)` for the one reworded
+item: the ref's display name is the text, its description the tooltip, its source the screen the
+click shows; `viewItems()` lists them), **Help** (Help = the bundled
+`app-description.md` in an `MDViewerPanel`, titled *NOSNEAK — Help* — rewritten 2026-10-27 to the
+sidebar's pages: one paragraph per page, what the tool will not do, where the data stays; About =
+a 460 px card in the house look (same day): name, `TAGLINE`, the `SUMMARY` paragraph that repeats
+the Help's "what it will and won't do", a `KeyValuePanel` of Version / Java / Platform / Vault
+(the directory) / Store (`STORE_NOTE`),
+a muted line that every page, button, option and tab carries a tooltip (same day, when the
+enums gained descriptions), and a `UITokens.link` button that opens Help. The Help text says the
+same under *Where things live* and names the T0 to T5 and All / Bundled / Mine segments. Keep
+both in step when a page is added or merged.)
+Both dialogs are modeless and owned by the application window. `showDescription()` / `showAbout()`
+are public so the sidebar's footer (*Help*, and the version line for About) can open them. The old *Tools* / *Mode* menus and
 the never-wired *Technical Mode* checkbox were removed on 2026-10-24.
 
 **There is one navigation layer** (2026-10-24). The sidebar in `AppShell` chooses the page; a
@@ -804,7 +872,9 @@ State changes fire an `"authenticated"` property event; listeners subscribe via 
 API-key mutations (`storeAPIKey` / `changeAPIDetails` / `rotateAPIKey` / `deleteAPIKey`) also fire
 a `"credentials"` event (`onCredentialsChange(...)`), which is how a key created or deleted from
 the **AI assistant's** Providers page shows up in `SubjectPanel`'s Credentials list without a
-re-login. The mutators run off the EDT, so that event fires off the EDT too — listeners hop via
+re-login. `loadMacVendors()` and `syncMacVendors()` fire a `"macVendors"` event
+(`onMacVendorsChange(...)`, new value = the table's size; 2026-10-27) that the shell's status bar
+follows. The mutators run off the EDT, so those events fire off the EDT too — listeners hop via
 `SwingUtilities.invokeLater` before touching Swing. **`setAssistantEnabled` deliberately does not
 fire it**: the assistant flips that property on every provider add/remove and nothing on the
 Credentials page renders it, so broadcasting would be a refresh storm for no visible change. `SubjectPanel`'s logout branch also resets
@@ -863,8 +933,14 @@ update from landing a millisecond apart on a fresh row. See the timestamp note i
 > full field round-trip, **one key backing several configs**, upsert-by-GUID, and delete.
 
 ### `Navigator`
-Routes a `Screen` (`SCAN_NEW, SCAN_HISTORY, PROBES, CHAT, CHATS, CAPTURE, SKILLS, PROVIDERS,
-PROFILE, API_KEYS, SETTINGS, ACL` — the sidebar's items, in order) to a `Route(card, section)`:
+Routes a `Screen` (`SCAN, SCAN_HISTORY, PROBES, CHAT, CAPTURE, SKILLS, PROVIDERS, PROFILE,
+API_KEYS, SETTINGS, ACL` — the sidebar's items, in order; each carries its sidebar label through
+zoxweb's `GetDisplayName` (2026-10-26) and a one-line purpose through `GetDescription` (2026-10-27,
+the sidebar and View-menu tooltips); `CHAT_HISTORY` went on the 26th with the merge of Chat
+History into Chat) to a `Route(ref, card, section)` — since 2026-10-27 the shell registers the
+hosting *panel* (`register(screen, panel, section)`), the navigator adds it to the content host as
+a card the first time a screen names it and keeps a `ComponentRef<Screen>` over it (`ref(screen)`,
+`isShowing(panel)`; the shell's `CARD_*` names are gone):
 `show(screen)` flips the `CardLayout` to the card, runs the section `Runnable` (the panel's
 `show(section)` / `showPage(page)`), records `current()` and tells the `onShow` listeners;
 `sync(screen)` records a move a panel made by itself and tells the listeners without running the

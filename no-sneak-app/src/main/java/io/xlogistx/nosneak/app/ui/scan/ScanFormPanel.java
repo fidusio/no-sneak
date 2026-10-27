@@ -41,7 +41,7 @@ public class ScanFormPanel extends JPanel {
     private final JCheckBox skipPing = new JCheckBox("Skip ping");
     private final JCheckBox upOnly = new JCheckBox("Live hosts only");
     private final JCheckBox openOnly = new JCheckBox("Open ports only");
-    private final SegmentedControl timing = new SegmentedControl("T0", "T1", "T2", "T3", "T4", "T5");
+    private final SegmentedControl timing = new SegmentedControl(NMapConfig.Timing.values());
     private final JTextField maxInFlight = new JTextField(6);
     private final JTextField minRtt = new JTextField(6);
     private final JTextField command = new JTextField();
@@ -184,8 +184,8 @@ public class ScanFormPanel extends JPanel {
             // picking a template resets the knobs to its values; the fields follow
             syncing = true;
             try {
-                NMapConfig.Timing t = NMapConfig.Timing.values()[timing.getSelectedIndex()];
-                maxInFlight.setText(Integer.toString(t.maxInFlight));
+                NMapConfig.Timing t = timing.<NMapConfig.Timing>selectedSource();
+                if (t != null) maxInFlight.setText(Integer.toString(t.maxInFlight));
             } finally {
                 syncing = false;
             }
@@ -393,8 +393,8 @@ public class ScanFormPanel extends JPanel {
         cfg.discovery(!skipPing.isSelected());
         cfg.upOnly(upOnly.isSelected());
         cfg.openOnly(openOnly.isSelected());
-        int t = timing.getSelectedIndex();
-        if (t >= 0) cfg.timing(NMapConfig.Timing.values()[t]);
+        NMapConfig.Timing t = timing.<NMapConfig.Timing>selectedSource();
+        if (t != null) cfg.timing(t);
         Integer inFlight = intOf(maxInFlight.getText(), "Max in flight");
         if (inFlight != null) cfg.maxInFlight = Math.max(1, inFlight);
         Integer rtt = intOf(minRtt.getText(), "Min RTT timeout");
@@ -431,11 +431,10 @@ public class ScanFormPanel extends JPanel {
         upOnly.setSelected(cfg.upOnly);
         openOnly.setSelected(cfg.openOnly);
         NMapConfig.Timing t = NMapConfig.Timing.matching(cfg);
-        if (t != null) timing.select(t.ordinal());
+        if (t != null) timing.select(t);
         else {
             NMapConfig.Timing c = NMapConfig.Timing.closest(cfg);
-            if (c.matches(cfg) == 2) timing.select(c.ordinal());
-            else timing.clearSelection();
+            timing.select(c.matches(cfg) == 2 ? c : null);
         }
         maxInFlight.setText(Integer.toString(cfg.maxInFlight));
         minRtt.setText(Integer.toString(cfg.minRttTimeoutMs));

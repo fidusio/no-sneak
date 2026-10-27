@@ -97,18 +97,6 @@ public class AssistantUtil {
                     south.add(saveAsTarget);
                 }
             }
-            if (targets) {
-                for (Map.Entry<String, Runnable> target : saveAs.entrySet()) {
-                    JButton saveAsTarget = new JButton("Save as " + target.getKey());
-                    saveAsTarget.putClientProperty("JButton.buttonType", "borderless");
-                    saveAsTarget.setFont(saveAsTarget.getFont().deriveFont(saveAsTarget.getFont().getSize2D() - 2f));
-                    saveAsTarget.setForeground(UIManager.getColor("Label.disabledForeground"));
-                    saveAsTarget.setFocusable(false);
-                    saveAsTarget.setToolTipText("Save this response as a " + target.getKey());
-                    saveAsTarget.addActionListener(_ -> target.getValue().run());
-                    south.add(saveAsTarget);
-                }
-            }
             if (markdown != null) {
                 JButton copyMarkdown = new JButton(new IconUtil.CopyIcon(16));
                 copyMarkdown.putClientProperty("JButton.buttonType", "borderless");

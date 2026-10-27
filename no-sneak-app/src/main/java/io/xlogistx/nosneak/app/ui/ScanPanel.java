@@ -34,7 +34,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.function.BiConsumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -85,7 +84,7 @@ public class ScanPanel extends JPanel {
     private final JTable libraryTable = new JTable(libraryModel);
     private final TableRowSorter<ProbeLibraryModel> librarySorter = new TableRowSorter<>(libraryModel);
     private final JTextField librarySearch = new JTextField();
-    private final SegmentedControl libraryFilter = new SegmentedControl("All", "Bundled", "Mine");
+    private final SegmentedControl libraryFilter = new SegmentedControl(ProbeLibraryModel.Filter.values());
     private final JLabel libraryCount = new JLabel();
     private final CardStack libraryDetail = new CardStack();
     private final JLabel probeTitle = new JLabel();
@@ -595,7 +594,7 @@ public class ScanPanel extends JPanel {
         librarySearch.putClientProperty("JTextField.placeholderText", "Search name, service, port");
         librarySearch.putClientProperty("JTextField.leadingIcon", new IconUtil.SearchIcon(14));
         bar.add(librarySearch, "growx");
-        libraryFilter.select(0);
+        libraryFilter.select(ProbeLibraryModel.Filter.ALL);
         libraryFilter.onChange(_ -> filterLibrary());
         bar.add(libraryFilter);
         libraryCount.setForeground(UITokens.muted());
@@ -820,7 +819,8 @@ public class ScanPanel extends JPanel {
     }
 
     private void filterLibrary() {
-        ProbeLibraryModel.Filter f = ProbeLibraryModel.Filter.values()[Math.max(0, libraryFilter.getSelectedIndex())];
+        ProbeLibraryModel.Filter chosen = libraryFilter.selectedSource();
+        ProbeLibraryModel.Filter f = chosen != null ? chosen : ProbeLibraryModel.Filter.ALL;
         String q = librarySearch.getText();
         librarySorter.setRowFilter(new RowFilter<>() {
             @Override
@@ -872,7 +872,7 @@ public class ScanPanel extends JPanel {
             sendToChat.send(ProbeDefinitionLoader.probeDefinition(), "Probe definition", prompt);
         } catch (AccessSecurityException e) {
             JOptionPane.showMessageDialog(this, e.getMessage(), "Write with the assistant", JOptionPane.WARNING_MESSAGE);
-            ctx.nav().show(Navigator.Screen.CHATS);
+            ctx.nav().show(Navigator.Screen.CHAT); // no chat open: the Chat page lands on the list, New chat is there
             return;
         }
         ctx.nav().show(Navigator.Screen.CHAT);
@@ -936,7 +936,7 @@ public class ScanPanel extends JPanel {
         titles.add(sub);
         head.add(titles, "wmin 0");
         JButton newScan = UITokens.primary(new JButton("New scan", IconUtil.svgIcon("io/xlogistx/gui/icons/plus.svg", 14, Color.WHITE)));
-        newScan.addActionListener(_ -> ctx.nav().show(Navigator.Screen.SCAN_NEW));
+        newScan.addActionListener(_ -> ctx.nav().show(Navigator.Screen.SCAN));
         head.add(newScan);
         out.add(head, "growx");
 
@@ -1151,7 +1151,7 @@ public class ScanPanel extends JPanel {
         form.setCommand(command);
         form.setScanName(scan.getName());
         refreshProbeChips();
-        ctx.nav().show(Navigator.Screen.SCAN_NEW);
+        ctx.nav().show(Navigator.Screen.SCAN);
     }
 
     /** The typed command of a report: the {@code command} property, else the description. */
