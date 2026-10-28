@@ -1,6 +1,7 @@
 package io.xlogistx.nosneak.ai.assistant.panels;
 
 import io.xlogistx.nosneak.ai.model.AIChat;
+import io.xlogistx.nosneak.ai.model.AIResponse;
 import org.zoxweb.shared.util.SUS;
 
 import javax.swing.table.AbstractTableModel;
@@ -65,6 +66,28 @@ public class ChatHistoryModel extends AbstractTableModel {
         if (ref == null) return NO_PROVIDER;
         String name = providerName != null ? providerName.apply(ref) : null;
         return name != null ? name : ref;
+    }
+
+    /**
+     * The reply's who-answered line (2026-10-27, the conversation's provider switch):
+     * {@code provider · model} from what the response recorded — the provider's name when known,
+     * the raw reference otherwise; a reply saved before the provider was recorded reads as its
+     * model alone; null when neither is known.
+     */
+    public String replyMeta(AIResponse res) {
+        return replyMeta(providerName, res);
+    }
+
+    public static String replyMeta(Function<String, String> providerName, AIResponse res) {
+        String ref = res == null ? null : SUS.trimOrNull(res.getProvider());
+        String model = res == null ? null : SUS.trimOrNull(res.getModel());
+        String name = null;
+        if (ref != null) {
+            String n = providerName != null ? providerName.apply(ref) : null;
+            name = n != null ? n : ref;
+        }
+        if (name == null) return model;
+        return model == null ? name : name + " · " + model;
     }
 
     @Override

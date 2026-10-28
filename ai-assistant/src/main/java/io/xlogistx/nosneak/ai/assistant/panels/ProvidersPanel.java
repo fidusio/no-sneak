@@ -383,7 +383,7 @@ public class ProvidersPanel extends JPanel {
         providerFormModelLabel.setVisible(config != null);
         providerFormModel.setVisible(config != null);
         if (config != null) {
-            fillModels(ctx, providerFormModel, config.getGUID(), false);
+            fillModels(ctx, providerFormModel, config.getGUID());
             providerFormModel.setSelectedItem(config.getDefaultModel());
         } else {
             providerFormModel.setSelectedItem("");

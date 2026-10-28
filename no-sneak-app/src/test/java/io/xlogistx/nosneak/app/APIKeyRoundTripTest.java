@@ -143,6 +143,31 @@ public class APIKeyRoundTripTest {
     }
 
     @Test
+    public void changeApiDetailsRemovesBlankAssistantMetadata() {
+        Session s = mockSession();
+        s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
+        assertDoesNotThrow(() -> s.storeAPIKey("claude", "desc", null, null, s.generateAPIKey().getAPIKey(),
+                "anthropic", "https://api.example.test", "Bearer", "Authorization", false));
+        SubjectAPIKey stored = firstApiKey(s);
+        assertNotNull(stored);
+        assertEquals("anthropic", s.providerOf(stored));
+
+        // a blank clears the entry: no "" is stored, the key reads as unlinked rather than mislinked
+        assertDoesNotThrow(() -> s.changeAPIDetails(stored, "claude", "desc", null, null, "", "   ", null, null));
+        SubjectAPIKey reloaded = firstApiKey(s);
+        assertNotNull(reloaded);
+        assertNull(s.providerOf(reloaded), "a blank provider removes the entry");
+        assertNull(s.baseUrlOf(reloaded), "a blank base URL removes the entry");
+        assertNull(s.authTypeOf(reloaded), "a null auth scheme removes the entry");
+        assertNull(s.headerNameOf(reloaded), "a null header name removes the entry");
+        assertNull(reloaded.getProperties().getValue(Session.APIKeyInfo.PROVIDER), "no empty string is stored");
+
+        // a value is written trimmed
+        assertDoesNotThrow(() -> s.changeAPIDetails(reloaded, "claude", "desc", null, null, " grok ", null, null, null));
+        assertEquals("grok", s.providerOf(firstApiKey(s)));
+    }
+
+    @Test
     public void changeApiDetailsUpdatesVendorOfExternalKey() {
         Session s = mockSession();
         s.loginUsernamePassword("kailen01", "Password1!".toCharArray());
@@ -181,7 +206,7 @@ public class APIKeyRoundTripTest {
         AccessSecurityException ex = assertThrows(AccessSecurityException.class,
                 () -> s.changeAPIDetails(new SubjectAPIKey(), "label", "desc", null, null, null, null, null, null),
                 "editing metadata must be refused when no subject is signed in");
-        assertEquals("Not Logged in", ex.getMessage());
+        assertEquals("Not signed in", ex.getMessage());
     }
 
     @Test

@@ -22,6 +22,15 @@ public class DetailLineTest {
     }
 
     @Test
+    public void whoAnsweredLeads() {
+        assertEquals("Claude (work) · claude-sonnet-5-5 · 120 ms · 57 in / 203 out tokens",
+                AssistantUtil.detailLine("Claude (work) · claude-sonnet-5-5", 120, 57, 203));
+        assertEquals("Claude (work) · claude-sonnet-5-5",
+                AssistantUtil.detailLine("Claude (work) · claude-sonnet-5-5", null, null, null));
+        assertEquals("120 ms", AssistantUtil.detailLine("  ", 120, null, null));
+    }
+
+    @Test
     public void nothingReportedMeansNoLine() {
         assertNull(AssistantUtil.detailLine(null, null, null));
         assertNull(AssistantUtil.detailLine(0, 0, 0));

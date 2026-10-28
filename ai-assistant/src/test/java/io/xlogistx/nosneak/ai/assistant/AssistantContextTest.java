@@ -25,8 +25,8 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 public class AssistantContextTest {
 
-    /** In-memory {@link AIRepository} that returns a fresh copy per read, like a real store. */
-    private static final class MemoryRepository implements AIRepository {
+    /** In-memory {@link AIRepository} that returns a fresh copy per read, like a real store (shared with {@code ChatPanelClearTest}). */
+    static final class MemoryRepository implements AIRepository {
 
         private final Map<String, AIChat> chats = new LinkedHashMap<>();
         private final Map<String, AISkill> skills = new LinkedHashMap<>();

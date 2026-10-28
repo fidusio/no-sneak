@@ -25,7 +25,15 @@
 > status bar that shows the MAC vendor list's state, the Profile, API Keys and Settings pages
 > re-laid out, and gui-audio's **`ComponentRef`** under every enum-driven control (sidebar, View
 > menu, segmented controls, assistant pages, navigator routes, tabs, list rows, chips) with
-> descriptions on the UI enums as tooltips.
+> descriptions on the UI enums as tooltips. **Later that day** the app's five *Hardening* items
+> closed: one signed-in guard in `Session`, identifier rules left to the manager, chat delete
+> cascade, a blank provider removes the entry, a copied API key wiped from the clipboard after 60 s.
+> Same evening: a **Provider combo** on the conversation page switches the assistant inside a
+> chat, and every reply says which provider · model answered it (`AIResponse.provider`); later,
+> a **copy icon on every past prompt** puts its text back in the composer to send it again, and
+> an **X icon** inside the input box empties the prompt. **2026-10-28:** the Model box and the
+> model filter are one gui-audio **`FilterComboBox`** (type to narrow the drop-down), so a filter
+> can no longer hide the new provider's models after a provider switch.
 
 Assessment tooling for what a network endpoint exposes — TLS posture, **post-quantum
 readiness**, and running services — plus a Swing front-end and an AI-assistant layer.

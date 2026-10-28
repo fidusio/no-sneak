@@ -5,6 +5,7 @@ import io.xlogistx.nosneak.ai.AIProvider;
 import io.xlogistx.nosneak.ai.assistant.AssistantContext;
 import io.xlogistx.nosneak.ai.assistant.AssistantPanel;
 import io.xlogistx.nosneak.ai.model.AIChat;
+import io.xlogistx.nosneak.ai.model.AIResponse;
 import net.miginfocom.swing.MigLayout;
 
 import javax.swing.*;
@@ -57,6 +58,11 @@ public class ChatHistoryPanel extends JPanel {
     /** The facts line of a chat: {@code provider · model · N messages}. */
     public String facts(AIChat chat) {
         return historyModel.facts(chat);
+    }
+
+    /** @see ChatHistoryModel#replyMeta(AIResponse) */
+    public String replyMeta(AIResponse res) {
+        return historyModel.replyMeta(res);
     }
 
     private final CardStack historyCards = new CardStack();

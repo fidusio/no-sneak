@@ -4,6 +4,7 @@ import io.xlogistx.nosneak.ai.assistant.panels.ChatHistoryModel;
 import io.xlogistx.nosneak.ai.model.AIChat;
 import io.xlogistx.nosneak.ai.model.AIMessage;
 import io.xlogistx.nosneak.ai.model.AIRequest;
+import io.xlogistx.nosneak.ai.model.AIResponse;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -53,6 +54,23 @@ class ChatHistoryModelTest {
         c.addMessage(new AIMessage(new AIRequest("claude-sonnet-5-5", "again", 10)));
         assertEquals("Claude (work) · claude-sonnet-5-5 · 2 messages", m.facts(c));
         assertEquals("no provider · no model · no messages yet", m.facts(chat("x", null, " ")));
+    }
+
+    @Test
+    void replyMeta() {
+        Map<String, String> names = Map.of("cfg-1", "Claude (work)");
+        ChatHistoryModel m = new ChatHistoryModel(names::get);
+        AIResponse r = new AIResponse();
+        assertNull(m.replyMeta(r), "nothing recorded, no line");
+        r.setModel("claude-sonnet-5-5");
+        assertEquals("claude-sonnet-5-5", m.replyMeta(r), "a reply saved before the provider was recorded reads as its model");
+        r.setProvider("cfg-1");
+        assertEquals("Claude (work) · claude-sonnet-5-5", m.replyMeta(r));
+        r.setProvider("cfg-gone");
+        assertEquals("cfg-gone · claude-sonnet-5-5", m.replyMeta(r), "an unknown reference shows as itself");
+        r.setModel(null);
+        assertEquals("cfg-gone", m.replyMeta(r));
+        assertNull(m.replyMeta(null));
     }
 
     @Test

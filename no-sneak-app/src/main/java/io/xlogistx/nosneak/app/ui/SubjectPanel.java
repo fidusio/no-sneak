@@ -21,7 +21,6 @@ import org.zoxweb.shared.util.NVPair;
 
 import javax.swing.*;
 import java.awt.*;
-import java.awt.datatransfer.StringSelection;
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.File;
@@ -40,6 +39,10 @@ import java.util.*;
 import static io.xlogistx.gui.PanelBuilder.*;
 
 public class SubjectPanel extends JPanel {
+
+    /** A copied API-key secret is wiped from the clipboard after this long, if it is still there. */
+    static final int SECRET_CLIPBOARD_MILLIS = 60_000;
+    private static final String COPIED_TIP = "Copied (cleared from the clipboard after 60 s)";
 
     // ---- Services ----
     private final CardStack cardStack = new CardStack();
@@ -808,10 +811,9 @@ public class SubjectPanel extends JPanel {
         JButton copy = GUIUtil.iconButton(new IconUtil.CopyIcon(16));
         copy.setToolTipText("Copy");
         copy.addActionListener(_ -> {
-            Toolkit.getDefaultToolkit().getSystemClipboard()
-                    .setContents(new StringSelection(genKey.getText()), null);
+            GUIUtil.copyToClipboard(genKey.getText(), SECRET_CLIPBOARD_MILLIS);
             copy.setIcon(new IconUtil.CheckIcon(16));
-            copy.setToolTipText("Copied!");
+            copy.setToolTipText(COPIED_TIP);
         });
         JButton refresh = GUIUtil.iconButton(new IconUtil.RefreshIcon(16));
         refresh.setToolTipText("Refresh");
@@ -824,7 +826,7 @@ public class SubjectPanel extends JPanel {
                 return;
             }
             genKey.setText(refreshed.getAPIKey());
-            // new key → the old "Copied!" state no longer applies
+            // new key → the old "Copied" state no longer applies
             copy.setIcon(new IconUtil.CopyIcon(16));
             copy.setToolTipText("Copy");
         });
@@ -993,8 +995,8 @@ public class SubjectPanel extends JPanel {
         submit.addActionListener(_ -> onEditAPIDetails(submit));
         copyKey.addActionListener(_ -> {
             if (selectedKey != null && selectedKey.getAPIKey() != null) {
-                Toolkit.getDefaultToolkit().getSystemClipboard()
-                        .setContents(new StringSelection(selectedKey.getAPIKey()), null);
+                GUIUtil.copyToClipboard(selectedKey.getAPIKey(), SECRET_CLIPBOARD_MILLIS);
+                copyKey.setToolTipText(COPIED_TIP);
             }
         });
 

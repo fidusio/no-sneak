@@ -24,6 +24,13 @@ import java.util.List;
  * when the current one is 0 — it records creation and never advances "last updated" on its own.
  * The insert branch deliberately leaves it alone so a new row's created and updated times do not
  * land a millisecond apart.
+ * <p>
+ * <b>Every delete cascades</b> ({@code withReference=true}): a row's children are its own, so the
+ * store follows the stored row's references down — a chat's {@code ai_message} rows and their
+ * {@code ai_request} / {@code ai_response} / attachment rows go with the chat. The store keeps a
+ * child another row still references, so a shared child is never pulled from under its other
+ * parent. Until 2026-10-27 {@code deleteChat} passed {@code false} and every message row of a
+ * deleted chat stayed in the database.
  */
 public class AssistantStorage implements AIRepository {
     private final APIDataStore<?, ?> ds;
@@ -50,7 +57,7 @@ public class AssistantStorage implements AIRepository {
 
     @Override
     public void deleteChat(AIChat chat) {
-        ds.delete(chat, false);
+        ds.delete(chat, true);
     }
 
     @Override
@@ -78,7 +85,7 @@ public class AssistantStorage implements AIRepository {
 
     @Override
     public void deleteSkill(AISkill skill) {
-        ds.delete(skill, false);
+        ds.delete(skill, true);
     }
 
     @Override

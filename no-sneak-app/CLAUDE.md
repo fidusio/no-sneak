@@ -433,7 +433,7 @@ a wrapping `JTextArea`: one line high until laid out once, and stretched by BoxL
     `storeAPIKey` enforces a non-blank key.
     > Known rework: broader mandatory-field validation (label/description) on this dialog is still
     > to come, and the dialog currently closes on click even on error.
-  - The `editAPI` card (the same `FormPanel` sections as the add form since 2026-10-27, the secret with its Copy and Show buttons on one line, the primary **Save** beside **Delete**) is fully wired
+  - The `editAPI` card (the same `FormPanel` sections as the add form since 2026-10-27, the secret with its Copy — wiped from the clipboard after 60 s, see *Hardening* — and Show buttons on one line, the primary **Save** beside **Delete**) is fully wired
     **Show/Hide** toggle (`VisibleIcon`/`InvisibleIcon`, re-masked on every open) and a **Copy**
     button; editable **Label** / **Description**, **App ID** / **Domain ID**, and **Provider**
     (its own editable `keyProvider` combo — **not** the add dialog's `inProvider`; see the
@@ -698,8 +698,10 @@ Its notes and session log: `zoxweb-datastore/h2p-datastore/SHIRO-DS.md`.
 > `IdentifierRoundTripTest`, `AddressRoundTripTest`, `AssistantStorageTest`,
 > `SessionAICredentialSourceTest`, `AppIDDefaultTest` (the domain + app-id filters directly), and
 > **`DataStoreSetupFlowTest`** on a real installation set up by `H2PSetup` (vault + encrypted H2
-> file + `shiro.ini`, access check on, manager attached to the INI realm — the only suite where
-> the subject binding and the app login gate are enforced). Subjects the mock-store suites need
+> file + `shiro.ini`, access check on, manager attached to the INI realm — the suites where
+> the subject binding and the app login gate are enforced), and **`StoreHardeningTest`** on the
+> same kind of installation (the chat delete cascade and the duplicate identifier, two rules the
+> mock store cannot exercise; 2026-10-27). Subjects the mock-store suites need
 > come from `TestSecurity.createUser`, which creates and grants `app_user` as sign-up does.
 > Surefire cannot fetch its provider offline here; run them per class in IntelliJ (10 classes,
 > 79 tests on 2026-10-21), or through the `.claude/tools` launcher with the app classpath (module
@@ -802,7 +804,9 @@ and read back in clear by its owner):
 - `changeAPIDetails(key, label, description, domainID, appID, provider, baseURI, authScheme,
   headerName)` — updates the key in place via `updateCredential`. Unlike create it **sets**
   blanks (passing empty clears label/description) and **rewrites** the metadata properties every
-  save; when both `domainID`/`appID` are non-blank **and the key is external** it records them as
+  save — a blank or null value **removes** the entry (`putOrRemove`, 2026-10-27; it used to write
+  `""`, a provider the assistant could not resolve any better than a missing one); when both
+  `domainID`/`appID` are non-blank **and the key is external** it records them as
   the vendor properties (invalid pair → thrown); an internal key's scope is not editable.
 - `isExternalKey(key)` / `providerOf(key)` / `baseUrlOf(key)` / `authTypeOf(key)` /
   `headerNameOf(key)` / `vendorDomainOf(key)` / `vendorAppOf(key)` — read the metadata back off
@@ -824,7 +828,7 @@ re-verifying the round-trip on the H2P datastore.)*
 - `changeAddressDetails(NVGenericMap)` — persists after an in-place mutation. Guarded: the map
   must be in the stored list (identity check), else throws `"Address not found"`.
 - `deleteAddress(NVGenericMap)` — removes by reference and persists.
-  All throw `"Not Logged in"` when signed out.
+  All throw `"Not signed in"` when signed out (the one guard, `requireSignedIn`, 2026-10-27).
 
 Account data (backed by `DomainSecurityManager`, keyed off the signed-in subject):
 - `getAllPrincipalIDForLoggedInUser()` — identifiers, via
@@ -832,9 +836,14 @@ Account data (backed by `DomainSecurityManager`, keyed off the signed-in subject
 - `getAllCredentialForLoggedInUser()` — credentials, via `lookupAllPrincipalCredentials(principalID)`.
 - `getAllCredentialForUserByType(CredentialInfo.Type)` — credentials of one type, via
   `lookupCredentialsBySubjectGUID(subjectIdentifier.getSubjectGUID(), type)`; guards both null args.
-- `addIdentifier` — delegates straight to `addPrincipalID`; the Session-side blank/duplicate
-  guards are currently **commented out** (see *Needed fixes*).
-- `removeIdentifier` — rejects a `null` principal (`"Identifier cannot be empty"`), then calls
+- `addIdentifier` — the signed-in guard, then `addPrincipalID`; validation is the manager's (a
+  blank is `"Invalid principal ID: …"`, one already in use — by any subject — is
+  `"Principal ID already exists: …"`, backed by the store's unique index), so the session adds no
+  guard of its own (the commented-out ones went on 2026-10-27; `StoreHardeningTest` pins the
+  duplicate on a real store, the mock cannot refuse one).
+- `removeIdentifier` — rejects a `null` principal (`"Identifier cannot be empty"`), the signed-in
+  guard, then `"Cannot remove the only identifier"` when the subject has one left (the manager
+  refuses that too, under a row lock, as a bare `false` → `"Could not remove identifier"`), then
   `deletePrincipalID`. If you remove the identifier you logged in as, it **repoints `principalID`**
   to a survivor so credential lookups keep working.
 - `changePassword` — verifies the current password, validates the new one, then updates the
@@ -921,13 +930,15 @@ otherwise show the insert time forever. Stamping only on update (not insert) kee
 update from landing a millisecond apart on a fresh row. See the timestamp note in
 `ai-model/CLAUDE.md`.
 
-> **`deleteChat` orphans children.** It calls `ds.delete(chat, false)`, and `withReference=false`
-> means H2P deletes the chat row plus the cascading join rows but **not** the child entities — the
-> `ai_message` / `ai_request` / `ai_response` rows stay in the database indefinitely. Note
-> `deleteProviderConfig` passes `true` — the two are inconsistent, deliberately or not; settle it
-> once the cascade semantics are confirmed.
+> **Every delete cascades** (`withReference=true` on all four; since 2026-10-27 for chats and
+> skills). The H2P cascade is DB-driven: it collects the stored row's references before deleting
+> it and follows them down, keeping any child another row still references, so a deleted chat
+> takes its `ai_message` / `ai_request` / `ai_response` (and attachment) rows with it. Until that
+> day `deleteChat` passed `false` and every message row of a deleted chat stayed in the database.
+> `StoreHardeningTest` pins the cascade on a real `H2PSetup` installation (the mock store has no
+> references to follow).
 >
-> **Tests** (`AssistantStorageTest`, 9 green, over a `@TempDir` H2P store): insert assigns GUID +
+> **Tests** (`AssistantStorageTest`, 9 green, over `TestSecurity`'s mock store): insert assigns GUID +
 > owner, update stamps `lastTimeUpdated`, save is an upsert by GUID (an edit must not duplicate
 > the row), skills mirror chats, signed-out reads return empty, and — for provider configs — a
 > full field round-trip, **one key backing several configs**, upsert-by-GUID, and delete.
@@ -1123,19 +1134,24 @@ ordered by priority.
   needs it to enable the key and hand it back for discovery.
 - ~~**`loginAPIKey` can authenticate with a null principal**~~ — **fixed.** Zero identifiers now
   clears `subjectIdentifier` and throws instead of flipping `authenticated`.
-- **Clipboard secret never cleared** (`SubjectPanel`, the **Copy** actions). A copied API-key
-  secret sits on the clipboard indefinitely. Add an auto-clear after a timeout (Swing `Timer`,
-  ~60 s), guarded to only clear if the clipboard still holds that value.
+- ~~**Clipboard secret never cleared**~~ — **fixed 2026-10-27.** Both **Copy** actions of
+  `SubjectPanel` go through gui-audio's `GUIUtil.copyToClipboard(text, SECRET_CLIPBOARD_MILLIS)`:
+  a one-shot Swing `Timer` wipes the clipboard after 60 s, and only when it still holds exactly
+  that secret (`clearClipboardIfHolding`; a later copy by the user is left alone). The tooltip
+  says so. `GUIUtilClipboardTest` pins the guard on a private clipboard.
 - **`char[]` secrets are never zeroed** (`LoginPanel`/`SubjectPanel`). Wipe the arrays
   (`Arrays.fill(pwd, '\0')`) in a `finally`. Partial only: `Session` immediately does `new
   String(secret)` for the backend API, and that immutable copy can't be wiped — so this shrinks
   the exposure window but can't close it without a `char[]`-accepting backend.
-- **Inconsistent signed-in guards in `Session`.** Some methods guard on `principalID`, others on
-  `subjectIdentifier`. Standardize on `subjectIdentifier`.
-- **Identifier validation was dropped.** `addIdentifier`'s blank/duplicate guards are commented out
-  and `removeIdentifier`'s last-identifier guard was removed, so duplicates can be added and the
-  only identifier can be (attempted to be) removed — it fails now only because the backend refuses.
-  Restore the guards (or confirm the backend enforces both).
+- ~~**Inconsistent signed-in guards in `Session`.**~~ — **fixed 2026-10-27.** One private
+  `requireSignedIn()` (both fields, one wording `"Not signed in"`) replaced the twelve inline
+  checks and their three spellings; the tests that pinned `"Not Logged in"` follow.
+- ~~**Identifier validation was dropped.**~~ — **settled 2026-10-27.** The backend enforces both:
+  `addPrincipalID` refuses a blank and a duplicate (store unique index), `deletePrincipalID`
+  refuses the last principal in a transaction. The commented-out guards are deleted;
+  `addIdentifier` gained the signed-in guard it lacked and `removeIdentifier` a readable
+  `"Cannot remove the only identifier"` ahead of the manager's refusal. `StoreHardeningTest`
+  covers the duplicate on a real store.
 - ~~**`showEditAPIKey` calls `setText(null)`**~~ — gone; no `setText(null)` remains in `SubjectPanel`
   (verified 2026-10-26).
 - ~~**External favicon fetch on the login screen** (`LoginPanel`)~~ — gone with the redesign: the
@@ -1152,15 +1168,13 @@ ordered by priority.
   never displayed. Both call sites read through `comboText(...)`, which takes the **editor's**
   item when the combo is editable, so a typed custom provider is not dropped when you click
   Save without committing.
-- **Deleting a chat orphans its message rows.** `AssistantStorage.deleteChat` passes
-  `withReference=false` to `ds.delete`, so H2P removes the chat row and the join rows but never
-  the child entities — every `ai_message` / `ai_request` / `ai_response` row survives, forever.
-  Not fixed; confirm the cascade semantics before flipping it to `true`.
-- **Clearing the Provider field still unlinks a key from the assistant** — but no longer
-  silently. `changeAPIDetails` writes `""` rather than removing the property, `resolveType("")`
-  returns null, `AIAPIProvider.create` returns null, and `reloadProviders` skips the key while
-  `assistant-enabled` stays `true`. The skip is now **reported** at login ("unrecognized provider
-  type"), so the symptom is explained; writing `""` in the first place is the part still to fix.
+- ~~**Deleting a chat orphans its message rows.**~~ — **fixed 2026-10-27**: `deleteChat` passes
+  `withReference=true`; the cascade semantics were read off `H2PDataStore.deleteByGuid` (DB-driven,
+  shared children kept) and `StoreHardeningTest` pins the result on a real store.
+- **Clearing the Provider field unlinks a key from the assistant** — by design, and reported:
+  `reloadProviders` says "unrecognized provider type" at login while `assistant-enabled` stays
+  `true`. Since 2026-10-27 `changeAPIDetails` removes the entry instead of writing `""`, so the
+  key reads as *no provider* rather than an empty one; same behaviour, clean property bag.
 - ~~**Every registration failure reads "That username is already taken"**~~ — **fixed 2026-10-05**:
   only the duplicate-principal failure maps to it; anything else reads
   `"Registration failed: <root cause>"` (which is how the ≥ 8-character principal rule showed up).

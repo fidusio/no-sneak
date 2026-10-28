@@ -188,11 +188,11 @@ public class AddressRoundTripTest {
         Session s = new Session(dsm);   // never logged in
 
         assertTrue(s.getAllAddresses().isEmpty(), "getAllAddresses returns empty when signed out");
-        assertEquals("Not Logged in",
+        assertEquals("Not signed in",
                 assertThrows(AccessSecurityException.class, () -> s.addAddress(address("H", "1 St", "NYC"))).getMessage());
-        assertEquals("Not Logged in",
+        assertEquals("Not signed in",
                 assertThrows(AccessSecurityException.class, () -> s.changeAddressDetails(address("H", "1 St", "NYC"))).getMessage());
-        assertEquals("Not Logged in",
+        assertEquals("Not signed in",
                 assertThrows(AccessSecurityException.class, () -> s.deleteAddress(address("H", "1 St", "NYC"))).getMessage());
     }
 }

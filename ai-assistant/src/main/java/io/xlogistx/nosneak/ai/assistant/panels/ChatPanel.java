@@ -2,8 +2,10 @@ package io.xlogistx.nosneak.ai.assistant.panels;
 
 import io.xlogistx.gui.*;
 import io.xlogistx.nosneak.ai.AIProvider;
+import io.xlogistx.nosneak.ai.assistant.AIAPIProvider;
 import io.xlogistx.nosneak.ai.assistant.AssistantCallback;
 import io.xlogistx.nosneak.ai.assistant.AssistantContext;
+import io.xlogistx.nosneak.ai.assistant.ModelFilter;
 import io.xlogistx.nosneak.ai.assistant.AssistantMDDecoder;
 import io.xlogistx.nosneak.ai.assistant.AssistantUtil;
 import io.xlogistx.nosneak.ai.model.*;
@@ -31,6 +33,8 @@ import java.util.function.Consumer;
 
 import static io.xlogistx.nosneak.ai.assistant.AssistantUtil.chatBubble;
 import static io.xlogistx.nosneak.ai.assistant.panels.PanelSupport.fillModels;
+import static io.xlogistx.nosneak.ai.assistant.panels.PanelSupport.fillProviders;
+import static io.xlogistx.nosneak.ai.assistant.panels.PanelSupport.providerRenderer;
 import static io.xlogistx.nosneak.ai.assistant.panels.PanelSupport.showErrorDialog;
 
 /**
@@ -63,10 +67,19 @@ public class ChatPanel extends JPanel {
     private JScrollPane transcriptScroll;
     private JTextArea composer;
 
-    private JComboBox<String> modelSelector;
-    private JTextField modelFilterField;
+    /** The model combo is its own filter (2026-10-28, gui-audio {@code FilterComboBox}): typing narrows it through {@link #modelMatcher}. */
+    private FilterComboBox<String> modelSelector;
+    /** The chat's model-filter grammar, applied to what is typed in {@link #modelSelector}. */
+    private final ModelFilter modelMatcher = new ModelFilter();
+    private JComboBox<String> providerSelector;
+    /** True while the provider combo is being set from the chat, so the pick handler stays quiet. */
+    private boolean syncingProvider;
 
     private JButton sendButton;
+    /** Empties the composer (2026-10-27): the X inside the input box, shown only while it holds text. */
+    private JButton clearButton;
+    /** Component name of {@link #clearButton}, for tests. */
+    public static final String CLEAR_PROMPT = "clear-prompt";
     private JButton attachSkillButton;
     private final List<AISkill> pendingSkills = new ArrayList<>();
 
@@ -221,13 +234,70 @@ public class ChatPanel extends JPanel {
         history.refreshHistory();
     }
 
-    /** Repopulates the provider combos of the New chat / Edit chat forms. */
+    /** Repopulates the provider combos: the New chat / Edit chat forms' and the conversation's. */
     public void refreshProviderCombos() {
         history.refreshProviderCombos();
+        syncProviderSelector(ctx.currentChat());
     }
 
     public void clearModels() {
         if (modelSelector != null) modelSelector.removeAllItems();
+        if (providerSelector != null) {
+            syncingProvider = true;
+            try {
+                providerSelector.removeAllItems();
+            } finally {
+                syncingProvider = false;
+            }
+        }
+    }
+
+    /**
+     * Fills the conversation's provider combo and selects the chat's provider (2026-10-27) without
+     * running {@link #onProviderPicked()}. A chat bound to a provider that is not linked any more
+     * shows no selection, so a stale name cannot sit there looking valid.
+     */
+    private void syncProviderSelector(AIChat chat) {
+        if (providerSelector == null) return;
+        syncingProvider = true;
+        try {
+            fillProviders(ctx, providerSelector);
+            AIProvider p = chat != null ? ctx.lookupProvider(chat.getProvider()) : null;
+            providerSelector.setSelectedItem(p != null ? p.getID() : null);
+        } finally {
+            syncingProvider = false;
+        }
+    }
+
+    /**
+     * The conversation's provider combo (2026-10-27, "can I switch between them"): the next
+     * message goes to the picked provider, in this chat. The model list refills with that
+     * provider's models and lands on its default model (else the first); the chat is saved with
+     * the new binding; the facts line under the title follows. The transcript is untouched, and
+     * whether the new provider sees it stays the <i>Send history</i> box's business.
+     * <p>
+     * Whatever was typed to narrow the old provider's list goes with the refill (2026-10-28: the
+     * filter lives in the combo now and {@code removeAllItems} clears it), so the new provider's
+     * list is never hidden behind a pattern meant for the old one.
+     */
+    /** The chat's combo holds every discovered model; what shows is the matcher's call, blank text = chat models. */
+    private static final java.util.function.Predicate<String> ALL_MODELS = _ -> true;
+
+    private void onProviderPicked() {
+        if (syncingProvider) return;
+        AIChat chat = ctx.currentChat();
+        String ref = (String) providerSelector.getSelectedItem();
+        if (chat == null || ref == null || ref.equals(chat.getProvider())) return;
+        chat.setProvider(ref);
+        fillModels(ctx, modelSelector, ref, ALL_MODELS);
+        String preferred = ctx.lookupProvider(ref) instanceof AIAPIProvider api ? api.getConfig().getDefaultModel() : null;
+        if (preferred != null && !preferred.isBlank()) modelSelector.setSelectedItem(preferred);
+        else if (modelSelector.getItemCount() > 0) modelSelector.setSelectedIndex(0);
+        else modelSelector.setSelectedItem(null);
+        Object model = modelSelector.getSelectedItem();
+        chat.setModel(model == null || model.toString().isBlank() ? null : model.toString());
+        BackgroundTask.runCatching(this, null, () -> ctx.saveChat(chat), null);
+        SwingUtilities.invokeLater(this::showConversation); // after the combo's event: the page is re-framed
     }
 
     public void dropPendingSkill(AISkill skill) {
@@ -289,26 +359,20 @@ public class ChatPanel extends JPanel {
         transcript = new JPanel(new MigLayout("wrap 1, insets 14, gapy 10", "[grow]"));
         transcript.setBackground(UITokens.surface());
 
-        modelSelector = new JComboBox<>();
-        modelSelector.setEditable(true);
-
-        modelFilterField = PanelBuilder.textField("Filter models", 12);
-        modelFilterField.putClientProperty("JTextField.leadingIcon", new IconUtil.SearchIcon(14));
-        modelFilterField.setToolTipText(
-                "Narrow the model list: gpt-4*, o3, !*preview*  (bare words match anywhere, ! excludes, blank hides non-chat models)");
-        modelFilterField.getDocument().addDocumentListener(new DocumentListener() {
-            public void insertUpdate(DocumentEvent e) {
-                applyModelFilter();
-            }
-
-            public void removeUpdate(DocumentEvent e) {
-                applyModelFilter();
-            }
-
-            public void changedUpdate(DocumentEvent e) {
-                applyModelFilter();
-            }
+        modelSelector = new FilterComboBox<>();
+        modelSelector.setFreeText(true); // a name the list does not offer is kept as typed
+        modelSelector.setMatcher((typed, m) -> {
+            if (!typed.trim().equals(modelMatcher.getPatterns())) modelMatcher.setPatterns(typed);
+            return modelMatcher.accepts(m);
         });
+        modelSelector.setToolTipText("The model the next message goes to. Type to narrow the list: gpt-4*, o3, !*preview*  "
+                + "(bare words match anywhere, ! excludes, blank hides non-chat models); a name the list does not offer is kept as typed");
+
+        providerSelector = new JComboBox<>();
+        providerSelector.setEditable(false);
+        providerSelector.setRenderer(providerRenderer(ctx));
+        providerSelector.setToolTipText("The assistant the next message goes to. Switching keeps this chat and its transcript; the model list follows");
+        providerSelector.addActionListener(_ -> onProviderPicked());
 
         sendFullHistory.setToolTipText(
                 "Checked: each request carries the whole conversation. Unchecked: only the new message is sent.");
@@ -348,13 +412,16 @@ public class ChatPanel extends JPanel {
         headActions.add(chatToPDF);
         headActions.add(newChat);
 
+        JLabel providerLabel = new JLabel("Provider");
+        providerLabel.setForeground(UITokens.muted());
         JLabel modelLabel = new JLabel("Model");
         modelLabel.setForeground(UITokens.muted());
-        options = new JPanel(new MigLayout("insets 0, gapx 8", "[][][200!]push[][]"));
+        options = new JPanel(new MigLayout("insets 0, gapx 8", "[][][][]push[][]"));
         options.setOpaque(false);
+        options.add(providerLabel);
+        options.add(providerSelector, "wmin 160");
         options.add(modelLabel);
-        options.add(modelSelector, "wmin 220");
-        options.add(modelFilterField, "growx");
+        options.add(modelSelector, "wmin 320");
         options.add(sendFullHistory);
         options.add(autoCopyCode);
 
@@ -411,6 +478,21 @@ public class ChatPanel extends JPanel {
         addSkillHolder.setOpaque(false);
         addSkillHolder.add(attachButtons, BorderLayout.NORTH);
 
+        // the X at the right end of the input box, the + button's twin (2026-10-27)
+        clearButton = new JButton(new IconUtil.CancelIcon(16));
+        clearButton.setName(CLEAR_PROMPT);
+        clearButton.putClientProperty("JButton.buttonType", "toolBarButton");
+        clearButton.setFocusable(false);
+        clearButton.setMargin(new Insets(0, 0, 0, 0));
+        clearButton.setPreferredSize(new Dimension(28, 28));
+        clearButton.setToolTipText("Clear the prompt (what is attached stays)");
+        clearButton.setVisible(false);
+        clearButton.addActionListener(_ -> clearComposer());
+
+        JPanel clearHolder = new JPanel(new BorderLayout());
+        clearHolder.setOpaque(false);
+        clearHolder.add(clearButton, BorderLayout.NORTH);
+
         JPanel inputBox = new JPanel(new BorderLayout(4, 0));
         inputBox.setBackground(composer.getBackground());
         inputBox.setBorder(BorderFactory.createCompoundBorder(
@@ -418,6 +500,7 @@ public class ChatPanel extends JPanel {
                 BorderFactory.createEmptyBorder(4, 6, 4, 4)));
         inputBox.add(addSkillHolder, BorderLayout.WEST);
         inputBox.add(composerScroll, BorderLayout.CENTER);
+        inputBox.add(clearHolder, BorderLayout.EAST);
 
         sendButton = UITokens.primary(new JButton("Send"));
         sendButton.addActionListener(_ -> onSend());
@@ -440,15 +523,15 @@ public class ChatPanel extends JPanel {
 
         composer.getDocument().addDocumentListener(new DocumentListener() {
             public void insertUpdate(DocumentEvent e) {
-                composerBar.revalidate();
+                composerChanged(composerBar);
             }
 
             public void removeUpdate(DocumentEvent e) {
-                composerBar.revalidate();
+                composerChanged(composerBar);
             }
 
             public void changedUpdate(DocumentEvent e) {
-                composerBar.revalidate();
+                composerChanged(composerBar);
             }
         });
 
@@ -458,13 +541,16 @@ public class ChatPanel extends JPanel {
         surface.add(composerBar, BorderLayout.SOUTH);
     }
 
-    private void applyModelFilter() {
-        Object selected = modelSelector.getSelectedItem();
-        ctx.setModelFilter(modelFilterField.getText());
+    /** The composer's text changed: the bar grows or shrinks with it, the X shows only while there is text. */
+    private void composerChanged(JComponent composerBar) {
+        clearButton.setVisible(!composer.getText().isEmpty());
+        composerBar.revalidate();
+    }
 
-        AIChat chat = ctx.currentChat();
-        fillModels(ctx, modelSelector, chat != null ? chat.getProvider() : null);
-        if (selected != null) modelSelector.setSelectedItem(selected);
+    /** The X in the input box (2026-10-27): drops the typed text only — chips and attachments stay — and keeps the focus in the composer. */
+    private void clearComposer() {
+        composer.setText("");
+        composer.requestFocusInWindow();
     }
 
     private void refreshPrompt() {
@@ -474,7 +560,8 @@ public class ChatPanel extends JPanel {
         }
 
         AIChat chat = ctx.currentChat();
-        fillModels(ctx, modelSelector, chat != null ? chat.getProvider() : null);
+        syncProviderSelector(chat);
+        fillModels(ctx, modelSelector, chat != null ? chat.getProvider() : null, ALL_MODELS);
 
         transcript.removeAll();
         if (chat != null) {
@@ -483,12 +570,12 @@ public class ChatPanel extends JPanel {
                 AIMessage m = (AIMessage) e;
                 AIRequest req = m.getAIRequest();
                 if (req != null && req.getContent() != null) {
-                    addMessage(req.getContent(), true, null, null, null);
+                    addMessage(req.getContent(), true, null, null, null, null);
                     addAttachments(req);
                 }
                 AIResponse res = m.getAIResponse();
                 if (res != null && res.getContent() != null)
-                    addMessage(res.getContent(), false, latencyOf(res), inTokensOf(res), outTokensOf(res));
+                    addMessage(res.getContent(), false, history.replyMeta(res), latencyOf(res), inTokensOf(res), outTokensOf(res));
             }
         }
         // removeAll took the conditional entries with it; put the still-pending ones back last
@@ -563,7 +650,11 @@ public class ChatPanel extends JPanel {
             }
             if (res != null && res.getContent() != null) {
                 sb.append("### Assistant");
-                if (res.getModel() != null) sb.append(" · ").append(res.getModel());
+                String who = ChatHistoryModel.replyMeta(ref -> {
+                    AIProvider p = ctx.lookupProvider(ref);
+                    return p != null ? p.getName() : null;
+                }, res);
+                if (who != null) sb.append(" · ").append(who);
                 sb.append("\n\n").append(res.getContent().trim()).append("\n\n");
             }
         }
@@ -625,7 +716,7 @@ public class ChatPanel extends JPanel {
         // the pending entries become the sent turn: out with the conditional views, in with the
         // message and its attachments as part of the chat
         removePendingViews();
-        addMessage(text, true, null, null, null);
+        addMessage(text, true, null, null, null, null);
         addAttachments(sources);
 
         composer.setText("");
@@ -676,11 +767,11 @@ public class ChatPanel extends JPanel {
 
         final AIChat sending = chat;
         sendButton.setEnabled(false);
-        AssistantCallback callback = new AssistantCallback(ctx, sending, msg,
+        AssistantCallback callback = new AssistantCallback(ctx, sending, msg, p.getID(),
                 resp -> {
                     sendButton.setEnabled(true);
                     if (sending == ctx.currentChat() && resp.getContent() != null && !resp.getContent().isEmpty()) {
-                        addMessage(resp.getContent(), false, latencyOf(resp), inTokensOf(resp), outTokensOf(resp));
+                        addMessage(resp.getContent(), false, history.replyMeta(resp), latencyOf(resp), inTokensOf(resp), outTokensOf(resp));
                         if (autoCopyCode.isSelected()) copyCode(resp.getContent());
                     }
                 }, err -> {
@@ -790,7 +881,8 @@ public class ChatPanel extends JPanel {
         }
     }
 
-    private void addMessage(String response, boolean user, Integer latency, Integer inTokens, Integer outTokens) {
+    /** @param who the reply's {@code provider · model} line ({@link ChatHistoryModel#replyMeta}); null for a user bubble */
+    private void addMessage(String response, boolean user, String who, Integer latency, Integer inTokens, Integer outTokens) {
         Map<String, Runnable> saveAs = null;
         if (!user && !saveTargets.isEmpty()) {
             saveAs = new LinkedHashMap<>();
@@ -807,10 +899,12 @@ public class ChatPanel extends JPanel {
                 });
             }
         }
-        JComponent bubble = chatBubble(response, user, latency, inTokens, outTokens,
+        // a user bubble carries a copy icon that puts the prompt back in the composer (2026-10-27)
+        JComponent bubble = chatBubble(response, who, user, latency, inTokens, outTokens,
                 user ? null : () -> {
                     if (onSaveAsSkill != null) onSaveAsSkill.accept(response);
-                }, saveAs);
+                }, saveAs,
+                user ? () -> insertIntoComposer(response) : null);
         String cons = user
                 ? "wmin 0, wmax 60%, alignx trailing"
                 : "growx, wmin 0, wmax 92%, alignx leading";
@@ -1369,7 +1463,6 @@ public class ChatPanel extends JPanel {
     public void reset() {
         sendFullHistory.setSelected(false);
         autoCopyCode.setSelected(false);
-        modelFilterField.setText("");
         pendingSkills.clear();
         tickedAreas.clear();
         clearPendingSources();

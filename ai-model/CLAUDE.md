@@ -64,7 +64,10 @@ AIChat  ──has many──▶  AIMessage  ──is──▶  { AIRequest, AIRe
   `providerSessionID`. There is **no `skillsPrompt` field** — the skill text travels as the
   separate `String skill` argument on `AIProvider.send`/`asyncSend`, so it is never persisted
   with the request. Per-call tuning can ride the inherited `properties` bag.
-- **`AIResponse`** — `model`, `content`, `correlationID`, `providerSessionID`, **`inTokens`,
+- **`AIResponse`** — `model`, **`provider`** (2026-10-27: the config id the request went to,
+  stamped by the assistant's callback, so a transcript whose chat switched providers says who
+  answered what; null on rows saved before, which read as their model alone), `content`,
+  `correlationID`, `providerSessionID`, **`inTokens`,
   `outTokens`** (2026-09-23: the single `tokens` param is gone; `getTokens()` is now their sum,
   `AssistantCallback` fills them from the payload's `prompt_tokens` / `completion_tokens` or
   their Anthropic / Gemini spellings), `latency`. The getters are **null-safe by construction**:
@@ -209,7 +212,7 @@ drops the nested entity on JSON round-trip.
   `saveProviderConfig` / `deleteProviderConfig` / `getProviderConfig` / `getAllProviderConfigs`,
   and `saveCapture` / `deleteCapture` / `getCapture` / `getAllCaptures`.
   `no-sneak-app`'s `AssistantStorage` implements it against the H2P `APIDataStore` (owner-scoped
-  by subjectGUID), branching insert-vs-update on `getGUID()`. **`getAllCaptures` is the one
+  by subjectGUID), branching insert-vs-update on `getGUID()`. Its deletes cascade (`withReference=true`, 2026-10-27), so a deleted chat takes its turns with it. **`getAllCaptures` is the one
   projected read** — it omits the `image` column (see `AICapture` above), so it is `getCapture`
   that returns a saveable row.
 - **`AIException`** — checked, with a `Kind` (`AUTH`, `RATE_LIMIT`, `CONTEXT_OVERFLOW`,

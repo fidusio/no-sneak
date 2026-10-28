@@ -10,6 +10,7 @@ public class AIResponse extends PropertyImpl {
 
     public enum Param implements GetNVConfig {
         MODEL(NVConfigManager.createNVConfig("model", "the ai model for the request", "Model", false, true, String.class)),
+        PROVIDER(NVConfigManager.createNVConfig("provider", "the provider (config id) that answered", "Provider", false, true, String.class)),
         CONTENT(NVConfigManager.createNVConfig("content", "the content the ai sends back", "Content", false, true, String.class)),
         CORRELATION_ID(NVConfigManager.createNVConfig("correlation_id", "id to connect response with request", "CorrelationID", false, true, String.class)),
         PROVIDER_SESSION_ID(NVConfigManager.createNVConfig("provider_session_id", "id for stateful ai for context", "ProviderSessionID", false, true, String.class)),
@@ -46,6 +47,18 @@ public class AIResponse extends PropertyImpl {
 
     public void setModel(String model) {
         setValue(Param.MODEL, model);
+    }
+
+    /**
+     * The provider the request went to (its config id), recorded with the reply since 2026-10-27
+     * so a transcript that switched providers says who answered what; null on older rows.
+     */
+    public String getProvider() {
+        return lookupValue(Param.PROVIDER);
+    }
+
+    public void setProvider(String provider) {
+        setValue(Param.PROVIDER, provider);
     }
 
     public String getContent() {

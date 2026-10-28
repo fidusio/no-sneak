@@ -5,7 +5,7 @@ import io.xlogistx.gui.IconUtil;
 import io.xlogistx.gui.BackgroundTask;
 import io.xlogistx.gui.MDToPDF;
 import io.xlogistx.gui.MDViewerPanel;
-import io.xlogistx.gui.PDFViewerPanel;
+import io.xlogistx.gui.pdf.PDFViewerPanel;
 import org.zoxweb.shared.util.NVGenericMap;
 
 import javax.swing.*;
@@ -14,6 +14,9 @@ import java.util.Map;
 import java.util.concurrent.Callable;
 
 public class AssistantUtil {
+
+    /** Component name of the user bubble's copy icon (puts the prompt back in the composer). */
+    public static final String REUSE_PROMPT = "reuse-prompt";
 
     public static JComponent chatBubble(NVGenericMap response, boolean user, Integer latency,
                                         Integer inTokens, Integer outTokens) {
@@ -45,8 +48,30 @@ public class AssistantUtil {
     public static JComponent chatBubble(String markdown, boolean user, Integer latency,
                                         Integer inTokens, Integer outTokens, Runnable onSaveAsSkill,
                                         Map<String, Runnable> saveAs) {
+        return chatBubble(markdown, null, user, latency, inTokens, outTokens, onSaveAsSkill, saveAs);
+    }
+
+    /**
+     * @param who the reply's {@code provider · model} (2026-10-27, the conversation's provider
+     *            switch), shown first on the detail line; null for a user bubble or when unknown
+     */
+    public static JComponent chatBubble(String markdown, String who, boolean user, Integer latency,
+                                        Integer inTokens, Integer outTokens, Runnable onSaveAsSkill,
+                                        Map<String, Runnable> saveAs) {
+        return chatBubble(markdown, who, user, latency, inTokens, outTokens, onSaveAsSkill, saveAs, null);
+    }
+
+    /**
+     * @param onReuse what a click on the user bubble's copy icon does (2026-10-27): the host puts
+     *                the prompt back in the composer so it can be sent again. User bubbles only;
+     *                null = no icon. The button is named {@value #REUSE_PROMPT} for tests.
+     */
+    public static JComponent chatBubble(String markdown, String who, boolean user, Integer latency,
+                                        Integer inTokens, Integer outTokens, Runnable onSaveAsSkill,
+                                        Map<String, Runnable> saveAs, Runnable onReuse) {
 
         boolean targets = !user && saveAs != null && !saveAs.isEmpty();
+        boolean reuse = user && onReuse != null && markdown != null;
         MDViewerPanel mdViewerPanel = new MDViewerPanel();
         mdViewerPanel.setMarkdown(markdown);
 
@@ -64,9 +89,9 @@ public class AssistantUtil {
 
         Bubble bubble = new Bubble(bg);
         bubble.add(pane, BorderLayout.CENTER);
-        String detail = user ? null : detailLine(latency, inTokens, outTokens);
-        if (detail != null || (!user && onSaveAsSkill != null) || targets) {
-            JPanel south = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        String detail = user ? null : detailLine(who, latency, inTokens, outTokens);
+        if (detail != null || (!user && onSaveAsSkill != null) || targets || reuse) {
+            JPanel south = new JPanel(new FlowLayout(user ? FlowLayout.RIGHT : FlowLayout.LEFT, 8, 0));
             south.setOpaque(false);
             south.setBorder(BorderFactory.createEmptyBorder(0, 12, 6, 12));
             if (detail != null) {
@@ -97,7 +122,18 @@ public class AssistantUtil {
                     south.add(saveAsTarget);
                 }
             }
-            if (markdown != null) {
+            if (reuse) {
+                JButton reusePrompt = new JButton(new IconUtil.CopyIcon(16, Color.WHITE));
+                reusePrompt.setName(REUSE_PROMPT);
+                reusePrompt.putClientProperty("JButton.buttonType", "borderless");
+                reusePrompt.setOpaque(false);
+                reusePrompt.setContentAreaFilled(false);
+                reusePrompt.setFocusable(false);
+                reusePrompt.setToolTipText("Put this prompt back in the composer to send it again");
+                reusePrompt.addActionListener(_ -> onReuse.run());
+                south.add(reusePrompt);
+            }
+            if (!user && markdown != null) {
                 JButton copyMarkdown = new JButton(new IconUtil.CopyIcon(16));
                 copyMarkdown.putClientProperty("JButton.buttonType", "borderless");
                 copyMarkdown.setFont(copyMarkdown.getFont().deriveFont(copyMarkdown.getFont().getSize2D() - 2f));
@@ -183,8 +219,17 @@ public class AssistantUtil {
      * {@code 120 ms · 57 in / 203 out tokens}; a missing or zero part is left out, all missing → null.
      */
     static String detailLine(Integer latency, Integer inTokens, Integer outTokens) {
+        return detailLine(null, latency, inTokens, outTokens);
+    }
+
+    /** {@code who · latency · tokens}: the reply's provider · model leads when given. */
+    static String detailLine(String who, Integer latency, Integer inTokens, Integer outTokens) {
         StringBuilder sb = new StringBuilder();
-        if (latency != null && latency > 0) sb.append(latency).append(" ms");
+        if (who != null && !who.isBlank()) sb.append(who.trim());
+        if (latency != null && latency > 0) {
+            if (!sb.isEmpty()) sb.append(" · ");
+            sb.append(latency).append(" ms");
+        }
         boolean in = inTokens != null && inTokens > 0;
         boolean out = outTokens != null && outTokens > 0;
         if (in || out) {

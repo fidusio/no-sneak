@@ -13,6 +13,7 @@ import java.awt.*;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.function.Predicate;
 
 public final class PanelSupport {
 
@@ -73,20 +74,25 @@ public final class PanelSupport {
         box.setSelectedItem(p != null ? p.getID() : ref);
     }
 
+    /** The provider's chat models ({@link ModelFilter#isChatModel}): the History forms' and the Providers form's combos. */
     public static void fillModels(AssistantContext ctx, JComboBox<String> box, String providerRef) {
-        fillModels(ctx, box, providerRef, true);
+        fillModels(ctx, box, providerRef, ModelFilter::isChatModel);
     }
 
+    /**
+     * Refills {@code box} with the provider's cached catalog, keeping the models {@code accept}
+     * says (2026-10-28: the conversation's combo takes everything and filters as the subject
+     * types, so the rule is the caller's). An unknown provider or no catalog leaves it empty.
+     */
     public static void fillModels(AssistantContext ctx, JComboBox<String> box, String providerRef,
-                                  boolean sessionFilter) {
+                                  Predicate<String> accept) {
         box.removeAllItems();
         AIProvider p = ctx.lookupProvider(providerRef);
         if (p == null) return;
         try {
             String[] models = p.getModelCatalog().models();
             if (models != null) for (String m : models) {
-                if (sessionFilter ? ctx.getModelFilter().accepts(m) : ModelFilter.isChatModel(m))
-                    box.addItem(m);
+                if (accept.test(m)) box.addItem(m);
             }
         } catch (AIException _) {
         }

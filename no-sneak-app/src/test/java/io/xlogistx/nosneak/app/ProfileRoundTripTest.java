@@ -61,7 +61,7 @@ public class ProfileRoundTripTest {
         AccessSecurityException ex = assertThrows(AccessSecurityException.class,
                 () -> s.saveProfile(map("firstName", "Jane")),
                 "saving a profile with no signed-in subject must be refused");
-        assertEquals("Not Logged in", ex.getMessage());
+        assertEquals("Not signed in", ex.getMessage());
     }
 
     @Test

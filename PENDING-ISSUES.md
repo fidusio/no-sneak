@@ -18,7 +18,22 @@ detail lives in the module `CLAUDE.md` files, named below.*
    - Probe library: *Write with the assistant* on an open chat, then *Save as probe* on the reply;
      *Copy to my probes* of `ssh`, Save, and a scan reports the shadow warning;
    - `postgres-tls` against a real PostgreSQL with `ssl = on` (the version needs `trust` auth for
-     the probe's user; otherwise `postgresql-tls-auth-required`, still a completed identification).
+     the probe's user; otherwise `postgresql-tls-auth-required`, still a completed identification);
+   - (2026-10-27, hardening) *Copy* of an API-key secret: the clipboard is blank a minute later
+     unless something else was copied since; a deleted chat leaves no message rows behind on the
+     installation (`StoreHardeningTest` proves it on a fresh store);
+   - (2026-10-27, provider switch) a chat with two linked providers: pick the other one in the
+     conversation's *Provider* combo, Send, and the reply's line reads that provider · model
+     while the earlier replies keep theirs; with *Send history* ticked the new provider answers
+     in context, unticked it sees the new message only;
+   - (2026-10-27, send again) the copy icon at the bottom-right of a past prompt puts its text
+     in the composer (appended after what is already typed) and Send sends it as a new turn;
+     the X at the right end of the input box empties the typed text, leaves the chips, and
+     disappears when the prompt is empty;
+   - (2026-10-28, model combo) type in the Model box: `mini` narrows the drop-down as you type,
+     `gpt*` and `!mini` follow the grammar, `*` shows the embedding and audio models too;
+     arrows + Enter and a mouse click pick, Escape puts the chosen model's name back, and
+     switching provider with text typed shows the other provider's full list.
 2. **Run-through on a display** of the pages not yet tried since the redesign: a stored report
    opened from history, API keys, Providers, a chat with chips, a capture, Profile, Settings
    (Backup and Restore), Access control. Since 2026-10-27 that includes what was re-laid out or
@@ -45,13 +60,8 @@ detail lives in the module `CLAUDE.md` files, named below.*
   that a label or a street is enough.
 - A scan report goes to the assistant as its full JSON (a `/24` is ~53 KB, ~15k tokens); the
   compact `NORMAL` render would need to be stored at scan time. Decide before stores fill up.
-- A copied API-key secret stays on the clipboard; add a guarded auto-clear (~60 s).
-- Hardening, still open (all verified against the code on 2026-10-26): `Session.addIdentifier`'s
-  blank / duplicate guards are commented out and `removeIdentifier` has no last-identifier guard;
-  the signed-in guards in `Session` mix `principalID` and `subjectIdentifier`;
-  `AssistantStorage.deleteChat` deletes without references, so a chat's message, request and
-  response rows survive it; `changeAPIDetails` writes an empty provider rather than removing the
-  property, which unlinks the key from the assistant.
+- `char[]` passwords are never zeroed after use (`UnlockPanel`, `SubjectPanel`); a partial fix
+  only, since `Session` turns them into Strings for the manager.
 - Installations written before 2026-10-21 (vault without super-admin, no `shiro.ini`, old table
   names) are refused by `open`: start fresh or write a migration.
 - PostgreSQL is the next datastore target (Mongo deprecated 2026-10-25; the Mongo branch of
@@ -636,6 +646,101 @@ segments carry tooltips. Tests: gui-audio `ComponentRefTest`, `SegmentedControlT
 `SessionMacVendorsTest` pins the event. Every page rendered headless and read. **Live checks
 owed:** the tooltips appear on hover; the status bar after a real *Sync*; *Save changes* on
 Profile shows *Saved.*; a backup lands as `<db>-backup-<date>.zip`.
+
+**2026-10-27 (later), hardening, uncommitted:** the five items the open list carried under
+*Hardening* are closed. `Session` has one signed-in guard (`requireSignedIn`, checks both
+`subjectIdentifier` and `principalID`, one wording *Not signed in*; the tests that pinned *Not
+Logged in* follow); `addIdentifier` runs it and leaves validation to the manager, which already
+refuses a blank (*Invalid principal ID*) and a duplicate (*Principal ID already exists*, the
+store's unique index) — the commented-out guards are gone; `removeIdentifier` answers *Cannot
+remove the only identifier* ahead of the manager's own row-locked refusal; `changeAPIDetails`
+removes a metadata entry handed a blank instead of writing `""` (`putOrRemove`), so a cleared
+provider reads as absent; `AssistantStorage.deleteChat` (and `deleteSkill`) pass
+`withReference=true` — the H2P cascade is DB-driven and keeps a child another row still
+references, so a deleted chat takes its `ai_message` / `ai_request` / `ai_response` rows with
+it; a copied API-key secret is wiped from the clipboard after 60 s if it is still there (gui-audio
+`GUIUtil.copyToClipboard(text, millis)` on a one-shot Swing `Timer`, `clearClipboardIfHolding`
+guards it; jar reinstalled, reload Maven in IntelliJ). Tests: `StoreHardeningTest` (a real
+`H2PSetup` installation under `target/`: the cascade and the duplicate identifier, two rules the
+mock store cannot exercise), `IdentifierRoundTripTest.addAndRemoveRejectedWhenSignedOut`,
+`APIKeyRoundTripTest.changeApiDetailsRemovesBlankAssistantMetadata`, gui-audio
+`GUIUtilClipboardTest` (3); the seven app classes 58 / 58 through the CLI launcher. Left under
+*Hardening* in the app `CLAUDE.md`: the `char[]` secrets are never zeroed.
+
+**2026-10-27 (evening), switching assistants inside a chat, uncommitted:** the maintainer asked
+"if I have 2 ai assistant can I switch between them" and chose, when asked, a **Provider combo
+in the conversation's options row**, *Send history* keeping its meaning unchanged, and replies
+labelled by provider and model. Built: `ChatPanel` has a Provider combo beside Model
+(`onProviderPicked`: rebind the chat, refill the models, land on the provider's default model,
+save, re-frame the facts line; `syncProviderSelector` fills and selects it from the chat on every
+`refreshPrompt` / `refreshProviderCombos` / `clearModels` under a guard; a provider no longer
+linked shows no selection); `AIResponse.provider` (new param, the config id) is stamped by
+`AssistantCallback`, which now takes the provider id the request goes to; the bubble's detail
+line and the PDF's `### Assistant` heading read `provider · model` (`ChatHistoryModel.replyMeta`:
+name when known, raw reference otherwise, model alone on older rows; `AssistantUtil.detailLine`
+has a leading *who*); invariant 4 of the assistant's *Hard rules* (key + model immutable) is
+dropped. Tests: `ChatHistoryModelTest.replyMeta`, `DetailLineTest.whoAnsweredLeads`; the
+assistant's unit classes 33 / 33. Rendered headless with two linked providers and a chat answered
+by both, then the combo driven: the chat rebinds and lands on the other provider's default
+model. Live check owed above.
+
+**2026-10-27 (evening, later), sending a past prompt again, uncommitted:** the maintainer asked
+for "a copy icon for every past prompt" that, clicked, "insert[s] in the main prompt so I could
+send it again". Built: every user bubble carries one white copy icon at its bottom-right
+(`AssistantUtil.chatBubble` nine-argument form with an `onReuse` runnable, button named
+`AssistantUtil.REUSE_PROMPT`); `ChatPanel.addMessage` wires it to `insertIntoComposer`, the path
+a skill insert and `setComposerText` already use (blank composer replaced, otherwise appended at
+the caret, focus to the composer), so nothing goes out until Send. Reply bubbles are unchanged;
+the Copy / PDF buttons stay on replies only (the user row never built them before and now says
+so in code). Test `ChatBubbleReuseTest` (3); the four bubble classes 17 / 17 through the CLI
+launcher. Rendered headless in both themes: white glyph on the accent bubble, right-aligned
+under the text. Live check owed above.
+
+**2026-10-27 (evening, last), Clear on the composer, uncommitted:** the maintainer asked for a
+"clear button to the main prompt area", then "an icon instead of a text button". Built: an
+**X icon** (`IconUtil.CancelIcon`, toolbar style, 28 px, the + button's twin) at the right end
+of the input box (`ChatPanel.clearButton`, named `CLEAR_PROMPT`); it empties the typed text only
+(chips and attachments stay), returns focus to the composer, and is shown only while the
+composer holds text (the svg glyph has no dimmed look, so it hides rather than greys) — the
+document listener that already resized the bar now also syncs it (`composerChanged`). A text *Clear* button beside Send came first and was replaced the same
+evening. Test `ChatPanelClearTest` over a real `ChatPanel` on the context
+test's in-memory repository (made package-private); rendered headless empty (no X) and
+filled (X at the right end of the box). Live check owed above.
+
+**2026-10-28, provider switch kept the model filter (bug, fixed, uncommitted):** the maintainer:
+"when I [switch] providers ie claude to chatgpt the model filter should be updated properly, now it
+hangs on the old one". Cause: the *Filter models* text is a session filter (`ctx.getModelFilter`),
+and `onProviderPicked` refilled the model combo through it, so "sonnet" typed for Claude hid every
+ChatGPT model. Fix: `onProviderPicked` blanks the filter field before refilling (the field's
+document listener runs `applyModelFilter` against the new binding; an already blank field falls
+through to the explicit `fillModels`). Opening another chat bound to a different provider still
+keeps the filter — that is the session-filter design and was not changed. Test
+`ChatPanelProviderSwitchTest` (2) over a real `ChatPanel` with two fake providers; the assistant
+suite 85 / 85. Live check: type a Claude-only filter, switch to ChatGPT, the filter is blank and
+the list is ChatGPT's.
+
+**2026-10-28, one filterable model combo (uncommitted, both repos):** the maintainer: "the
+model widget and filter widget [could be] one widget like a combo and put it in the xlogistx-io
+gui package". Built in gui-audio: `io.xlogistx.gui.FilterComboBox<T>` — an editable `JComboBox`
+whose own model keeps the full list and a visible, filtered view; typing in the editor narrows
+the drop-down through a pluggable `Matcher` (default `CONTAINS`; the matcher also sees blank
+text), the popup reopens sized to the matches, Enter takes the highlighted item or resolves the
+typed text (exact name ignoring case, else free text when `setFreeText(true)`, else no change),
+Escape restores the selected item's text, and the filter is dropped when the popup closes, on a
+pick with the list closed and on `removeAllItems`. Hooks survive a look-and-feel change
+(`setEditor` / `updateUI` re-install them once per editor). `FilterComboBoxTest` (6, headless);
+jar installed 10:16, reload Maven in IntelliJ. In the assistant: `ChatPanel.modelSelector` is one
+of these with the `ModelFilter` grammar as matcher and free text on; the `Filter models` field,
+`applyModelFilter`, and the session filter on `AssistantContext` (`getModelFilter` /
+`setModelFilter`, the `"modelFilter"` event, the reset line) are gone; `PanelSupport.fillModels`
+takes a `Predicate<String>` (the conversation's combo takes everything, the three-arg form is
+chat models only for the History and Providers forms). The morning's "filter hangs on the old
+provider" fix is subsumed: the refill clears the combo's own filter. Tests: the assistant suite
+85 / 85 (`ChatPanelProviderSwitchTest` now types into the combo); rendered headless with two
+fake providers — the options row is Provider · Model · the two boxes, the model editor shows the
+bound model, typed text narrows the visible count. Live check owed: type in the Model box
+(`mini`, `gpt*`, `!mini`, `*`), pick with the mouse and with arrows + Enter, Escape, and switch
+provider with text typed.
 
 **Open after Phase 5 (updated 2026-10-27):** the rest of the maintainer's run-through on a
 display (unlock, the scan form and history are done; still to try: a stored report from history,

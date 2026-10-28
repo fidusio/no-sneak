@@ -44,7 +44,6 @@ public class AssistantContext {
     private final Map<String, AIProviderConfig> configCache = new ConcurrentHashMap<>();
 
     private final CaptureAreaSet captureAreaSet = new CaptureAreaSet();
-    private final ModelFilter modelFilter = new ModelFilter();
 
     public AssistantContext(AICredentialSource credentials, AIRepository repository) {
         this.credentials = credentials;
@@ -203,16 +202,6 @@ public class AssistantContext {
         return captureAreaSet;
     }
 
-    public ModelFilter getModelFilter() {
-        return modelFilter;
-    }
-
-    public void setModelFilter(String patterns) {
-        String old = modelFilter.getPatterns();
-        modelFilter.setPatterns(patterns);
-        pcs.firePropertyChange("modelFilter", old, modelFilter.getPatterns());
-    }
-
     public List<AICapture> getAllCaptures() {
         return repository.getAllCaptures();
     }
@@ -239,7 +228,6 @@ public class AssistantContext {
         skillCache.clear();
         configCache.clear();
         captureAreaSet.clearCaptureAreas();
-        modelFilter.setPatterns(null);
         pcs.firePropertyChange("currentChat", old, null);
     }
 }

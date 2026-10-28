@@ -101,6 +101,6 @@ public class ChangePasswordRoundTripTest {
         Session s = freshSession();   // never logged in
         AccessSecurityException ex = assertThrows(AccessSecurityException.class,
                 () -> s.changePassword(OLD.toCharArray(), NEW.toCharArray()));
-        assertEquals("Not Logged in", ex.getMessage());
+        assertEquals("Not signed in", ex.getMessage());
     }
 }

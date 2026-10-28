@@ -69,23 +69,28 @@ has chosen to use.
 >   three send paths (`send` / `asyncSend` / `asyncImageSend`) strip `req.getModel()` again so a
 >   chat saved with a prefixed model before the fix still sends. Every other provider's ids carry
 >   no prefix and pass through untouched. Pinned by `ModelNameTest` (4).
-> - **The model list has a user filter, in the chat header.** `ModelFilter` wraps two zoxweb
->   `TokenMatcher`s (case-insensitive) — includes and excludes — over a free-text pattern list the
->   subject types into `modelFilterField`, the small search box beside the chat's model combo.
+> - **The conversation's model combo is its own filter (2026-10-28).** The maintainer asked for
+>   the model widget and the filter widget to be "one widget like a combo" in the gui-audio
+>   package: `ChatPanel.modelSelector` is an `io.xlogistx.gui.FilterComboBox<String>` — an
+>   editable combo whose drop-down narrows to what is typed in its editor (the widget's contract
+>   is in gui-audio's `CLAUDE.md`). Its `Matcher` is the chat's **`ModelFilter`** grammar: two
+>   zoxweb `TokenMatcher`s (case-insensitive) — includes and excludes — over the typed text.
 >   Patterns split on comma / semicolon / whitespace; a bare word with no `*` or `?` is expanded
 >   to `*word*` so `mini` matches anywhere; a leading `!` sends the rest to the exclude matcher.
 >   **Blank means the built-in `NON_CHAT_MODEL_MARKERS` list** (whisper / tts / embedding /
 >   moderation / dall-e / …); as soon as one pattern is set the markers **step aside entirely**,
 >   which is the only way to reach an audio or embedding model on purpose (`*` lists everything
 >   the provider discovered). Excludes win over includes; an exclude-only filter keeps everything
->   else. State is **session-scoped on `AssistantContext`** — `getModelFilter()` /
->   `setModelFilter(String)` (which fires a `"modelFilter"` property event), cleared by
->   `resetContext()` alongside the capture areas, never persisted. `fillModels(ctx, box, ref)`
->   applies it; the four-arg `fillModels(..., false)` applies the built-in markers only and is
->   what the **Providers form's Default model** combo uses, so a narrow chat-side filter can
->   never hide the model you are trying to set as a provider default. Every chat-model combo it
->   *does* reach is `setEditable(true)` (the chat header, both History forms), so a model the
->   filter hides stays selectable and a bound chat never has its model silently rewritten.
+>   else. The filter has **no state of its own**: it is the editor text while the popup is open,
+>   gone once an item is picked, Escape is pressed or the list is refilled, so there is nothing on
+>   `AssistantContext` any more (`getModelFilter` / `setModelFilter` and the `"modelFilter"`
+>   event were removed the same day). The combo holds **every** discovered model
+>   (`fillModels(ctx, box, ref, m -> true)`, `ChatPanel.ALL_MODELS`) and the matcher decides what
+>   shows; `setFreeText(true)` keeps a typed name the list does not offer, so a bound chat never
+>   has its model silently rewritten. The three-arg `fillModels(ctx, box, ref)` is the chat
+>   models only (`ModelFilter.isChatModel`) and is what the History forms' and the Providers
+>   form's plain editable combos use. Before this the filter was a separate `Filter models`
+>   search field beside a plain combo, session-scoped on the context.
 > - **List rows are label + sublabel, and search covers both.** The shared `ListSection` grew
 >   `.description(...)` (a wrapping blurb under the panel title) and `.sublabel(...)` (a muted
 >   second line per row). The rule here: the **label is the searchable identity**, the sublabel
@@ -123,6 +128,16 @@ has chosen to use.
 >   latency/token line (assistant bubbles only, never the user's). It routes to
 >   `onSaveSkillFromResponse`, which confirms first if the editor holds unsaved edits, then opens
 >   the skill editor seeded with that response. Guarded by `ChatBubbleSaveAsSkillTest`.
+> - **A past prompt can be sent again (2026-10-27).** Every user bubble on the conversation page
+>   carries one white copy icon at its bottom-right (`IconUtil.CopyIcon(16, Color.WHITE)`,
+>   component name `AssistantUtil.REUSE_PROMPT`, tooltip *Put this prompt back in the composer
+>   to send it again*). The nine-argument `chatBubble` takes the `onReuse` `Runnable`;
+>   `ChatPanel.addMessage` passes `() -> insertIntoComposer(text)` for user bubbles and null for
+>   replies, so the prompt lands in the composer the same way a skill or another screen's
+>   `setComposerText` does: replacing a blank composer, otherwise appended at the caret, caret at
+>   the end, focus on the composer. Nothing is sent until the subject presses Send. The action
+>   row is the only one a user bubble gets (right-aligned, no detail line, no Copy / PDF
+>   buttons, which stay assistant-only). Guarded by `ChatBubbleReuseTest`.
 >   **Or a host record, in one click (2026-10-26):** the seven-argument `chatBubble` also takes a
 >   `Map<String, Runnable>` of the host's save targets and renders one borderless
 >   "Save as <label>" button per entry after *Save as skill*. `ChatPanel.addSaveTarget(label,
@@ -135,7 +150,7 @@ has chosen to use.
 >   through the toolkit's `io.xlogistx.gui.MDToPDF` (commonmark with the same GFM extensions as
 >   the viewer, OpenHTMLtoPDF over PDFBox, Roboto embedded) **off the EDT** via `BackgroundTask`
 >   — the button is disabled while it renders and a failure lands in `BackgroundTask`'s own error
->   dialog — and the bytes open in an `io.xlogistx.gui.PDFViewerPanel` inside a modeless
+>   dialog — and the bytes open in an `io.xlogistx.gui.pdf.PDFViewerPanel` (the `pdf` package since the 2026-10-28 gui-audio move) inside a modeless
 >   `JDialog` (900 × 940, toolbar on; closing asks the viewer's `confirmDiscard()` when it has
 >   unsaved edits, disposal → `viewer.close()`). The viewer's **Aa text size spinner is scoped
 >   to the viewer** (gui-audio 2026-10-23, `FontSizeWidget(Component scope)` — the default for
@@ -468,14 +483,14 @@ split out of `AssistantPanel`, which is now just wiring:
 | Class | What it is |
 |---|---|
 | `AssistantPanel` | Wiring only: builds the six page panels, the sidebar, and the top-level `CardStack` |
-| `AssistantContext` | Swing-free state holder: injected services + current selection + caches + the session `CaptureAreaSet` + the session `ModelFilter` |
-| `ModelFilter` | Session model filter: two `TokenMatcher`s (include / `!`exclude) over a typed pattern list, falling back to the built-in non-chat markers |
+| `AssistantContext` | Swing-free state holder: injected services + current selection + caches + the session `CaptureAreaSet` |
+| `ModelFilter` | The model-filter grammar: two `TokenMatcher`s (include / `!`exclude) over a typed pattern list, falling back to the built-in non-chat markers; the conversation combo's `Matcher` since 2026-10-28, no session state |
 | `AIAPIProvider` | The `AIProvider` implementation over `io.xlogistx.api.ai.AIAPI` (+ inner `ModelCatalog`) |
-| `AssistantCallback` | `ConsumerCallback<NVGenericMap>` — payload → `AIResponse`, persist, hop to the EDT |
+| `AssistantCallback` | `ConsumerCallback<NVGenericMap>` — payload → `AIResponse` (stamped with the model and, since 2026-10-27, the provider id the request went to), persist, hop to the EDT |
 | `AssistantMDDecoder` | Provider payload → renderable markdown (see §10.1) |
 | `AssistantUtil` | `chatBubble(...)` — a rounded bubble around an `io.xlogistx.gui.MDViewerPanel` |
 | `io.xlogistx.gui.MDEditorPanel` | Split markdown editor: editor left, live `MDViewerPanel` preview right (see §5.1). **Lives in `io-xlogistx/gui-audio` since 2026-10-22**; only its test stays here |
-| `panels/ChatPanel` | The Chat page (merged with Chat History 2026-10-26): two cards — the list of chats (`ChatHistoryPanel`) and the conversation page (`PagePanel` titled by the chat, re-framed by `showConversation()`): head actions, options row, transcript over the composer; `+` popup (skills / images / capture), `onSend`, `attachText`; `showCurrent()` is what the sidebar lands on |
+| `panels/ChatPanel` | The Chat page (merged with Chat History 2026-10-26): two cards — the list of chats (`ChatHistoryPanel`) and the conversation page (`PagePanel` titled by the chat, re-framed by `showConversation()`): head actions, options row (the provider combo — the provider switch of 2026-10-27 — and the filterable model combo, a gui-audio `FilterComboBox` since 2026-10-28, Send history, Auto-copy code), transcript over the composer; `+` popup (skills / images / capture), `onSend`, `attachText`; `showCurrent()` is what the sidebar lands on |
 | `panels/ChatHistoryPanel` | The list of chats, the Chat page's `list` card: `PagePanel` head (title from `Page.CHAT`, the primary New chat), toolbar, table on `ChatHistoryModel`, plus the New chat / Edit chat form cards (house list look since 2026-10-26); `editChat`, `startNewChat`, `setOnFormClosed` |
 | `panels/ChatHistoryModel` | The chat list's rows (title, provider, model, messages, created, updated) and the conversation's `facts` line; pure, `ChatHistoryModelTest` |
 | `panels/SkillsPanel` | The Skills page: `PagePanel` head (New skill), toolbar, table on `SkillsTableModel`, and the one `MDEditorPanel` framed as a New skill / Edit skill page (house list look since 2026-10-26) |
@@ -628,9 +643,27 @@ are buttons that paste their text into the composer for the subject to edit befo
 > `provider · model · N messages`), the head actions are plain toolbar buttons — **All chats**
 > (back to the list, refreshed), **Edit** (the §4 Edit form, which returns here on Save or
 > Cancel), **Chat as PDF** (`showChatAsPDF`), **New chat** (the §4 Create form; Cancel returns
-> here, Create opens the new chat) — then a row with the model combo, the model filter and the
+> here, Create opens the new chat) — then a row with the **provider combo** (2026-10-27, the
+> maintainer's "if I have 2 ai assistant can I switch between them": the assistant the next
+> message goes to; picking another one rebinds the chat, refills the model combo with that
+> provider's models and lands on its default model, saves the chat and re-frames the facts line;
+> the transcript stays as it is and *Send history* alone decides whether the new provider sees
+> it; a chat bound to a provider that is no longer linked shows no selection; `onProviderPicked`,
+> `syncProviderSelector` under a `syncingProvider` guard so the sync never counts as a pick;
+> **a filter cannot outlive the switch** (2026-10-28, first a maintainer's bug report — the
+> old session filter typed for the old provider's names stayed in force and hid the new
+> provider's whole list — then, the same day, the filter became the model combo's own typed
+> text, which the refill drops) — `ChatPanelProviderSwitchTest` drives it with two fake
+> providers), the model combo (an `io.xlogistx.gui.FilterComboBox`: type to narrow the list,
+> see *The conversation's model combo is its own filter* above) and the
 > *Send history* / *Auto-copy code* checkboxes, and the card: the transcript over the composer
-> bar (a line above it; the one primary button of the page is **Send**). The old empty card ("No
+> bar (a line above it; the one primary button of the page is **Send**; since 2026-10-27, at
+> the maintainer's request, an **X icon** at the right end of the input box — `IconUtil.CancelIcon`,
+> the + button's twin, named `ChatPanel.CLEAR_PROMPT` — empties the typed text only, chips and
+> attachments stay, focus returns to the composer; it is shown only while the composer holds
+> text (the svg icon has no dimmed state, so hidden beats disabled), through the same document
+> listener that resizes the bar — `composerChanged` /
+> `clearComposer`, guarded by `ChatPanelClearTest`). The old empty card ("No
 > chat selected", New Chat, Open Chat History) and the Chat header's own New Chat are gone with
 > the merge: `New chat` lives on the list's head and the conversation's head, nothing else. The
 > `currentChat` event drives the cards: a chat (open from the list, Create) shows the
@@ -935,9 +968,12 @@ errored offers an inline `Query models` or a jump to Providers, and blocks `Star
    source, external-flagged and assistant-enabled on creation.
 2. Removing a provider from the assistant never deletes the underlying credential.
 3. Model lists are **discovered**, never hardcoded.
-4. Key + model are immutable for a prompt's lifetime. **Not enforced today** — the chat header's
-   model combo is editable and `onSend` writes the selection back to the chat, and the Edit Chat
-   form rewrites both provider and model. Either lock the controls or drop the invariant.
+4. ~~Key + model are immutable for a prompt's lifetime.~~ **Dropped 2026-10-27** — the maintainer
+   asked to switch assistants inside a chat. The conversation's provider and model combos rebind
+   the chat for the next turn, the Edit chat form does the same, and every reply records the
+   provider and model that answered it (`AIResponse.provider`, set by `AssistantCallback`; the
+   bubble's detail line and the PDF's `### Assistant` heading read `provider · model` through
+   `ChatHistoryModel.replyMeta`), so a transcript that changed hands stays readable.
 5. Skills have no global default — activation is per prompt or per message.
 6. Every model in a run gets identical prompt text, skills, and attachments.
 7. Nothing leaves the machine that the subject didn't attach.
@@ -988,8 +1024,7 @@ name match so a chat saved before providers had ids still resolves). `setCurrent
 selection and fires `"currentChat"`; `deleteChat` fires it **only** when the deleted chat is the
 current one (matched by instance **or GUID**, nulling first, then firing — instance identity
 alone misses, because History refreshes hand out fresh instances whenever the cache hasn't seen
-the GUID yet); `resetContext()` clears the selection, **all three** caches, the session
-`ModelFilter` and the session
+the GUID yet); `resetContext()` clears the selection, **all three** caches and the session
 `CaptureAreaSet` (`getCaptureAreaSet()` is the only accessor — the old
 `getCaptureAreas`/`addCaptureArea`/`removeCaptureArea` trio is gone), then
 fires `"currentChat"` so the transcript blanks. Panels subscribe via `onChange(prop, listener)`
@@ -1091,7 +1126,15 @@ read like the real store does; `CaptureSupportTest` (6) pins the headless-safe c
 built-in markers, bare word → contains, glob include, `!` exclude, exclude-only, `*`,
 round-trip/clear, and a lone `!` being ignored rather than blocking everything); and
 `ChatBubbleSaveAsSkillTest` (4) covers the "Save as skill"
-affordance; `CodeBlocksTest` (5, 2026-10-07) pins the fenced-block extraction behind the chat
+affordance; `ChatBubbleReuseTest` (3, 2026-10-27) the user bubble's copy icon (present with a
+handler, clickable, never on a reply); `ChatPanelClearTest` (1, 2026-10-27) drives a real
+`ChatPanel` over `AssistantContextTest.MemoryRepository` (package-private for that) with a current
+chat and checks the clear icon is hidden when empty, shown on text, and empties the composer;
+`ChatPanelProviderSwitchTest` (2, 2026-10-28) registers two fake `AIProvider`s with fixed catalogs
+on the context's registrar, binds a chat to one, types into the model combo's editor (the list
+narrows), picks the other provider in the conversation's combo and checks the list is the new
+provider's, the editor shows its model and the chat is rebound; the widget itself is pinned by
+gui-audio's `FilterComboBoxTest` (6); `CodeBlocksTest` (5, 2026-10-07) pins the fenced-block extraction behind the chat
 header's *Auto-copy code* box. `RegionOverlay` and the capture tab/toolbar/inline-rename behavior are **not**
 headless-testable — they need real windows and a mouse; use the `AssistantPanelTest` harness.
 

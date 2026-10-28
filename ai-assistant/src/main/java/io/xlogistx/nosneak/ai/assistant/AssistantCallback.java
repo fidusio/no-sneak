@@ -14,15 +14,21 @@ public class AssistantCallback implements ConsumerCallback<NVGenericMap> {
     private final AssistantContext context;
     private final AIChat chat;
     private final AIMessage message;
+    private final String providerRef;
     private final Consumer<AIResponse> onResponse;
     private final Consumer<Throwable> onError;
     private final long start = System.nanoTime();
 
-    public AssistantCallback(AssistantContext context, AIChat chat, AIMessage message,
+    /**
+     * @param providerRef the id of the provider the request went to; recorded on the reply so the
+     *                    transcript names who answered even after the chat is rebound (2026-10-27)
+     */
+    public AssistantCallback(AssistantContext context, AIChat chat, AIMessage message, String providerRef,
                              Consumer<AIResponse> onResponse, Consumer<Throwable> onError) {
         this.context = context;
         this.chat = chat;
         this.message = message;
+        this.providerRef = providerRef;
         this.onResponse = onResponse;
         this.onError = onError;
     }
@@ -34,6 +40,7 @@ public class AssistantCallback implements ConsumerCallback<NVGenericMap> {
             response = new AIResponse();
             response.setContent(AssistantMDDecoder.SINGLETON.decode(payload));
             response.setModel(message.getAIRequest().getModel());
+            response.setProvider(providerRef);
             response.setInTokens(AssistantMDDecoder.inTokens(payload));
             response.setOutTokens(AssistantMDDecoder.outTokens(payload));
             response.setLatency(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start));

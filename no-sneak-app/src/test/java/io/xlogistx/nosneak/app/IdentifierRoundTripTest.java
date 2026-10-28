@@ -10,8 +10,9 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Covers {@link Session#addIdentifier(String)} / {@link Session#removeIdentifier} — the
- * add rules (blank/duplicate), the "can't remove the last one" guard, and the repoint of
- * the active subject when you remove the identifier you logged in as.
+ * add rules (blank here; the duplicate rule needs the real store's unique index, see
+ * {@link StoreHardeningTest}), the signed-in guard, the "can't remove the only one" guard, and
+ * the repoint of the active subject when you remove the identifier you logged in as.
  *
  * <p>Failure is signalled by a thrown {@link AccessSecurityException} (message = the reason);
  * success returns normally.</p>
@@ -56,7 +57,7 @@ public class IdentifierRoundTripTest {
     public void cannotRemoveLastIdentifier() {
         Session s = loggedInSession();
         PrincipalIdentifier only = find(s, "kailen01");
-        assertEquals("Could not remove identifier",
+        assertEquals("Cannot remove the only identifier",
                 assertThrows(AccessSecurityException.class, () -> s.removeIdentifier(only)).getMessage());
         assertEquals(1, s.getAllPrincipalIDForLoggedInUser().size());
     }
@@ -98,5 +99,17 @@ public class IdentifierRoundTripTest {
         // credential lookups (keyed off the subject) must keep working after the repoint
         assertEquals(1, s.getAllCredentialForLoggedInUser().size(),
                 "the password credential should still be reachable via the new subject");
+    }
+
+    @Test
+    public void addAndRemoveRejectedWhenSignedOut() {
+        Session s = loggedInSession();
+        PrincipalIdentifier only = find(s, "kailen01");
+        s.logout();
+
+        assertEquals("Not signed in",
+                assertThrows(AccessSecurityException.class, () -> s.addIdentifier("later@example.com")).getMessage());
+        assertEquals("Not signed in",
+                assertThrows(AccessSecurityException.class, () -> s.removeIdentifier(only)).getMessage());
     }
 }

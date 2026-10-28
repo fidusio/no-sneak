@@ -439,6 +439,17 @@ public class Session {
     }
 
     /**
+     * The one signed-in guard every mutation runs. {@code subjectIdentifier} and {@code principalID}
+     * are set together by a login and cleared together by {@link #logout()}, so checking both is
+     * belt and braces, not a second state.
+     *
+     * @throws AccessSecurityException {@code "Not signed in"} when no subject is signed in
+     */
+    private void requireSignedIn() throws AccessSecurityException {
+        if (subjectIdentifier == null || principalID == null) throw new AccessSecurityException("Not signed in");
+    }
+
+    /**
      * Mock passkey login; not implemented yet. @return {@code false}.
      */
     public void loginPasskey() {
@@ -482,7 +493,7 @@ public class Session {
         // TBD return api key, or null if it cannot
         // principalID should be changed to support security model of logged-in user
         // refer to MN
-        if (principalID == null) throw new AccessSecurityException("Not signed in");
+        requireSignedIn();
         SecretKey secretKey;
 
         try {
@@ -505,7 +516,7 @@ public class Session {
                                      String provider, String baseURI, String authScheme, String headerName, Boolean external) throws AccessSecurityException {
 
 
-        if (principalID == null) throw new AccessSecurityException("Not signed in");
+        requireSignedIn();
         if (rawKey == null || rawKey.isBlank()) throw new AccessSecurityException("Key cannot be empty");
 
         SubjectAPIKey key = new SubjectAPIKey();
@@ -541,6 +552,12 @@ public class Session {
 
     private static void putIfPresent(NVGenericMap props, GetName name, String value) {
         if (value != null && !value.isBlank()) props.build(name, value.trim());
+    }
+
+    /** Writes the trimmed value, or removes the entry when the value is null or blank. */
+    private static void putOrRemove(NVGenericMap props, GetName name, String value) {
+        if (value == null || value.isBlank()) props.remove(name);
+        else props.build(name, value.trim());
     }
 
     /**
@@ -592,7 +609,7 @@ public class Session {
     public void deleteAPIKey(APIKey<String> key) throws AccessSecurityException {
 
         // signature to void, throw security exception
-        if (subjectIdentifier == null) throw new AccessSecurityException("Not signed in");
+        requireSignedIn();
         if (key == null) throw new AccessSecurityException("Empty Key");
 
         domainSecurityManager.deleteCredential(key);
@@ -602,7 +619,7 @@ public class Session {
 
     public void rotateAPIKey(APIKey<String> key) throws AccessSecurityException {
 
-        if (subjectIdentifier == null) throw new AccessSecurityException("Not signed in");
+        requireSignedIn();
         if (key == null) throw new AccessSecurityException("Empty Key");
 
         if (isExternalKey(key)) throw new AccessSecurityException("Cannot rotate external key");
@@ -638,7 +655,7 @@ public class Session {
     }
 
     public void setAssistantEnabled(APIKey<String> key, boolean enabled) throws AccessSecurityException {
-        if (subjectIdentifier == null) throw new AccessSecurityException("Not signed in");
+        requireSignedIn();
         if (key == null) throw new AccessSecurityException("Empty Key");
 
         propertiesOf(key).build(APIKeyInfo.ASSISTANT_ENABLED, Boolean.toString(enabled));
@@ -718,26 +735,36 @@ public class Session {
     }
 
     /**
-     * Adds a new identifier to the signed-in subject (rejects blank/duplicate). @return {@code null} on success, else an error message.
+     * Adds a new identifier to the signed-in subject. The manager validates the value: a blank
+     * one is refused as {@code "Invalid principal ID: …"}, one already in use (by any subject,
+     * this one included) as {@code "Principal ID already exists: …"}; the session adds nothing
+     * to those rules.
+     *
+     * @throws AccessSecurityException {@code "Not signed in"}, or the manager's reason
      */
     public void addIdentifier(String principalID) throws AccessSecurityException {
-//        if (subjectIdentifier == null) throw new AccessSecurityException("Not signed in");
-//        if (principalID == null || principalID.isBlank()) throw new AccessSecurityException("Identifier cannot be empty");
-//        if (domainSecurityManager.lookupPrincipalID(principalID) != null) {
-//            throw new AccessSecurityException("That identifier is already in use");
-//        }
+        requireSignedIn();
         domainSecurityManager.addPrincipalID(subjectIdentifier, principalID);
     }
 
 
     /**
-     * Removes an identifier (never the last one); if it was the identifier you logged in as,
-     * the active principalID is repointed to a survivor. @return {@code null} on success, else an error message.
+     * Removes an identifier, never the only one; if it was the identifier you logged in as, the
+     * active principalID is repointed to a survivor.
+     *
+     * @throws AccessSecurityException {@code "Identifier cannot be empty"}, {@code "Not signed in"},
+     *                                 {@code "Cannot remove the only identifier"}, or
+     *                                 {@code "Could not remove identifier"} when the manager refuses
+     *                                 (unknown principal, or the last one under its row lock)
      */
     public void removeIdentifier(PrincipalIdentifier principal) throws AccessSecurityException {
 
         if (principal == null) throw new AccessSecurityException("Identifier cannot be empty");
-        if (subjectIdentifier == null) throw new AccessSecurityException("Not Signed in");
+        requireSignedIn();
+        // the manager refuses the last principal as well, in a transaction; this is the readable answer
+        if (getAllPrincipalIDForLoggedInUser().size() <= 1) {
+            throw new AccessSecurityException("Cannot remove the only identifier");
+        }
 
         if (!domainSecurityManager.deletePrincipalID(principal)) {
             throw new AccessSecurityException("Could not remove identifier");
@@ -756,7 +783,7 @@ public class Session {
      * Verifies the current password and replaces it in place. @return {@code null} on success, else an error message.
      */
     public void changePassword(char[] current, char[] next) throws AccessSecurityException {
-        if (principalID == null) throw new AccessSecurityException("Not Logged in");
+        requireSignedIn();
 
         // 1. verify the current password (no login: works while a password reset is pending too)
         if (!domainSecurityManager.verifyPassword(principalID, new String(current))) {
@@ -791,13 +818,16 @@ public class Session {
 
     /**
      * Updates an API key's label, description, and AI-assistant metadata (provider, base URL,
-     * and whether it appears in the AI assistant). Blanks clear the text fields.
+     * auth scheme, header name). Blanks clear the text fields and <b>remove</b> the metadata
+     * entries: a blank provider used to be stored as {@code ""}, which the assistant's
+     * {@code resolveType} could not map any more than an absent one, so the entry goes instead
+     * and the key reads as unlinked rather than carrying an empty string.
      */
     public void changeAPIDetails(APIKey<String> apiKey, String label, String description,
                                  String domainID, String appID,
                                  String provider, String baseURI, String authScheme, String headerName) throws AccessSecurityException {
 
-        if (principalID == null) throw new AccessSecurityException("Not Logged in");
+        requireSignedIn();
         if (apiKey == null) throw new AccessSecurityException("Invalid API Key");
 
         if (label != null) apiKey.setName(label.trim());
@@ -807,10 +837,10 @@ public class Session {
         // only an external key carries a vendor domain/app; a key no-sneak issued keeps its
         // xlogistx.com-nosneak scope, which is not editable
         if (isExternalKey(apiKey)) putVendor(props, domainID, appID);
-        props.build(APIKeyInfo.PROVIDER, provider == null ? "" : provider.trim());
-        props.build(APIKeyInfo.BASE_URL, baseURI == null ? "" : baseURI.trim());
-        props.build(APIKeyInfo.AUTH_SCHEME, authScheme == null ? "" : authScheme.trim());
-        props.build(APIKeyInfo.HEADER_NAME, headerName == null ? "" : headerName.trim());
+        putOrRemove(props, APIKeyInfo.PROVIDER, provider);
+        putOrRemove(props, APIKeyInfo.BASE_URL, baseURI);
+        putOrRemove(props, APIKeyInfo.AUTH_SCHEME, authScheme);
+        putOrRemove(props, APIKeyInfo.HEADER_NAME, headerName);
 
         domainSecurityManager.updateCredential(subjectIdentifier, apiKey);
         pcs.firePropertyChange("credentials", null, apiKey);
@@ -820,7 +850,7 @@ public class Session {
      * Saves the given profile fields into the subject's property bag. @return {@code null} on success, else an error message.
      */
     public void saveProfile(Map<String, String> fields) throws AccessSecurityException {
-        if (subjectIdentifier == null) throw new AccessSecurityException("Not Logged in");
+        requireSignedIn();
         NVGenericMap props = subjectIdentifier.getProperties();
         if (props == null) {
             props = new NVGenericMap();
@@ -859,7 +889,7 @@ public class Session {
 
 
     public void changeAddressDetails(NVGenericMap address) throws AccessSecurityException {
-        if (subjectIdentifier == null) throw new AccessSecurityException("Not Logged in");
+        requireSignedIn();
         if (address == null) throw new AccessSecurityException("Invalid address");
 
         NVGenericMap props = subjectIdentifier.getProperties();
@@ -871,7 +901,7 @@ public class Session {
     }
 
     public void addAddress(NVGenericMap address) throws AccessSecurityException {
-        if (subjectIdentifier == null) throw new AccessSecurityException("Not Logged in");
+        requireSignedIn();
         if (address == null) throw new AccessSecurityException("Invalid address");
 
         NVGenericMap props = subjectIdentifier.getProperties();
@@ -889,7 +919,7 @@ public class Session {
     }
 
     public void deleteAddress(NVGenericMap address) throws AccessSecurityException {
-        if (subjectIdentifier == null) throw new AccessSecurityException("Not Logged in");
+        requireSignedIn();
         if (address == null) throw new AccessSecurityException("Invalid address");
 
         NVGenericMap props = subjectIdentifier.getProperties();
