@@ -39,6 +39,8 @@ import java.util.function.Consumer;
  *       {@link AppPrefs#storeLocation()}) and its vault password. When the directory holds no
  *       vault the step grows the first-run rows — the operator's account (the store's super-admin)
  *       and the database settings — and the button reads <i>Create</i>; otherwise <i>Open</i>.
+ *       Every input carries a tooltip and a warning row under the vault password says it is not
+ *       recoverable ({@link Form#VAULT_PASSWORD_WARNING}, 2026-10-29).
  *       Enter in the vault password field is the click. The work runs off the EDT through the
  *       injected {@link StoreOpener} ({@code NoSneakStore.openOrCreate} in production); a failure
  *       (wrong vault password, an installation from before the 2026-10-21 model) stays on the step
@@ -67,6 +69,13 @@ public class UnlockPanel extends JPanel {
     public static final class Form {
         public static final String CREATE_HINT = "No vault here: a new vault, database and operator account will be created.";
         public static final String OPEN_HINT = "Existing vault found: enter its password.";
+        /**
+         * Shown under the vault password field on every run and in its tooltip (2026-10-29): the
+         * vault password is the one secret nothing can bring back.
+         */
+        public static final String VAULT_PASSWORD_WARNING = "Keep the vault password safe. IT IS NOT RECOVERABLE: "
+                + "there is no reset, no recovery and nobody who can retrieve it. Lose it and the vault, the database "
+                + "and everything they hold are gone for good.";
 
         private Form() {
         }
@@ -131,6 +140,19 @@ public class UnlockPanel extends JPanel {
 
     private static final String FIRST_RUN = "firstRun";
     private static final String REGISTER = "register";
+
+    // step-1 tooltips (2026-10-29): what each input is for, hovered on the field itself
+    private static final String TIP_LOCATION = "The directory NoSneak keeps its vault and encrypted database in. "
+            + "An empty folder creates a new store; a folder that already holds a vault opens it.";
+    private static final String TIP_VAULT_PASSWORD = "Unlocks the vault that holds every other secret of this store. "
+            + "It is never written anywhere and it cannot be recovered or reset: keep it safe.";
+    private static final String TIP_OPERATOR = "The store's super-admin: the account you sign in with from now on.";
+    private static final String TIP_OPERATOR_PASSWORD = "The operator's sign-in password; different from the vault password. "
+            + "It can be changed later from Account \u2192 Profile.";
+    private static final String TIP_OPERATOR_CONFIRM = "Type the operator password again.";
+    private static final String TIP_DB_USER = "The H2 database account; leave the default unless you have a reason.";
+    private static final String TIP_DB_PASSWORD = "The H2 database password. Empty = generated and kept only in the vault.";
+    private static final String TIP_DB_ENCRYPTION = "The password that encrypts the H2 file on disk. Empty = generated and kept only in the vault.";
 
     private final StoreOpener opener;
     private final Consumer<ShiroDSDomainSecurityManager> onStoreOpened;
@@ -237,17 +259,7 @@ public class UnlockPanel extends JPanel {
         WrapLabel text = new WrapLabel("First time here? Pick an empty folder in step 1 and NoSneak creates the vault, the encrypted database "
                 + "and your operator account in one go. Installations made before October 2026 cannot be opened and say why.");
         text.setFont(UITokens.font(Font.PLAIN, -1f));
-        JPanel note = new JPanel(new MigLayout("insets 12 14 12 14, gapx 10", "[]0[grow,fill]")) {
-            @Override
-            public void doLayout() {
-                text.setWrapWidth(getWidth() - 14 - 14 - 16 - 10);
-                super.doLayout();
-            }
-        };
-        note.setBackground(ground);
-        note.add(new JLabel(new IconUtil.InfoIcon(16)), "aligny top, gaptop 2");
-        note.add(text, "growx, wmin 0");
-        card.add(note, "growx, gaptop 16");
+        card.add(callout(new IconUtil.InfoIcon(16), text, ground), "growx, gaptop 16");
 
         // the card sits centred in the free space and scrolls only when the window is shorter than it
         ScrollablePanel centre = new ScrollablePanel(new MigLayout("insets 40 24 40 24, fill", "[grow,center]", "[grow,center]"));
@@ -258,6 +270,24 @@ public class UnlockPanel extends JPanel {
         scroll.setBorder(BorderFactory.createEmptyBorder());
         scroll.getViewport().setBackground(ground);
         return scroll;
+    }
+
+    /**
+     * A tinted row with an icon on the left and wrapping text beside it: the first-run note under
+     * the card and the vault password warning in step 1. The text wraps at the row's real width.
+     */
+    private static JPanel callout(Icon icon, WrapLabel text, Color background) {
+        JPanel row = new JPanel(new MigLayout("insets 12 14 12 14", "[]10[grow,fill]")) {
+            @Override
+            public void doLayout() {
+                text.setWrapWidth(getWidth() - 14 - 14 - icon.getIconWidth() - 10);
+                super.doLayout();
+            }
+        };
+        row.setBackground(background);
+        row.add(new JLabel(icon), "aligny top, gaptop 2");
+        row.add(text, "growx, wmin 0");
+        return row;
     }
 
     /** Sets the installation directory as if chosen through the field; for hosts and tests. */
@@ -275,10 +305,27 @@ public class UnlockPanel extends JPanel {
                 });
         location.onChange(_ -> applyStoreMode(path()));
 
+        location.setToolTipText(TIP_LOCATION);
+        location.getPathField().setToolTipText(TIP_LOCATION);
+        location.getChooseButton().setToolTipText("Choose the directory");
+        vaultPassword.setToolTipText(TIP_VAULT_PASSWORD);
+        operatorID.setToolTipText(TIP_OPERATOR);
+        operatorPassword.setToolTipText(TIP_OPERATOR_PASSWORD);
+        operatorConfirm.setToolTipText(TIP_OPERATOR_CONFIRM);
+        dbUser.setToolTipText(TIP_DB_USER);
+        dbPassword.setToolTipText(TIP_DB_PASSWORD);
+        dbEncryptionPassword.setToolTipText(TIP_DB_ENCRYPTION);
+
         storeForm.field("Location", location);
         storeForm.row(storeMessage, "growx, gaptop 4");
         storeForm.requiredField("Vault password", PanelBuilder.passwordField(vaultPassword),
                 "The one secret every later run needs. It is never written anywhere.");
+        // the warning stands out from the muted hints: bold, in the warning colour, on its own tinted row
+        WrapLabel warning = new WrapLabel(Form.VAULT_PASSWORD_WARNING);
+        warning.setFont(UITokens.font(Font.BOLD, -1f));
+        warning.setForeground(UITokens.warn());
+        storeForm.row(callout(IconUtil.svgIcon("io/xlogistx/gui/icons/alert.svg", 16, UITokens.warn()), warning, UITokens.warnSoft()),
+                "growx, gaptop 6");
         storeForm.group(FIRST_RUN, () -> {
             storeForm.requiredField("Operator username", operatorID, "The store's super-admin: the account you sign in with from now on.");
             storeForm.requiredField("Operator password", PanelBuilder.passwordField(operatorPassword));

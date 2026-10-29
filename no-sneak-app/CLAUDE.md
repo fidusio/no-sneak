@@ -186,7 +186,7 @@ io.xlogistx.nosneak.app
 ├── NoSneakStore.java              ← vault + encrypted H2 + shiro.ini: create (H2PSetup) / open (attached manager) / secure / bootstrap / grantAppUser / setRegistrarPassword (2026-10-21)
 └── ui/                            ← UI (screens, menu, session/access wiring)
     ├── AppShell.java              ← the signed-in window: HeaderBar + SideNavPanel + CardLayout host (2026-10-24), mounts ai-assistant's AssistantPanel
-    ├── UnlockPanel.java           ← the pre-auth screen (2026-10-24): step 1 open/create the store, step 2 sign in / register; replaced LoginPanel + DataStoreSetupPanel
+    ├── UnlockPanel.java           ← the pre-auth screen (2026-10-24): step 1 open/create the store, step 2 sign in / register; replaced LoginPanel + DataStoreSetupPanel. 2026-10-29: every step-1 input has a tooltip and a warning row under the vault password says it is NOT RECOVERABLE (`Form.VAULT_PASSWORD_WARNING`)
     ├── PQCRegistryPanel.java      ← PQC file-sharing registry view
     ├── SubjectPanel.java          ← Account pages in the PagePanel frame: Profile, Credentials (API keys), Settings (Sync of the MAC vendor list, Backup, Restore)
     ├── SubjectSecManagerPanel.java← Access control (admin) page; tabs are stubs
@@ -735,7 +735,7 @@ Signed out, `subject` is null, the swap binds nothing, and the store returns no 
 **MAC vendors (2026-10-25, maintainer's spec).** `loadMacVendors()` runs after a login, before
 the shell is shown (`NoSneakMain.AppFrame.loadMacVendorsThenShow`): in the system context it
 looks for the `DataContent` whose `full_name` is `Mac-Vendor-Content` (`MAC_VENDOR_CONTENT_NAME`);
-missing → `OUIDB.getRawContent(OUIDB.WIRESHARK_MANUF_URL)` downloads the Wireshark manuf file
+missing → `OUIDB.getRawContent(OUIDB.XLOG_MANUF_URL)` downloads the Wireshark manuf file
 (3.2 MB, ~58k entries), which is stored as that row (`source_id` = the URL, `data` = the bytes)
 after a throw-away `OUIDB` has parsed it to at least one entry (an error page is refused and not
 stored); either way the bytes go into `NSNetUtil.MAC_VENDORS.load(...)`, the process-wide table

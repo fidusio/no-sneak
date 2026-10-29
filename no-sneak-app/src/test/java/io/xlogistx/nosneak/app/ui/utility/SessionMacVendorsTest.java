@@ -96,7 +96,7 @@ public class SessionMacVendorsTest {
         List<DataContent> rows = storedRows(first);
         assertEquals(1, rows.size(), "one app-wide row");
         assertEquals(Session.MAC_VENDOR_CONTENT_NAME, rows.get(0).getFullName());
-        assertEquals(OUIDB.WIRESHARK_MANUF_URL, rows.get(0).getSourceID());
+        assertEquals(OUIDB.XLOG_MANUF_URL, rows.get(0).getSourceID());
         assertArrayEquals(MANUF, rows.get(0).getData());
 
         // the same session does not load twice, and does not fire again

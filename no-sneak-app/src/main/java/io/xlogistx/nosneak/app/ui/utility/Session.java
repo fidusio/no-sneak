@@ -138,7 +138,7 @@ public class Session {
     }
 
     /** Where the manuf bytes come from when the store has none; a test replaces it so it never reaches wireshark.org. */
-    private IOSupplier<byte[]> macVendorSource = () -> OUIDB.getRawContent(OUIDB.WIRESHARK_MANUF_URL);
+    private IOSupplier<byte[]> macVendorSource = () -> OUIDB.getRawContent(OUIDB.XLOG_MANUF_URL);
     private volatile boolean macVendorsLoaded;
 
     void setMacVendorSource(IOSupplier<byte[]> source) {
@@ -153,7 +153,7 @@ public class Session {
     /**
      * Fills {@link NSNetUtil#MAC_VENDORS} from the store, after a login (maintainer, 2026-10-25):
      * the store holds one {@link DataContent} named {@link #MAC_VENDOR_CONTENT_NAME} with the
-     * Wireshark manuf file as its data and {@link OUIDB#WIRESHARK_MANUF_URL} as its source id. When
+     * Wireshark manuf file as its data and {@link OUIDB#XLOG_MANUF_URL} as its source id. When
      * the row is missing the file is downloaded once, stored, and loaded; when present its bytes
      * are loaded without any download. The row is app-wide, shared by every subject: it is read and
      * written in the store's system context ({@link #runAsSystem}), so it has no owner and the
@@ -249,7 +249,7 @@ public class Session {
             data = macVendorSource.get();
             // an error page or a captive portal answers 200 with something that is not a manuf file
             if (data == null || new OUIDB().load(data).size() == 0) {
-                throw new IOException("the vendor list from " + OUIDB.WIRESHARK_MANUF_URL + " is empty or not a manuf file");
+                throw new IOException("the vendor list from " + OUIDB.XLOG_MANUF_URL + " is empty or not a manuf file");
             }
         } catch (IOException e) {
             throw new UncheckedIOException(e);
@@ -260,7 +260,7 @@ public class Session {
             row.setName(MAC_VENDOR_CONTENT_NAME);
             row.setFullName(MAC_VENDOR_CONTENT_NAME);
         }
-        row.setSourceID(OUIDB.WIRESHARK_MANUF_URL);
+        row.setSourceID(OUIDB.XLOG_MANUF_URL);
         row.setData(data);
         if (SUS.isEmpty(row.getGUID())) {
             rawStore.insert(row);

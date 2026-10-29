@@ -566,7 +566,7 @@ is closed; new work starts after this session.
 (now the manuf *description*: the short name is an 8-char abbreviation). The table is filled
 **after a login**, before the shell shows (`AppFrame.loadMacVendorsThenShow` →
 `Session.loadMacVendors`): the store's `DataContent` named `Mac-Vendor-Content` holds the Wireshark
-manuf file (`source_id` = `OUIDB.WIRESHARK_MANUF_URL`, `data` = the bytes); missing → downloaded once
+manuf file (`source_id` = `OUIDB.XLOG_MANUF_URL`, `data` = the bytes); missing → downloaded once
 with `OUIDB.getRawContent`, parsed in a throw-away table to make sure it is a manuf file, stored,
 loaded; present → loaded, no network. The row is app-wide (system context, no owner) so every
 subject shares it. A failed download warns once and the app still starts. The result view shows a
@@ -741,6 +741,19 @@ fake providers — the options row is Provider · Model · the two boxes, the mo
 bound model, typed text narrows the visible count. Live check owed: type in the Model box
 (`mini`, `gpt*`, `!mini`, `*`), pick with the mouse and with arrows + Enter, Escape, and switch
 provider with text typed.
+
+**2026-10-29, vault password warning and step-1 tooltips (uncommitted):** the maintainer: "in the
+vault setup panel add tooltip for the input field and put emphasis on the vault password it is
+crucial for the user to keep it safe because IT IS NOT RECOVERABLE". In `UnlockPanel` step 1 every
+input carries a tooltip (location and its path field and Choose button, vault password, operator
+username / password / confirm, database username / password / encryption password), and a
+warning row sits under the vault password field in both modes: alert glyph, bold text in the
+warning colour on the `warnSoft` tint — `Form.VAULT_PASSWORD_WARNING` ("Keep the vault password
+safe. IT IS NOT RECOVERABLE: there is no reset, no recovery and nobody who can retrieve it. Lose
+it and the vault, the database and everything they hold are gone for good."). The first-run note
+under the card and the warning share one `callout(icon, text, background)` helper. Rendered
+headless in create and open mode; `UnlockFormTest` + `UnlockPanelSignInTest` 6 / 6. Live check
+owed: hover each step-1 field for its tooltip.
 
 **Open after Phase 5 (updated 2026-10-27):** the rest of the maintainer's run-through on a
 display (unlock, the scan form and history are done; still to try: a stored report from history,
