@@ -44,6 +44,8 @@ public class AssistantContext {
     private final Map<String, AIProviderConfig> configCache = new ConcurrentHashMap<>();
 
     private final CaptureAreaSet captureAreaSet = new CaptureAreaSet();
+    /** Whether the assistant's window is hidden while the capture areas are shot (2026-10-29); a session preference, kept across sign-out. */
+    private volatile boolean hideWindowOnCapture = true;
 
     public AssistantContext(AICredentialSource credentials, AIRepository repository) {
         this.credentials = credentials;
@@ -200,6 +202,14 @@ public class AssistantContext {
 
     public CaptureAreaSet getCaptureAreaSet() {
         return captureAreaSet;
+    }
+
+    public boolean isHideWindowOnCapture() {
+        return hideWindowOnCapture;
+    }
+
+    public void setHideWindowOnCapture(boolean hide) {
+        hideWindowOnCapture = hide;
     }
 
     public List<AICapture> getAllCaptures() {

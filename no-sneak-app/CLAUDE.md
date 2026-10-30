@@ -643,7 +643,16 @@ discoverability — it mirrors the sidebar and adds nothing; since 2026-10-27 ea
 item: the ref's display name is the text, its description the tooltip, its source the screen the
 click shows; `viewItems()` lists them), **Help** (Help = the bundled
 `app-description.md` in an `MDViewerPanel`, titled *NOSNEAK — Help* — rewritten 2026-10-27 to the
-sidebar's pages: one paragraph per page, what the tool will not do, where the data stays; About =
+sidebar's pages: one paragraph per page, what the tool will not do, where the data stays; made
+richer on 2026-10-29 ("update the help content make richer to reflect the recent update"): an
+*Opening the store and signing in* section (the two steps, the vault password NOT RECOVERABLE),
+the pages grouped under Scan / Assistant / Account headings, and the recent work spelled out —
+the command-is-the-truth rule and the `-sn` / ports exclusivity, no chip = no probing, the MAC
+and vendor columns and the Network adapter block, Scan again and Stop, multi-select Delete and
+Delete all, the Probe library's three ways to add a probe, the Provider box and the provider ·
+model line on replies, the Model box filter grammar, Send history / Auto-copy code, the chips,
+the copy icon on past prompts and the × in the input box, Chat as PDF, the Capture page's Hide
+window box, one key backing several providers, the clipboard wipe on Copy, Backup / Restore; About =
 a 460 px card in the house look (same day): name, `TAGLINE`, the `SUMMARY` paragraph that repeats
 the Help's "what it will and won't do", a `KeyValuePanel` of Version / Java / Platform / Vault
 (the directory) / Store (`STORE_NOTE`),

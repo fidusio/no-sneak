@@ -12,6 +12,7 @@ import io.xlogistx.nosneak.app.ui.AppShell;
 import io.xlogistx.nosneak.app.ui.UnlockPanel;
 import io.xlogistx.nosneak.app.ui.utility.AppContext;
 import io.xlogistx.nosneak.app.ui.utility.AppPrefs;
+import io.xlogistx.nosneak.app.ui.utility.Session;
 import io.xlogistx.opsec.OPSecUtil;
 import io.xlogistx.shiro.ds.ShiroDSDomainSecurityManager;
 import org.zoxweb.shared.api.APIDataStore;
@@ -28,7 +29,7 @@ import java.io.IOException;
 public class NoSneakMain {
 
 
-    public final static AppVersion VERSION = new AppVersion("NOSNEAK::1.0.0");
+    public final static AppVersion VERSION = new AppVersion("NOSNEAK::1.1.1");
     /** The H2 database name inside the installation directory; see {@link NoSneakStore}. */
     public static final String dbName = NoSneakStore.DB_NAME;
 
@@ -45,6 +46,9 @@ public class NoSneakMain {
      * Passing the vault password or a subject's password on the command line exposes them
      * (process list, shell history, run configurations): a development convenience, the unlock
      * screen is the normal path.
+     *
+     * @param args {@code name=value} launch parameters: {@code ds.location}, {@code ds.store-password},
+     *             {@code subject} (or {@code username}), {@code password}; none for the unlock screen
      */
     public static void main(String... args) {
 
@@ -134,6 +138,8 @@ public class NoSneakMain {
          * The store is open: build the application around it. Called on the EDT by the unlock
          * panel after a successful Open / Create, or by {@link #launchApp} for a store opened from
          * launch parameters. A second call is ignored: the store is fixed for the process.
+         *
+         * @param dsm the manager over the opened store, attached to its INI realm
          */
         public void storeOpened(ShiroDSDomainSecurityManager dsm) {
             if (ctx != null) return;
@@ -206,6 +212,9 @@ public class NoSneakMain {
      * {@link NoSneakStore#open} instead, which attaches the manager to the INI realm.
      * {@code ShiroDSDomainSecurityManager} replaced {@code DomainSecurityManagerDefault} (user,
      * 2026-10-05); it registers {@code CIPassword} and {@code SubjectAPIKey} itself.
+     *
+     * @param dataStore the open store, configured with the Shiro controller and the key maker
+     * @return the bootstrapped manager over it
      */
     public static ShiroDSDomainSecurityManager createDomainSecManager(APIDataStore<?, ?> dataStore) {
         OPSecUtil.singleton();
@@ -216,6 +225,9 @@ public class NoSneakMain {
      * Shows the application window. With a manager (opened from launch parameters) the unlock
      * panel's first step is already done and the window opens on sign-in; without one it opens on
      * the open-store step.
+     *
+     * @param domainSecurityManager the manager of an installation opened from launch parameters, or null
+     * @param location              that installation's directory, shown on the collapsed first step; null without a manager
      */
     public static void launchApp(ShiroDSDomainSecurityManager domainSecurityManager, String location) {
         launchApp(domainSecurityManager, location, null, null);
@@ -226,6 +238,11 @@ public class NoSneakMain {
      * (both non-null, store open) the sign-in step is run for them once the window is up
      * ({@link UnlockPanel#signIn}): success lands in the shell, a refusal stays on the sign-in step
      * with the reason inline. The password array is wiped by the panel.
+     *
+     * @param domainSecurityManager the manager of an installation opened from launch parameters, or null
+     * @param location              that installation's directory; null without a manager
+     * @param subject               the username to sign in once the window is up, or null
+     * @param password              that subject's password, wiped by the panel; null with no subject
      */
     public static void launchApp(ShiroDSDomainSecurityManager domainSecurityManager, String location,
                                  String subject, char[] password) {

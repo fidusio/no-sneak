@@ -33,7 +33,10 @@
 > a **copy icon on every past prompt** puts its text back in the composer to send it again, and
 > an **X icon** inside the input box empties the prompt. **2026-10-28:** the Model box and the
 > model filter are one gui-audio **`FilterComboBox`** (type to narrow the drop-down), so a filter
-> can no longer hide the new provider's models after a provider switch.
+> can no longer hide the new provider's models after a provider switch. **2026-10-29:** step-1
+> tooltips and the NOT RECOVERABLE warning under the vault password on the unlock screen, and a
+> **Hide window** box beside Capture (N) on the Capture page (ticked by default; clear, the
+> application stays on screen while an area is drawn or shot, so it can capture itself).
 
 Assessment tooling for what a network endpoint exposes — TLS posture, **post-quantum
 readiness**, and running services — plus a Swing front-end and an AI-assistant layer.

@@ -30,28 +30,38 @@ public final class CaptureSupport {
     private CaptureSupport() {
     }
 
-    static RegionOverlay.Selection select(Window owner) throws Exception {
-        hideWindow(owner);
+    /**
+     * Runs the drag-select overlay. The window is hidden for the drag only when the context's
+     * {@code hideWindowOnCapture} is set; otherwise it stays, so an area can be drawn over the
+     * application itself (the overlay is always on top).
+     */
+    static RegionOverlay.Selection select(AssistantContext ctx, Window owner) throws Exception {
+        Window hidden = ctx.isHideWindowOnCapture() ? owner : null;
+        hideWindow(hidden);
         try {
             RegionOverlay.Selection selection = drag();
             return (selection != null && usable(selection.bounds())) ? selection : null;
         } finally {
-            restoreWindow(owner);
+            restoreWindow(hidden);
         }
     }
 
     /**
-     * Shoots every area in one sweep and persists each shot. The window is restored before anything
-     * is encoded or written, so a failed save cannot leave the assistant invisible.
+     * Shoots every area in one sweep and persists each shot. The window is hidden for the sweep only
+     * when the context's {@code hideWindowOnCapture} is set (the Capture page's <i>Hide window</i>
+     * box, on by default); otherwise it stays where it is and an area over it shoots the assistant
+     * itself. The window is restored before anything is encoded or written, so a failed save cannot
+     * leave the assistant invisible.
      */
     static AICapture[] shootAndSave(AssistantContext ctx, Window owner, CaptureArea[] areas)
             throws Exception {
-        hideWindow(owner);
+        Window hidden = ctx.isHideWindowOnCapture() ? owner : null;
+        hideWindow(hidden);
         SnapShot[] snaps;
         try {
             snaps = ctx.getCaptureAreaSet().takeSnapShots(areas);
         } finally {
-            restoreWindow(owner);
+            restoreWindow(hidden);
         }
 
         List<AICapture> saved = new ArrayList<>();

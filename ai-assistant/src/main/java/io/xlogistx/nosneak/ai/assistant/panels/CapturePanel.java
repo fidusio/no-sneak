@@ -53,7 +53,11 @@ public class CapturePanel extends JPanel {
     private final JLabel captureNote = new JLabel();
 
     private JButton defineAreaButton;
+    /** Component name of the <i>Hide window</i> box beside Capture (N). */
+    public static final String HIDE_WINDOW = "hide-window";
+
     private JButton captureButton;
+    private JCheckBox hideWindowBox;
     private JButton sendButton;
     private JButton deleteAllButton;
 
@@ -86,10 +90,16 @@ public class CapturePanel extends JPanel {
         captureButton.setToolTipText("Capture an image of every area");
         captureButton.setEnabled(false);
         captureButton.addActionListener(_ -> onCapture());
+        hideWindowBox = new JCheckBox("Hide window", ctx.isHideWindowOnCapture());
+        hideWindowBox.setOpaque(false);
+        hideWindowBox.setName(HIDE_WINDOW);
+        hideWindowBox.setToolTipText("Hide this window while an area is drawn or shot; untick to draw over and capture the application itself");
+        hideWindowBox.addActionListener(_ -> ctx.setHideWindowOnCapture(hideWindowBox.isSelected()));
         JPanel actions = new JPanel(new MigLayout("insets 0, gapx 8"));
         actions.setOpaque(false);
         actions.add(defineAreaButton);
         actions.add(captureButton);
+        actions.add(hideWindowBox);
         page.action(actions);
 
         // preferred widths are zeroed so the two columns split the page 38/62 whatever their toolbars want
@@ -328,7 +338,7 @@ public class CapturePanel extends JPanel {
 
     private void onDefineArea() {
         Window window = SwingUtilities.getWindowAncestor(this);
-        BackgroundTask.run(this, defineAreaButton, () -> CaptureSupport.select(window), selection -> {
+        BackgroundTask.run(this, defineAreaButton, () -> CaptureSupport.select(ctx, window), selection -> {
             if (selection == null) return;
             CaptureArea area = new CaptureArea(
                     "Area " + (ctx.getCaptureAreaSet().getCaptureAreas().length + 1),
@@ -343,7 +353,7 @@ public class CapturePanel extends JPanel {
     private void onRedrawArea(CaptureArea area) {
         if (area == null) return;
         Window window = SwingUtilities.getWindowAncestor(this);
-        BackgroundTask.run(this, null, () -> CaptureSupport.select(window), selection -> {
+        BackgroundTask.run(this, null, () -> CaptureSupport.select(ctx, window), selection -> {
             if (selection == null) return;
             area.setCaptureArea(selection.bounds());
             area.setDescription(selection.display());

@@ -1229,7 +1229,7 @@ public class ChatPanel extends JPanel {
         button.addActionListener(_ -> {
             popup.setVisible(false);
             Window window = SwingUtilities.getWindowAncestor(this);
-            BackgroundTask.run(this, null, () -> CaptureSupport.select(window), selection -> {
+            BackgroundTask.run(this, null, () -> CaptureSupport.select(ctx, window), selection -> {
                 if (selection == null) return;
                 CaptureArea area = new CaptureArea(
                         "Area " + (ctx.getCaptureAreaSet().getCaptureAreas().length + 1),

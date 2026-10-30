@@ -33,7 +33,12 @@ detail lives in the module `CLAUDE.md` files, named below.*
    - (2026-10-28, model combo) type in the Model box: `mini` narrows the drop-down as you type,
      `gpt*` and `!mini` follow the grammar, `*` shows the embedding and audio models too;
      arrows + Enter and a mouse click pick, Escape puts the chosen model's name back, and
-     switching provider with text typed shows the other provider's full list.
+     switching provider with text typed shows the other provider's full list;
+   - (2026-10-29, hide window) on the Capture page untick *Hide window* and press Capture (N):
+     the application stays on screen and an area drawn over it shoots the application; ticked
+     again, the window disappears for the sweep as before; the chat's send-time sweep follows
+     the same box; with it unticked *Define area* draws over the application too (the overlay
+     sits on top of it).
 2. **Run-through on a display** of the pages not yet tried since the redesign: a stored report
    opened from history, API keys, Providers, a chat with chips, a capture, Profile, Settings
    (Backup and Restore), Access control. Since 2026-10-27 that includes what was re-laid out or
@@ -754,6 +759,37 @@ it and the vault, the database and everything they hold are gone for good."). Th
 under the card and the warning share one `callout(icon, text, background)` helper. Rendered
 headless in create and open mode; `UnlockFormTest` + `UnlockPanelSignInTest` 6 / 6. Live check
 owed: hover each step-1 field for its tooltip.
+
+**2026-10-29, Hide window box on the Capture page (uncommitted):** the maintainer: "when I click
+on capture to an area in the current design by default the app window is hidden add a check to
+enable it is set you hide the application if not it stays". `CapturePanel` carries a **Hide
+window** check box beside Capture (N) (component name `CapturePanel.HIDE_WINDOW`, tooltip *Hide
+this window while the areas are shot; untick to capture the application itself*), ticked by
+default. It drives `AssistantContext.hideWindowOnCapture` (a session preference, kept across
+sign-out, not persisted), which `CaptureSupport.shootAndSave` reads: set, the owner window is
+hidden and restored around the sweep as before; clear, it is left where it is and the areas are
+shot with the application on screen. The chat's send-time sweep goes through the same method, so
+the box governs it too. The maintainer's first try ("if I uncheck the hide window it is not
+working"): the sweep honoured the box but *Define area*, *Redraw* and the chat's *Capture
+area...* still hid the window for the drag, so no area could be drawn over the application in
+the first place; `CaptureSupport.select(ctx, owner)` now reads the same flag (the overlay is
+always on top, so the drag works over the application).
+`CapturePanelHideWindowTest` (2) drives the box on a real `CapturePanel`; rendered headless in
+both states (the box sits right of Capture (1), ticked and clear). Live check owed: item 1.
+
+**2026-10-29, Help made richer (uncommitted):** the maintainer: "update the help content make
+richer to reflect the recent update". `app-description.md` (Help in the sidebar footer and the
+Help menu) gained an *Opening the store and signing in* section (step 1 / step 2, the vault
+password NOT RECOVERABLE, the header and status bar), the pages grouped under Scan / Assistant /
+Account, and the work since 2026-10-25 in the user's words: the command-is-the-truth rule, `-sn`
+versus ports, no chip = no probing, MAC and vendor, Scan again, Stop, multi-select Delete and
+Delete all, the Probe library's three routes, the Provider box and the provider · model line,
+the Model box grammar (`mini`, `gpt*`, `!mini`, `*`), Send history, Auto-copy code, the chips,
+the copy icon and the ×, Chat as PDF, Hide window on Capture, several providers on one key, the
+clipboard wipe, Backup / Restore. About's `SUMMARY` still says the same thing in one paragraph
+and was left alone; the note in the app module's `CLAUDE.md` follows. Rendered through
+`MDViewerPanel` at the dialog's width (2175 px tall, two pages): table, headings and nested
+lists come out right. Live check owed: open Help from the sidebar footer and scroll it.
 
 **Open after Phase 5 (updated 2026-10-27):** the rest of the maintainer's run-through on a
 display (unlock, the scan form and history are done; still to try: a stored report from history,

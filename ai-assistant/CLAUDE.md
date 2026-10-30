@@ -258,7 +258,8 @@ has chosen to use.
 > - **Capture areas are ticked in the composer and shot at send time.** The popup's *Capture*
 >   section carries `defineAreaRow` ("Capture area...", a fresh drag that **adds** a
 >   `CaptureArea` to the shared `CaptureAreaSet` — auto-named `Area N`, description = display,
->   ticked on creation — nothing is shot at that point) and `areaSection`: an **All areas**
+>   ticked on creation — nothing is shot at that point; the window is hidden for the drag only
+>   while the Capture page's *Hide window* box is ticked, 2026-10-29) and `areaSection`: an **All areas**
 >   check-all above one row per area in a bounded scroll pane (`AREA_LIST_MAX_HEIGHT`), each
 >   row a tick box (tooltip = `areaSublabel`) plus an ✕ that removes the area from the set.
 >   Ticks live in `ChatPanel.tickedAreas` (an identity set — view state, not on the area) and
@@ -277,7 +278,12 @@ has chosen to use.
 > - **The Capture page is built** (`panels/CapturePanel`; re-laid out 2026-10-26 in the house
 >   list look, after Chat History): a `PagePanel` head (title from `Page.CAPTURE`, the two
 >   actions **Define area** and the primary **Capture (N)**; N = all defined areas, disabled at
->   0) over two columns split 38/62. *Areas* (left) is a toolbar (count, **Rename / Redraw /
+>   0; and, since 2026-10-29, a **Hide window** check box after them — component name
+>   `CapturePanel.HIDE_WINDOW`, ticked by default — that drives
+>   `AssistantContext.hideWindowOnCapture`, a session preference kept across sign-out: set, the
+>   window is hidden for the drag and the sweep as before; clear, it stays on screen, so an area
+>   can be drawn over the application and shoots it; `CaptureSupport.select(ctx, owner)` and
+>   `shootAndSave` both read the flag; `CapturePanelHideWindowTest`) over two columns split 38/62. *Areas* (left) is a toolbar (count, **Rename / Redraw /
 >   Remove** on the selected row) over a `Tables.style`d table on **`CaptureAreaModel`** —
 >   Area · Display · Region — of the **session-scoped** `io.xlogistx.gui.CaptureArea`s (held in
 >   `AssistantContext`'s `CaptureAreaSet`, never persisted, cleared by `resetContext()`); the
@@ -291,7 +297,9 @@ has chosen to use.
 >   **Back** and the primary **Send to chat**, the image in the card). Both models are pure
 >   (`CaptureModelsTest`). `fromArea` is a **copied string label**, so deleting the area leaves
 >   captures intact. Capture (N) runs `CaptureSupport.shootAndSave` — the same sweep the chat
->   send path uses: one hide/settle/restore cycle around a single
+>   send path uses: one hide/settle/restore cycle (the hide and restore only while the context's
+>   `hideWindowOnCapture` is set, the Capture page's *Hide window* box; the chat's send-time
+>   sweep follows the same flag) around a single
 >   `CaptureAreaSet.takeSnapShots` sweep (one cached `Robot`; unset or empty rectangles are
 >   silently skipped per the library contract, and the panel warns "N of M areas could not be
 >   captured" when the snapshot count comes up short), saves each via `ctx.saveCapture`, and
@@ -483,7 +491,7 @@ split out of `AssistantPanel`, which is now just wiring:
 | Class | What it is |
 |---|---|
 | `AssistantPanel` | Wiring only: builds the six page panels, the sidebar, and the top-level `CardStack` |
-| `AssistantContext` | Swing-free state holder: injected services + current selection + caches + the session `CaptureAreaSet` |
+| `AssistantContext` | Swing-free state holder: injected services + current selection + caches + the session `CaptureAreaSet` + the `hideWindowOnCapture` preference (2026-10-29) |
 | `ModelFilter` | The model-filter grammar: two `TokenMatcher`s (include / `!`exclude) over a typed pattern list, falling back to the built-in non-chat markers; the conversation combo's `Matcher` since 2026-10-28, no session state |
 | `AIAPIProvider` | The `AIProvider` implementation over `io.xlogistx.api.ai.AIAPI` (+ inner `ModelCatalog`) |
 | `AssistantCallback` | `ConsumerCallback<NVGenericMap>` — payload → `AIResponse` (stamped with the model and, since 2026-10-27, the provider id the request went to), persist, hop to the EDT |
@@ -499,10 +507,10 @@ split out of `AssistantPanel`, which is now just wiring:
 | `panels/ProvidersTableModel` | The providers table's rows (`Row` computed once per refresh by `rowOf`: label, type, endpoint, default model, model count, last sync); pure, `ProviderTableModelsTest` |
 | `panels/ProviderKeysTableModel` | The key picker's rows (`Row`: key, provider or *choose provider*, endpoint, used-by count); pure, `ProviderTableModelsTest` |
 | `panels/JobQueuePanel` | Stub (see the status block) |
-| `panels/CapturePanel` | The Capture page: `PagePanel` head (Define area, Capture (N)), the Areas and Captures toolbar-over-table columns, the preview page (house list look since 2026-10-26; see the status block) |
+| `panels/CapturePanel` | The Capture page: `PagePanel` head (Define area, Capture (N), the Hide window box), the Areas and Captures toolbar-over-table columns, the preview page (house list look since 2026-10-26; see the status block) |
 | `panels/CaptureAreaModel` | The Areas table's rows (name edited in place, display, region); pure, `CaptureModelsTest` |
 | `panels/CaptureTableModel` | The Captures table's rows (thumbnail, name, area, size, bytes, taken); pure, `CaptureModelsTest` |
-| `panels/CaptureSupport` | Capture helpers: select/shootAndSave, png encode + jpeg thumbnail, icon scaling, sublabel/byte/time formatting |
+| `panels/CaptureSupport` | Capture helpers: select/shootAndSave (both hide the window only when `hideWindowOnCapture` is set), png encode + jpeg thumbnail, icon scaling, sublabel/byte/time formatting |
 | `panels/RegionOverlay` | Blocking multi-monitor drag-select overlay; `select()` must run off the EDT |
 | `panels/PanelSupport` | Shared row/format helpers (`timestamp`, `deleteConfirm`, provider combos, `showErrorDialog`) |
 
@@ -1130,7 +1138,10 @@ affordance; `ChatBubbleReuseTest` (3, 2026-10-27) the user bubble's copy icon (p
 handler, clickable, never on a reply); `ChatPanelClearTest` (1, 2026-10-27) drives a real
 `ChatPanel` over `AssistantContextTest.MemoryRepository` (package-private for that) with a current
 chat and checks the clear icon is hidden when empty, shown on text, and empties the composer;
-`ChatPanelProviderSwitchTest` (2, 2026-10-28) registers two fake `AIProvider`s with fixed catalogs
+`CapturePanelHideWindowTest` (2, 2026-10-29) builds a real `CapturePanel` on the same repository
+and checks the *Hide window* box is ticked by default, that clicking it flips the context's
+`hideWindowOnCapture` both ways, and that a page built on a context with the flag off starts
+unticked; `ChatPanelProviderSwitchTest` (2, 2026-10-28) registers two fake `AIProvider`s with fixed catalogs
 on the context's registrar, binds a chat to one, types into the model combo's editor (the list
 narrows), picks the other provider in the conversation's combo and checks the list is the new
 provider's, the editor shows its model and the chat is rebound; the widget itself is pinned by
