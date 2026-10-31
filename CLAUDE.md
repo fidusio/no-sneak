@@ -37,6 +37,14 @@
 > tooltips and the NOT RECOVERABLE warning under the vault password on the unlock screen, and a
 > **Hide window** box beside Capture (N) on the Capture page (ticked by default; clear, the
 > application stays on screen while an area is drawn or shot, so it can capture itself).
+> **2026-10-31:** an **Assistant block on the Settings page** with the **reply timeout** (seconds a
+> provider may take to answer one request, 10 to 600, default 40, kept per installation in
+> `AppPrefs`). The usual 40 s is right for a responsive endpoint; the setting is there to
+> stretch it for a congested one, which zoxweb's shared http client gave no way to do.
+> `AssistantContext` holds the value and **one shared
+> `OkHttpClient`** built from it, rebuilt when the setting changes and pushed to every
+> registered provider's endpoints (`applyHttpClient`); a provider built later gets it when it is
+> registered, and a timed-out send names the setting in its error.
 
 Assessment tooling for what a network endpoint exposes — TLS posture, **post-quantum
 readiness**, and running services — plus a Swing front-end and an AI-assistant layer.

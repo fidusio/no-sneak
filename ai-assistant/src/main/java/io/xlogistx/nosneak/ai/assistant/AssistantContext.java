@@ -5,6 +5,8 @@ import io.xlogistx.nosneak.ai.AIProvider;
 import io.xlogistx.nosneak.ai.AIRepository;
 import io.xlogistx.nosneak.ai.AICredentialSource;
 import io.xlogistx.nosneak.ai.model.*;
+import okhttp3.OkHttpClient;
+import org.zoxweb.server.http.OkHTTPCall;
 import org.zoxweb.shared.data.ReferenceIDImpl;
 import org.zoxweb.shared.security.APIKey;
 import org.zoxweb.shared.util.SUS;
@@ -46,6 +48,30 @@ public class AssistantContext {
     private final CaptureAreaSet captureAreaSet = new CaptureAreaSet();
     /** Whether the assistant's window is hidden while the capture areas are shot (2026-10-29); a session preference, kept across sign-out. */
     private volatile boolean hideWindowOnCapture = true;
+
+    /** The reply timeout a host starts with when it has no stored value: zoxweb's own 40 s, which is right for a responsive endpoint. */
+    public static final long DEFAULT_CALL_TIMEOUT_SECONDS = 40;
+    /**
+     * How long one request to a provider may wait for its reply, in seconds (2026-10-31); the
+     * host's Settings page sets it, to stretch the limit for a congested endpoint. 0 leaves the
+     * http library's own limit in force.
+     */
+    private volatile long callTimeoutSeconds = DEFAULT_CALL_TIMEOUT_SECONDS;
+    /**
+     * The one http client every provider sends through, built from {@link #callTimeoutSeconds}
+     * and rebuilt only when it changes; null when the timeout is 0, which leaves the endpoints on
+     * zoxweb's shared default client.
+     * <p>
+     * <b>Why a client and not {@code HTTPMessageConfig.setTimeout}:</b> zoxweb's
+     * {@code OkHTTPCall} honours the message config's timeout only when the call has a proxy or
+     * redirects off; on the ordinary path it uses one shared {@code OkHttpClient} whose 40 s
+     * cannot be changed from here, and a congested endpoint needs longer. An endpoint does
+     * take a dedicated client, and {@code HTTPAPICaller.updateOkHttpClient} hands one to every
+     * endpoint of an {@code AIAPI} — {@code setOkHttpClient} on the caller itself is a field
+     * nothing reads — so the setting is applied by pushing this client to every registered
+     * {@link AIAPIProvider} ({@link #applyHttpClient}), never per call.
+     */
+    private volatile OkHttpClient httpClient = buildHttpClient(DEFAULT_CALL_TIMEOUT_SECONDS);
 
     public AssistantContext(AICredentialSource credentials, AIRepository repository) {
         this.credentials = credentials;
@@ -210,6 +236,42 @@ public class AssistantContext {
 
     public void setHideWindowOnCapture(boolean hide) {
         hideWindowOnCapture = hide;
+    }
+
+    /** Seconds a provider may take to answer one request; 0 means the http library's default. */
+    public long getCallTimeoutSeconds() {
+        return callTimeoutSeconds;
+    }
+
+    /**
+     * Sets the reply timeout: builds the shared client once for the new value and hands it to
+     * every registered provider, so their next request uses it. Negative values read as 0.
+     */
+    public void setCallTimeoutSeconds(long seconds) {
+        callTimeoutSeconds = Math.max(0, seconds);
+        httpClient = buildHttpClient(callTimeoutSeconds);
+        for (AIProvider p : getProvidersList()) applyHttpClient(p);
+    }
+
+    /** The client built for the current timeout, or null when it is 0. */
+    public OkHttpClient getHttpClient() {
+        return httpClient;
+    }
+
+    /**
+     * Hands the current client to a provider's endpoints; a no-op for a provider that is not an
+     * {@link AIAPIProvider}. Called for every registered provider when the timeout changes and
+     * by the code that registers a provider, so one built later gets the current value too.
+     */
+    public void applyHttpClient(AIProvider provider) {
+        if (provider instanceof AIAPIProvider p && p.getHTTPAPICaller() != null)
+            p.getHTTPAPICaller().updateOkHttpClient(httpClient);
+    }
+
+    /** zoxweb's own builder with the timeout on connect, read and write; SSL checks and redirects on, no proxy. */
+    static OkHttpClient buildHttpClient(long seconds) {
+        if (seconds <= 0) return null;
+        return OkHTTPCall.createOkHttpBuilder(null, true, null, seconds, true, 20, 20).build();
     }
 
     public List<AICapture> getAllCaptures() {

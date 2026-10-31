@@ -13,6 +13,9 @@ import java.util.prefs.Preferences;
  *   <li>{@link #storeLocation()} — the installation directory the app last opened, offered on
  *       the setup screen so the subject only types the vault password.</li>
  *   <li>{@link #fileDirectory()} — where the backup / restore choosers last landed.</li>
+ *   <li>{@link #aiTimeoutSeconds()} — the assistant's reply timeout (2026-10-31), set on the
+ *       Settings page; per installation, like the rest, because a timeout is about this
+ *       machine's connection rather than an account.</li>
  * </ul>
  *
  * Readers return null when nothing is saved or the saved directory no longer exists; writers
@@ -23,6 +26,10 @@ public final class AppPrefs {
     private static final Preferences PREFS = Preferences.userNodeForPackage(AppPrefs.class);
     static final String STORE_LOCATION = "store.location";
     static final String FILE_DIRECTORY = "file.directory";
+    static final String AI_TIMEOUT = "ai.timeout.seconds";
+
+    /** The reply timeout's default (the http library's own 40 s) and bounds, in seconds; the Settings spinner moves in tens. */
+    public static final int AI_TIMEOUT_DEFAULT = 40, AI_TIMEOUT_MIN = 10, AI_TIMEOUT_MAX = 600;
 
     private AppPrefs() {}
 
@@ -46,6 +53,20 @@ public final class AppPrefs {
         if (chosen == null) return;
         File dir = chosen.isDirectory() ? chosen : chosen.getAbsoluteFile().getParentFile();
         if (dir != null) put(FILE_DIRECTORY, dir.getAbsolutePath());
+    }
+
+    /** Seconds the assistant waits for a provider's reply; the default when nothing is stored, always within the bounds. */
+    public static int aiTimeoutSeconds() {
+        return clampAiTimeout(PREFS.getInt(AI_TIMEOUT, AI_TIMEOUT_DEFAULT));
+    }
+
+    /** Records the reply timeout, clamped to the bounds. */
+    public static void aiTimeoutSeconds(int seconds) {
+        PREFS.putInt(AI_TIMEOUT, clampAiTimeout(seconds));
+    }
+
+    public static int clampAiTimeout(int seconds) {
+        return Math.max(AI_TIMEOUT_MIN, Math.min(AI_TIMEOUT_MAX, seconds));
     }
 
     private static File existingDirectory(String path) {

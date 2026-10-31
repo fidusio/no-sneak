@@ -20,6 +20,7 @@ import org.zoxweb.shared.util.NVGenericMap;
 import org.zoxweb.shared.util.NVPair;
 
 import javax.swing.*;
+import javax.swing.text.DefaultFormatter;
 import java.awt.*;
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -35,6 +36,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.*;
+import java.util.function.IntConsumer;
 
 import static io.xlogistx.gui.PanelBuilder.*;
 
@@ -115,7 +117,7 @@ public class SubjectPanel extends JPanel {
         profilePage.card(scroll(buildProfileArea()));
         cardStack.add(profilePage, "Profile");
         cardStack.add(buildCredentials(), "Credentials");
-        PagePanel settingsPage = new PagePanel(Navigator.Screen.SETTINGS.getDisplayName(), "Reference data this installation keeps up to date, and the store's backup.");
+        PagePanel settingsPage = new PagePanel(Navigator.Screen.SETTINGS.getDisplayName(), "Reference data this installation keeps up to date, the assistant's reply timeout, and the store's backup.");
         settingsPage.card(scroll(buildSettingsArea()));
         cardStack.add(settingsPage, SECTION_SETTINGS);
         cardStack.show(SECTION_PROFILE);
@@ -203,6 +205,8 @@ public class SubjectPanel extends JPanel {
         JPanel area = new JPanel(new MigLayout("wrap 1, insets 0", "[grow,fill]"));
         area.add(buildSync());
         area.add(new JSeparator(), "gaptop 8, gapbottom 8");
+        area.add(buildAssistant());
+        area.add(new JSeparator(), "gaptop 8, gapbottom 8");
         area.add(buildDBBackup());
         area.add(new JSeparator(), "gaptop 8, gapbottom 8");
         area.add(buildDBRestore());
@@ -289,6 +293,70 @@ public class SubjectPanel extends JPanel {
 
     private static String day(long epochMs) {
         return LocalDate.ofInstant(Instant.ofEpochMilli(epochMs), ZoneId.systemDefault()).toString();
+    }
+
+    // ==================== Assistant (Settings block) ====================
+
+    /** The reply timeout spinner's component name. */
+    static final String REPLY_TIMEOUT = "settings.assistant.replyTimeout";
+
+    private IntConsumer onAssistantTimeoutChange = _ -> {};
+
+    /**
+     * Hears every change of the Assistant block's reply timeout, in seconds, after it is stored;
+     * {@code AppShell} hands it to the assistant's context so the next request uses it.
+     */
+    public void setOnAssistantTimeoutChange(IntConsumer listener) {
+        onAssistantTimeoutChange = listener != null ? listener : _ -> {};
+    }
+
+    /**
+     * The Assistant block (2026-10-31, the maintainer: "the ai apis call sometimes they timeout
+     * can we set the timeout as parameter in setting"): one spinner, the seconds a provider may
+     * take to answer a request. The default is the usual 40 s; the setting is there to stretch it
+     * when an endpoint is congested. Stored per installation in {@link AppPrefs} and pushed to
+     * the assistant through {@link #setOnAssistantTimeoutChange} the moment it changes.
+     */
+    private JPanel buildAssistant() {
+        return assistantBlock(AppPrefs.aiTimeoutSeconds(), seconds -> {
+            AppPrefs.aiTimeoutSeconds(seconds);
+            onAssistantTimeoutChange.accept(seconds);
+        });
+    }
+
+    /** The block itself, in the Sync block's shape; a factory so a test can build and paint it on its own. */
+    static JPanel assistantBlock(int seconds, IntConsumer onChange) {
+        JPanel panel = new JPanel(new MigLayout("wrap 1, insets 12, gapy 6", "[grow,fill]"));
+
+        panel.add(PanelBuilder.title("Assistant"));
+        panel.add(blockNote("""
+                Reply timeout — how long a request to an AI provider may wait for its answer before \
+                the send is given up and reported as failed. 40 seconds is right for a responsive \
+                endpoint; stretch it when the one you use is congested and sends time out, lower it \
+                to fail faster. It applies to the next request of every provider and is kept for \
+                this installation."""), "growx 0");
+
+        JSpinner spinner = new JSpinner(new SpinnerNumberModel(AppPrefs.clampAiTimeout(seconds),
+                AppPrefs.AI_TIMEOUT_MIN, AppPrefs.AI_TIMEOUT_MAX, 10));
+        spinner.setName(REPLY_TIMEOUT);
+        spinner.setToolTipText("Seconds a provider may take to answer one request, "
+                + AppPrefs.AI_TIMEOUT_MIN + " to " + AppPrefs.AI_TIMEOUT_MAX + "; the default is " + AppPrefs.AI_TIMEOUT_DEFAULT + ".");
+        JFormattedTextField field = ((JSpinner.DefaultEditor) spinner.getEditor()).getTextField();
+        field.setColumns(4);
+        // a typed value counts as soon as it is valid, not only on Enter or focus loss
+        if (field.getFormatter() instanceof DefaultFormatter df) df.setCommitsOnValidEdit(true);
+        spinner.addChangeListener(_ -> onChange.accept(((Number) spinner.getValue()).intValue()));
+
+        JLabel label = new JLabel("Reply timeout");
+        label.setLabelFor(spinner);
+        JPanel row = new JPanel(new MigLayout("insets 0, gapx 8", "[][][]"));
+        row.setOpaque(false);
+        row.add(label);
+        row.add(spinner);
+        row.add(new JLabel("seconds"));
+        panel.add(row, "growx 0");
+
+        return panel;
     }
 
     // ==================== Backup and Restore (Settings blocks) ====================

@@ -79,8 +79,8 @@ detail lives in the module `CLAUDE.md` files, named below.*
   `NoSneakUtil` is not to be extended).
 
 **ai-assistant** — the full list is `ai-assistant/CLAUDE.md` → *Known rough edges*; the ones that
-lose data or hang: no send timeout or cancel (a provider that never calls back leaves Send disabled
-for the life of the app; the fix belongs in `ai-model`); a failed send loses the attached images;
+lose data or hang: no send cancel (the reply timeout is a Settings value since 2026-10-31, so a
+provider that never answers frees Send when it runs out; cancelling in flight belongs in `ai-model`); a failed send loses the attached images;
 `CapturePanel.full()` can write an image-less row over a stored capture when the store misses;
 `maxTokens` never reaches the wire (commented out upstream in `xlog-api-ai`); auto-named capture
 areas can collide; the compare (multi-model) path and chat-scoped skills are unbuilt.
@@ -823,6 +823,28 @@ the popup with a stored skill and the built-in row unticked and ticked, and the 
 with the *Probe definition · skill* chip. The library's *Write with the assistant* is unchanged
 (it attaches the definition as a text source and types the request). Live check owed: open a
 chat, press +, tick *Probe definition*, ask for a probe, *Save as probe* on the reply.
+
+**2026-10-31, the assistant's reply timeout on the Settings page (uncommitted):** the maintainer:
+"the ai apis call sometimes they timeout can we set the timeout as parameter in setting", and,
+on the framing: "the 40s is a correct timeout, the problem if user is using a congested aiapi
+endpoint we need to stretch it has nothing to do with the default". Found in zoxweb:
+`OkHTTPCall` sends every ordinary call (no proxy, redirects on) on one shared `OkHttpClient`
+with a 40 s read timeout and ignores the message config's own timeout on that path, so there
+was no way to stretch it. Built: an **Assistant** block on *Account → Settings* (between Sync
+and Backup) with a **Reply timeout** spinner, 10 to 600 s in tens, default 40 (first 120,
+corrected the same day), stored per installation in `AppPrefs.aiTimeoutSeconds` and pushed
+through `SubjectPanel.setOnAssistantTimeoutChange` → `AssistantContext.setCallTimeoutSeconds`,
+which builds **one shared `OkHttpClient`** for the value (`OkHTTPCall.createOkHttpBuilder`) and
+pushes it to every registered provider's endpoints (`applyHttpClient` →
+`HTTPAPICaller.updateOkHttpClient`; the two registration sites in `ProvidersPanel` apply it to a
+provider built later) — the maintainer's shape, after a first cut that read the value through a
+supplier before every call was reworked the same day (`AIAPIProvider` is untouched; note
+`HTTPAPICaller.setOkHttpClient` is a field nothing reads, `update…` is what reaches the
+endpoints); a timed-out send's error names the setting (`ChatPanel.timeoutHint`). `CallTimeoutTest` (6, assistant)
+and `SettingsAssistantBlockTest` (2, app, paints the block) green with their neighbours through
+the `.claude/tools` launcher; the block rendered and read. Live check owed: against a congested
+endpoint, a send that times out at 40 s comes back with the timeout stretched, and the error
+names the setting with it lowered to 10 s. Not built: cancelling a send in flight (`AIProvider.asyncSend` returns void).
 
 **Open after Phase 5 (updated 2026-10-27):** the rest of the maintainer's run-through on a
 display (unlock, the scan form and history are done; still to try: a stored report from history,

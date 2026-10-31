@@ -928,7 +928,22 @@ public class ChatPanel extends JPanel {
             refreshPrompt();
             if (composer.getText().isBlank()) composer.setText(text);
         }
-        showErrorDialog(this, "Send", "Send failed: " + e.getMessage(), e);
+        showErrorDialog(this, "Send", "Send failed: " + e.getMessage() + timeoutHint(e, ctx.getCallTimeoutSeconds()), e);
+    }
+
+    /**
+     * A send that ran out of time names the setting that raises the limit (2026-10-31): a
+     * {@link java.io.InterruptedIOException} anywhere in the chain (a socket timeout is one), or
+     * a message that says so. Any other failure adds nothing.
+     */
+    public static String timeoutHint(Throwable e, long timeoutSeconds) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            String m = t.getMessage();
+            if (t instanceof java.io.InterruptedIOException || (m != null && m.toLowerCase(Locale.ROOT).contains("timeout")))
+                return "\n\nThe provider did not answer within " + timeoutSeconds
+                        + " s. Account > Settings > Assistant raises the reply timeout.";
+        }
+        return "";
     }
 
     /**

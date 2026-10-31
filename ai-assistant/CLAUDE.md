@@ -333,6 +333,30 @@ has chosen to use.
 >   session-sized and the captures toolbar has no room for one at 1280 px wide. Note macOS
 >   needs Screen Recording permission for
 >   `Robot.createScreenCapture` — without it captures come back blank with no exception.
+> - **A send has a reply timeout, and the host sets it (2026-10-31).** The maintainer: "the ai
+>   apis call sometimes they timeout can we set the timeout as parameter in setting". Every call
+>   goes out on zoxweb's shared `OkHttpClient`, whose 40 s read timeout is the right limit for a
+>   responsive endpoint, and `OkHTTPCall` ignores the message config's own timeout on the
+>   ordinary path (no proxy, redirects on), so there was no way to stretch it when the endpoint
+>   a subject uses is congested — the maintainer's point: "the 40s is a correct timeout, the
+>   problem if user is using a congested aiapi endpoint we need to stretch it". Now
+>   `AssistantContext.callTimeoutSeconds` (default `DEFAULT_CALL_TIMEOUT_SECONDS` = 40; 0 =
+>   the library's limit) is what the host sets — `no-sneak-app` loads it from `AppPrefs` and
+>   its Settings page's Assistant block pushes every change — and the context holds **one
+>   shared `OkHttpClient`** built from it (`buildHttpClient`: `OkHTTPCall.createOkHttpBuilder`,
+>   connect / read / write at that many seconds, SSL checks and redirects on, no proxy; null for
+>   0). The shape is the maintainer's: `setCallTimeoutSeconds` builds a new client **once** and
+>   hands it to every registered provider through `applyHttpClient(provider)` →
+>   `HTTPAPICaller.updateOkHttpClient`, which sets it on every endpoint of the `AIAPI`
+>   (`setOkHttpClient` on the caller itself is a field nothing reads — the endpoints hold the
+>   client the calls use); the two places `ProvidersPanel` registers a provider call
+>   `applyHttpClient` first, so one built after a change gets the current client. Nothing is
+>   read per call: `AIAPIProvider` is unchanged, a send costs no lookup, a settings change costs
+>   one client. A send that runs out of time says so: `ChatPanel.timeoutHint` adds *The provider
+>   did not answer within N s. Account > Settings > Assistant raises the reply timeout.* to the
+>   failure dialog when an `InterruptedIOException` (a socket timeout is one) or a message
+>   saying "timeout" is in the chain. Pinned by `CallTimeoutTest` (6). Cancel is still not
+>   built, see the rough edges.
 > - **The module has two outward hooks, and they are the whole coupling to the scanner.**
 >   **`AssistantPanel.sendToChat(text, name)`** attaches plain text as a pending `AISource`
 >   (rendered in full as the last transcript entry, with a Delete button until it is sent, 2026-10-22) and
@@ -394,9 +418,11 @@ has chosen to use.
 > targets, not its full command line.
 >
 > **Known rough edges** (see the code, not yet fixed):
-> - **No send timeout or cancel.** If the provider never invokes the callback, the Send button
->   stays disabled for the life of the app. `AIProvider.asyncSend` returns `void`, so there is no
->   handle to cancel or time out against — the fix belongs in `ai-model`.
+> - **No send cancel** (the timeout half closed 2026-10-31, the status bullet above: the http
+>   client gives up after the reply timeout the subject set, the callback's error path runs and
+>   Send is enabled again). A provider that keeps the connection open and never answers is still
+>   bounded only by that timeout: `AIProvider.asyncSend` returns `void`, so there is no handle to
+>   cancel against — that part belongs in `ai-model`.
 > - **The persisted response is the *display*-processed markdown.** `AssistantCallback` stores
 >   what `AssistantMDDecoder` produced — outer fence unwrapped, wrapper fences widened, images
 >   neutralized, and the truncation note appended — not the provider's original text. The
@@ -502,7 +528,7 @@ split out of `AssistantPanel`, which is now just wiring:
 | Class | What it is |
 |---|---|
 | `AssistantPanel` | Wiring only: builds the six page panels, the sidebar, and the top-level `CardStack` |
-| `AssistantContext` | Swing-free state holder: injected services + current selection + caches + the session `CaptureAreaSet` + the `hideWindowOnCapture` preference (2026-10-29) |
+| `AssistantContext` | Swing-free state holder: injected services + current selection + caches + the session `CaptureAreaSet` + the `hideWindowOnCapture` preference (2026-10-29) + the `callTimeoutSeconds` the host sets and the one shared `OkHttpClient` built from it, pushed to every provider (2026-10-31) |
 | `ModelFilter` | The model-filter grammar: two `TokenMatcher`s (include / `!`exclude) over a typed pattern list, falling back to the built-in non-chat markers; the conversation combo's `Matcher` since 2026-10-28, no session state |
 | `AIAPIProvider` | The `AIProvider` implementation over `io.xlogistx.api.ai.AIAPI` (+ inner `ModelCatalog`) |
 | `AssistantCallback` | `ConsumerCallback<NVGenericMap>` — payload → `AIResponse` (stamped with the model and, since 2026-10-27, the provider id the request went to), persist, hop to the EDT |
@@ -1156,6 +1182,12 @@ unticked; `ChatPanelBuiltInSkillTest` (1, 2026-10-30) registers a built-in skill
 `ChatPanel`, builds the `+` popup and checks the row is there with its tooltip, that a click
 attaches it (the + tooltip names it, the supplier is read once), that a rebuilt popup shows it
 ticked, that unticking drops it and that an unknown name attaches nothing;
+`CallTimeoutTest` (6, 2026-10-31) pins the reply timeout: the context starts on the default with
+a client built for it, the client carries the seconds on every leg, 0 and below mean null, a
+change pushes one new client to every endpoint of a registered real `AIAPIProvider` (fake key)
+and 0 hands them back to the shared client, a provider built later gets the current client from
+`applyHttpClient`, and `ChatPanel.timeoutHint` for a wrapped socket timeout, a "timeout"
+message, an unrelated failure and null;
 `ChatPanelProviderSwitchTest` (2, 2026-10-28) registers two fake `AIProvider`s with fixed catalogs
 on the context's registrar, binds a chat to one, types into the model combo's editor (the list
 narrows), picks the other provider in the conversation's combo and checks the list is the new

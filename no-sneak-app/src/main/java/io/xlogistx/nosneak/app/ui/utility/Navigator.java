@@ -32,7 +32,7 @@ public class Navigator {
         PROVIDERS("Providers", "Which of your API keys the assistant may use, and their models"),
         PROFILE("Profile", "Your name, identifiers and addresses"),
         API_KEYS("API Keys", "Your password and the third-party keys the assistant borrows"),
-        SETTINGS("Settings", "The MAC vendor list, and the store's backup and restore"),
+        SETTINGS("Settings", "The MAC vendor list, the assistant's reply timeout, and the store's backup and restore"),
         ACL("Access Control", "Subjects, permissions, roles and grants (super-admin only)"),
         ;
 

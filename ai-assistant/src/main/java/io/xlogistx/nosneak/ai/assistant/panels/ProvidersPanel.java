@@ -425,6 +425,7 @@ public class ProvidersPanel extends JPanel {
                     ctx.getCredentials().setEnabled(key, true);
                     AIAPIProvider p = AIAPIProvider.create(saved, key);
                     if (p != null) {
+                        ctx.applyHttpClient(p); // the reply timeout, before discovery touches the wire
                         try {
                             p.getModelCatalog().refresh();
                         } catch (Exception ignore) {
@@ -526,6 +527,7 @@ public class ProvidersPanel extends JPanel {
                             + cfg.getProviderType() + "'");
                     continue;
                 }
+                ctx.applyHttpClient(p); // the reply timeout, before discovery touches the wire
                 try {
                     p.getModelCatalog().refresh();
                 } catch (Exception e) {

@@ -172,8 +172,9 @@ Two properties this module owns, and every screen has to keep them: **the store 
 opened with the subject's own credentials**, and **everything in it is scoped to the subject who
 created it** — scan reports, probes, chats, captures, keys. The one setting outside
 the store is `ui.utility.AppPrefs` (`java.util.prefs` of the OS user, 2026-10-22): the directory
-of the last successful open or create, and the last backup/restore directory. Directories only;
-the vault password is never written there. Logout must leave nothing of the
+of the last successful open or create, the last backup/restore directory and, since 2026-10-31,
+the assistant's reply timeout in seconds (`aiTimeoutSeconds`, clamped to 10–600, default 40).
+Directories and that one number only; the vault password is never written there. Logout must leave nothing of the
 previous subject on screen or in a panel field; `ScanPanel.resetPanel()` runs on *every* auth
 change for exactly this reason (the gap `PENDING-ISSUES.md` finding 1 described, closed
 2026-09-11), and a scan whose subject signed out before it finished is discarded, not shown to
@@ -190,7 +191,7 @@ io.xlogistx.nosneak.app
     ├── AppShell.java              ← the signed-in window: HeaderBar + SideNavPanel + CardLayout host (2026-10-24), mounts ai-assistant's AssistantPanel
     ├── UnlockPanel.java           ← the pre-auth screen (2026-10-24): step 1 open/create the store, step 2 sign in / register; replaced LoginPanel + DataStoreSetupPanel. 2026-10-29: every step-1 input has a tooltip and a warning row under the vault password says it is NOT RECOVERABLE (`Form.VAULT_PASSWORD_WARNING`)
     ├── PQCRegistryPanel.java      ← PQC file-sharing registry view
-    ├── SubjectPanel.java          ← Account pages in the PagePanel frame: Profile, Credentials (API keys), Settings (Sync of the MAC vendor list, Backup, Restore)
+    ├── SubjectPanel.java          ← Account pages in the PagePanel frame: Profile, Credentials (API keys), Settings (Sync of the MAC vendor list, Assistant reply timeout, Backup, Restore)
     ├── SubjectSecManagerPanel.java← Access control (admin) page; tabs are stubs
     ├── ScanPanel.java             ← scanner wiring: ScanFormPanel + ScanResultView, probe chips (the only source of probing, 2026-10-26), history JTable (multi-select, Delete / Delete all), probe editor
     ├── scan/
@@ -205,7 +206,7 @@ io.xlogistx.nosneak.app
         ├── AppContext.java        ← per-app service locator (Session + Navigator)
         ├── Session.java           ← auth (unbound Shiro subject) + identifiers + credentials + profile + addresses + the subject view of the store + the app-wide MAC vendor record (loadMacVendors / syncMacVendors, system context)
         ├── Navigator.java         ← top-level screen switching over a CardLayout
-        └── AppPrefs.java          ← java.util.prefs of the OS user: last store location + last chooser directory (2026-10-22)
+        └── AppPrefs.java          ← java.util.prefs of the OS user: last store location + last chooser directory (2026-10-22) + the assistant's reply timeout (2026-10-31)
 
 (The `CardStack` / `PanelBuilder` / `ListSection` / `BackgroundTask` helpers live in the shared
 `io.xlogistx.gui` toolkit — `xlogistx-gui-audio` — not in this module.)
@@ -364,7 +365,8 @@ that scrolls — and the old in-form "Profile" title and description line are go
 has its own two-card layout (Phase 4).
 
 **Settings** (`SECTION_SETTINGS`, sidebar *Account → Settings*, 2026-10-25, asked for by the
-maintainer) is a `PagePanel` with three blocks separated by rules: **Sync**, **Backup** and
+maintainer) is a `PagePanel` with four blocks separated by rules: **Sync**, **Assistant**
+(2026-10-31, below), **Backup** and
 **Restore** — the last two moved here from their own Backup page on 2026-10-26 on the
 maintainer's instruction (the `BACKUP` screen, its sidebar item and its View-menu entry are
 gone). On 2026-10-27 `buildDBBackup` / `buildDBRestore` took the Sync block's shape (`blockNote`, a
@@ -382,6 +384,25 @@ shows the same text) is re-read off the EDT each time the page is shown (`show(S
 while the table is not filled yet. The note names where the vendor shows up (Hosts tab columns,
 Network adapter block) and points at the status bar.
 Other reference data this installation keeps belongs in further blocks on this page.
+
+The **Assistant** block (2026-10-31, the maintainer: "the ai apis call sometimes they timeout
+can we set the timeout as parameter in setting") is one row, **Reply timeout** — a `JSpinner`
+(component name `SubjectPanel.REPLY_TIMEOUT`, 10 to 600 in steps of 10, a typed value commits
+as soon as it is valid) with "seconds" after it — under a note in the Sync block's shape. Every
+change is stored at once through `AppPrefs.aiTimeoutSeconds(int)` (per installation, not per
+account: a timeout is about this machine's connection) and handed to the listener
+`setOnAssistantTimeoutChange` holds, which `AppShell` binds to
+`AssistantContext.setCallTimeoutSeconds`, so the next request of every provider uses it; at
+start-up `AppShell` seeds the context from `AppPrefs.aiTimeoutSeconds()` (default 40 s, the
+http library's own limit, right for a responsive endpoint; the setting exists to stretch it for
+a congested one). What happens on the wire is the assistant's business
+(`ai-assistant/CLAUDE.md`, *A send has a reply timeout*): the context builds one shared http
+client from the value and pushes it to every provider's endpoints; before 2026-10-31 zoxweb's
+shared client gave no way to change its 40 s. `assistantBlock(seconds, IntConsumer)` is a static factory so
+`SettingsAssistantBlockTest` (2) can build the block on its own: the spinner starts on the
+value, reports a change in seconds, keeps the bounds and the step, and an out-of-range stored
+value is clamped before the spinner sees it (`AppPrefs.clampAiTimeout`); with `-Drender.dir`
+the test paints the block to `settings-assistant.png`. The OS preferences are never written by a test.
 
 The **Profile** screen is itself a nested `CardStack` (`profileCards`, built by
 `buildProfileArea`, a 480 px column like the Settings blocks) with a **profile** card and an

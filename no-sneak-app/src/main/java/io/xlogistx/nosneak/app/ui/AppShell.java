@@ -61,8 +61,12 @@ public class AppShell extends JPanel {
         setLayout(new BorderLayout());
         this.ctx = ctx;
 
-        assistantPanel = new AssistantPanel(new AssistantContext(new SessionAICredentialSource(ctx.session()), new AssistantStorage(ctx.session())));
+        AssistantContext assistantContext = new AssistantContext(new SessionAICredentialSource(ctx.session()), new AssistantStorage(ctx.session()));
+        // the reply timeout of the Settings page, kept per installation (2026-10-31)
+        assistantContext.setCallTimeoutSeconds(AppPrefs.aiTimeoutSeconds());
+        assistantPanel = new AssistantPanel(assistantContext);
         subjectPanel = new SubjectPanel(ctx);
+        subjectPanel.setOnAssistantTimeoutChange(assistantContext::setCallTimeoutSeconds);
         scanPanel = new ScanPanel(ctx, assistantPanel::sendToChat);
         assistantPanel.addSaveTarget("probe", scanPanel::saveProbeFromEditor);
         // the probe definition as a built-in skill in the composer's + popup (2026-10-30): ticked, it
