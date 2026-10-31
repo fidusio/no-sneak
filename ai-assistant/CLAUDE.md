@@ -219,7 +219,18 @@ has chosen to use.
 >   skill type** (`groupByType`). An **md skill** is a checkbox — check attaches, uncheck removes,
 >   popup stays open while toggling; a **prompt skill** is a borderless button that closes the
 >   popup and inserts its content into the composer at the caret (`insertIntoComposer`), and is
->   deliberately *not* added to `pendingSkills`. Checkbox selections live in the
+>   deliberately *not* added to `pendingSkills`. **Built-in skills (2026-10-30)**: a host
+>   registers a reference text through `AssistantPanel.addBuiltInSkill(name, description,
+>   Supplier<String>)` (→ `ChatPanel.addBuiltInSkill`) and the popup lists it under a
+>   *Built-in skills* section after the stored ones, a tick box named
+>   `ChatPanel.BUILT_IN_SKILL + name`; ticking builds one `AISkill` (`MD_SKILL`, the supplier
+>   read once, never stored) and puts it in `pendingSkills`, so it goes out as a `<skill>` block,
+>   shows as a *skill* chip and is dropped from the chip's × like any other
+>   (`attachBuiltInSkill(name, on)` / `isBuiltInSkillAttached(name)` are the tick box's
+>   contract). The app registers "Probe definition" (`PROBE-DEFINITION.md`) this way, so a probe
+>   can be asked for from any chat; the module still never learns what a probe is. The popup is
+>   built by the public `buildAttachPopup()` and shown by `showAttachPopup()`, so a test can
+>   inspect it without a screen (`ChatPanelBuiltInSkillTest`). Checkbox selections live in the
 >   transient `pendingSkills` list (the `+` button's tooltip names them), are flattened into
 >   `<skill>…</skill>` blocks and passed as `asyncSend`'s **`String skill`** argument (there is
 >   no `AIRequest.skillsPrompt` field — the skill text is never persisted with the turn), and
@@ -1141,7 +1152,11 @@ chat and checks the clear icon is hidden when empty, shown on text, and empties 
 `CapturePanelHideWindowTest` (2, 2026-10-29) builds a real `CapturePanel` on the same repository
 and checks the *Hide window* box is ticked by default, that clicking it flips the context's
 `hideWindowOnCapture` both ways, and that a page built on a context with the flag off starts
-unticked; `ChatPanelProviderSwitchTest` (2, 2026-10-28) registers two fake `AIProvider`s with fixed catalogs
+unticked; `ChatPanelBuiltInSkillTest` (1, 2026-10-30) registers a built-in skill on a real
+`ChatPanel`, builds the `+` popup and checks the row is there with its tooltip, that a click
+attaches it (the + tooltip names it, the supplier is read once), that a rebuilt popup shows it
+ticked, that unticking drops it and that an unknown name attaches nothing;
+`ChatPanelProviderSwitchTest` (2, 2026-10-28) registers two fake `AIProvider`s with fixed catalogs
 on the context's registrar, binds a chat to one, types into the model combo's editor (the list
 narrows), picks the other provider in the conversation's combo and checks the list is the new
 provider's, the editor shows its model and the chat is rebound; the widget itself is pinned by

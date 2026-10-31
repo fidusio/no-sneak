@@ -30,6 +30,7 @@ import java.util.*;
 import java.util.List;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 import static io.xlogistx.nosneak.ai.assistant.AssistantUtil.chatBubble;
 import static io.xlogistx.nosneak.ai.assistant.panels.PanelSupport.fillModels;
@@ -82,6 +83,76 @@ public class ChatPanel extends JPanel {
     public static final String CLEAR_PROMPT = "clear-prompt";
     private JButton attachSkillButton;
     private final List<AISkill> pendingSkills = new ArrayList<>();
+
+    /**
+     * The built-in skills (2026-10-30): reference texts the host offers in the {@code +} popup
+     * under <i>Built-in skills</i>, next to the stored ones, so a subject can attach, say, the
+     * probe definition to a message without first saving it as a skill. Each one is an
+     * {@link AISkill} built once from its supplier the first time it is ticked (the text is
+     * never stored); ticked, it travels like any md skill, as a {@code <skill>} block, and shows
+     * as a chip. The app registers "Probe definition" through
+     * {@code AssistantPanel.addBuiltInSkill}; this module never learns what a probe is.
+     */
+    private final Map<String, BuiltInSkill> builtInSkills = new LinkedHashMap<>();
+
+    /** Component name prefix of a built-in skill's tick box in the popup: {@code built-in-skill:<name>}. */
+    public static final String BUILT_IN_SKILL = "built-in-skill:";
+
+    private static final class BuiltInSkill {
+        final String name;
+        final String description;
+        final Supplier<String> content;
+        AISkill skill;
+
+        BuiltInSkill(String name, String description, Supplier<String> content) {
+            this.name = name;
+            this.description = description;
+            this.content = content;
+        }
+
+        AISkill skill() {
+            if (skill == null) {
+                skill = new AISkill(name, description, content.get());
+                skill.setSkillType(AISkill.SkillType.MD_SKILL);
+            }
+            return skill;
+        }
+    }
+
+    /**
+     * Offers {@code name} in the popup's <i>Built-in skills</i> section. {@code content} is read
+     * once, the first time the skill is attached. A second registration under the same name
+     * replaces the first.
+     */
+    public void addBuiltInSkill(String name, String description, Supplier<String> content) {
+        if (name == null || name.isBlank() || content == null) return;
+        builtInSkills.put(name, new BuiltInSkill(name, description, content));
+    }
+
+    /**
+     * Attaches ({@code on}) or drops the built-in skill {@code name} for the next message, the
+     * way its tick box in the popup does.
+     *
+     * @return {@code true} if the skill is attached after the call
+     */
+    public boolean attachBuiltInSkill(String name, boolean on) {
+        BuiltInSkill b = builtInSkills.get(name);
+        if (b == null) return false;
+        AISkill skill = b.skill();
+        if (on) {
+            if (!pendingSkills.contains(skill)) pendingSkills.add(skill);
+        } else {
+            pendingSkills.remove(skill);
+        }
+        refreshSkillTooltip();
+        return on;
+    }
+
+    /** @return whether the built-in skill {@code name} goes with the next message. */
+    public boolean isBuiltInSkillAttached(String name) {
+        BuiltInSkill b = builtInSkills.get(name);
+        return b != null && b.skill != null && pendingSkills.contains(b.skill);
+    }
 
     private final List<AISource> pendingSources = new ArrayList<>();
     /**
@@ -1053,6 +1124,12 @@ public class ChatPanel extends JPanel {
     }
 
     private void showAttachPopup() {
+        JPopupMenu popup = buildAttachPopup();
+        popup.show(attachSkillButton, 0, -popup.getPreferredSize().height);
+    }
+
+    /** The {@code +} popup, built fresh on every open (public for the tests and the render harness). */
+    public JPopupMenu buildAttachPopup() {
         JPopupMenu popup = new JPopupMenu();
         JPanel content = new JPanel(new MigLayout("wrap 1, insets 10 12 10 12, gapy 4", "[grow]"));
         content.setOpaque(false);
@@ -1081,6 +1158,11 @@ public class ChatPanel extends JPanel {
             }
         }
 
+        if (!builtInSkills.isEmpty()) {
+            content.add(sectionLabel("Built-in skills"), "gaptop 6");
+            for (BuiltInSkill b : builtInSkills.values()) content.add(builtInSkillRow(b));
+        }
+
         content.add(sectionLabel("Sources for this message"), "gaptop 10");
         for (AISource source : pendingSources) content.add(sourceRow(source));
         content.add(attachImageRow(popup));
@@ -1092,7 +1174,17 @@ public class ChatPanel extends JPanel {
         content.add(areaSection(popup), "growx");
 
         popup.add(content);
-        popup.show(attachSkillButton, 0, -popup.getPreferredSize().height);
+        return popup;
+    }
+
+    /** A built-in skill's row: a tick box like an md skill's; ticked, it goes with the next message. */
+    private JCheckBox builtInSkillRow(BuiltInSkill b) {
+        JCheckBox box = new JCheckBox(b.name, isBuiltInSkillAttached(b.name));
+        box.setName(BUILT_IN_SKILL + b.name);
+        box.setOpaque(false);
+        if (b.description != null && !b.description.isEmpty()) box.setToolTipText(b.description);
+        box.addActionListener(_ -> attachBuiltInSkill(b.name, box.isSelected()));
+        return box;
     }
 
     private JComponent areaSection(JPopupMenu popup) {

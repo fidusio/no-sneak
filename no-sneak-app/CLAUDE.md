@@ -19,7 +19,9 @@ network scanner screen** over `no-sneak-core`; the PQC file-sharing screen is st
 > doesn't explain how to create one") is a table of every probe, bundled and stored, with a
 > read-only detail pane, a how-to block, an editor with inline Check, the probe definition
 > (`PROBE-DEFINITION.md`) shown in the app, and *Write with the assistant* (the definition
-> attached, the request typed, *Save as probe* on the reply) — see *ScanPanel* below. Live
+> attached, the request typed, *Save as probe* on the reply) — see *ScanPanel* below. Since
+> 2026-10-30 the definition is also a *Built-in skill* in the chat composer's `+` popup
+> (`AppShell`, below). Live
 > checks still owed by the maintainer are listed in `PENDING-ISSUES.md`.
 >
 > **2026-10-24 — UI redesign, Phase 1 (setup and login).** The maintainer asked for a more
@@ -331,8 +333,14 @@ screen when `NoSneakMain.AppFrame` swaps the shell back in. `menuBar()` hands th
 **`AppShell` is also where the scanner and the assistant are joined**, and the order matters:
 `assistantPanel` is built first, then `ScanPanel` takes `assistantPanel::sendToChat`, then
 `assistantPanel.addSaveTarget("probe", scanPanel::saveProbeFromEditor)` registers the reverse
-direction. Both are plain callbacks, so the dependency stays one-way (`no-sneak-app →
-ai-assistant`) in both directions of the data flow. The `ASSISTANT` card is the `ai-assistant`
+direction, and `assistantPanel.addBuiltInSkill("Probe definition", …,
+ProbeDefinitionLoader::probeDefinition)` (2026-10-30, the maintainer: "in the chat panel where +
+attachment put a section to attach probe definition when selected it will be attached to prompt
+as skill") offers `PROBE-DEFINITION.md` in the composer's `+` popup under *Built-in skills*:
+ticked, it goes with the message as an md skill, so a probe can be asked for from any chat
+without going through the library's *Write with the assistant* (which still attaches the
+definition as a text source and types the request). All three are plain callbacks, so the
+dependency stays one-way (`no-sneak-app → ai-assistant`) in both directions of the data flow. The `ASSISTANT` card is the `ai-assistant`
 module's `AssistantPanel`, constructed with an `AssistantContext`:
 `new AssistantPanel(new AssistantContext(new SessionAICredentialSource(ctx.session()), new
 AssistantStorage(ctx.session())))` — the **only** coupling point.

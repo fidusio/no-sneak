@@ -15,6 +15,7 @@ import io.xlogistx.nosneak.app.ui.utility.AppContext;
 import io.xlogistx.nosneak.app.ui.utility.AppPrefs;
 import io.xlogistx.nosneak.app.ui.utility.Navigator;
 import io.xlogistx.nosneak.app.ui.utility.Navigator.Screen;
+import io.xlogistx.nosneak.model.ProbeDefinitionLoader;
 
 import javax.swing.*;
 import java.awt.*;
@@ -64,6 +65,11 @@ public class AppShell extends JPanel {
         subjectPanel = new SubjectPanel(ctx);
         scanPanel = new ScanPanel(ctx, assistantPanel::sendToChat);
         assistantPanel.addSaveTarget("probe", scanPanel::saveProbeFromEditor);
+        // the probe definition as a built-in skill in the composer's + popup (2026-10-30): ticked, it
+        // goes with the message, so a probe can be asked for from any chat, not only from the library
+        assistantPanel.addBuiltInSkill("Probe definition",
+                "PROBE-DEFINITION.md, the contract a probe file follows: attach it when asking for a probe",
+                ProbeDefinitionLoader::probeDefinition);
         managerPanel = new SubjectSecManagerPanel(ctx);
 
         // the navigator adds each panel to the content host as a card the first time a screen

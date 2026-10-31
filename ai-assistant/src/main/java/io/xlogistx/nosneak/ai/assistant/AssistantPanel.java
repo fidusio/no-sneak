@@ -192,6 +192,16 @@ public class AssistantPanel extends JPanel {
     }
 
     /**
+     * Offers a reference text in the chat composer's {@code +} popup under <i>Built-in skills</i>
+     * (2026-10-30): ticked, it goes with the next message as an md skill, a {@code <skill>}
+     * block beside the stored ones. {@code content} is read once, on first use. The app registers
+     * the probe definition this way, so a subject can ask for a probe from any chat.
+     */
+    public void addBuiltInSkill(String name, String description, java.util.function.Supplier<String> content) {
+        chatPanel.addBuiltInSkill(name, description, content);
+    }
+
+    /**
      * Attaches {@code text} to the next message and shows the Chat page — the way another screen
      * hands content to the assistant (the scanner sends scan reports through here).
      * <p>

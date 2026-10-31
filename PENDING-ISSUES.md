@@ -34,6 +34,9 @@ detail lives in the module `CLAUDE.md` files, named below.*
      `gpt*` and `!mini` follow the grammar, `*` shows the embedding and audio models too;
      arrows + Enter and a mouse click pick, Escape puts the chosen model's name back, and
      switching provider with text typed shows the other provider's full list;
+   - (2026-10-30, built-in skill) in a chat press +: a *Built-in skills* section offers *Probe
+     definition*; ticked, a *Probe definition · skill* chip sits over the composer and the
+     reply to "write a redis probe" carries *Save as probe*; the chip's × drops it;
    - (2026-10-30, probe actions) select one of your probes in the Probe library: *Edit* and
      *Delete* sit right of the name at the top of the detail pane; a bundled probe shows *Copy
      to my probes* in the same place;
@@ -794,7 +797,7 @@ and was left alone; the note in the app module's `CLAUDE.md` follows. Rendered t
 `MDViewerPanel` at the dialog's width (2175 px tall, two pages): table, headings and nested
 lists come out right. Live check owed: open Help from the sidebar footer and scroll it.
 
-**2026-10-30, Probe library actions moved to the top (uncommitted):** the maintainer: "move the
+**2026-10-30, Probe library actions moved to the top (committed 2f2a9b0):** the maintainer: "move the
 edit and delete to the top it is confusing on the bottom for a human user". The detail pane's
 action row (*Copy to my probes* for a bundled probe, *Edit* and the confirmed *Delete* for a
 stored one) left its place under the read-only JSON and now sits on the title row, right of the
@@ -804,6 +807,22 @@ visibility rule, the same confirm dialog, the same store call. Rendered headless
 `ScanPanel` on a fresh store with one stored probe: the stored state shows *Edit · Delete* beside
 "my-redis", the bundled state shows *Copy to my probes* beside "https-scan". Live check owed:
 select a probe of yours in the library, Delete is now at the top right of the pane.
+
+**2026-10-30, the probe definition as a built-in skill in the chat (uncommitted):** the
+maintainer: "in the chat panel where + attachment put a section to attach probe definition when
+selected it will be attached to prompt as skill". `ChatPanel` gained a built-in skill registry
+(`addBuiltInSkill(name, description, Supplier<String>)`, through
+`AssistantPanel.addBuiltInSkill`): the `+` popup shows a *Built-in skills* section after the
+stored skills, one tick box per entry; ticked, the text becomes an `MD_SKILL` `AISkill` built once
+from its supplier (never stored), joins `pendingSkills`, goes out as a `<skill>` block, shows as a
+*skill* chip over the composer and leaves from the chip's ×. `AppShell` registers "Probe
+definition" with `ProbeDefinitionLoader::probeDefinition`. `showAttachPopup` was split into the
+public `buildAttachPopup()` plus the show, so `ChatPanelBuiltInSkillTest` (1, green with
+`ChatPanelClearTest` and `ChatPanelProviderSwitchTest`) drives the real popup. Rendered headless:
+the popup with a stored skill and the built-in row unticked and ticked, and the conversation page
+with the *Probe definition · skill* chip. The library's *Write with the assistant* is unchanged
+(it attaches the definition as a text source and types the request). Live check owed: open a
+chat, press +, tick *Probe definition*, ask for a probe, *Save as probe* on the reply.
 
 **Open after Phase 5 (updated 2026-10-27):** the rest of the maintainer's run-through on a
 display (unlock, the scan form and history are done; still to try: a stored report from history,
