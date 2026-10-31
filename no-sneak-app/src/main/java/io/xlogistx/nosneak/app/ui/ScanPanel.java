@@ -707,23 +707,16 @@ public class ScanPanel extends JPanel {
         return l;
     }
 
-    /** The detail pane for a selected probe: its facts, its JSON read-only, and what you can do with it. */
+    /** The detail pane for a selected probe: its name with what you can do with it, its facts, its JSON read-only. */
     private JPanel buildLibraryProbeCard() {
-        JPanel p = new JPanel(new MigLayout("insets 16, wrap 1, gapy 8, fill", "[grow,fill]", "[][][][grow,fill][]"));
+        JPanel p = new JPanel(new MigLayout("insets 16, wrap 1, gapy 8, fill", "[grow,fill]", "[][][][grow,fill]"));
         p.setOpaque(false);
         probeTitle.setFont(UITokens.font(Font.BOLD, 2f));
-        p.add(probeTitle);
-        p.add(probeFacts);
-        p.add(probeProblem, "hidemode 3");
-        probeSource.setEditable(false);
-        probeSource.setFont(UITokens.mono(-1f));
-        probeSource.setMargin(new Insets(10, 12, 10, 12));
-        JScrollPane sourceScroll = new JScrollPane(probeSource);
-        sourceScroll.setBorder(BorderFactory.createLineBorder(UITokens.border()));
-        sourceScroll.setMinimumSize(new Dimension(0, 0));
-        p.add(sourceScroll, "grow, push");
-        JPanel actions = new JPanel(new MigLayout("insets 0, gapx 8", "[][][]"));
-        actions.setOpaque(false);
+        // Title on the left, the actions (Copy / Edit / Delete) on the right of the same row: a human
+        // looks for "what can I do with this" next to the name, not under a long JSON listing (2026-10-30).
+        JPanel header = new JPanel(new MigLayout("insets 0, gapx 8", "[grow][][][]"));
+        header.setOpaque(false);
+        header.add(probeTitle, "growx");
         copyProbe.setToolTipText("Open the editor with this probe's JSON as your draft");
         copyProbe.addActionListener(_ -> onCopyBundledProbe(selectedLibraryRow()));
         editProbe.addActionListener(_ -> {
@@ -740,9 +733,18 @@ public class ScanPanel extends JPanel {
         });
         for (JButton b : new JButton[]{copyProbe, editProbe, deleteProbe}) {
             b.putClientProperty("JButton.buttonType", "toolBarButton");
-            actions.add(b, "hidemode 3");
+            header.add(b, "hidemode 3");
         }
-        p.add(actions);
+        p.add(header);
+        p.add(probeFacts);
+        p.add(probeProblem, "hidemode 3");
+        probeSource.setEditable(false);
+        probeSource.setFont(UITokens.mono(-1f));
+        probeSource.setMargin(new Insets(10, 12, 10, 12));
+        JScrollPane sourceScroll = new JScrollPane(probeSource);
+        sourceScroll.setBorder(BorderFactory.createLineBorder(UITokens.border()));
+        sourceScroll.setMinimumSize(new Dimension(0, 0));
+        p.add(sourceScroll, "grow, push");
         return p;
     }
 

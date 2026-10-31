@@ -34,6 +34,9 @@ detail lives in the module `CLAUDE.md` files, named below.*
      `gpt*` and `!mini` follow the grammar, `*` shows the embedding and audio models too;
      arrows + Enter and a mouse click pick, Escape puts the chosen model's name back, and
      switching provider with text typed shows the other provider's full list;
+   - (2026-10-30, probe actions) select one of your probes in the Probe library: *Edit* and
+     *Delete* sit right of the name at the top of the detail pane; a bundled probe shows *Copy
+     to my probes* in the same place;
    - (2026-10-29, hide window) on the Capture page untick *Hide window* and press Capture (N):
      the application stays on screen and an area drawn over it shoots the application; ticked
      again, the window disappears for the sweep as before; the chat's send-time sweep follows
@@ -790,6 +793,17 @@ clipboard wipe, Backup / Restore. About's `SUMMARY` still says the same thing in
 and was left alone; the note in the app module's `CLAUDE.md` follows. Rendered through
 `MDViewerPanel` at the dialog's width (2175 px tall, two pages): table, headings and nested
 lists come out right. Live check owed: open Help from the sidebar footer and scroll it.
+
+**2026-10-30, Probe library actions moved to the top (uncommitted):** the maintainer: "move the
+edit and delete to the top it is confusing on the bottom for a human user". The detail pane's
+action row (*Copy to my probes* for a bundled probe, *Edit* and the confirmed *Delete* for a
+stored one) left its place under the read-only JSON and now sits on the title row, right of the
+probe's name (`ScanPanel.buildLibraryProbeCard`, a header `MigLayout` with the title growing and
+the three buttons under `hidemode 3`). Nothing else changed: the same buttons, the same
+visibility rule, the same confirm dialog, the same store call. Rendered headless through a real
+`ScanPanel` on a fresh store with one stored probe: the stored state shows *Edit · Delete* beside
+"my-redis", the bundled state shows *Copy to my probes* beside "https-scan". Live check owed:
+select a probe of yours in the library, Delete is now at the top right of the pane.
 
 **Open after Phase 5 (updated 2026-10-27):** the rest of the maintainer's run-through on a
 display (unlock, the scan form and history are done; still to try: a stored report from history,

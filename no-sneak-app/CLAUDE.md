@@ -593,10 +593,11 @@ priority then name as the engine orders its catalog; `ProbeLibraryModel.matches`
 segment, then a query against name, service, description and exact port), right a detail
 `CardStack`: **howto** with nothing selected (what a probe is, and the three ways to add one as
 link buttons: copy a bundled probe, write with the assistant, new probe) and **probe** for a
-selected row (a `KeyValuePanel` of its facts — Description, service, transport, ports, priority,
-port-scoped, watchdog, states and start, source — the JSON read-only in the mono font, and the
-actions: *Copy to my probes* for a bundled row, *Edit* and a confirmed *Delete* for a stored one;
-double-click does the same). The bundled JSON comes from core's `ProbeDefinitionLoader.bundledSource(name)`,
+selected row (the name with the actions on the same header row — *Copy to my probes* for a
+bundled row, *Edit* and a confirmed *Delete* for a stored one; moved from under the JSON to the
+top on 2026-10-30 because a reader looks for them beside the name — then a `KeyValuePanel` of its
+facts — Description, service, transport, ports, priority, port-scoped, watchdog, states and
+start, source — and the JSON read-only in the mono font; double-click does the same as Edit/Copy). The bundled JSON comes from core's `ProbeDefinitionLoader.bundledSource(name)`,
 read once into `bundledSources` by `reloadProbes()` (public now, for the render harness). A stored
 probe whose JSON no longer parses keeps its row with the loader's reason in the detail pane. The
 selection survives a reload by name and source.
