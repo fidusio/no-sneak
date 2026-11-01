@@ -44,7 +44,15 @@
 > `AssistantContext` holds the value and **one shared
 > `OkHttpClient`** built from it, rebuilt when the setting changes and pushed to every
 > registered provider's endpoints (`applyHttpClient`); a provider built later gets it when it is
-> registered, and a timed-out send names the setting in its error.
+> registered, and a timed-out send names the setting in its error. **Same day, the scanner:**
+> with no ports typed and probes ticked, the scan covers **the ticked probes' declared ports**
+> (ssh + https-pqc = 22, 2222, 443, 8443; `NMapScanner.resolvePorts`, the Ports placeholder says
+> which) instead of 1-1024; typed ports still win; and **`--probe-match first|all`** (a *Match*
+> segment on the form) picks the checker's sweep on an open port — first, the default, stops the
+> other probes once one has identified it, all keeps every identification (`PortReport.probes`,
+> the JSON's `probes` list, an *Identifications* block in the host detail). **2026-11-01:** the
+> Scan page is titled *Scan* like its sidebar item, and a **New scan** button on that page clears
+> the form, the chips and the result (`ScanPanel.newScan`); the history page's button is unchanged.
 
 Assessment tooling for what a network endpoint exposes — TLS posture, **post-quantum
 readiness**, and running services — plus a Swing front-end and an AI-assistant layer.

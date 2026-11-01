@@ -226,7 +226,13 @@ public final class NMapScanner {
         final Executor executor = nio.getExecutor();
         final ScheduledExecutorService scheduler = nio.getScheduler();
         final ScanGate limiter = new ScanGate(scheduler, cfg.maxInFlight, cfg.maxPerSec);
-        final int[] ports = cfg.ports != null ? cfg.ports : NMap.DEFAULT_PORTS;
+        // The probe catalog is resolved first because it may decide the ports (2026-10-31): with
+        // probes named and no -p, the scan covers the ports those probes declare.
+        final List<ProbeDefinition> catalog = cfg.probeScan ? selectedCatalog(cfg, report) : null;
+        final NMap.PortSpec scanned = resolvePorts(cfg, catalog, report);
+        report.tcpPortsScanned = scanned.tcp();
+        report.udpPortsScanned = scanned.udp();
+        final int[] ports = scanned.tcp();
         final int[] discPorts = cfg.discoveryPorts != null ? cfg.discoveryPorts : DEFAULT_DISCOVERY_PORTS;
         final int to = cfg.timeoutSec;
 
@@ -245,7 +251,7 @@ public final class NMapScanner {
         // The probe catalog is built before the first connect so that a port can be probed the
         // moment it answers (streamed from the connect callback) instead of after the last
         // filtered port on the last host has timed out. Null when -sV is off.
-        final ProbeChecker checker = cfg.probeScan ? buildChecker(nio, cfg, to, report, limiter) : null;
+        final ProbeChecker checker = catalog != null ? buildChecker(nio, catalog, to, limiter) : null;
         if (checker != null) {
             // A cancel tears every sweep down; each delivers a "cancelled" result, so the
             // barrier children below complete and the stage drains.
@@ -277,7 +283,7 @@ public final class NMapScanner {
         final Runnable afterDiscovery =
                 () -> reverseDnsStage(nio, limiter, report, cfg, handle,
                         () -> portScanStage(nio, limiter, report, ports, cfg, to, handle, checker,
-                                () -> udpScanStage(nio, limiter, report, cfg, to, handle,
+                                () -> udpScanStage(nio, limiter, report, scanned.udp(), to, handle,
                                         () -> probeStage(report, handle, checker, finish))));
 
         if (handle.isCancelled()) {
@@ -900,7 +906,7 @@ public final class NMapScanner {
                                 && !handle.isCancelled() && j.addChild();
                         unit.complete();
                         if (stream) {
-                            launchProbe(checker, hr.host, target, j);
+                            launchProbe(checker, cfg.probeMatch, hr.host, target, j);
                         }
                     });
                     if (hr.ip == null) {
@@ -935,8 +941,7 @@ public final class NMapScanner {
      * TCP connects. Runs only when UDP ports were named ({@code -sU} or {@code -p U:...}).
      */
     private static void udpScanStage(NIOSocket nio, ScanGate limiter, ScanReport report,
-                                     NMapConfig cfg, int to, ScanHandle handle, Runnable onDone) {
-        final int[] udpPorts = cfg.udpPorts;
+                                     int[] udpPorts, int to, ScanHandle handle, Runnable onDone) {
         if (udpPorts == null || udpPorts.length == 0 || handle.isCancelled()) {
             onDone.run();
             return;
@@ -1062,9 +1067,10 @@ public final class NMapScanner {
             onDone.run();
             return;
         }
+        final NMapConfig.ProbeMatch match = report.config != null ? report.config.probeMatch : NMapConfig.ProbeMatch.FIRST;
         final CountdownMonitor j = new CountdownMonitor(openPorts.size(), onDone);
         for (int i = 0; i < openPorts.size(); i++) {
-            launchProbe(checker, hostsOf.get(i).host, openPorts.get(i), j);
+            launchProbe(checker, match, hostsOf.get(i).host, openPorts.get(i), j);
         }
     }
 
@@ -1075,25 +1081,107 @@ public final class NMapScanner {
      * must NOT hold a limiter slot of its own, or the ports would fill the cap and starve the
      * connections they wait for. Completes exactly once: on delivery, on the checker's
      * exception path, or on a launch that threw.
+     * <p>
+     * {@code match} (2026-10-31) picks the checker's sweep: {@link NMapConfig.ProbeMatch#FIRST}
+     * is {@code check} — the highest-priority probe that identifies the port wins and the others
+     * are torn down; {@link NMapConfig.ProbeMatch#ALL} is {@code checkAll} — every candidate runs
+     * to its end and every identification is kept on {@link PortReport#probes}, the first of them
+     * (priority order) also as {@link PortReport#probe} so everything that reads one result
+     * still does.
      */
-    private static void launchProbe(ProbeChecker checker, String host, PortReport pr, CountdownMonitor j) {
+    private static void launchProbe(ProbeChecker checker, NMapConfig.ProbeMatch match, String host,
+                                    PortReport pr, CountdownMonitor j) {
         final String transport = "udp".equalsIgnoreCase(pr.protocol) ? "udp" : "tcp";
         final Unit unit = new Unit(j);
         try {
-            checker.check(host, pr.port, transport, new CallableConsumerTask<ProbeResult>()
-                    .setConsumer(r -> {
-                        pr.probe = r;
-                        unit.complete();
-                    })
-                    .setExceptionCallback(t -> unit.complete()));
+            if (match == NMapConfig.ProbeMatch.ALL) {
+                checker.checkAll(host, pr.port, transport, new CallableConsumerTask<List<ProbeResult>>()
+                        .setConsumer(results -> {
+                            // the sweep delivers the completed identifications, or one
+                            // "none identified" result when there was none: that one is the
+                            // port's probe (as match-first would record it), never a list entry
+                            List<ProbeResult> done = new ArrayList<>();
+                            ProbeResult first = null;
+                            if (results != null) {
+                                for (ProbeResult r : results) {
+                                    if (r == null) continue;
+                                    if (first == null) first = r;
+                                    if (r.isComplete()) done.add(r);
+                                }
+                            }
+                            pr.probes = done.isEmpty() ? null : Collections.unmodifiableList(done);
+                            pr.probe = done.isEmpty() ? first : done.get(0);
+                            unit.complete();
+                        })
+                        .setExceptionCallback(t -> unit.complete()));
+            } else {
+                checker.check(host, pr.port, transport, new CallableConsumerTask<ProbeResult>()
+                        .setConsumer(r -> {
+                            pr.probe = r;
+                            unit.complete();
+                        })
+                        .setExceptionCallback(t -> unit.complete()));
+            }
         } catch (Exception e) {
             unit.complete();
         }
     }
 
+    /**
+     * The ports this scan covers, per protocol (2026-10-31, the maintainer: "if the ports are
+     * not set and probes were selected we scan the probe default port per probe"): typed
+     * {@code -p} ports win; with none typed and a probe set named, the ports the selected
+     * definitions declare ({@link NMap#probePorts}) — a UDP probe's ports join the UDP list and
+     * turn that stage on —; else {@link NMap#DEFAULT_PORTS}. A named set that declares no port
+     * at all ({@code tls-scan} alone) falls back to the default list with a warning. Nothing is
+     * written back to the configuration.
+     */
+    static NMap.PortSpec resolvePorts(NMapConfig cfg, List<ProbeDefinition> catalog, ScanReport report) {
+        int[] udp = cfg.udpPorts != null ? cfg.udpPorts : new int[0];
+        if (cfg.ports != null) {
+            return new NMap.PortSpec(cfg.ports, udp);
+        }
+        if (cfg.probeScan && catalog != null && !catalog.isEmpty() && !cfg.probeNames.isEmpty()) {
+            NMap.PortSpec declared = NMap.probePorts(catalog);
+            if (declared.tcp().length > 0 || declared.udp().length > 0) {
+                return new NMap.PortSpec(declared.tcp(), union(udp, declared.udp()));
+            }
+            report.warnings.add("the requested probes declare no ports; scanned the default 1-1024");
+        }
+        return new NMap.PortSpec(NMap.DEFAULT_PORTS, udp);
+    }
+
+    private static int[] union(int[] a, int[] b) {
+        java.util.TreeSet<Integer> set = new java.util.TreeSet<>();
+        for (int p : a) set.add(p);
+        for (int p : b) set.add(p);
+        int[] out = new int[set.size()];
+        int i = 0;
+        for (int p : set) out[i++] = p;
+        return out;
+    }
+
     /** The probe catalog for this scan; {@code gate} null means unpaced (tests only). */
     private static ProbeChecker buildChecker(NIOSocket nio, NMapConfig cfg, int to, ScanReport report,
                                              ScanGate gate) {
+        return buildChecker(nio, selectedCatalog(cfg, report), to, gate);
+    }
+
+    /** The checker over an already selected catalog; null — the engine's "no probing" — for an empty one. */
+    private static ProbeChecker buildChecker(NIOSocket nio, List<ProbeDefinition> catalog, int to, ScanGate gate) {
+        if (catalog == null || catalog.isEmpty()) {
+            return null;
+        }
+        return new ProbeChecker(nio, catalog, gate).timeoutInSec(to);
+    }
+
+    /**
+     * The definitions this scan probes with (split out of {@code buildChecker} on 2026-10-31 so
+     * the ports can be derived from them): the whole merged catalog with no names requested, the
+     * named subset otherwise, empty when a named set matched nothing. Every warning is recorded
+     * here.
+     */
+    static List<ProbeDefinition> selectedCatalog(NMapConfig cfg, ScanReport report) {
         // The catalog is bundled + caller-supplied definitions. ProbeChecker's constructor does
         // NOT sort — only withBundled() does, via loadBundled — and orderedCandidates preserves
         // input order within each tier, so the merged list has to be re-sorted here or an extra
@@ -1126,7 +1214,7 @@ public final class NMapScanner {
         catalog.sort((a, b) -> Integer.compare(b.getPriority(), a.getPriority()));
 
         if (cfg.probeNames == null || cfg.probeNames.isEmpty()) {
-            return new ProbeChecker(nio, catalog, gate).timeoutInSec(to);
+            return catalog;
         }
         List<ProbeDefinition> subset = new ArrayList<>();
         Set<String> matched = new LinkedHashSet<>();
@@ -1148,9 +1236,8 @@ public final class NMapScanner {
             // specific probes, so running the whole catalog instead would be a scan nobody asked
             // for. A null checker is the engine's "no probing" state (see the callers).
             report.warnings.add("no requested probe matched; nothing probed");
-            return null;
         }
-        return new ProbeChecker(nio, subset, gate).timeoutInSec(to);
+        return subset;
     }
 
     // ==================== Target expansion (host / CIDR / range) ====================

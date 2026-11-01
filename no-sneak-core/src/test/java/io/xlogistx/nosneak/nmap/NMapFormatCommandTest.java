@@ -22,6 +22,7 @@ public class NMapFormatCommandTest {
             "10.0.0.0/24 -p 1-1024 -sV -T5 --min-rtt-timeout 200 --max-inflight 4096 --up-only --open",
             "192.168.50.0/24 -sn -PR --up-only",
             "mail.example.com -p 25,465,587,993,995 -sV --probes TLS-handshake,smtp",
+            "10.0.0.1 -sV --probes ssh,https-pqc --probe-match all",
             "example.com 10.0.0.5 -p 1-100,443,8000-8010 -Pn -n",
             "10.0.0.1 -sU",
             "10.0.0.1 -p 22,U:53,161 -sU -R --dns-servers 1.1.1.1 -v",
@@ -48,6 +49,9 @@ public class NMapFormatCommandTest {
         assertEquals("10.0.0.0/24 -sn", NMap.formatCommand(NMap.parseCommand("10.0.0.0/24 -sn")));
         assertEquals("10.0.0.1 -p 1-1024,8080", NMap.formatCommand(NMap.parseCommand("10.0.0.1 -p 1-1024,8080")), "ranges are compressed back");
         assertEquals("10.0.0.1 -p 1-5", NMap.formatCommand(NMap.parseCommand("10.0.0.1 -p 1,2,3,4,5")));
+        assertEquals("10.0.0.1 -sV --probes ssh", NMap.formatCommand(NMap.parseCommand("10.0.0.1 -sV --probes ssh --probe-match first")),
+                "first is the default and is not printed");
+        assertEquals("10.0.0.1 -sV --probes ssh --probe-match all", NMap.formatCommand(NMap.parseCommand("10.0.0.1 --probe-match ALL -sV --probes ssh")));
         assertEquals("10.0.0.1 -p 22,U:53,161 -sU", NMap.formatCommand(NMap.parseCommand("10.0.0.1 -p T:22,U:53,161 -sU")));
         assertEquals("10.0.0.1 -sU", NMap.formatCommand(NMap.parseCommand("10.0.0.1 -sU")), "the default UDP list is not printed");
         assertEquals("10.0.0.1 -T5 --max-inflight 4096",
@@ -94,6 +98,7 @@ public class NMapFormatCommandTest {
         assertEquals(a.icmpProbes, b.icmpProbes, label + " icmpProbes");
         assertEquals(a.probeScan, b.probeScan, label + " probeScan");
         assertEquals(a.probeNames, b.probeNames, label + " probeNames");
+        assertEquals(a.probeMatch, b.probeMatch, label + " probeMatch");
         assertEquals(a.maxInFlight, b.maxInFlight, label + " maxInFlight");
         assertEquals(a.maxPerSec, b.maxPerSec, label + " maxPerSec");
         assertEquals(a.timeoutSec, b.timeoutSec, label + " timeoutSec");

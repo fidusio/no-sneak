@@ -48,6 +48,33 @@ public class ReportViewTest {
             }
             """;
 
+    /** {@code --probe-match all} (2026-10-31): a port's {@code probes} list reads as one identification per probe. */
+    @Test
+    void everyIdentificationOfAPortIsListed() {
+        String json = """
+                {"hosts": [{"host": "10.0.0.5", "up": true, "ports": [
+                  {"port": 443, "protocol": "tcp", "state": "open", "service": "https",
+                   "probe": {"probe": "https-scan", "service": "https", "service-version": "nginx 1.27"},
+                   "probes": [
+                     {"probe": "https-scan", "service": "https", "service-version": "nginx 1.27"},
+                     {"probe": "https-version", "service": "https"},
+                     {"probe": "tls-scan"}
+                   ]},
+                  {"port": 22, "protocol": "tcp", "state": "open", "service": "ssh",
+                   "probe": {"probe": "ssh", "service": "ssh"}}
+                ]}]}
+                """;
+        ReportView.Report r = ReportView.parse(json);
+        List<ReportView.Port> ports = r.hosts().get(0).openPorts();
+        assertEquals(List.of("https-scan · https nginx 1.27", "https-version · https", "tls-scan"),
+                ports.get(0).identifications());
+        assertTrue(ports.get(1).identifications().isEmpty(), "match-first: no list");
+        // the sample report carries no probes list on any port
+        for (ReportView.Host h : ReportView.parse(SAMPLE).hosts()) {
+            for (ReportView.Port p : h.ports()) assertTrue(p.identifications().isEmpty(), p.portLabel());
+        }
+    }
+
     @Test
     void readsHostsPortsAndTheEngineGrades() {
         ReportView.Report r = ReportView.parse(SAMPLE);

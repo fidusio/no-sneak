@@ -334,6 +334,23 @@ public class ScanResultView extends JPanel {
             portsBox.add(ports, BorderLayout.CENTER);
             detail.add(portsBox, "growx");
 
+            // identifications (2026-10-31, --probe-match all): a port several probes identified
+            // lists each of them; under match-first the table's detail column already says it
+            KeyValuePanel ids = null;
+            for (ReportView.Port p : h.openPorts()) {
+                if (p.identifications().size() < 2) continue;
+                if (ids == null) {
+                    detail.add(section("Identifications"));
+                    ids = new KeyValuePanel(110);
+                }
+                boolean first = true;
+                for (String id : p.identifications()) {
+                    ids.putMono(first ? p.portLabel() : "", id);
+                    first = false;
+                }
+            }
+            if (ids != null) detail.add(ids, "growx");
+
             // TLS posture
             ReportView.Port tls = h.worstTlsPort();
             if (tls != null) {

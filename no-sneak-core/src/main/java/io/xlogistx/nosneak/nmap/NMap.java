@@ -1,5 +1,6 @@
 package io.xlogistx.nosneak.nmap;
 
+import io.xlogistx.nosneak.model.ProbeDefinition;
 import io.xlogistx.nosneak.nmap.output.NormalFormatter;
 import io.xlogistx.nosneak.nmap.output.OutputFormat;
 import org.zoxweb.server.net.NIOSocket;
@@ -11,12 +12,14 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -28,13 +31,15 @@ import java.util.concurrent.TimeUnit;
  * <pre>
  * Usage: NMap &lt;target...&gt; [options]
  *   target        host | IP | CIDR (10.0.0.0/24) | range (10.0.0.1-50, 192.168.1-5.1-254) | a,b,c
- *   -p &lt;spec&gt;      ports: 22,80,443 or 1-1024; T:/U: prefixes  (default: 1-1024)
+ *   -p &lt;spec&gt;      ports: 22,80,443 or 1-1024; T:/U: prefixes  (default: the named probes'
+ *                 declared ports with --probes, else 1-1024)
  *   -sU           UDP scan (common UDP ports, or the U: half of -p); UDP-only unless T: ports given
  *   --top-ports N scan nmap's N most common TCP ports (max 100)
  *   --open        report only open ports
  *   --up-only     list only hosts found up (counts still cover every target)
  *   -sV           probe scan: service/version/TLS/PQC on open ports, each probed as it connects
  *   --probes a,b  restrict the probe scan to named probes
+ *   --probe-match first|all   stop at the first probe that identifies a port (default), or keep all
  *   -Pn / -PN     skip host discovery (treat every target as up; discovery otherwise decides at
  *                 the first positive answer from ARP, ICMP or a TCP-ping)
  *   -sn / -sP     discovery only (no port scan)
@@ -60,8 +65,11 @@ import java.util.concurrent.TimeUnit;
 public final class NMap {
 
     /**
-     * The TCP ports scanned when {@code -p} is absent: {@code 1-1024}, nmap's classic
-     * well-known range and what the v1 scanner defaulted to. {@code --top-ports N} is the
+     * The TCP ports scanned when {@code -p} is absent and no probe set is named: {@code 1-1024},
+     * nmap's classic well-known range and what the v1 scanner defaulted to. With
+     * {@code --probes} and no {@code -p} the scan covers the named probes' declared ports instead
+     * (2026-10-31, {@link #probePorts}; the scanner falls back to this list when they declare
+     * none). {@code --top-ports N} is the
      * cheaper alternative when a thousand connects per host is too many.
      */
     public static final int[] DEFAULT_PORTS = range(1, 1024);
@@ -100,11 +108,40 @@ public final class NMap {
     }
 
     /**
+     * The ports a set of probe definitions declares, sorted and without duplicates, split by
+     * transport (2026-10-31): what a scan with probes named and no {@code -p} covers — ssh and
+     * https-pqc ticked means TCP 22, 443, 2222, 8443, nothing more. A definition without declared
+     * ports ({@code tls-scan}) contributes none. Used by {@code NMapScanner} to pick the ports and
+     * by the desktop form to say which they are, so both name the same set.
+     */
+    public static PortSpec probePorts(Collection<ProbeDefinition> defs) {
+        TreeSet<Integer> tcp = new TreeSet<>();
+        TreeSet<Integer> udp = new TreeSet<>();
+        if (defs != null) {
+            for (ProbeDefinition d : defs) {
+                if (d == null || d.getPorts() == null) continue;
+                TreeSet<Integer> into = "udp".equalsIgnoreCase(d.getTransport()) ? udp : tcp;
+                for (int p : d.getPorts()) {
+                    if (p >= 1 && p <= 65535) into.add(p);
+                }
+            }
+        }
+        return new PortSpec(toArray(tcp), toArray(udp));
+    }
+
+    private static int[] toArray(Collection<Integer> ports) {
+        int[] out = new int[ports.size()];
+        int i = 0;
+        for (int p : ports) out[i++] = p;
+        return out;
+    }
+
+    /**
      * The command line for a configuration — the inverse of {@link #parseCommand}, added
      * 2026-10-24 for the scanner screen, whose form generates the command and whose command
      * field, when edited, refills the form. Parsing what this prints gives the configuration
      * back ({@code NMapFormatCommandTest}); the text is canonical: targets, {@code -p}, {@code -sU},
-     * {@code -sn}, {@code -sV}, {@code --probes}, discovery flags, {@code --icmp-probes}, timing
+     * {@code -sn}, {@code -sV}, {@code --probes}, {@code --probe-match all}, discovery flags, {@code --icmp-probes}, timing
      * (the closest {@code -T} template plus the knobs that differ from it; nothing for the
      * defaults), {@code --min-rtt-timeout}, {@code --open}, {@code --up-only}, {@code -n}/{@code -R},
      * {@code --dns-servers}, {@code -v}. Defaults are omitted. A probe name with whitespace or a
@@ -135,6 +172,10 @@ public final class NMap {
         if (!names.isEmpty()) {
             out.add("--probes");
             out.add(String.join(",", names));
+        }
+        if (cfg.probeMatch == NMapConfig.ProbeMatch.ALL) {
+            out.add("--probe-match");
+            out.add(cfg.probeMatch.token());
         }
         if (!cfg.discovery) {
             out.add("-Pn");
@@ -303,6 +344,15 @@ public final class NMap {
      * A timing template by digit ({@code 4}), by enum name ({@code T4}) or by nmap's word
      * ({@code aggressive}): paranoid/sneaky/polite/normal/aggressive/insane = T0..T5.
      */
+    /** {@code --probe-match first|all}, case-insensitive; anything else is refused with the choices. */
+    public static NMapConfig.ProbeMatch probeMatchOf(String value, String flag) {
+        String v = value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+        for (NMapConfig.ProbeMatch m : NMapConfig.ProbeMatch.values()) {
+            if (m.token().equals(v)) return m;
+        }
+        throw new IllegalArgumentException(flag + " expects first|all, got '" + value + "'");
+    }
+
     public static NMapConfig.Timing timingOf(String value, String flag) {
         String v = value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
         switch (v) {
@@ -374,6 +424,7 @@ public final class NMap {
                 case "-T":             cfg.timing(timingOf(argOf(args, ++i, a), a)); break;
                 case "-sV":            cfg.probeScan(true); break;
                 case "--probes":       for (String n : argOf(args, ++i, a).split(",")) cfg.probe(n.trim()); break;
+                case "--probe-match":  cfg.probeMatch(probeMatchOf(argOf(args, ++i, a), a)); break;
                 case "-Pn": case "-PN": cfg.discovery(false); break;
                 case "-sn": case "-sP": discoveryOnly = true; break;
                 case "--no-icmp":      cfg.discoveryIcmp(false); break;
@@ -612,7 +663,8 @@ public final class NMap {
                   target         host | IP | CIDR (10.0.0.0/24) | range (10.0.0.1-50, 10.0.0.1-10.0.1.9,
                                  192.168.1-5.1-254) | comma-separated list (10.0.0.1,10.0.0.5,example.com)
                                  (expansion is capped at 65536 addresses per spec, with a warning)
-                  -p <spec>      ports: 22,80,443 or 1-1024 (default: 1-1024); -p22,80 also accepted
+                  -p <spec>      ports: 22,80,443 or 1-1024; -p22,80 also accepted. Default: the named
+                                 probes' declared ports when --probes is given, else 1-1024
                                  T:/U: prefixes accepted (T:22,80,U:53); U: ports get a UDP probe
                   -sU            UDP scan: common UDP ports, or the U: ports of -p; UDP-only unless
                                  T: ports or --top-ports are named too (open / closed / open|filtered)
@@ -623,7 +675,10 @@ public final class NMap {
                                  probed the moment it connects, ahead of the queued connects. A port no
                                  bundled probe declares (53/tcp, say) costs one full -t while the
                                  fallback candidates wait for a reply that never comes.
-                  --probes a,b   restrict probe scan to named probes
+                  --probes a,b   restrict probe scan to named probes; without -p the scan covers the
+                                 ports they declare (ssh,https-pqc = 22,2222,443,8443)
+                  --probe-match first|all   first (default): the first probe that identifies a port
+                                 wins, the others are stopped; all: every identification is kept
                 Discovery (decided at the first positive answer from any method):
                   -Pn / -PN      skip host discovery (all targets up)
                   -sn / -sP      discovery only (no port scan)

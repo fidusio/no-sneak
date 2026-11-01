@@ -90,6 +90,11 @@ public final class NMapConfig {
     public final List<String> probeNames = new ArrayList<>();
     /** Definitions to scan with alongside the bundled ones; they join the catalog {@link #probeNames} resolves against. */
     public final List<ProbeDefinition> extraProbes = new ArrayList<>();
+    /**
+     * How many probes may identify one open port (2026-10-31, {@code --probe-match}): {@link ProbeMatch#FIRST},
+     * the default, stops the others once one has; {@link ProbeMatch#ALL} keeps every identification.
+     */
+    public ProbeMatch probeMatch = ProbeMatch.FIRST;
 
     /** Rate limit: max simultaneously-open connections ({@code <=0} = unlimited). Default 256. */
     public int maxInFlight = DEFAULT_MAX_IN_FLIGHT;
@@ -218,6 +223,35 @@ public final class NMapConfig {
         }
     }
 
+    /**
+     * What happens on an open port once a probe has identified it (2026-10-31, the maintainer:
+     * "if a probe is successful on host:port we don't need to probe for the rest, or we could
+     * specify a flag on first succeed or all"). Both sweeps already existed in
+     * {@code ProbeChecker}: {@code check} is match-first, {@code checkAll} is match-all; this
+     * enum is the scanner's switch between them, {@code --probe-match first|all} on the CLI and
+     * the <i>Match</i> segment on the desktop form. The display name is the segment's label.
+     */
+    public enum ProbeMatch implements GetDisplayName, GetDescription {
+        FIRST, ALL;
+
+        @Override
+        public String getDisplayName() {
+            return this == FIRST ? "First" : "All";
+        }
+
+        @Override
+        public String getDescription() {
+            return this == FIRST
+                    ? "The first probe that identifies the port wins and the others are stopped (default)"
+                    : "Every matching probe runs and every identification is kept";
+        }
+
+        /** The CLI token, lower case. */
+        public String token() {
+            return name().toLowerCase(java.util.Locale.ROOT);
+        }
+    }
+
     public NMapConfig target(String t) { if (t != null && !t.isEmpty()) targets.add(t); return this; }
     public NMapConfig ports(int[] p) { this.ports = p; return this; }
     public NMapConfig udpPorts(int[] p) { this.udpPorts = p; return this; }
@@ -233,6 +267,7 @@ public final class NMapConfig {
     public NMapConfig probeScan(boolean b) { this.probeScan = b; return this; }
     public NMapConfig probe(String name) { if (name != null && !name.isEmpty()) probeNames.add(name); return this; }
     public NMapConfig extraProbe(ProbeDefinition d) { if (d != null) extraProbes.add(d); return this; }
+    public NMapConfig probeMatch(ProbeMatch m) { if (m != null) this.probeMatch = m; return this; }
     public NMapConfig rate(int maxInFlight, int maxPerSec) { this.maxInFlight = maxInFlight; this.maxPerSec = maxPerSec; return this; }
     public NMapConfig timeoutInSec(int s) { this.timeoutSec = s > 0 ? s : DEFAULT_TIMEOUT_SEC; return this; }
     public NMapConfig verbose(boolean b) { this.verbose = b; return this; }

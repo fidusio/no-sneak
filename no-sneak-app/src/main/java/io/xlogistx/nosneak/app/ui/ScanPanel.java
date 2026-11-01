@@ -110,6 +110,12 @@ public class ScanPanel extends JPanel {
     private final ScanResultView storedView;
     /** Enabled only while a scan runs; stops it through the scanner's handle. The form owns the button. */
     private final JButton stopButton;
+    /**
+     * The Scan page's own way to start over (2026-11-01, the maintainer: "I want to create a new
+     * scan, create a button for it in the scan panel, I don't need to go back to the scan history
+     * to do it"): empties the form, the chips and the result. Disabled while a scan runs.
+     */
+    private final JButton newScanButton = UITokens.primary(new JButton("New scan", IconUtil.svgIcon("io/xlogistx/gui/icons/plus.svg", 14, Color.WHITE)));
     /** The scan in progress, or null. Set on the worker, read on the EDT by the Stop button. */
     private volatile NMapScanner.ScanHandle running;
     private ReportContent selectedScan;
@@ -212,14 +218,21 @@ public class ScanPanel extends JPanel {
         JPanel out = new JPanel(new MigLayout("insets 20 24 24 24, wrap 1, gapy 14, fill", "[grow,fill]", "[][]0[grow,fill]"));
         out.setBackground(UITokens.color("xlogistx.ground", null, 0xF4F4F7));
 
-        JPanel head = new JPanel(new MigLayout("insets 0, wrap 1, gapy 2"));
+        // the page is named like its sidebar item (2026-11-01: it said "New scan", which is now the button)
+        JPanel head = new JPanel(new MigLayout("insets 0, gapx 12", "[grow][]"));
         head.setOpaque(false);
-        JLabel title = new JLabel("New scan");
+        JPanel titles = new JPanel(new MigLayout("insets 0, wrap 1, gapy 2"));
+        titles.setOpaque(false);
+        JLabel title = new JLabel(Navigator.Screen.SCAN.getDisplayName());
         title.setFont(UITokens.font(Font.BOLD, 8f));
-        head.add(title);
+        titles.add(title);
         JLabel sub = new JLabel("Assess what the hosts on a segment expose. Only ordinary handshakes are sent, from this machine's own address.");
         sub.setForeground(UITokens.muted());
-        head.add(sub);
+        titles.add(sub);
+        head.add(titles, "wmin 0");
+        newScanButton.setToolTipText("Start over: clear the targets, ports, name, options, probes and the last result");
+        newScanButton.addActionListener(_ -> newScan());
+        head.add(newScanButton);
         out.add(head, "growx");
 
         probeChips.setEmptyText("none · no probing (tick Service detection for all)");
@@ -242,6 +255,19 @@ public class ScanPanel extends JPanel {
 
         out.add(resultView, "grow, push");
         return out;
+    }
+
+    /**
+     * New scan: the form, the chips and the result area back to how a fresh login finds them,
+     * so the next scan starts from nothing without a trip through the history page. The
+     * history, the probe library and a stored report open on their own cards are untouched.
+     */
+    private void newScan() {
+        form.reset();
+        tickedProbes.clear();
+        refreshProbeChips();
+        resultView.clear();
+        form.getRunButton().requestFocusInWindow();
     }
 
     /**
@@ -280,8 +306,10 @@ public class ScanPanel extends JPanel {
         String subjectAtStart = ctx.session().getSubjectGUID();
 
         stopButton.setEnabled(true);
+        newScanButton.setEnabled(false);
         BackgroundTask.run(this, run, () -> runScan(cfg), outcome -> {
             stopButton.setEnabled(false);
+            newScanButton.setEnabled(true);
             if (outcome.stopped() != null) {
                 // Stopped by the subject or by the wait budget: show what completed, save nothing.
                 if (outcome.json() != null) resultView.setReport(scanName, outcome.json(), outcome.stopped(), false);
@@ -407,6 +435,21 @@ public class ScanPanel extends JPanel {
         }
 
         /**
+         * What an empty Ports field scans, in the field's own grammar (2026-10-31, the maintainer:
+         * "if the ports are not set and probes were selected we scan the probe default port per
+         * probe"): the ticked definitions' declared ports through {@link NMap#probePorts}, the
+         * engine's own rule — {@code 22,443,2222,8443 (ticked probes)}, {@code U:53}
+         * for a UDP probe — or {@link ScanFormPanel#PORTS_DEFAULT_HINT} with no chip, or chips
+         * that declare no port (the engine then scans 1-1024 and says so).
+         */
+        static String portsPlaceholder(List<ProbeDefinition> ticked) {
+            if (ticked == null || ticked.isEmpty()) return ScanFormPanel.PORTS_DEFAULT_HINT;
+            NMap.PortSpec spec = NMap.probePorts(ticked);
+            if (spec.tcp().length == 0 && spec.udp().length == 0) return ScanFormPanel.PORTS_DEFAULT_HINT;
+            return NMap.portSpec(spec.tcp(), spec.udp()) + " (ticked probes)";
+        }
+
+        /**
          * The inverse of {@link #describe}: the ticks a report's saved {@code probes} property
          * stands for, against the probes known now (2026-10-25, for <i>Scan again</i>). A name is
          * matched to a bundled probe first, then to a stored one by name; a name that matches
@@ -489,6 +532,28 @@ public class ScanPanel extends JPanel {
         }
         probeChips.setChips(chips);
         form.setServiceDetection(!chips.isEmpty()); // -sV mirrors the chips both ways, as applyTo does
+        // an empty Ports field means the ticked probes' ports (2026-10-31): say which
+        form.setPortsPlaceholder(ProbeSelection.portsPlaceholder(tickedDefinitions()));
+    }
+
+    /**
+     * The definitions behind the ticks, for the Ports placeholder: bundled ones by name, stored
+     * ones parsed; a stored probe that does not parse is left out here (the run reports it).
+     */
+    private List<ProbeDefinition> tickedDefinitions() {
+        List<ProbeDefinition> defs = new ArrayList<>();
+        for (ProbeDefinition d : bundledProbes) {
+            if (tickedProbes.contains(ProbeSelection.bundledKey(d.getName()))) defs.add(d);
+        }
+        for (ProbeContent p : probes) {
+            if (p.getName() == null || !tickedProbes.contains(ProbeSelection.storedKey(p))) continue;
+            try {
+                defs.add(ProbeDefinitionLoader.parse(p.getContent(), p.getName()));
+            } catch (IllegalArgumentException ignored) {
+                // the run says which probe is invalid; the placeholder just skips it
+            }
+        }
+        return defs;
     }
 
     /** Every bundled and stored probe ticked: what the Service detection box means on its own. */

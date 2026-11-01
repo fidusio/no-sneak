@@ -119,6 +119,22 @@ continuation on its own thread. Nothing parks. What the 2026-09-20 pass changed,
   catalog; `--probes` names a subset, and (2026-10-26) a named set that matches nothing **probes
   nothing** — `buildChecker` returns a null checker with the warning *nothing probed* — rather
   than falling back to everything (`ExtraProbeCatalogTest.onlyUnknownNamesProbeNothing`).
+- **Named probes decide the ports when none are typed (2026-10-31).** The maintainer: "if the
+  ports are not set and probes were selected we scan the probe default port per probe". The
+  catalog is now resolved before the first connect (`selectedCatalog`, split out of
+  `buildChecker`) and `resolvePorts` picks the list: typed `-p` ports win; with none typed and
+  `--probes` named, the scan covers the union of the selected definitions' declared ports
+  (`NMap.probePorts`, per transport — a UDP probe's ports join the UDP list and turn that stage
+  on); a bare `-sV`, or a named set that declares no port (`tls-scan` alone, with a warning),
+  keeps `NMap.DEFAULT_PORTS` (1-1024). What was scanned is on the report
+  (`tcpPortsScanned` / `udpPortsScanned`; the XML `services` attribute reads it). And
+  **`--probe-match first|all`** (`NMapConfig.ProbeMatch`, default first) picks the checker's
+  sweep per open port: first is `check` (the highest-priority identification wins, the rest are
+  torn down, as always), all is `checkAll` — every identification is kept on
+  `PortReport.probes`, the first of them also as `probe`, and the JSON carries a `probes` list
+  beside `probe` when there is more than one. `ProbePortsTest` (9, pure) and two
+  `NMapScannerEndToEndTest` cases (two extra probes declared on the loopback port, no `-p`:
+  one port scanned, first keeps alpha, all keeps alpha and beta) pin it.
 - **`ScanGate` honours caps above 1000/s.** zoxweb `RateController` paces in whole milliseconds, so
   every cap ≥ 1000/s had collapsed to one launch per ms (`-T4`/`-T5` were no faster than `-T3`).
   The gate now spends a quantum of `maxPerSec/1000` launches per slot — still leaky, still
@@ -173,6 +189,8 @@ higher-priority candidate can still complete, the rest are aborted. **match-all*
 scanner's catalog merges bundled and subject-authored definitions **by name**: a stored probe
 with a bundled name replaces it (warning names the shadowed probe), a second stored definition
 with a used name is ignored (warning), and `--probes` names that match nothing probe nothing.
+The nmap scanner runs match-first unless `--probe-match all` is given (2026-10-31), and with
+`--probes` and no `-p` it scans the named probes' declared ports (*The scan pipeline*).
 
 **Result fields (`ProbeResult`, facts only).** `service`, `service-version`, `service-<name>`
 (captures), `tls-state` (`NONE` / `DIRECT_TLS` / `STARTTLS_UPGRADED`), `pqc-status` (`PQC` /
@@ -207,7 +225,9 @@ every child is counted against the scan window through `GatedProbeTransport`.
 
 **CLI.** `java io.xlogistx.nosneak.ProbeChecker <host> <port> [timeoutSec] [--all|--first]
 [--tcp|--udp] [probe.json …]` — match-first over the bundled probes by default; explicit files run
-those probes only. The nmap CLI is `io.xlogistx.nosneak.nmap.NMap` (see *The scan pipeline*).
+those probes only. The nmap CLI is `io.xlogistx.nosneak.nmap.NMap` (see *The scan pipeline*):
+`-p` optional — with `--probes a,b` and no `-p` the named probes' declared ports are scanned —
+and `--probe-match first|all` (2026-10-31).
 
 **REST (`service/Checker`, `/check-qdz/{domain}/{detailed}`).** Fully asynchronous, and that is a
 correctness requirement: the handler runs on the same pool the probes need, so a blocking wait
@@ -270,7 +290,7 @@ io.xlogistx.nosneak
 └── tools/                  DMTool · NoSneakUtil
 
 src/main/resources/probes/   18 bundled probe definitions (the 2 unbundled ones were deleted 2026-10-26)
-src/test/java/io/xlogistx/nosneak/   403 tests in 36 classes, all green (2026-09-22) + NoSneakNIOHTTPServer harness. Pure and socket-free except
+src/test/java/io/xlogistx/nosneak/   403 tests in 36 classes, all green (2026-09-22); + nmap/ProbePortsTest and two end-to-end cases (2026-10-31) + NoSneakNIOHTTPServer harness. Pure and socket-free except
                                     nmap/NMapScannerEndToEndTest (a loopback listener) and nmap/ScanGateThroughputTest
                                     (measures the gate on real pools); model/ProbeDefinitionGuideTest pins
                                     PROBE-DEFINITION.md to the loader

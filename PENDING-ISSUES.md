@@ -846,6 +846,43 @@ the `.claude/tools` launcher; the block rendered and read. Live check owed: agai
 endpoint, a send that times out at 40 s comes back with the timeout stretched, and the error
 names the setting with it lowered to 10 s. Not built: cancelling a send in flight (`AIProvider.asyncSend` returns void).
 
+**2026-10-31, ports follow the ticked probes; a first / all probe-match flag (uncommitted):**
+the maintainer: "when you run the scan and no port is defined you run from 1-1024 … we have to
+change it: the ports are scanned if they are set; if the ports are not set and probes were
+selected we scan the probe default port per probe — I select ssh and https on the target host,
+we probe ssh on 22 and https on 443; if ports were defined, i.e. 1-2048, all the ports are
+scanned with probes; if a probe is successful on host:port we don't need to probe the rest, or
+we could specify a flag on first succeed or all". Built in the engine: `NMapScanner.resolvePorts`
+(typed `-p` wins; else `NMap.probePorts` over the named definitions, per transport, a UDP
+probe's ports joining the UDP list; else 1-1024, with a warning when the named set declares no
+port), the catalog resolved first (`selectedCatalog`), `tcpPortsScanned` / `udpPortsScanned` on
+the report; `--probe-match first|all` (`NMapConfig.ProbeMatch`), `launchProbe` calling
+`checkAll` under all and keeping every identification on `PortReport.probes` (JSON `probes`).
+"First" was already the behaviour: `ProbeChecker.check` tears the other candidates down once
+one wins. In the app: the Ports placeholder names the ticked probes' ports (and the tooltip
+carries the full text), a *Match* segment beside the Probes label, an *Identifications* block
+in the host detail. `ProbePortsTest` (9), the parse/format round trip, two end-to-end cases on
+the loopback listener, `ScanPanelTest`, `ScanFormPanelTest`, `ReportViewTest` green through the
+`.claude/tools` launcher (core 123 / 123 over the touched classes, app 26 / 26); the form
+rendered and read. Decisions taken: no probes ticked and no ports stays 1-1024; a bare CLI
+`-sV` (whole catalog) stays 1-1024 too; `maxWaitMs` still budgets for 1024 ports (an upper
+bound). Live checks owed: ssh + https ticked and Ports empty → the result's Hosts tab shows
+the four ports only; `1-2048` typed → all scanned; *All* on a TLS host → the detail pane lists
+every identification.
+
+**2026-11-01, the Scan page named Scan, with its own New scan button (uncommitted):** the
+maintainer: "under scan panel first you are calling it new scan, fix that, and I want to create
+a new scan, create a button for it in the scan panel, I don't need to go back to the scan
+history to do it, leave scan history as it is". The page title is `Screen.SCAN.getDisplayName()`
+(*Scan*, the sidebar's word, as `AppShell` says every page title is); a primary **New scan**
+button on the header's right (`ScanPanel.newScan`: `form.reset()`, ticks and chips cleared,
+`resultView.clear()`; disabled while a scan runs) starts the next scan from an empty form. The
+history page's own *New scan* button, which navigates to the Scan page, is as it was. Help
+says so under *Scan*. No new test: `ScanPanel` needs a store-backed `AppContext` to build, and
+the button is three calls on methods `resetPanel()` already exercises; the page was compiled
+and rendered. Live check owed: run a scan, press New scan, see the form, chips and result
+empty, run again.
+
 **Open after Phase 5 (updated 2026-10-27):** the rest of the maintainer's run-through on a
 display (unlock, the scan form and history are done; still to try: a stored report from history,
 API keys, Providers, a chat with chips, a capture, Profile, Settings with Backup and Restore,

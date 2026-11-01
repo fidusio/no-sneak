@@ -46,6 +46,31 @@ class ScanPanelTest {
         return java.util.Arrays.stream(names).map(n -> ProbeDefinitionLoader.parse(json(n), n)).toList();
     }
 
+    private static List<ProbeDefinition> bundledNamed(String... names) {
+        List<String> wanted = List.of(names);
+        return ProbeDefinitionLoader.loadBundled().stream().filter(d -> wanted.contains(d.getName())).toList();
+    }
+
+    /**
+     * 2026-10-31, maintainer: with no ports typed the scan covers the ticked probes' declared
+     * ports; the Ports field's placeholder names them in the field's own grammar.
+     */
+    @Test
+    void thePortsPlaceholderNamesTheTickedProbesPorts() {
+        assertEquals("22,443,2222,8443 (ticked probes)",
+                ScanPanel.ProbeSelection.portsPlaceholder(bundledNamed("ssh", "https-pqc")));
+        assertEquals("U:53 (ticked probes)",
+                ScanPanel.ProbeSelection.portsPlaceholder(bundledNamed("dns")), "a UDP probe's ports in the U: half");
+        assertEquals("22,2222,U:53 (ticked probes)",
+                ScanPanel.ProbeSelection.portsPlaceholder(bundledNamed("ssh", "dns")));
+        assertEquals(io.xlogistx.nosneak.app.ui.scan.ScanFormPanel.PORTS_DEFAULT_HINT,
+                ScanPanel.ProbeSelection.portsPlaceholder(List.of()), "no chip: the engine's default list");
+        assertEquals(io.xlogistx.nosneak.app.ui.scan.ScanFormPanel.PORTS_DEFAULT_HINT,
+                ScanPanel.ProbeSelection.portsPlaceholder(bundledNamed("tls-scan")), "tls-scan declares no port");
+        assertEquals("6379 (ticked probes)",
+                ScanPanel.ProbeSelection.portsPlaceholder(bundled("my-redis")), "a stored probe counts the same");
+    }
+
     @Test
     void aProbeNameWithSpacesNeverBecomesAScanTarget() {
         String typed = "10.0.0.0/24 -p 6379";

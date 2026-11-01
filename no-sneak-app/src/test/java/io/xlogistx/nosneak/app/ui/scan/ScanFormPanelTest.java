@@ -58,6 +58,36 @@ public class ScanFormPanelTest {
         });
     }
 
+    /** The Match segment is {@code --probe-match} (2026-10-31): first is the default and prints nothing. */
+    @Test
+    void theMatchSegmentFollowsTheCommandBothWays() throws Exception {
+        onEDT(() -> {
+            ScanFormPanel form = new ScanFormPanel();
+            form.setCommand("10.0.0.1 -sV --probe-match all");
+            assertEquals(NMapConfig.ProbeMatch.ALL, form.toConfig().probeMatch, "the command sets the segment");
+            form.setConfig(NMap.parseCommand("10.0.0.1 -sV"));
+            assertEquals("10.0.0.1 -sV", form.getCommand(), "first is the default and is not printed");
+            assertEquals(NMapConfig.ProbeMatch.FIRST, form.toConfig().probeMatch);
+            form.setConfig(NMap.parseCommand("10.0.0.1 -p 443 -sV --probe-match all"));
+            assertEquals("10.0.0.1 -p 443 -sV --probe-match all", form.getCommand(), "the segment prints into the command");
+            return null;
+        });
+    }
+
+    /** The Ports placeholder is the owner's to set (2026-10-31); it starts on the engine's default. */
+    @Test
+    void thePortsPlaceholderIsSetByTheOwner() throws Exception {
+        onEDT(() -> {
+            ScanFormPanel form = new ScanFormPanel();
+            assertEquals(ScanFormPanel.PORTS_DEFAULT_HINT, form.portsPlaceholder());
+            form.setPortsPlaceholder("22,443 (ticked probes)");
+            assertEquals("22,443 (ticked probes)", form.portsPlaceholder());
+            form.setPortsPlaceholder(null);
+            assertEquals(ScanFormPanel.PORTS_DEFAULT_HINT, form.portsPlaceholder(), "null is the default again");
+            return null;
+        });
+    }
+
     @Test
     void flagsWithoutAControlSurvive() throws Exception {
         onEDT(() -> {

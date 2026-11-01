@@ -29,9 +29,15 @@ import java.util.List;
  * {@code NMap.formatCommand}; every command edit re-parses into the fields. A guard stops the two
  * from echoing. A command that does not parse shows its reason inline and leaves the fields alone.
  * Probes are not in the command: the chips belong to the owner ({@code ScanPanel}), which applies
- * ticked probes to the configuration at run time, as it always did.
+ * ticked probes to the configuration at run time, as it always did. What an <b>empty Ports
+ * field</b> means depends on the chips (2026-10-31: the ticked probes' declared ports, else
+ * 1-1024), so the owner tells the form through {@link #setPortsPlaceholder} and the placeholder
+ * says it; the <b>Match</b> segment ({@code --probe-match}) is the form's own.
  */
 public class ScanFormPanel extends JPanel {
+
+    /** What an empty Ports field means when no probe is ticked: the engine's default list. */
+    public static final String PORTS_DEFAULT_HINT = "1-1024 (default when empty)";
 
     private final JTextField targets = new JTextField();
     private final JTextField ports = new JTextField();
@@ -42,6 +48,8 @@ public class ScanFormPanel extends JPanel {
     private final JCheckBox upOnly = new JCheckBox("Live hosts only");
     private final JCheckBox openOnly = new JCheckBox("Open ports only");
     private final SegmentedControl timing = new SegmentedControl(NMapConfig.Timing.values());
+    /** First / All — {@code --probe-match} (2026-10-31); the enum carries the labels and tooltips. */
+    private final SegmentedControl probeMatch = new SegmentedControl(NMapConfig.ProbeMatch.values());
     private final JTextField maxInFlight = new JTextField(6);
     private final JTextField minRtt = new JTextField(6);
     private final JTextField command = new JTextField();
@@ -65,7 +73,7 @@ public class ScanFormPanel extends JPanel {
         command.setBackground(UITokens.color("xlogistx.chip", null, 0xF7F7FA));
         name.putClientProperty("JTextField.placeholderText", "e.g. Office segment, weekly");
         targets.putClientProperty("JTextField.placeholderText", "10.0.0.0/24  host.example.com  10.0.0.5-9");
-        ports.putClientProperty("JTextField.placeholderText", "1-1024 (default when empty)");
+        ports.putClientProperty("JTextField.placeholderText", PORTS_DEFAULT_HINT);
 
         // row 1: targets · ports · name
         JPanel row1 = new JPanel(new MigLayout("insets 0, gapx 14, fillx", "[grow 5,fill][grow 3,fill][grow 4,fill]"));
@@ -110,7 +118,12 @@ public class ScanFormPanel extends JPanel {
         row3.add(field("Min RTT timeout (ms)", minRtt, null), "aligny top, w 150!");
         JPanel probeBox = new JPanel(new MigLayout("insets 0, wrap 1, gapy 6, fillx", "[grow,fill]"));
         probeBox.setOpaque(false);
-        probeBox.add(FormPanel.fieldLabel("Probes", false));
+        JPanel probeHead = new JPanel(new MigLayout("insets 0, gapx 8", "[]push[][]"));
+        probeHead.setOpaque(false);
+        probeHead.add(FormPanel.fieldLabel("Probes", false));
+        probeHead.add(FormPanel.fieldLabel("Match", false));
+        probeHead.add(probeMatch);
+        probeBox.add(probeHead, "growx");
         probeSlot.setOpaque(false);
         probeBox.add(probeSlot, "growx, wmin 0");
         row3.add(probeBox, "aligny top, growx, pushx, wmin 200");
@@ -180,6 +193,8 @@ public class ScanFormPanel extends JPanel {
         });
         maxInFlight.getDocument().addDocumentListener(fields);
         minRtt.getDocument().addDocumentListener(fields);
+        probeMatch.select(NMapConfig.ProbeMatch.FIRST);
+        probeMatch.onChange(_ -> fieldsChanged());
         timing.onChange(_ -> {
             // picking a template resets the knobs to its values; the fields follow
             syncing = true;
@@ -211,6 +226,24 @@ public class ScanFormPanel extends JPanel {
     }
 
     // ---- public API ----
+
+    /**
+     * What an empty Ports field means right now, shown as its placeholder (2026-10-31): the owner
+     * sets the ticked probes' ports ({@code 22,443,2222,8443 (ticked probes)}) or
+     * {@link #PORTS_DEFAULT_HINT} when no chip declares any.
+     */
+    public void setPortsPlaceholder(String text) {
+        String hint = text != null ? text : PORTS_DEFAULT_HINT;
+        ports.putClientProperty("JTextField.placeholderText", hint);
+        ports.setToolTipText("Empty: " + hint + ". Type a -p spec to scan other ports."); // the field is narrow
+        ports.repaint();
+    }
+
+    /** The Ports field's current placeholder (tests). */
+    public String portsPlaceholder() {
+        Object v = ports.getClientProperty("JTextField.placeholderText");
+        return v != null ? v.toString() : "";
+    }
 
     /** The component that shows the probe chips; the owner puts its {@link ChipPanel} here. */
     public void setProbeControl(JComponent control) {
@@ -343,6 +376,7 @@ public class ScanFormPanel extends JPanel {
             upOnly.setSelected(false);
             openOnly.setSelected(false);
             timing.select(3);
+            probeMatch.select(NMapConfig.ProbeMatch.FIRST);
             maxInFlight.setText(Integer.toString(NMapConfig.DEFAULT_MAX_IN_FLIGHT));
             minRtt.setText(Integer.toString(NMapConfig.DEFAULT_MIN_RTT_TIMEOUT_MS));
             command.setText("");
@@ -390,6 +424,8 @@ public class ScanFormPanel extends JPanel {
             else if (!cfg.udpScan) cfg.udpPorts = null;
         }
         cfg.probeScan(serviceDetection.isSelected());
+        NMapConfig.ProbeMatch pm = probeMatch.<NMapConfig.ProbeMatch>selectedSource();
+        cfg.probeMatch(pm != null ? pm : NMapConfig.ProbeMatch.FIRST);
         cfg.discovery(!skipPing.isSelected());
         cfg.upOnly(upOnly.isSelected());
         cfg.openOnly(openOnly.isSelected());
@@ -427,6 +463,7 @@ public class ScanFormPanel extends JPanel {
             ports.setText(NMap.portSpec(cfg.ports, udp));
         }
         serviceDetection.setSelected(cfg.probeScan);
+        probeMatch.select(cfg.probeMatch != null ? cfg.probeMatch : NMapConfig.ProbeMatch.FIRST);
         skipPing.setSelected(!cfg.discovery);
         upOnly.setSelected(cfg.upOnly);
         openOnly.setSelected(cfg.openOnly);

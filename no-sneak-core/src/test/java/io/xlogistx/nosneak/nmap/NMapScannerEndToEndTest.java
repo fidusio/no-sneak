@@ -1,5 +1,7 @@
 package io.xlogistx.nosneak.nmap;
 
+import io.xlogistx.nosneak.model.ProbeDefinition;
+import io.xlogistx.nosneak.model.ProbeDefinitionLoader;
 import io.xlogistx.nosneak.nmap.ScanReport.HostReport;
 import io.xlogistx.nosneak.nmap.ScanReport.PortReport;
 import io.xlogistx.nosneak.nmap.output.OutputFormat;
@@ -188,5 +190,80 @@ public class NMapScannerEndToEndTest {
         assertEquals(PortState.CLOSED, closed.state);
         assertNull(closed.probe, "a closed port is not probeable");
         assertTrue(accepted.size() >= 2, "the connect and the probe each opened a connection: " + accepted.size());
+    }
+
+    /** A connect-then-done probe declared on one port, under a name and a priority. */
+    private static ProbeDefinition declaredOn(String name, int priority, int port) {
+        return ProbeDefinitionLoader.parse("""
+                {
+                  "name": "%s",
+                  "service": "custom-%s",
+                  "transport": "tcp",
+                  "ports": [%d],
+                  "priority": %d,
+                  "start": "hello",
+                  "states": {
+                    "hello":  { "action": "connect", "on": { "connected": "finish", "error": "stop" } },
+                    "finish": { "action": "done" },
+                    "stop":   { "action": "fail" }
+                  }
+                }
+                """.formatted(name, name, port, priority), name);
+    }
+
+    private ScanReport scanProbesOnly(NMapConfig.ProbeMatch match) throws Exception {
+        // no -p: the two named probes decide the ports, and they both declare the open one
+        NMapConfig cfg = new NMapConfig()
+                .target("127.0.0.1")
+                .discovery(false)
+                .reverseDns(NMapConfig.ReverseDns.NEVER)
+                .probeScan(true)
+                .extraProbe(declaredOn("alpha", 90, openPort)).probe("alpha")
+                .extraProbe(declaredOn("beta", 80, openPort)).probe("beta")
+                .probeMatch(match)
+                .timeoutInSec(3);
+        CompletableFuture<ScanReport> done = new CompletableFuture<>();
+        NMapScanner.scan(nio, cfg, new CallableConsumerTask<ScanReport>().setConsumer(done::complete));
+        ScanReport report = done.get(10, TimeUnit.SECONDS);
+        assertFalse(report.cancelled);
+        assertTrue(report.warnings.isEmpty(), report.warnings.toString());
+        return report;
+    }
+
+    /**
+     * 2026-10-31: probes named and no ports typed — the scan covers the ports the probes declare
+     * and nothing else ({@code tcpPortsScanned}, one port report per host); match-first keeps
+     * the higher-priority identification alone.
+     */
+    @Test
+    public void namedProbesWithoutPortsScanTheirDeclaredPortsAndTheFirstWins() throws Exception {
+        ScanReport report = scanProbesOnly(NMapConfig.ProbeMatch.FIRST);
+        assertEquals(List.of(openPort), List.of(report.tcpPortsScanned[0]));
+        assertEquals(1, report.tcpPortsScanned.length, "only the declared port");
+        HostReport h = report.hosts.getFirst();
+        assertEquals(1, h.ports.size(), "one port scanned: " + h.ports);
+        PortReport open = h.ports.getFirst();
+        assertEquals(openPort, open.port);
+        assertEquals(PortState.OPEN, open.state);
+        assertNotNull(open.probe);
+        assertEquals("alpha", open.probe.getProbeName(), "the higher priority wins");
+        assertNull(open.probes, "match-first keeps one identification");
+    }
+
+    /** {@code --probe-match all}: every probe that identifies the port is kept, priority order, the first also as the port's probe. */
+    @Test
+    public void probeMatchAllKeepsEveryIdentification() throws Exception {
+        ScanReport report = scanProbesOnly(NMapConfig.ProbeMatch.ALL);
+        PortReport open = report.hosts.getFirst().ports.getFirst();
+        assertEquals(PortState.OPEN, open.state);
+        assertNotNull(open.probes, "match-all records the list");
+        assertEquals(2, open.probes.size(), open.probes.toString());
+        assertEquals("alpha", open.probes.get(0).getProbeName());
+        assertEquals("beta", open.probes.get(1).getProbeName());
+        assertEquals("alpha", open.probe.getProbeName(), "the first of them is the port's probe");
+        // and the JSON carries both under "probes"
+        String json = OutputFormat.formatter(OutputFormat.JSON).render(report);
+        assertTrue(json.contains("\"probes\""), json);
+        assertTrue(json.contains("custom-beta"), json);
     }
 }

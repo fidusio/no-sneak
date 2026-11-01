@@ -37,11 +37,16 @@ option, filter segment and tab carries the same kind of tooltip.
   it sets when you rest the pointer on it), the probe chips and the **command** they all build.
   The command is the truth: edit it and the form follows; change the form and the command is
   reprinted. *Host discovery only* and *Ports* are exclusive — the last one you touched wins,
-  and a note under the command says when typed ports are not scanned.
+  and a note under the command says when typed ports are not scanned. **Leave Ports empty and
+  the ticked probes decide**: the scan covers the ports they declare (ssh and https ticked:
+  22, 2222, 443, 8443), and the field's placeholder names them; with no chip it is 1-1024. Type
+  a range (`1-2048`) and every port of it is scanned, with the probes on each open one.
 - **Probes are the chips.** *Add probe* ticks bundled and your own probes into the run; a chip's
   × removes it. **No chip means no probing** — the scan then reports open ports only. The
   *Service detection* box is the shortcut: ticking it with no chips selects every probe,
-  unticking it clears them.
+  unticking it clears them. The **Match** segment beside the chips says what happens once a
+  probe has identified an open port: *First* (the default) stops the others, *All* lets every
+  probe finish and keeps each identification — the host detail lists them.
 - **The result** sits under the form: the counts (hosts up, open ports, TLS endpoints, PQC
   ready), then a **Hosts** tab — address, hostname, **MAC**, **vendor**, status, open ports,
   services, the worst TLS endpoint's version and key exchange, and the posture letter — with a
@@ -49,7 +54,9 @@ option, filter segment and tab carries the same kind of tooltip.
   and the verdict in words), a **Services** tab with every open port, and the **Raw JSON**.
   *Copy* takes the JSON, the text icon beside it the command the scan ran with, *Send to
   assistant* attaches the report to the open chat, *Scan again* puts the command back in the
-  form. *Stop* ends a running scan and keeps the partial report, marked as not saved.
+  form. *Stop* ends a running scan and keeps the partial report, marked as not saved. **New
+  scan**, at the top right of the page, clears the form, the chips and the result so the next
+  scan starts from nothing; the previous report is already in Scan History if it completed.
 - **Scan History** — every report you ran, kept under your account, newest first, with a search
   over every column. Select a row to **View**, **Scan again**, copy its command or result,
   **Send to assistant**, or **Delete** it; select several rows to delete them together, or

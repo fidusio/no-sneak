@@ -117,6 +117,11 @@ public final class XMLFormatter implements OutputFormatter {
      * ({@code null} TCP ports meaning the default set), else the union of what the hosts record.
      */
     static int[] portsScanned(ScanReport r, String protocol) {
+        if (r.tcpPortsScanned != null) {
+            // the scanner's own record (2026-10-31): the typed, derived or default list it ran
+            int[] p = "udp".equals(protocol) ? r.udpPortsScanned : r.tcpPortsScanned;
+            return p == null ? new int[0] : p;
+        }
         if (r.config != null) {
             int[] p = "udp".equals(protocol) ? r.config.udpPorts
                     : (r.config.ports != null ? r.config.ports : NMap.DEFAULT_PORTS);

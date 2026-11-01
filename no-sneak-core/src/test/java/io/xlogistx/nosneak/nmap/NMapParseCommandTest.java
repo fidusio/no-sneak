@@ -33,6 +33,17 @@ public class NMapParseCommandTest {
         assertEquals(9, cfg.timeoutSec);
     }
 
+    /** {@code --probe-match} (2026-10-31): first is the default, all is the other choice, nothing else. */
+    @Test
+    public void probeMatchIsFirstByDefaultAndAllOnRequest() {
+        assertEquals(NMapConfig.ProbeMatch.FIRST, NMap.parseCommand("10.0.0.1 -sV").probeMatch);
+        assertEquals(NMapConfig.ProbeMatch.ALL, NMap.parseCommand("10.0.0.1 -sV --probe-match all").probeMatch);
+        assertEquals(NMapConfig.ProbeMatch.FIRST, NMap.parseCommand("10.0.0.1 -sV --probe-match FIRST").probeMatch);
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> NMap.parseCommand("10.0.0.1 --probe-match some"));
+        assertTrue(e.getMessage().contains("first|all"), e.getMessage());
+    }
+
     @Test
     public void severalTargetsAccumulate() {
         NMapConfig cfg = NMap.parseCommand("example.com 10.0.0.5   10.0.0.6");

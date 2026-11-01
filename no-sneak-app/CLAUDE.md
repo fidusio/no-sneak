@@ -516,7 +516,7 @@ All tables are empty `DefaultTableModel` stubs; search and the actions column ar
 
 ### `ScanPanel`
 The scanner pages — the front end for the `no-sneak-core` scanning engine. Six cards: the three the
-sidebar routes to (`SECTION_SCAN` = New scan, `SECTION_HISTORY` = History, `SECTION_PROBES` = Probe
+sidebar routes to (`SECTION_SCAN` = Scan, `SECTION_HISTORY` = History, `SECTION_PROBES` = Probe
 library, through `show(section)`) and three reached from within (a stored report, the probe editor,
 the probe definition). **Rebuilt on 2026-10-24 (Phase 3 of the redesign; board 2 of the canvas).**
 Constructed as `new ScanPanel(ctx, assistantPanel::sendToChat)`; the second argument is a
@@ -524,10 +524,19 @@ Constructed as `new ScanPanel(ctx, assistantPanel::sendToChat)`; the second argu
 `sendToChat` since 2026-10-26 (a `BiConsumer` of content and name before) — so the panel can hand
 a report, or a request, to the assistant without `no-sneak-app` reaching into it for anything else.
 
-**New scan card.** A page header, then **`ui.scan.ScanFormPanel`** over a **`ui.scan.ScanResultView`**.
+**Scan card.** A page header — titled `Screen.SCAN.getDisplayName()` since 2026-11-01 (it said
+*New scan*; the maintainer: "under scan panel first you are calling it new scan, fix that") with
+the page's one primary button, **New scan**, on its right (same day, same instruction: "I want to
+create a new scan, create a button for it in the scan panel, I don't need to go back to the scan
+history to do it, leave scan history as it is"): `newScan()` runs `form.reset()`, clears the
+ticks and the chips, and `resultView.clear()`, so the next scan starts from nothing; it is
+disabled while a scan runs, and it touches neither the history page (whose own *New scan*
+button still navigates here) nor a stored report open on its card — then
+**`ui.scan.ScanFormPanel`** over a **`ui.scan.ScanResultView`**.
 
 - **The form generates the command, and the command refills the form.** Targets (whitespace
-  separated), Ports (a `-p` spec; empty = the engine's default list), Name, the option boxes
+  separated), Ports (a `-p` spec; empty = the ticked probes' declared ports, else the engine's
+  default list — 2026-10-31, below), Name, the option boxes
   (Service detection `-sV`, Host discovery only `-sn`, Skip ping `-Pn`, Live hosts only
   `--up-only`, Open ports only `--open`), a `SegmentedControl` built from `NMapConfig.Timing.values()`
   for the `-T` template (the enum's display name is its `-T` token; `timing.selected(values())` gives
@@ -556,7 +565,21 @@ a report, or a request, to the assistant without `no-sneak-app` reaching into it
   only source of probing (maintainer, 2026-10-26): no chip, no probing.** `applyTo` with an empty
   selection sets `probeScan` false and clears any `--probes` the command carried (a bare `-sV`
   would otherwise run the engine's whole catalog); a non-empty one implies `-sV` and names the
-  set. The *Service detection* box mirrors the chips both ways (`refreshProbeChips`) and is the
+  set. **Chips decide the ports when the Ports field is empty (2026-10-31, the maintainer: "if
+  the ports are not set and probes were selected we scan the probe default port per probe; if
+  ports were defined all the ports are scanned with probes").** The rule is the engine's
+  (`NMapScanner.resolvePorts`: typed ports win, else the named probes' declared ports, else
+  1-1024 — `no-sneak-core/CLAUDE.md`, *The scan pipeline*); the form only says so:
+  `refreshProbeChips` sets the Ports field's **placeholder** to
+  `ProbeSelection.portsPlaceholder(tickedDefinitions())` — `22,443,2222,8443 (ticked probes)`,
+  `U:53 (ticked probes)` for a UDP probe, back to `ScanFormPanel.PORTS_DEFAULT_HINT` with no
+  chip or chips that declare no port — through `ScanFormPanel.setPortsPlaceholder`, which also
+  puts the full text in the field's tooltip (the field is narrow). Beside the Probes label a
+  **Match** segment (`NMapConfig.ProbeMatch.values()`, *First* / *All*, tooltips from the enum)
+  is `--probe-match`: first, the default, prints nothing; all prints `--probe-match all` into the
+  command, and the command sets the segment back. `ScanPanelTest.thePortsPlaceholderNamesTheTickedProbesPorts`
+  and `ScanFormPanelTest.theMatchSegmentFollowsTheCommandBothWays` / `thePortsPlaceholderIsSetByTheOwner`
+  pin it. The *Service detection* box mirrors the chips both ways (`refreshProbeChips`) and is the
   all / none shortcut when the user clicks it: a tick with no chips ticks every bundled and stored
   probe (`tickAllProbes`, through `ScanFormPanel.onServiceDetectionToggled`, which programmatic
   `setServiceDetection` does not fire), an untick clears them. The empty chip strip says so. The
@@ -573,7 +596,11 @@ a report, or a request, to the assistant without `no-sneak-app` reaching into it
   off the EDT), then `markSaved(true)` and the history list reloads. The departed-subject rule is
   unchanged: a scan whose subject signed out is not saved.
 - **The result as tables.** `ScanResultView` parses the JSON with **`ui.scan.ReportView`** (pure;
-  `ReportViewTest` reads a hand-written sample and a report the engine itself rendered): header with
+  `ReportViewTest` reads a hand-written sample and a report the engine itself rendered; since
+  2026-10-31 a port's `identifications` — one `probe · service version` per entry of the JSON's
+  `probes` list under `--probe-match all`, empty otherwise, `everyIdentificationOfAPortIsListed` —
+  and the host detail pane lists them in an **Identifications** block when a port has more than
+  one): header with
   name, command, time, duration, the state badge, the four counts (hosts up, open ports, TLS
   endpoints, PQC ready), Copy (the raw JSON) and Send to assistant; then **Hosts** (address and
   hostname, the MAC's **vendor** when the engine named it — the report's `macVendor`, 2026-10-25,

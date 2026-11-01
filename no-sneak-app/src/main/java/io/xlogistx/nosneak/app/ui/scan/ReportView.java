@@ -43,7 +43,7 @@ public final class ReportView {
                        String certValidity, String certChainTrust, String tlsVersion, String cipherSuite,
                        String kexGroup, String kexAlgorithm, String certSubject, String certIssuer,
                        String certNotAfter, String chainMessage, List<String> supportedProtocols,
-                       List<String> supportedGroups) {
+                       List<String> supportedGroups, List<String> identifications) {
 
         public boolean isOpen() {
             return "open".equalsIgnoreCase(state);
@@ -204,6 +204,12 @@ public final class ReportView {
                 }
             }
         }
+        // every identification under --probe-match all (2026-10-31): "probe · service version"
+        List<String> identifications = new ArrayList<>();
+        for (NVGenericMap r : maps(p, "probes")) {
+            String id = identification(r);
+            if (!id.isEmpty()) identifications.add(id);
+        }
         return new Port((int) lng(p, "port"), str(p, "protocol"), str(p, "state"), str(p, "reason"),
                 lngOr(p, "rttMs", -1), str(p, "service"), str(p, "version"), str(p, "banner"),
                 probe != null ? str(probe, "probe") : null,
@@ -218,7 +224,28 @@ public final class ReportView {
                 probe != null ? str(probe, "cert-not-after") : null,
                 probe != null ? str(probe, "cert-chain-trust-message") : null,
                 probe != null ? strings(probe, "supported-protocol-versions") : List.of(),
-                probe != null ? strings(probe, "supported-groups") : List.of());
+                probe != null ? strings(probe, "supported-groups") : List.of(),
+                Collections.unmodifiableList(identifications));
+    }
+
+    /** One probe result as {@code probe · service version}; the parts that are known, in that order. */
+    static String identification(NVGenericMap r) {
+        StringBuilder sb = new StringBuilder();
+        String probe = str(r, "probe");
+        if (probe != null && !probe.isBlank()) sb.append(probe);
+        String service = str(r, "service");
+        String version = str(r, "service-version");
+        StringBuilder what = new StringBuilder();
+        if (service != null && !service.isBlank()) what.append(service);
+        if (version != null && !version.isBlank()) {
+            if (!what.isEmpty()) what.append(' ');
+            what.append(version);
+        }
+        if (!what.isEmpty()) {
+            if (!sb.isEmpty()) sb.append(" · ");
+            sb.append(what);
+        }
+        return sb.toString();
     }
 
     // ---- posture ----

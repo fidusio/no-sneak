@@ -40,6 +40,13 @@ public final class ScanReport {
     public volatile String commandLine;
     public volatile NMapConfig config;
     /**
+     * The ports the scan actually covered per protocol (2026-10-31): the typed ones, the named
+     * probes' declared ports when none were typed, or the default list. Set by the scanner
+     * before the first connect; null on a report the scanner did not write.
+     */
+    public volatile int[] tcpPortsScanned;
+    public volatile int[] udpPortsScanned;
+    /**
      * True when the scan was stopped before every stage finished ({@code ScanHandle.cancel()},
      * Ctrl-C, or the caller's wait budget). The report then holds whatever had completed; ports
      * that were never probed carry reason {@code cancelled}, and a warning states the counts.
@@ -325,6 +332,11 @@ public final class ScanReport {
         public volatile long rttMs = -1;
         public volatile String banner;
         public volatile ProbeResult probe; // service/version/TLS identification if probed
+        /**
+         * Every identification under {@code --probe-match all} (2026-10-31), priority order, the
+         * first of them also in {@link #probe}; null under match-first.
+         */
+        public volatile List<ProbeResult> probes;
 
         public PortReport(int port, PortState state) {
             this.port = port;
@@ -363,6 +375,14 @@ public final class ScanReport {
                 NVGenericMap full = pr.toNVGenericMap();
                 full.setName("probe");
                 m.add(full);
+            }
+            List<ProbeResult> all = probes;
+            if (all != null && all.size() > 1) {
+                NVGenericMapList list = new NVGenericMapList("probes");
+                for (ProbeResult r : all) {
+                    if (r != null && r.isComplete()) list.add(r.toNVGenericMap());
+                }
+                if (list.getValue().size() > 1) m.add(list);
             }
             return m;
         }
