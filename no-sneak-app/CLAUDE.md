@@ -187,6 +187,7 @@ when the subject attaches one to a chat themselves. Nothing here uploads, phones
 io.xlogistx.nosneak.app
 ├── NoSneakMain.java               ← entry point; ds.location/ds.store-password (+ subject=/password=) or the unlock screen; AppFrame swaps unlock ↔ shell, loads the MAC vendors after login (2026-10-25)
 ├── NoSneakStore.java              ← vault + encrypted H2 + shiro.ini: create (H2PSetup) / open (attached manager) / secure / bootstrap / grantAppUser / setRegistrarPassword (2026-10-21)
+├── NSAppUtil.java                 ← the UI descriptors (2026-11-01): 36 enums, one per panel/feature/table, each wrapping zoxweb GetNameDescriptionDisplayImpl; EVERY component the app builds (every panel, label, button, field, tab, column, dialog title) has a constant here and gui-audio's GUIUtil.applyProp(component, ref) maps it on; the page enum Screen, ScanResultTab, AclView, ProbeLibraryFilter/Column live here too (NSAppUtilTest finds the enums by reflection)
 └── ui/                            ← UI (screens, menu, session/access wiring)
     ├── AppShell.java              ← the signed-in window: HeaderBar + SideNavPanel + CardLayout host (2026-10-24), mounts ai-assistant's AssistantPanel
     ├── UnlockPanel.java           ← the pre-auth screen (2026-10-24): step 1 open/create the store, step 2 sign in / register; replaced LoginPanel + DataStoreSetupPanel. 2026-10-29: every step-1 input has a tooltip and a warning row under the vault password says it is NOT RECOVERABLE (`Form.VAULT_PASSWORD_WARNING`)
@@ -197,6 +198,9 @@ io.xlogistx.nosneak.app
     ├── scan/
     │   ├── ScanFormPanel.java     ← the form that generates the command line (and follows an edited one); Service detection = all / none of the chips
     │   ├── ScanResultView.java    ← header counts + Hosts (MAC and Vendor columns, blank when the report has none) / Services / Raw JSON, host detail with the Network adapter block
+    │   ├── ProbeSelection.java    ← the scanner card's pure rules: ticks → NMapConfig, b:/s: keys, keysForNames, portsPlaceholder (moved out of ScanPanel 2026-11-01; ScanPanelTest)
+    │   ├── ProbeLibraryModel.java ← the Probe library's table rows and filter (pure; ProbeLibraryModelTest)
+    │   ├── ProbeGroupModel.java   ← probe groups (2026-11-01): the groups table, names ↔ tick keys, tick/untick, missing members (pure; ProbeGroupModelTest)
     │   └── ReportView.java        ← the engine's JSON parsed into records (pure; ReportViewTest)
     ├── MenuBarFactory.java        ← builds the application menu bar
     ├── assistant/                 ← app-side bindings for the ai-assistant module
@@ -300,11 +304,11 @@ Settings `PagePanel`s, the API Keys header and the Access Control page all read
 and in the menu. The assistant's own pages (`ai-assistant`, which cannot see `Navigator`) take
 their titles from `AssistantPanel.Page.getDisplayName()`, and `ScreenLabelsTest` pins that each
 assistant page and its `Screen` (`AppShell.screenFor`, package-private for the test) carry the same
-words, that every screen label is distinct, and that the two segment enums (`ProbeLibraryModel.Filter`,
+words, that every screen label is distinct, and that the two segment enums (`NSAppUtil.ProbeLibraryFilter`,
 `NMapConfig.Timing`) label themselves. The remaining GUI enums are not label sources:
 `ReportView.Tone` is a colour, `Session.APIKeyInfo` is a property key.
 
-| Section | Items (`Screen.getDisplayName()`) → `Navigator.Screen` → card · section |
+| Section | Items (`Screen.getDisplayName()`) → `NSAppUtil.Screen` → card · section |
 |---|---|
 | Scan | Scan → `SCAN` → `ScanPanel.show(SECTION_SCAN)`; Scan History → `SCAN_HISTORY` → `SECTION_HISTORY`; Probe Library → `PROBES` → `SECTION_PROBES` |
 | Assistant | Chat / Capture / Skills / Providers → `CHAT` / `CAPTURE` / `SKILLS` / `PROVIDERS` → `AssistantPanel.showPage(Page.CHAT …)`; Chat is the list of chats and the open conversation in one page (merged 2026-10-26) |
@@ -315,7 +319,7 @@ Footer of the sidebar: **Help** (`MenuBarFactory.showDescription`) and the versi
 link that opens About (`showAbout`; since 2026-10-27 the line is name + version only, the Java /
 platform / store facts are in the About card).
 `navigator.onShow` keeps the sidebar highlight in step; a click on an item is
-`navigator.show(Screen.valueOf(key))`. When the assistant moves itself (a chat opened from
+`navigator.show(Screen.byName(key))` (the key is the constant's component name, `nav.scan`, since the enum moved to `NSAppUtil` on 2026-11-01). When the assistant moves itself (a chat opened from
 history, a capture sent to the chat, `sendToChat` from the scanner) `AssistantPanel.setOnPageShown`
 → `navigator.sync(screen)` updates the highlight without re-running the route. The per-screen
 toggle columns (`PanelBuilder.buildDefaultSplitPanel`) are gone from every panel; each keeps its
@@ -515,10 +519,15 @@ All tables are empty `DefaultTableModel` stubs; search and the actions column ar
 > view over all subjects/permissions/roles/grants.
 
 ### `ScanPanel`
-The scanner pages — the front end for the `no-sneak-core` scanning engine. Six cards: the three the
+The scanner pages — the front end for the `no-sneak-core` scanning engine. Eight cards: the three the
 sidebar routes to (`SECTION_SCAN` = Scan, `SECTION_HISTORY` = History, `SECTION_PROBES` = Probe
-library, through `show(section)`) and three reached from within (a stored report, the probe editor,
-the probe definition). **Rebuilt on 2026-10-24 (Phase 3 of the redesign; board 2 of the canvas).**
+library, through `show(section)`) and five reached from within (a stored report, the probe editor,
+the probe definition, and since 2026-11-01 the probe groups page and the group editor).
+**Rebuilt on 2026-10-24 (Phase 3 of the redesign; board 2 of the canvas).** The pure half of the
+scanner card, **`ui.scan.ProbeSelection`** (ticks → config, identity keys, `keysForNames`,
+`portsPlaceholder`, the timeout and cancel messages, `existingByName`), was a package-private
+nested class of this panel until 2026-11-01, when it moved out so `ProbeGroupModel` could share
+one `keysForNames`; `ScanPanelTest` pins it as before.
 Constructed as `new ScanPanel(ctx, assistantPanel::sendToChat)`; the second argument is a
 `ScanPanel.ChatHandoff` — `(text, name, composerText)`, the assistant's three-argument
 `sendToChat` since 2026-10-26 (a `BiConsumer` of content and name before) — so the panel can hand
@@ -612,7 +621,7 @@ button still navigates here) nor a stored report open on its card — then
   ports with version · probe, the worst TLS port's protocol / key exchange / cipher / certificate /
   chain / groups offered, and the verdict in words from the PQC status, the trust verdict and the
   engine's advisories), **Services** (every open port flat) and **Raw JSON** — the three are the
-  enum `ScanResultView.Tab` (2026-10-27): title and tooltip through a `ComponentRef` per tab,
+  enum `NSAppUtil.ScanResultTab` (2026-10-27, in `NSAppUtil` since 2026-11-01): title and tooltip through a `ComponentRef` per tab,
   `tab(Tab)` hands the content back. Nothing here grades:
   `grade.Grade` in the core wrote the letter per port; the view only picks the worst per host.
 
@@ -641,7 +650,7 @@ tables as a fresh run. `showResult(name, json)` feeds the scanner page a report 
 
 **Probe library (2026-10-26, on the maintainer's instruction).** `buildProbePanel` is the same
 shape as the history page: a head (title, *Write with the assistant*, the primary *New probe*), a
-bar (search, an All / Bundled / Mine `SegmentedControl` built from `ProbeLibraryModel.Filter.values()`
+bar (search, an All / Bundled / Mine `SegmentedControl` built from `NSAppUtil.ProbeLibraryFilter.values()`
 — the enum carries its labels, 2026-10-26 —, the count, *Probe definition*), and a split
 card — left a table on `ui/scan/ProbeLibraryModel` (rows = `bundledProbes` + the stored probes,
 columns Name · Service · Ports · Transport · Priority · Source, Source a `BadgeLabel`, sorted by
@@ -684,6 +693,103 @@ save targets, registered by `AppShell.addSaveTarget("probe", scanPanel::saveProb
 so the loop is: ask, send, click. Pinned by `ProbeLibraryModelTest` (rows, order, the broken
 stored row, the filter, the check message, the prompt).
 
+**Probe groups (2026-11-01, plan `PLAN-probe-groups.md` at the repo root).** A subject saves
+named sets of probes and ticks a whole group when setting up a scan. The entity is core's
+`io.xlogistx.nosneak.data.ProbeGroup` (`PropertyImpl` like `ProbeContent`; the DAO's name
+and description, one param `probes` = a csv of probe **names**, `probeNames()` parses it);
+`Session.saveProbeGroup` / `deleteProbeGroup` / `getProbeGroup` / `getAllProbeGroups` are the
+probe methods' shape (subject-scoped, empty when signed out; `SessionProbeGroupTest` on a real
+store). **The rule: a group never reaches the engine and never changes what a report stores.**
+`tickedProbes` stays the only source of probing; a group resolves to tick keys the moment it is
+used, through `ProbeSelection.keysForNames` (bundled first, mine by name, a deleted member
+dropped — exactly as *Scan again* resolves a report's `probes`), so a renamed or re-saved probe
+does not break it and a missing member is reported, not silently lost. The pure rules are
+**`ui.scan.ProbeGroupModel`** (the groups table, Name · Probes = `4` or `4 (1 missing)` ·
+Description, sorted by name; `memberKeys`, `missing`, `csvFromTicks` — the inverse, names in
+catalog order: bundled by priority then name, then mine by name —, `applyTick` (a tick adds
+exactly the members, an untick removes exactly them), `isTicked` (every live member ticked and
+at least one), `missingNote`, `existingByName` (case-insensitive, stored rows only), `validate`
+(a name and a probe), `matches`; `rows(mine, presets, …)` keeps a seam for bundled groups,
+none ship yet). Three places in the panel:
+- **The Add probe popup** opens with a **GROUPS** section over the probe sections: one check
+  item per group, ticked when `isTicked`, tooltip = the members with ` (missing)` suffixed;
+  `tickGroup` applies the tick and, for a group with missing members, puts
+  `Group "<name>": N probe(s) no longer exist (…)` under the command through the form's new
+  `showNote` (an info `InlineMessage`, not a refusal). With no group the section says so. A
+  footer, **Save ticked as group…** (enabled with ≥ 1 tick), asks for a name and a description,
+  stores `csvFromTicks` of the chips, updates a group of the same name instead of adding one,
+  and reloads (`reloadProbeGroups`, public, off the EDT, called on login beside `reloadProbes`;
+  `resetPanel` clears the list and the editor draft).
+- **The Probe groups page** (card `Probe_groups`, `buildProbeGroupsPanel`, the library bar's
+  **Probe groups manager** button → `showProbeGroups()`): the library's shape — head (title, a *Probe library*
+  back link, the primary *New group*), bar (search over name, description and member names;
+  count), a split card with the table on `ProbeGroupModel` left and a detail `CardStack` right:
+  **howto** with nothing selected (what a group is, *New group*, *Save ticked as group on the
+  Scan page*) and **group** for a selected row — name with *Edit* and a confirmed *Delete* on
+  the header row, a `KeyValuePanel` (Description, Probes, Missing, Source) and the member list,
+  one line per name with a `BadgeLabel` *bundled* / *mine* / *missing*. Double-click edits; the
+  selection survives a reload by name; `reloadProbes` refreshes the rows too, since the resolved
+  count follows the probes known now.
+- **The group editor** (card `Edit_probe_group`, `buildEditProbeGroup`, `openGroupEditor(group
+  | null)`): Name, Description, a search box over a checklist of every probe (Bundled / My
+  probes with an *All* each, the same `probeRows()` as the popup), a live *N probes ticked*
+  label, an `InlineMessage` (a stored group's members that no longer exist are named and
+  dropped on save; validation errors land there), *Save* / *Cancel*. Save goes through
+  `validate`, dedupes by name, `Session.saveProbeGroup` off the EDT, then back to the groups
+  page with the row selected; a failure is the usual dialog and the draft stays.
+
+**Every string of the three places above lives in `NSAppUtil`** (the maintainer's rule, set
+the same day right after the feature landed: "any gui component or panel you create: a public
+enum in `NSAppUtil`, the enum implements `GetName`, `GetDescription` and `GetDisplayName`, and
+you use those interfaces to render the component name and description or display name"). It
+started with four enums — `ProbeGroupsPage` (the page, its bar, the how-to, the detail pane, the
+badges), `ProbeGroupEditor`, `ProbeGroupMenu` (the popup's GROUPS section and the Save-as dialog)
+and `ProbeGroupColumn` (the table's headers; `ProbeGroupModel.COL_*` are its ordinals) — and
+**the same evening every other panel of the module was converted** (see the end of this
+section). Each enum implements zoxweb's `GetNameDescriptionDisplay` by wrapping a `GetNameDescriptionDisplayImpl`
+(the maintainer's change the same evening; **its constructor is `(name, description,
+displayName)`**, the enum constructors stay `(name, displayName, description)` — passing them
+through in enum order once swapped every label with its tooltip). The name is the AWT component name (dotted,
+`probeGroups.new`), the display name the text shown (a field's placeholder, a label's or
+button's text), the description the tooltip. gui-audio's `GUIUtil.applyProp(component, ref)` is the one
+mapping (name always, tooltip when described, text for a button or label unless the display
+name is blank — a count label the panel fills — placeholder for a text field). `NSAppUtilTest`
+pins the interfaces, distinct non-blank names across every enum, and the mapping; it finds the
+enums by reflection, so a new one is covered the moment it is declared.
+
+**The whole module follows the rule (2026-11-01, evening).** `NSAppUtil` holds 36 enums. The
+UI enums that lived beside their panels moved in — `Screen` (was `Navigator.Screen`; the
+sidebar's key is now the constant's component name, `nav.scan`, resolved by `Screen.byName`),
+`ScanResultTab` (was `ScanResultView.Tab`), `AclView` (was `SubjectSecManagerPanel.View`),
+`ProbeLibraryFilter` (was `ProbeLibraryModel.Filter`) and `ProbeLibraryColumn` (was the
+`COLS` array; `COL_*` are its ordinals) — and every panel got its own: `Shell`, `StatusBar`,
+`MenuBar`, `UnlockPage`, `SignInForm`, `MainWindow`, `ScanPage`, `ScanForm`, `ScanResult`
+(+ `ScanResultHostColumn`, `ScanResultServiceColumn`, `HostDetail`), `ProbeMenu`,
+`ProbeLibraryPage`, `ProbeDefinitionPage`, `AskProbe`, `ScanHistoryPage` (+ `ScanHistoryColumn`),
+`ViewScanPage`, `ProbeEditor`, `ProfilePage`, `AddressEditor`, `PasswordEditor`, `ApiKeysPage`,
+`SettingsPage`, `AclPage`, `PQCRegistryPage`. Conventions: a dotted, globally unique name per
+constant with one prefix per enum (`scanForm.*`, `apiKeys.*`); the panel or card itself has a
+`PAGE`/`PANEL`/`EDITOR` constant and is `setName`d; **a row label and its field never share a
+constant** — the field gets a `*_FIELD` twin with a blank display name (else the label's text
+becomes a placeholder the field never had; the profile and address forms shipped that way for an
+hour); a table's headers are an enum and its model switches on it; a fixed status text
+("Saving…", "Saved.") is a constant, a run-time composed one keeps its fixed prefix as a constant;
+dialog titles are constants, dialog bodies, validation messages, `setText("")` clears and data
+values ("mine" as a model value, the Email/Username identifier kinds) stay as they were. Verified
+by painting every page before and after (11 pages pixel-identical, except the Access Control
+view subtitles, which now read the same sentence as their tab tooltips). The ai-assistant module
+cannot see `NSAppUtil` (the dependency runs the other way), so it got its own twin the same
+evening: `AIAssistantUtil` (20 enums; the assistant's `Page` moved there from `AssistantPanel`,
+and the app refers to it as `AIAssistantUtil.Page`) — `ai-assistant/CLAUDE.md` → *Source map*.
+
+Pinned by `ProbeGroupModelTest` (the csv ↔ keys round trip and its ordering, bundled-first /
+mine / unknown-dropped, a group whose members are all gone ticks nothing and says so, the
+rows and columns, the seam for presets, `existingByName`, `validate`, `matches`),
+`ScanPanelTest.aGroupTicksItsProbesAndNothingElseReachesTheEngine` (a ticked group puts exactly
+its probes in the config and the report, and unticking leaves the other ticks) and
+`SessionProbeGroupTest`. Out of scope in this pass, by the plan: bundled preset groups, a group
+chip in the strip, export / import.
+
 > **Two-way assistant wiring.** Out: the result views and the history rows call
 > `setSendToChat(content, name)` → the injected `ChatHandoff` → `AssistantPanel.sendToChat`, then
 > `ctx.nav().show(Screen.CHAT)`. A missing chat throws a `SecurityException` whose message the
@@ -694,7 +800,7 @@ stored row, the filter, the check message, the prompt).
 
 ### `MenuBarFactory` & the navigation model
 Builds the `JMenuBar` of the signed-in window: **File** (Sign out, with the same confirmation
-as the header button), **View** (one item per `Navigator.Screen`, in sidebar order, for keyboard
+as the header button), **View** (one item per `NSAppUtil.Screen`, in sidebar order, for keyboard
 discoverability — it mirrors the sidebar and adds nothing; since 2026-10-27 each item is a
 `ComponentRef` over its `Screen` (`page(screen)` / `page(label, screen)` for the one reworded
 item: the ref's display name is the text, its description the tooltip, its source the screen the
@@ -722,7 +828,7 @@ are public so the sidebar's footer (*Help*, and the version line for About) can 
 the never-wired *Technical Mode* checkbox were removed on 2026-10-24.
 
 **There is one navigation layer** (2026-10-24). The sidebar in `AppShell` chooses the page; a
-page is a `Navigator.Screen`, routed to a card on the content host plus a section inside that
+page is a `NSAppUtil.Screen`, routed to a card on the content host plus a section inside that
 card's panel. A panel's internal `CardStack` still exists (the scan panel's result and probe
 detail cards, the subject panel's edit cards) but is driven by the panel's own buttons and by
 `show(section)`, never by a second column of toggles.
@@ -925,7 +1031,11 @@ Scan data (`ReportContent` / `ProbeContent`, both from `no-sneak-core`'s
 `APIDataStore`). `saveScanResult` / `saveProbe` branch on `getGUID()` — non-empty updates and
 stamps `lastTimeUpdated`, empty stamps the owner and inserts — the same upsert-by-GUID shape
 `AssistantStorage` uses, and for the same reason (see the timestamp note in `ai-model/CLAUDE.md`).
-`getAllScanResults` / `getAllProbes` return empty when signed out.
+`getAllScanResults` / `getAllProbes` return empty when signed out. `ProbeGroup`
+(2026-11-01, the probe groups: name, description, a csv of probe names) has the same four
+methods — `saveProbeGroup` / `deleteProbeGroup` / `getProbeGroup` / `getAllProbeGroups` — in
+the same shape; `SessionProbeGroupTest` pins save, update-in-place, delete and the subject scope
+on a real store.
 
 > **`getAllScanResults()` is a projected read** — it names its columns and **omits `content`**,
 > because a single `/24` report is ~53 KB of JSON and the list only renders a name, the command

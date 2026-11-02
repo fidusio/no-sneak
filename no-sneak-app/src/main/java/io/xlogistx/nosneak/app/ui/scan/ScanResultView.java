@@ -1,6 +1,8 @@
 package io.xlogistx.nosneak.app.ui.scan;
 
+import io.xlogistx.nosneak.app.NSAppUtil;
 import io.xlogistx.gui.BadgeLabel;
+import io.xlogistx.gui.GUIUtil;
 import io.xlogistx.gui.IconUtil;
 import io.xlogistx.gui.KeyValuePanel;
 import io.xlogistx.gui.Tables;
@@ -9,8 +11,6 @@ import io.xlogistx.gui.WrapLabel;
 import net.miginfocom.swing.MigLayout;
 
 import io.xlogistx.gui.ComponentRef;
-import org.zoxweb.shared.util.GetDescription;
-import org.zoxweb.shared.util.GetDisplayName;
 import java.util.EnumMap;
 import java.util.Map;
 import javax.swing.*;
@@ -31,42 +31,17 @@ import java.util.function.Consumer;
  */
 public class ScanResultView extends JPanel {
 
-    /** The result's three tabs (2026-10-27): the display name is the tab's title, the description its tooltip. */
-    public enum Tab implements GetDisplayName, GetDescription {
-        HOSTS("Hosts", "Every host of the run: address, MAC and vendor, status, open ports, services, TLS and PQC readiness; select one for its detail"),
-        SERVICES("Services", "Every open port of the run, flat: host, port, service, version and what it said"),
-        RAW("Raw JSON", "The report exactly as the engine wrote it");
-
-        private final String displayName;
-        private final String description;
-
-        Tab(String displayName, String description) {
-            this.displayName = displayName;
-            this.description = description;
-        }
-
-        @Override
-        public String getDisplayName() {
-            return displayName;
-        }
-
-        @Override
-        public String getDescription() {
-            return description;
-        }
-    }
-
     /** One ref per tab: the tab's content is the component, the constant the source. */
-    private final Map<Tab, ComponentRef<Tab>> tabRefs = new EnumMap<>(Tab.class);
+    private final Map<NSAppUtil.ScanResultTab, ComponentRef<NSAppUtil.ScanResultTab>> tabRefs = new EnumMap<>(NSAppUtil.ScanResultTab.class);
 
-    private void tab(JTabbedPane tabs, Tab t, JComponent content) {
-        ComponentRef<Tab> ref = new ComponentRef<>(content, t);
+    private void tab(JTabbedPane tabs, NSAppUtil.ScanResultTab t, JComponent content) {
+        ComponentRef<NSAppUtil.ScanResultTab> ref = new ComponentRef<>(content, t);
         tabRefs.put(t, ref);
         tabs.addTab(ref.getDisplayName(), null, content, ref.getDescription());
     }
 
     /** The tab's ref: its content as the component, its title and tooltip the constant's. */
-    public ComponentRef<Tab> tab(Tab t) {
+    public ComponentRef<NSAppUtil.ScanResultTab> tab(NSAppUtil.ScanResultTab t) {
         return tabRefs.get(t);
     }
 
@@ -74,21 +49,22 @@ public class ScanResultView extends JPanel {
     private static final String CONTENT = "content";
 
     private final CardLayout cards = new CardLayout();
-    private final JLabel title = new JLabel();
-    private final JLabel meta = new JLabel();
-    private final BadgeLabel state = new BadgeLabel("", BadgeLabel.Tone.NEUTRAL);
-    private final JLabel counts = new JLabel();
-    private final JButton copy = new JButton(new IconUtil.CopyIcon(16));
-    private final JButton send = new JButton("Send to assistant", IconUtil.svgIcon("io/xlogistx/gui/icons/chat.svg", 16, UITokens.text()));
+    // every component is named, worded and described by NSAppUtil.ScanResult / HostDetail (the maintainer's rule, 2026-11-01)
+    private final JLabel title = GUIUtil.applyProp(new JLabel(), NSAppUtil.ScanResult.TITLE);
+    private final JLabel meta = GUIUtil.applyProp(new JLabel(), NSAppUtil.ScanResult.META);
+    private final BadgeLabel state = GUIUtil.applyProp(new BadgeLabel("", BadgeLabel.Tone.NEUTRAL), NSAppUtil.ScanResult.STATE);
+    private final JLabel counts = GUIUtil.applyProp(new JLabel(), NSAppUtil.ScanResult.COUNTS);
+    private final JButton copy = GUIUtil.applyProp(new JButton(new IconUtil.CopyIcon(16)), NSAppUtil.ScanResult.COPY);
+    private final JButton send = GUIUtil.applyProp(new JButton(IconUtil.svgIcon("io/xlogistx/gui/icons/chat.svg", 16, UITokens.text())), NSAppUtil.ScanResult.SEND);
     /** Shown only once {@link #onRerun} gives it something to do (a stored report). */
-    private final JButton rerun = new JButton("Scan again", IconUtil.svgIcon("io/xlogistx/gui/icons/refresh.svg", 16, UITokens.text()));
+    private final JButton rerun = GUIUtil.applyProp(new JButton(IconUtil.svgIcon("io/xlogistx/gui/icons/refresh.svg", 16, UITokens.text())), NSAppUtil.ScanResult.RERUN);
     private final HostsModel hostsModel = new HostsModel();
     private final ServicesModel servicesModel = new ServicesModel();
-    private final JTable hosts = Tables.style(new JTable(hostsModel));
-    private final JTable services = Tables.style(new JTable(servicesModel));
-    private final JTextArea raw = new JTextArea();
-    private final JPanel detail = new JPanel(new MigLayout("insets 16 20 20 20, wrap 1, gapy 14, fillx, hidemode 3", "[grow,fill]"));
-    private final JLabel emptyLabel = new JLabel("Run a scan to see its hosts, services and raw report here.");
+    private final JTable hosts = GUIUtil.applyProp(Tables.style(new JTable(hostsModel)), NSAppUtil.ScanResult.HOSTS_TABLE);
+    private final JTable services = GUIUtil.applyProp(Tables.style(new JTable(servicesModel)), NSAppUtil.ScanResult.SERVICES_TABLE);
+    private final JTextArea raw = GUIUtil.applyProp(new JTextArea(), NSAppUtil.ScanResult.RAW_TEXT);
+    private final JPanel detail = GUIUtil.applyProp(new JPanel(new MigLayout("insets 16 20 20 20, wrap 1, gapy 14, fillx, hidemode 3", "[grow,fill]")), NSAppUtil.HostDetail.PANE);
+    private final JLabel emptyLabel = GUIUtil.applyProp(new JLabel(), NSAppUtil.ScanResult.EMPTY);
 
     private String json;
     private String name;
@@ -100,6 +76,7 @@ public class ScanResultView extends JPanel {
      */
     public ScanResultView(Consumer<String> onCopy, BiConsumer<String, String> onSend) {
         super(null);
+        GUIUtil.applyProp(this, NSAppUtil.ScanResult.VIEW);
         setLayout(cards);
         setBackground(UITokens.surface());
         setBorder(BorderFactory.createLineBorder(UITokens.border()));
@@ -124,7 +101,6 @@ public class ScanResultView extends JPanel {
         head.add(meta, "wmin 0, growx");
         head.add(state);
         head.add(counts, "gapright 8");
-        copy.setToolTipText("Copy the raw report to the clipboard");
         copy.addActionListener(_ -> {
             if (json != null) onCopy.accept(json);
         });
@@ -132,14 +108,13 @@ public class ScanResultView extends JPanel {
             if (json != null) onSend.accept(json, name);
         });
         rerun.setVisible(false);
-        rerun.setToolTipText("Load this scan's command, probes and name into New scan");
         head.add(rerun);
         head.add(copy);
         head.add(send);
         content.add(head, BorderLayout.NORTH);
 
         // tabs
-        JTabbedPane tabs = new JTabbedPane();
+        JTabbedPane tabs = GUIUtil.applyProp(new JTabbedPane(), NSAppUtil.ScanResult.TABS);
         tabs.putClientProperty("JTabbedPane.tabAreaInsets", new Insets(0, 12, 0, 12));
         tabs.putClientProperty("JTabbedPane.showContentSeparator", true);
 
@@ -177,7 +152,7 @@ public class ScanResultView extends JPanel {
         split.setBorder(BorderFactory.createEmptyBorder());
         split.setDividerSize(6);
         split.setMinimumSize(new Dimension(0, 0));
-        tab(tabs, Tab.HOSTS, split);
+        tab(tabs, NSAppUtil.ScanResultTab.HOSTS, split);
 
         Tables.width(services, 0, 160);
         Tables.width(services, 1, 90);
@@ -186,7 +161,7 @@ public class ScanResultView extends JPanel {
         Tables.width(services, 4, 200);
         JScrollPane servicesScroll = new JScrollPane(services);
         servicesScroll.setBorder(BorderFactory.createEmptyBorder());
-        tab(tabs, Tab.SERVICES, servicesScroll);
+        tab(tabs, NSAppUtil.ScanResultTab.SERVICES, servicesScroll);
 
         raw.setEditable(false);
         raw.setFont(UITokens.mono(-1f));
@@ -195,7 +170,7 @@ public class ScanResultView extends JPanel {
         rawScroll.setBorder(BorderFactory.createEmptyBorder());
         rawScroll.setMinimumSize(new Dimension(0, 0));
         servicesScroll.setMinimumSize(new Dimension(0, 0));
-        tab(tabs, Tab.RAW, rawScroll);
+        tab(tabs, NSAppUtil.ScanResultTab.RAW, rawScroll);
         tabs.setMinimumSize(new Dimension(0, 0));
 
         content.add(tabs, BorderLayout.CENTER);
@@ -223,7 +198,7 @@ public class ScanResultView extends JPanel {
             // the raw tab still shows it
         }
         this.report = parsed;
-        title.setText(name != null && !name.isBlank() ? name : "Result");
+        title.setText(name != null && !name.isBlank() ? name : NSAppUtil.ScanResult.TITLE_DEFAULT.getDisplayName());
         if (parsed != null) {
             String when = parsed.startTime() != null ? parsed.startTime().replace('T', ' ').replaceAll("(\\.\\d+)?Z$", "") : "";
             meta.setText((parsed.command() != null ? parsed.command() : "") + (when.isEmpty() ? "" : "  ·  " + when) + "  ·  " + parsed.durationLabel());
@@ -234,7 +209,7 @@ public class ScanResultView extends JPanel {
             counts.setText("");
         }
         if (stopped != null) {
-            state.setText("stopped · not saved");
+            state.setText(NSAppUtil.ScanResult.STATE_STOPPED.getDisplayName());
             state.setTone(BadgeLabel.Tone.WARN);
             state.setToolTipText(stopped);
         } else {
@@ -252,7 +227,7 @@ public class ScanResultView extends JPanel {
 
     /** Flips the state badge once the report's save has landed (or not). */
     public void markSaved(boolean saved) {
-        state.setText(saved ? "saved to history" : "not saved");
+        state.setText((saved ? NSAppUtil.ScanResult.STATE_SAVED : NSAppUtil.ScanResult.STATE_NOT_SAVED).getDisplayName());
         state.setTone(saved ? BadgeLabel.Tone.OK : BadgeLabel.Tone.NEUTRAL);
         state.setToolTipText(null);
     }
@@ -299,30 +274,30 @@ public class ScanResultView extends JPanel {
     private void showHost(ReportView.Host h) {
         detail.removeAll();
         if (h != null) {
-            JLabel addr = new JLabel(h.address());
+            JLabel addr = GUIUtil.applyProp(new JLabel(h.address()), NSAppUtil.HostDetail.ADDRESS);
             addr.setFont(UITokens.mono(3f));
             addr.setFont(addr.getFont().deriveFont(Font.BOLD));
             detail.add(addr);
             String sub = (h.hostname() != null ? h.hostname() + " · " : "") + h.openPorts().size() + " open ports"
                     + (h.latencyMs() >= 0 ? " · " + h.latencyMs() + " ms" : "");
-            JLabel subLabel = new JLabel(sub);
+            JLabel subLabel = GUIUtil.applyProp(new JLabel(sub), NSAppUtil.HostDetail.SUBTITLE);
             subLabel.setForeground(UITokens.muted());
             detail.add(subLabel, "gaptop -8");
 
             // network adapter (2026-10-26): the MAC when discovery learnt one, its vendor when the
             // engine named it (put skips a null vendor)
             if (h.mac() != null) {
-                detail.add(section("Network adapter"));
+                detail.add(section(NSAppUtil.HostDetail.ADAPTER));
                 KeyValuePanel adapter = new KeyValuePanel(110);
-                adapter.putMono("MAC", h.mac());
-                adapter.put("Vendor", h.macVendor());
+                adapter.putMono(NSAppUtil.HostDetail.ADAPTER_MAC.getDisplayName(), h.mac());
+                adapter.put(NSAppUtil.HostDetail.ADAPTER_VENDOR.getDisplayName(), h.macVendor());
                 detail.add(adapter, "growx");
             }
 
             // ports
-            detail.add(section("Ports"));
+            detail.add(section(NSAppUtil.HostDetail.PORTS));
             PortsModel pm = new PortsModel(h.openPorts());
-            JTable ports = Tables.style(new JTable(pm));
+            JTable ports = GUIUtil.applyProp(Tables.style(new JTable(pm)), NSAppUtil.HostDetail.PORTS_TABLE);
             ports.setRowHeight(28);
             ports.setAutoCreateRowSorter(false);
             Tables.width(ports, 0, 80);
@@ -340,7 +315,7 @@ public class ScanResultView extends JPanel {
             for (ReportView.Port p : h.openPorts()) {
                 if (p.identifications().size() < 2) continue;
                 if (ids == null) {
-                    detail.add(section("Identifications"));
+                    detail.add(section(NSAppUtil.HostDetail.IDENTIFICATIONS));
                     ids = new KeyValuePanel(110);
                 }
                 boolean first = true;
@@ -354,27 +329,29 @@ public class ScanResultView extends JPanel {
             // TLS posture
             ReportView.Port tls = h.worstTlsPort();
             if (tls != null) {
-                detail.add(section("TLS posture · " + tls.portLabel()));
+                JLabel tlsHead = section(NSAppUtil.HostDetail.TLS);
+                tlsHead.setText(NSAppUtil.HostDetail.TLS.getDisplayName() + " · " + tls.portLabel());
+                detail.add(tlsHead);
                 KeyValuePanel kv = new KeyValuePanel(110);
-                kv.putMono("Protocol", tls.tlsVersion() != null ? tls.tlsVersion() : tls.tls());
-                kv.putMono("Key exchange", tls.kexGroup() != null ? tls.kexGroup() : tls.kexAlgorithm());
-                kv.putMono("Cipher", tls.cipherSuite());
-                kv.put("Certificate", cert(tls));
-                kv.put("Chain", chain(tls));
-                if (!tls.supportedGroups().isEmpty()) kv.putMono("Groups offered", String.join(", ", tls.supportedGroups()));
-                if (!tls.supportedProtocols().isEmpty()) kv.putMono("Versions", String.join(", ", tls.supportedProtocols()));
+                kv.putMono(NSAppUtil.HostDetail.TLS_PROTOCOL.getDisplayName(), tls.tlsVersion() != null ? tls.tlsVersion() : tls.tls());
+                kv.putMono(NSAppUtil.HostDetail.TLS_KEY_EXCHANGE.getDisplayName(), tls.kexGroup() != null ? tls.kexGroup() : tls.kexAlgorithm());
+                kv.putMono(NSAppUtil.HostDetail.TLS_CIPHER.getDisplayName(), tls.cipherSuite());
+                kv.put(NSAppUtil.HostDetail.TLS_CERTIFICATE.getDisplayName(), cert(tls));
+                kv.put(NSAppUtil.HostDetail.TLS_CHAIN.getDisplayName(), chain(tls));
+                if (!tls.supportedGroups().isEmpty()) kv.putMono(NSAppUtil.HostDetail.TLS_GROUPS.getDisplayName(), String.join(", ", tls.supportedGroups()));
+                if (!tls.supportedProtocols().isEmpty()) kv.putMono(NSAppUtil.HostDetail.TLS_VERSIONS.getDisplayName(), String.join(", ", tls.supportedProtocols()));
                 detail.add(kv, "growx");
 
                 ReportView.Posture posture = h.posture();
-                JPanel verdict = new JPanel(new MigLayout("insets 10 12 10 12, gapx 10", "[]0[grow,fill]"));
+                JPanel verdict = GUIUtil.applyProp(new JPanel(new MigLayout("insets 10 12 10 12, gapx 10", "[]0[grow,fill]")), NSAppUtil.HostDetail.VERDICT);
                 verdict.setBackground(UITokens.surface());
-                verdict.add(new BadgeLabel(posture.label(), tone(posture.tone())), "aligny top");
-                WrapLabel text = new WrapLabel(verdict(tls));
+                verdict.add(GUIUtil.applyProp(new BadgeLabel(posture.label(), tone(posture.tone())), NSAppUtil.HostDetail.VERDICT_BADGE), "aligny top");
+                WrapLabel text = GUIUtil.applyProp(new WrapLabel(verdict(tls)), NSAppUtil.HostDetail.VERDICT_TEXT);
                 text.setFont(UITokens.font(Font.PLAIN, -0.5f));
                 verdict.add(text, "growx, wmin 0");
                 detail.add(verdict, "growx");
             } else {
-                JLabel none = new JLabel("No TLS endpoint answered on this host, so there is no posture to grade.");
+                JLabel none = GUIUtil.applyProp(new JLabel(), NSAppUtil.HostDetail.TLS_NONE);
                 none.setForeground(UITokens.muted());
                 detail.add(none);
             }
@@ -413,8 +390,8 @@ public class ScanResultView extends JPanel {
         return sb.isEmpty() ? "No further notes." : sb.toString();
     }
 
-    private static JLabel section(String text) {
-        JLabel l = new JLabel(text);
+    private static JLabel section(NSAppUtil.HostDetail ref) {
+        JLabel l = GUIUtil.applyProp(new JLabel(), ref);
         l.setFont(UITokens.font(Font.BOLD, -1f));
         return l;
     }
@@ -436,14 +413,14 @@ public class ScanResultView extends JPanel {
          * (2026-10-25) sit next to the host they describe, blank when the report has none; the
          * PQC verdict stays last.
          */
-        private static final String[] COLS = {"Host", "MAC", "Vendor", "Status", "Open", "Services", "TLS", "PQC readiness"};
-        static final int COL_MAC = 1;
-        static final int COL_VENDOR = 2;
-        static final int COL_STATUS = 3;
-        static final int COL_OPEN = 4;
-        static final int COL_SERVICES = 5;
-        static final int COL_TLS = 6;
-        static final int COL_POSTURE = 7;
+        private static final NSAppUtil.ScanResultHostColumn[] COLS = NSAppUtil.ScanResultHostColumn.values();
+        static final int COL_MAC = NSAppUtil.ScanResultHostColumn.MAC.ordinal();
+        static final int COL_VENDOR = NSAppUtil.ScanResultHostColumn.VENDOR.ordinal();
+        static final int COL_STATUS = NSAppUtil.ScanResultHostColumn.STATUS.ordinal();
+        static final int COL_OPEN = NSAppUtil.ScanResultHostColumn.OPEN.ordinal();
+        static final int COL_SERVICES = NSAppUtil.ScanResultHostColumn.SERVICES.ordinal();
+        static final int COL_TLS = NSAppUtil.ScanResultHostColumn.TLS.ordinal();
+        static final int COL_POSTURE = NSAppUtil.ScanResultHostColumn.POSTURE.ordinal();
         private List<ReportView.Host> rows = List.of();
 
         void setHosts(List<ReportView.Host> hosts) {
@@ -464,23 +441,23 @@ public class ScanResultView extends JPanel {
         }
 
         public String getColumnName(int c) {
-            return COLS[c];
+            return COLS[c].getDisplayName();
         }
 
         public Object getValueAt(int r, int c) {
             ReportView.Host h = rows.get(r);
-            return switch (c) {
-                case 0 -> h.hostname() != null ? h.address() + "  " + h.hostname() : h.address();
-                case COL_MAC -> h.mac() != null ? h.mac() : "";
-                case COL_VENDOR -> h.macVendor() != null ? h.macVendor() : "";
-                case COL_STATUS -> h.up() ? "up" : "down";
-                case COL_OPEN -> h.openPorts().size();
-                case COL_SERVICES -> h.serviceList();
-                case COL_TLS -> {
+            return switch (COLS[c]) {
+                case HOST -> h.hostname() != null ? h.address() + "  " + h.hostname() : h.address();
+                case MAC -> h.mac() != null ? h.mac() : "";
+                case VENDOR -> h.macVendor() != null ? h.macVendor() : "";
+                case STATUS -> h.up() ? "up" : "down";
+                case OPEN -> h.openPorts().size();
+                case SERVICES -> h.serviceList();
+                case TLS -> {
                     ReportView.Port t = h.worstTlsPort();
                     yield t != null ? t.tlsSummary() : "";
                 }
-                default -> h.posture();
+                case POSTURE -> h.posture();
             };
         }
 
@@ -490,7 +467,7 @@ public class ScanResultView extends JPanel {
     }
 
     private static final class ServicesModel extends AbstractTableModel {
-        private static final String[] COLS = {"Host", "Port", "Service", "Version · probe", "TLS"};
+        private static final NSAppUtil.ScanResultServiceColumn[] COLS = NSAppUtil.ScanResultServiceColumn.values();
         private record Row(ReportView.Host host, ReportView.Port port) {
         }
 
@@ -512,7 +489,7 @@ public class ScanResultView extends JPanel {
         }
 
         public String getColumnName(int c) {
-            return COLS[c];
+            return COLS[c].getDisplayName();
         }
 
         public Object getValueAt(int r, int c) {
@@ -528,7 +505,7 @@ public class ScanResultView extends JPanel {
     }
 
     private static final class PortsModel extends AbstractTableModel {
-        private static final String[] COLS = {"Port", "Service", "Version · probe"};
+        private static final NSAppUtil.HostDetail[] COLS = {NSAppUtil.HostDetail.PORT_COL_PORT, NSAppUtil.HostDetail.PORT_COL_SERVICE, NSAppUtil.HostDetail.PORT_COL_VERSION};
         private final List<ReportView.Port> rows;
 
         PortsModel(List<ReportView.Port> rows) {
@@ -544,7 +521,7 @@ public class ScanResultView extends JPanel {
         }
 
         public String getColumnName(int c) {
-            return COLS[c];
+            return COLS[c].getDisplayName();
         }
 
         public Object getValueAt(int r, int c) {

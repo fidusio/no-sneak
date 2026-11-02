@@ -1,6 +1,6 @@
 package io.xlogistx.nosneak.ai.assistant.panels;
 
-import io.xlogistx.nosneak.ai.assistant.AssistantPanel;
+import io.xlogistx.nosneak.ai.assistant.AIAssistantUtil;
 import io.xlogistx.gui.ListSection;
 import io.xlogistx.nosneak.ai.assistant.AssistantContext;
 
@@ -27,15 +27,16 @@ public class JobQueuePanel extends JPanel {
 
     public JobQueuePanel(AssistantContext ctx) {
         this.ctx = ctx;
+        setName(AIAssistantUtil.JobQueuePage.PAGE.getName());
         setLayout(new BorderLayout());
         jobQueueList = ListSection.of(ArrayList::new)
-                .title(AssistantPanel.Page.QUEUE.getDisplayName())
-                .addButton("+ Add Job", this::onAddJob)
+                .title(AIAssistantUtil.Page.QUEUE.getDisplayName())
+                .addButton(AIAssistantUtil.JobQueuePage.ADD_JOB.getDisplayName(), this::onAddJob)
                 .label(_ -> "")
                 .onEdit(c -> this::onEditJob)
                 .onRemove(c -> this::onRemoveJob)
                 .scrollable()
-                .search("search")
+                .search(AIAssistantUtil.JobQueuePage.SEARCH.getDisplayName())
                 .build();
 
         add(jobQueueList);

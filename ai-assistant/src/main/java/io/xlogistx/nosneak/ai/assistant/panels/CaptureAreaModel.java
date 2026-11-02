@@ -1,6 +1,7 @@
 package io.xlogistx.nosneak.ai.assistant.panels;
 
 import io.xlogistx.gui.CaptureArea;
+import io.xlogistx.nosneak.ai.assistant.AIAssistantUtil;
 import org.zoxweb.shared.util.SUS;
 
 import javax.swing.table.AbstractTableModel;
@@ -14,8 +15,10 @@ import java.util.List;
  */
 public class CaptureAreaModel extends AbstractTableModel {
 
-    public static final String[] COLS = {"Area", "Display", "Region"};
-    public static final int COL_NAME = 0, COL_DISPLAY = 1, COL_REGION = 2;
+    /** The columns are {@link AIAssistantUtil.CaptureAreaColumn}, in its order; the header is the constant's display name. */
+    public static final int COL_NAME = AIAssistantUtil.CaptureAreaColumn.NAME.ordinal(),
+            COL_DISPLAY = AIAssistantUtil.CaptureAreaColumn.DISPLAY.ordinal(),
+            COL_REGION = AIAssistantUtil.CaptureAreaColumn.REGION.ordinal();
 
     public static final String UNTITLED = "Untitled area";
 
@@ -50,12 +53,12 @@ public class CaptureAreaModel extends AbstractTableModel {
 
     @Override
     public int getColumnCount() {
-        return COLS.length;
+        return AIAssistantUtil.CaptureAreaColumn.values().length;
     }
 
     @Override
     public String getColumnName(int column) {
-        return COLS[column];
+        return AIAssistantUtil.CaptureAreaColumn.values()[column].getDisplayName();
     }
 
     @Override
@@ -76,11 +79,10 @@ public class CaptureAreaModel extends AbstractTableModel {
     @Override
     public Object getValueAt(int rowIndex, int columnIndex) {
         CaptureArea a = rows.get(rowIndex);
-        return switch (columnIndex) {
-            case COL_NAME -> title(a);
-            case COL_DISPLAY -> SUS.trimOrNull(a.getDescription()) != null ? a.getDescription().trim() : "";
-            case COL_REGION -> CaptureSupport.region(a.getCaptureArea());
-            default -> "";
+        return switch (AIAssistantUtil.CaptureAreaColumn.values()[columnIndex]) {
+            case NAME -> title(a);
+            case DISPLAY -> SUS.trimOrNull(a.getDescription()) != null ? a.getDescription().trim() : "";
+            case REGION -> CaptureSupport.region(a.getCaptureArea());
         };
     }
 }

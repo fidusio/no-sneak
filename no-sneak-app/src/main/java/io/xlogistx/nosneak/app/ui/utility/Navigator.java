@@ -1,8 +1,7 @@
 package io.xlogistx.nosneak.app.ui.utility;
 
 import io.xlogistx.gui.ComponentRef;
-import org.zoxweb.shared.util.GetDescription;
-import org.zoxweb.shared.util.GetDisplayName;
+import io.xlogistx.nosneak.app.NSAppUtil.Screen;
 
 import javax.swing.*;
 import java.awt.*;
@@ -15,52 +14,11 @@ import java.util.function.Consumer;
 
 /**
  * Switches between the application's pages (2026-10-24, Phase 2 of the UI redesign). A page is
- * a {@link Screen}; a {@link Route} says which {@link CardLayout} card hosts it and which
+ * a {@link Screen} (in {@code NSAppUtil} since 2026-11-01); a {@link Route} says which {@link CardLayout} card hosts it and which
  * section of that card's panel to show. The shell registers one route per screen and listens
  * with {@link #onShow} to keep the sidebar in step. Only ever called on the EDT.
  */
 public class Navigator {
-
-    /** Every page the sidebar offers, in sidebar order. */
-    public enum Screen implements GetDisplayName, GetDescription {
-        SCAN("Scan", "Targets, ports and options; the hosts, services and raw report of the run"),
-        SCAN_HISTORY("Scan History", "Every report you ran, kept under your account"),
-        PROBES("Probe Library", "The bundled service probes and yours, readable in full"),
-        CHAT("Chat", "Your chats with the assistant: open one, or start a new one"),
-        CAPTURE("Capture", "Screen areas shot at once, kept for the chat"),
-        SKILLS("Skills", "Instructions the assistant carries into a chat"),
-        PROVIDERS("Providers", "Which of your API keys the assistant may use, and their models"),
-        PROFILE("Profile", "Your name, identifiers and addresses"),
-        API_KEYS("API Keys", "Your password and the third-party keys the assistant borrows"),
-        SETTINGS("Settings", "The MAC vendor list, the assistant's reply timeout, and the store's backup and restore"),
-        ACL("Access Control", "Subjects, permissions, roles and grants (super-admin only)"),
-        ;
-
-        /** What the sidebar, the View menu and the page title show (the component's name). */
-        private final String displayName;
-        /** One line on what the page is for: the sidebar's and the View menu's tooltip. */
-        private final String description;
-
-        Screen(String displayName, String description) {
-            this.displayName = displayName;
-            this.description = description;
-        }
-
-        @Override
-        public String getDescription() {
-            return description;
-        }
-        /**
-         * Returns the display name of an object which is usually
-         * used in the context of name override or for context change.
-         *
-         * @return display name
-         */
-        @Override
-        public String getDisplayName() {
-            return displayName;
-        }
-    }
 
     /**
      * A screen's route (2026-10-27): the ref over the card that hosts it (the content panel is the

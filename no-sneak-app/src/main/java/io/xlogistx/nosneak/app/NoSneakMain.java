@@ -107,7 +107,8 @@ public class NoSneakMain {
         private JMenuBar menuBar;
 
         public AppFrame() {
-            setTitle("NoSneak");
+            setTitle(NSAppUtil.MainWindow.WINDOW.getDisplayName());
+            setName(NSAppUtil.MainWindow.WINDOW.getName());
             setDefaultCloseOperation(EXIT_ON_CLOSE);
             //setSize(800, 600);
             Dimension screenSize = Toolkit.getDefaultToolkit().getScreenSize();

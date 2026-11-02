@@ -1,8 +1,9 @@
 package io.xlogistx.nosneak.ai.assistant.panels;
 
+import io.xlogistx.nosneak.ai.assistant.AIAssistantUtil;
+import io.xlogistx.nosneak.ai.assistant.AIAssistantUtil.CapturePage;
 import io.xlogistx.gui.*;
 import io.xlogistx.nosneak.ai.assistant.AssistantContext;
-import io.xlogistx.nosneak.ai.assistant.AssistantPanel;
 import io.xlogistx.nosneak.ai.model.AICapture;
 import net.miginfocom.swing.MigLayout;
 
@@ -45,16 +46,16 @@ public class CapturePanel extends JPanel {
 
     private final CaptureAreaModel areaModel = new CaptureAreaModel();
     private final JTable areaTable = new JTable(areaModel);
-    private final JLabel areaNote = new JLabel();
+    private final JLabel areaNote = GUIUtil.applyProp(new JLabel(), CapturePage.AREAS_NOTE);
 
     private final CaptureTableModel captureModel = new CaptureTableModel();
     private final JTable captureTable = new JTable(captureModel);
     private final TableRowSorter<CaptureTableModel> captureSorter = new TableRowSorter<>(captureModel);
-    private final JLabel captureNote = new JLabel();
+    private final JLabel captureNote = GUIUtil.applyProp(new JLabel(), CapturePage.CAPTURES_NOTE);
 
     private JButton defineAreaButton;
-    /** Component name of the <i>Hide window</i> box beside Capture (N). */
-    public static final String HIDE_WINDOW = "hide-window";
+    /** Component name of the <i>Hide window</i> box beside Capture (N): {@link CapturePage#HIDE_WINDOW}'s. */
+    public static final String HIDE_WINDOW = CapturePage.HIDE_WINDOW.getName();
 
     private JButton captureButton;
     private JCheckBox hideWindowBox;
@@ -65,6 +66,7 @@ public class CapturePanel extends JPanel {
 
     public CapturePanel(AssistantContext ctx) {
         this.ctx = ctx;
+        setName(CapturePage.PAGE.getName());
         setLayout(new BorderLayout());
         pageCards.add(buildPage(), "page");
         pageCards.add(previewHost, "preview");
@@ -80,20 +82,16 @@ public class CapturePanel extends JPanel {
     }
 
     private JPanel buildPage() {
-        PagePanel page = new PagePanel(AssistantPanel.Page.CAPTURE.getDisplayName(),
-                "Draw areas on the screen and shoot them all at once. Areas last the session; captures are kept under your account.");
+        PagePanel page = new PagePanel(AIAssistantUtil.Page.CAPTURE.getDisplayName(), CapturePage.SUBTITLE.getDisplayName());
 
-        defineAreaButton = new JButton("Define area", new IconUtil.AreaIcon(16));
-        defineAreaButton.setToolTipText("Drag out a region of the screen as a reusable capture area");
+        defineAreaButton = GUIUtil.applyProp(new JButton(new IconUtil.AreaIcon(16)), CapturePage.DEFINE_AREA);
         defineAreaButton.addActionListener(_ -> onDefineArea());
-        captureButton = UITokens.primary(new JButton("Capture (0)", IconUtil.svgIcon("io/xlogistx/gui/icons/camera.svg", 14, Color.WHITE)));
-        captureButton.setToolTipText("Capture an image of every area");
+        captureButton = UITokens.primary(GUIUtil.applyProp(new JButton(IconUtil.svgIcon("io/xlogistx/gui/icons/camera.svg", 14, Color.WHITE)), CapturePage.CAPTURE));
+        captureButton.setText(CapturePage.CAPTURE.getDisplayName() + " (0)");
         captureButton.setEnabled(false);
         captureButton.addActionListener(_ -> onCapture());
-        hideWindowBox = new JCheckBox("Hide window", ctx.isHideWindowOnCapture());
+        hideWindowBox = GUIUtil.applyProp(new JCheckBox("", ctx.isHideWindowOnCapture()), CapturePage.HIDE_WINDOW);
         hideWindowBox.setOpaque(false);
-        hideWindowBox.setName(HIDE_WINDOW);
-        hideWindowBox.setToolTipText("Hide this window while an area is drawn or shot; untick to draw over and capture the application itself");
         hideWindowBox.addActionListener(_ -> ctx.setHideWindowOnCapture(hideWindowBox.isSelected()));
         JPanel actions = new JPanel(new MigLayout("insets 0, gapx 8"));
         actions.setOpaque(false);
@@ -113,12 +111,12 @@ public class CapturePanel extends JPanel {
 
     /** The session's capture areas: Rename / Redraw / Remove on the selected row, the name edited in place. */
     private JPanel buildAreasColumn() {
-        JButton rename = toolButton("Rename", new IconUtil.EditIcon(16));
-        JButton redraw = toolButton("Redraw", new IconUtil.AreaIcon(16));
-        redraw.setToolTipText("Drag the region again, keeping the name");
-        JButton remove = toolButton("Remove", new IconUtil.DeleteIcon(16));
+        JButton rename = toolButton(CapturePage.AREA_RENAME, new IconUtil.EditIcon(16));
+        JButton redraw = toolButton(CapturePage.AREA_REDRAW, new IconUtil.AreaIcon(16));
+        JButton remove = toolButton(CapturePage.AREA_REMOVE, new IconUtil.DeleteIcon(16));
         remove.setForeground(UITokens.danger());
 
+        GUIUtil.applyProp(areaTable, CapturePage.AREAS_TABLE);
         Tables.style(areaTable);
         Tables.width(areaTable, CaptureAreaModel.COL_NAME, 150);
         Tables.width(areaTable, CaptureAreaModel.COL_DISPLAY, 120);
@@ -134,21 +132,21 @@ public class CapturePanel extends JPanel {
         redraw.addActionListener(_ -> onRedrawArea(selectedArea()));
         remove.addActionListener(_ -> onRemoveArea(selectedArea()));
 
-        return column("Areas", areaNote, new JButton[]{rename, redraw, remove}, areaTable);
+        return column(CapturePage.AREAS, areaNote, new JButton[]{rename, redraw, remove}, areaTable);
     }
 
     /** The stored captures: thumbnails, newest first; Open / Send to chat / Rename / Delete on the row, Delete all. */
     private JPanel buildCapturesColumn() {
-        JButton open = toolButton("Open", new IconUtil.VisibleIcon(16));
-        sendButton = toolButton("Send to chat", new IconUtil.NextIcon(16));
+        JButton open = toolButton(CapturePage.OPEN, new IconUtil.VisibleIcon(16));
+        sendButton = toolButton(CapturePage.SEND, new IconUtil.NextIcon(16));
         sendButton.setVisible(false);
-        JButton rename = toolButton("Rename", new IconUtil.EditIcon(16));
-        JButton delete = toolButton("Delete", new IconUtil.DeleteIcon(16));
+        JButton rename = toolButton(CapturePage.RENAME, new IconUtil.EditIcon(16));
+        JButton delete = toolButton(CapturePage.DELETE, new IconUtil.DeleteIcon(16));
         delete.setForeground(UITokens.danger());
-        deleteAllButton = toolButton("Delete all", new IconUtil.DeleteIcon(16));
-        deleteAllButton.setToolTipText("Delete every saved capture");
+        deleteAllButton = toolButton(CapturePage.DELETE_ALL, new IconUtil.DeleteIcon(16));
         deleteAllButton.setForeground(UITokens.danger());
 
+        GUIUtil.applyProp(captureTable, CapturePage.CAPTURES_TABLE);
         Tables.style(captureTable);
         captureTable.setRowHeight(THUMB_HEIGHT + 8);
         TableColumn thumb = captureTable.getColumnModel().getColumn(CaptureTableModel.COL_THUMB);
@@ -185,23 +183,23 @@ public class CapturePanel extends JPanel {
         delete.addActionListener(_ -> onRemoveCapture(selectedCapture()));
         deleteAllButton.addActionListener(_ -> onDeleteAllCaptures());
 
-        return column("Captures", captureNote, new JButton[]{open, sendButton, rename, delete, deleteAllButton}, captureTable);
+        return column(CapturePage.CAPTURES, captureNote, new JButton[]{open, sendButton, rename, delete, deleteAllButton}, captureTable);
     }
 
-    private static JButton toolButton(String text, Icon icon) {
-        JButton b = new JButton(text, icon);
+    private static JButton toolButton(CapturePage ref, Icon icon) {
+        JButton b = GUIUtil.applyProp(new JButton(icon), ref);
         b.putClientProperty("JButton.buttonType", "toolBarButton");
         b.setEnabled(false);
         return b;
     }
 
     /** One column of the page: a toolbar (title, muted note, the buttons at the right) over a white card holding the table. */
-    private static JPanel column(String title, JLabel note, JButton[] buttons, JTable table) {
+    private static JPanel column(CapturePage title, JLabel note, JButton[] buttons, JTable table) {
         StringBuilder cols = new StringBuilder("[][grow]push");
         for (int i = 0; i < buttons.length; i++) cols.append("[]");
         JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", cols.toString()));
         bar.setOpaque(false);
-        JLabel t = new JLabel(title);
+        JLabel t = GUIUtil.applyProp(new JLabel(), title);
         t.setFont(UITokens.font(Font.BOLD, 1f));
         bar.add(t);
         note.setForeground(UITokens.muted());
@@ -274,8 +272,8 @@ public class CapturePanel extends JPanel {
         areaModel.setRows(ctx.getCaptureAreaSet().getCaptureAreas());
         selectArea(keep);
         int count = areaModel.getRowCount();
-        areaNote.setText(count == 0 ? "No areas yet" : count + (count == 1 ? " area" : " areas"));
-        captureButton.setText("Capture (" + count + ")");
+        areaNote.setText(count == 0 ? CapturePage.AREAS_EMPTY.getDisplayName() : count + (count == 1 ? " area" : " areas"));
+        captureButton.setText(CapturePage.CAPTURE.getDisplayName() + " (" + count + ")");
         captureButton.setEnabled(count > 0);
     }
 
@@ -332,7 +330,7 @@ public class CapturePanel extends JPanel {
 
     private void updateCaptureNote() {
         int count = captureModel.getRowCount();
-        captureNote.setText(count == 0 ? "No captures yet" : count + (count == 1 ? " capture" : " captures"));
+        captureNote.setText(count == 0 ? CapturePage.CAPTURES_EMPTY.getDisplayName() : count + (count == 1 ? " capture" : " captures"));
         deleteAllButton.setEnabled(count > 0);
     }
 
@@ -378,7 +376,7 @@ public class CapturePanel extends JPanel {
                 JOptionPane.showMessageDialog(this,
                         (areas.length - snaps.length) + " of " + areas.length
                                 + " areas could not be captured",
-                        "Capture", JOptionPane.WARNING_MESSAGE);
+                        CapturePage.CAPTURE_DIALOG.getDisplayName(), JOptionPane.WARNING_MESSAGE);
             showCaptures();
             refreshCaptures();
         });
@@ -389,7 +387,7 @@ public class CapturePanel extends JPanel {
         BackgroundTask.run(this, null, () -> CaptureSupport.toImage(full(capture).getImage()), image -> {
             if (image == null) {
                 JOptionPane.showMessageDialog(this, "That capture has no stored image.",
-                        "Capture", JOptionPane.WARNING_MESSAGE);
+                        CapturePage.CAPTURE_DIALOG.getDisplayName(), JOptionPane.WARNING_MESSAGE);
                 return;
             }
             showPreview(capture, image);
@@ -399,9 +397,10 @@ public class CapturePanel extends JPanel {
     /** The preview page: the capture's name and facts in the head, Back and Send to chat as its actions, the image in the card. */
     private void showPreview(AICapture capture, BufferedImage image) {
         PagePanel page = new PagePanel(CaptureTableModel.title(capture), previewFacts(capture));
-        JButton back = new JButton("Back", new IconUtil.BackIcon(16));
+        page.setName(CapturePage.PREVIEW.getName());
+        JButton back = GUIUtil.applyProp(new JButton(new IconUtil.BackIcon(16)), CapturePage.PREVIEW_BACK);
         back.addActionListener(_ -> showCaptures());
-        JButton send = UITokens.primary(new JButton("Send to chat", IconUtil.svgIcon("io/xlogistx/gui/icons/next.svg", 14, Color.WHITE)));
+        JButton send = UITokens.primary(GUIUtil.applyProp(new JButton(IconUtil.svgIcon("io/xlogistx/gui/icons/next.svg", 14, Color.WHITE)), CapturePage.PREVIEW_SEND));
         send.setVisible(onSendToChat != null);
         send.addActionListener(_ -> onSendToChat(capture));
         JPanel actions = new JPanel(new MigLayout("insets 0, gapx 8"));
@@ -410,7 +409,7 @@ public class CapturePanel extends JPanel {
         actions.add(send);
         page.action(actions);
 
-        JLabel picture = new JLabel(new ImageIcon(image));
+        JLabel picture = GUIUtil.applyProp(new JLabel(new ImageIcon(image)), CapturePage.PREVIEW_PICTURE);
         picture.setHorizontalAlignment(SwingConstants.LEFT);
         picture.setVerticalAlignment(SwingConstants.TOP);
         picture.setBorder(BorderFactory.createEmptyBorder(14, 14, 14, 14));
@@ -462,7 +461,7 @@ public class CapturePanel extends JPanel {
     private void onRemoveCapture(AICapture capture) {
         if (capture == null) return;
         int res = JOptionPane.showConfirmDialog(this, deleteConfirm(CaptureTableModel.title(capture), "capture"),
-                "Delete capture", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
+                CapturePage.DELETE_DIALOG.getDisplayName(), JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
         if (res != JOptionPane.OK_OPTION) return;
 
         BackgroundTask.runCatching(this, null, () -> ctx.deleteCapture(capture), this::refreshCaptures);
@@ -475,7 +474,7 @@ public class CapturePanel extends JPanel {
         int res = JOptionPane.showConfirmDialog(this,
                 "Delete all " + count + " capture" + (count == 1 ? "" : "s")
                         + "? This permanently removes them.",
-                "Delete all captures", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
+                CapturePage.DELETE_ALL_DIALOG.getDisplayName(), JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
         if (res != JOptionPane.OK_OPTION) return;
 
         BackgroundTask.runCatching(this, deleteAllButton, () -> {

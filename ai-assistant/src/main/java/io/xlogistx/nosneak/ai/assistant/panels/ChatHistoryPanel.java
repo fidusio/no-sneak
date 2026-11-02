@@ -1,9 +1,10 @@
 package io.xlogistx.nosneak.ai.assistant.panels;
 
+import io.xlogistx.nosneak.ai.assistant.AIAssistantUtil;
 import io.xlogistx.gui.*;
+import io.xlogistx.gui.GUIUtil;
 import io.xlogistx.nosneak.ai.AIProvider;
 import io.xlogistx.nosneak.ai.assistant.AssistantContext;
-import io.xlogistx.nosneak.ai.assistant.AssistantPanel;
 import io.xlogistx.nosneak.ai.model.AIChat;
 import io.xlogistx.nosneak.ai.model.AIResponse;
 import net.miginfocom.swing.MigLayout;
@@ -39,6 +40,7 @@ public class ChatHistoryPanel extends JPanel {
 
     public ChatHistoryPanel(AssistantContext ctx) {
         this.ctx = ctx;
+        setName(AIAssistantUtil.ChatHistoryPage.PAGE.getName());
         setLayout(new BorderLayout());
         add(buildHistoryCards());
     }
@@ -89,24 +91,23 @@ public class ChatHistoryPanel extends JPanel {
     }
 
     public JPanel buildHistoryPanel() {
-        PagePanel page = new PagePanel(AssistantPanel.Page.CHAT.getDisplayName(),
-                "Every chat you had with the assistant, kept in this store under your account only. Open one to continue it, or start a new one.");
-        JButton newChat = UITokens.primary(new JButton("New chat", IconUtil.svgIcon("io/xlogistx/gui/icons/plus.svg", 14, Color.WHITE)));
+        PagePanel page = new PagePanel(AIAssistantUtil.Page.CHAT.getDisplayName(), AIAssistantUtil.ChatHistoryPage.SUBTITLE.getDisplayName());
+        JButton newChat = UITokens.primary(GUIUtil.applyProp(new JButton(IconUtil.svgIcon("io/xlogistx/gui/icons/plus.svg", 14, Color.WHITE)), AIAssistantUtil.ChatHistoryPage.NEW_CHAT));
         newChat.addActionListener(_ -> startNewChat());
         page.action(newChat);
 
         JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", "[260!][]push[][][]"));
         bar.setOpaque(false);
-        JTextField search = new JTextField();
-        search.putClientProperty("JTextField.placeholderText", "Search by title, provider or model");
+        JTextField search = GUIUtil.applyProp(new JTextField(), AIAssistantUtil.ChatHistoryPage.SEARCH);
         search.putClientProperty("JTextField.leadingIcon", new IconUtil.SearchIcon(14));
         bar.add(search, "growx");
+        GUIUtil.applyProp(historyCount, AIAssistantUtil.ChatHistoryPage.COUNT);
         historyCount.setForeground(UITokens.muted());
         historyCount.setFont(UITokens.font(Font.PLAIN, -1f));
         bar.add(historyCount);
-        JButton open = new JButton("Open", new IconUtil.NextIcon(16));
-        JButton edit = new JButton("Edit", new IconUtil.EditIcon(16));
-        JButton delete = new JButton("Delete", new IconUtil.DeleteIcon(16));
+        JButton open = GUIUtil.applyProp(new JButton(new IconUtil.NextIcon(16)), AIAssistantUtil.ChatHistoryPage.OPEN);
+        JButton edit = GUIUtil.applyProp(new JButton(new IconUtil.EditIcon(16)), AIAssistantUtil.ChatHistoryPage.EDIT);
+        JButton delete = GUIUtil.applyProp(new JButton(new IconUtil.DeleteIcon(16)), AIAssistantUtil.ChatHistoryPage.DELETE);
         delete.setForeground(UITokens.danger());
         for (JButton b : new JButton[]{open, edit, delete}) {
             b.putClientProperty("JButton.buttonType", "toolBarButton");
@@ -115,6 +116,7 @@ public class ChatHistoryPanel extends JPanel {
         }
         page.row(bar);
 
+        GUIUtil.applyProp(historyTable, AIAssistantUtil.ChatHistoryPage.TABLE);
         Tables.style(historyTable);
         Tables.width(historyTable, ChatHistoryModel.COL_TITLE, 320);
         Tables.width(historyTable, ChatHistoryModel.COL_PROVIDER, 140);
@@ -177,7 +179,7 @@ public class ChatHistoryPanel extends JPanel {
     private void updateCount() {
         int shown = historyTable.getRowCount();
         int all = historyModel.getRowCount();
-        historyCount.setText(all == 0 ? "No chats yet" : shown == all ? all + " chats" : shown + " of " + all + " chats");
+        historyCount.setText(all == 0 ? AIAssistantUtil.ChatHistoryPage.COUNT_EMPTY.getDisplayName() : shown == all ? all + " chats" : shown + " of " + all + " chats");
     }
 
     /** The provider column's text for a config reference: the provider's name, or null when unknown. */
@@ -198,7 +200,10 @@ public class ChatHistoryPanel extends JPanel {
     }
 
     public JPanel buildChatEditor() {
-        JButton save = UITokens.primary(new JButton("Save", IconUtil.svgIcon("io/xlogistx/gui/icons/save.svg", 14, Color.WHITE)));
+        JButton save = UITokens.primary(GUIUtil.applyProp(new JButton(IconUtil.svgIcon("io/xlogistx/gui/icons/save.svg", 14, Color.WHITE)), AIAssistantUtil.ChatEditor.SAVE));
+        GUIUtil.applyProp(editPromptName, AIAssistantUtil.ChatEditor.EDIT_NAME_FIELD);
+        GUIUtil.applyProp(editProviderSelector, AIAssistantUtil.ChatEditor.EDIT_PROVIDER_FIELD);
+        GUIUtil.applyProp(editModelSelector, AIAssistantUtil.ChatEditor.EDIT_MODEL_FIELD);
         editModelSelector.setEditable(true);
         bindProviderModels(ctx, editProviderSelector, editModelSelector);
 
@@ -206,7 +211,7 @@ public class ChatHistoryPanel extends JPanel {
             Object provider = editProviderSelector.getSelectedItem();
             Object model = editModelSelector.getSelectedItem();
             if (provider == null || model == null) {
-                JOptionPane.showMessageDialog(this, "Pick a provider and model", "Missing selection", JOptionPane.WARNING_MESSAGE);
+                JOptionPane.showMessageDialog(this, "Pick a provider and model", AIAssistantUtil.ChatEditor.MISSING_DIALOG.getDisplayName(), JOptionPane.WARNING_MESSAGE);
                 return;
             }
             selectedChat.setTitle(editPromptName.getText());
@@ -218,12 +223,14 @@ public class ChatHistoryPanel extends JPanel {
             });
         });
 
-        return chatForm("Edit chat", "Rename the chat, or change the provider and model it talks to.",
-                editPromptName, editProviderSelector, editModelSelector, save);
+        return chatForm(AIAssistantUtil.ChatEditor.EDIT_PAGE, editPromptName, editProviderSelector, editModelSelector, save);
     }
 
     public JPanel buildChatCreator() {
-        JButton create = UITokens.primary(new JButton("Create", IconUtil.svgIcon("io/xlogistx/gui/icons/plus.svg", 14, Color.WHITE)));
+        JButton create = UITokens.primary(GUIUtil.applyProp(new JButton(IconUtil.svgIcon("io/xlogistx/gui/icons/plus.svg", 14, Color.WHITE)), AIAssistantUtil.ChatEditor.CREATE));
+        GUIUtil.applyProp(createPromptName, AIAssistantUtil.ChatEditor.NEW_NAME_FIELD);
+        GUIUtil.applyProp(createProviderSelector, AIAssistantUtil.ChatEditor.NEW_PROVIDER_FIELD);
+        GUIUtil.applyProp(createModelSelector, AIAssistantUtil.ChatEditor.NEW_MODEL_FIELD);
         createModelSelector.setEditable(true);
         bindProviderModels(ctx, createProviderSelector, createModelSelector);
 
@@ -231,7 +238,7 @@ public class ChatHistoryPanel extends JPanel {
             Object provider = createProviderSelector.getSelectedItem();
             Object model = createModelSelector.getSelectedItem();
             if (provider == null || model == null) {
-                JOptionPane.showMessageDialog(this, "Pick a provider and model", "Missing selection", JOptionPane.WARNING_MESSAGE);
+                JOptionPane.showMessageDialog(this, "Pick a provider and model", AIAssistantUtil.ChatEditor.MISSING_DIALOG.getDisplayName(), JOptionPane.WARNING_MESSAGE);
                 return;
             }
             AIChat temp = new AIChat(createPromptName.getText());
@@ -244,23 +251,23 @@ public class ChatHistoryPanel extends JPanel {
             });
         });
 
-        return chatForm("New chat", "Name it and pick the provider and model it will talk to.",
-                createPromptName, createProviderSelector, createModelSelector, create);
+        return chatForm(AIAssistantUtil.ChatEditor.NEW_PAGE, createPromptName, createProviderSelector, createModelSelector, create);
     }
 
     /** The create / edit form in the page frame: three rows and a primary button beside Cancel, which returns to the list. */
-    private JPanel chatForm(String title, String description, JTextField name, JComboBox<String> provider,
+    private JPanel chatForm(AIAssistantUtil.ChatEditor framing, JTextField name, JComboBox<String> provider,
                             JComboBox<String> model, JButton primary) {
-        PagePanel page = new PagePanel(title, description);
+        PagePanel page = new PagePanel(framing.getDisplayName(), framing.getDescription());
+        page.setName(framing.getName());
         JPanel form = new JPanel(new MigLayout("insets 20, wrap 2, gapx 16, gapy 10", "[right][360!]"));
         form.setOpaque(false);
-        form.add(new JLabel("Name"));
+        form.add(GUIUtil.applyProp(new JLabel(), AIAssistantUtil.ChatEditor.NAME));
         form.add(name, "growx");
-        form.add(new JLabel("Provider"));
+        form.add(GUIUtil.applyProp(new JLabel(), AIAssistantUtil.ChatEditor.PROVIDER));
         form.add(provider, "growx");
-        form.add(new JLabel("Model"));
+        form.add(GUIUtil.applyProp(new JLabel(), AIAssistantUtil.ChatEditor.MODEL));
         form.add(model, "growx");
-        JButton cancel = new JButton("Cancel");
+        JButton cancel = GUIUtil.applyProp(new JButton(), AIAssistantUtil.ChatEditor.CANCEL);
         cancel.addActionListener(_ -> closeForm());
         JPanel actions = new JPanel(new MigLayout("insets 0, gapx 8"));
         actions.setOpaque(false);
@@ -300,7 +307,7 @@ public class ChatHistoryPanel extends JPanel {
     private void onRemovePrompt(AIChat chat) {
         if (chat == null) return;
         int res = JOptionPane.showConfirmDialog(this, deleteConfirm(ChatHistoryModel.title(chat), "chat"),
-                "Delete chat", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
+                AIAssistantUtil.ChatHistoryPage.DELETE_DIALOG.getDisplayName(), JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
         if (res != JOptionPane.OK_OPTION) return;
         BackgroundTask.runCatching(this, null, () -> ctx.deleteChat(chat), () -> {
             if (chat == selectedChat) selectedChat = null;

@@ -1,5 +1,6 @@
 package io.xlogistx.nosneak.app.ui.scan;
 
+import io.xlogistx.nosneak.app.NSAppUtil;
 import io.xlogistx.nosneak.data.ProbeContent;
 import io.xlogistx.nosneak.model.ProbeDefinition;
 import io.xlogistx.nosneak.model.ProbeDefinitionLoader;
@@ -80,19 +81,19 @@ class ProbeLibraryModelTest {
     @Test
     void theFilterIsSegmentThenSearch() {
         List<ProbeLibraryModel.Row> rows = library();
-        long mine = rows.stream().filter(r -> ProbeLibraryModel.matches(r, ProbeLibraryModel.Filter.MINE, "")).count();
-        long bundled = rows.stream().filter(r -> ProbeLibraryModel.matches(r, ProbeLibraryModel.Filter.BUNDLED, "")).count();
+        long mine = rows.stream().filter(r -> ProbeLibraryModel.matches(r, NSAppUtil.ProbeLibraryFilter.MINE, "")).count();
+        long bundled = rows.stream().filter(r -> ProbeLibraryModel.matches(r, NSAppUtil.ProbeLibraryFilter.BUNDLED, "")).count();
         assertEquals(2, mine);
         assertEquals(ProbeDefinitionLoader.BUNDLED.length, bundled);
-        assertEquals(rows.size(), rows.stream().filter(r -> ProbeLibraryModel.matches(r, ProbeLibraryModel.Filter.ALL, " ")).count());
+        assertEquals(rows.size(), rows.stream().filter(r -> ProbeLibraryModel.matches(r, NSAppUtil.ProbeLibraryFilter.ALL, " ")).count());
 
-        List<String> byPort = rows.stream().filter(r -> ProbeLibraryModel.matches(r, ProbeLibraryModel.Filter.ALL, "2222")).map(ProbeLibraryModel.Row::name).toList();
+        List<String> byPort = rows.stream().filter(r -> ProbeLibraryModel.matches(r, NSAppUtil.ProbeLibraryFilter.ALL, "2222")).map(ProbeLibraryModel.Row::name).toList();
         assertEquals(List.of("ssh"), byPort, "a port matches exactly, not as a substring");
-        assertTrue(rows.stream().anyMatch(r -> r.name().equals("mysql") && ProbeLibraryModel.matches(r, ProbeLibraryModel.Filter.ALL, "MYSQL")), "name, any case");
-        List<String> byService = rows.stream().filter(r -> ProbeLibraryModel.matches(r, ProbeLibraryModel.Filter.ALL, "postgresql")).map(ProbeLibraryModel.Row::name).toList();
+        assertTrue(rows.stream().anyMatch(r -> r.name().equals("mysql") && ProbeLibraryModel.matches(r, NSAppUtil.ProbeLibraryFilter.ALL, "MYSQL")), "name, any case");
+        List<String> byService = rows.stream().filter(r -> ProbeLibraryModel.matches(r, NSAppUtil.ProbeLibraryFilter.ALL, "postgresql")).map(ProbeLibraryModel.Row::name).toList();
         assertEquals(3, byService.size(), "service: the three postgres probes");
-        assertTrue(rows.stream().anyMatch(r -> r.name().equals("my-redis") && ProbeLibraryModel.matches(r, ProbeLibraryModel.Filter.MINE, "6380 ")), "description text");
-        assertFalse(rows.stream().anyMatch(r -> r.name().equals("my-redis") && ProbeLibraryModel.matches(r, ProbeLibraryModel.Filter.BUNDLED, "my-redis")));
+        assertTrue(rows.stream().anyMatch(r -> r.name().equals("my-redis") && ProbeLibraryModel.matches(r, NSAppUtil.ProbeLibraryFilter.MINE, "6380 ")), "description text");
+        assertFalse(rows.stream().anyMatch(r -> r.name().equals("my-redis") && ProbeLibraryModel.matches(r, NSAppUtil.ProbeLibraryFilter.BUNDLED, "my-redis")));
     }
 
     @Test

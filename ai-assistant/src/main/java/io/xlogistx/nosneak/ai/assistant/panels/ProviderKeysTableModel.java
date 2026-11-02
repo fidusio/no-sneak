@@ -1,5 +1,6 @@
 package io.xlogistx.nosneak.ai.assistant.panels;
 
+import io.xlogistx.nosneak.ai.assistant.AIAssistantUtil;
 import org.zoxweb.shared.security.APIKey;
 import org.zoxweb.shared.util.SUS;
 
@@ -19,8 +20,14 @@ public class ProviderKeysTableModel extends AbstractTableModel {
     public record Row(APIKey<String> key, String name, String provider, String endpoint, int usedBy) {
     }
 
-    public static final String[] COLS = {"Key", "Provider", "Endpoint", "Used by"};
-    public static final int COL_NAME = 0, COL_PROVIDER = 1, COL_ENDPOINT = 2, COL_USED = 3;
+    /** The columns are {@link AIAssistantUtil.ProviderKeysColumn}, in its order; the header is the constant's display name. */
+    public static final int COL_NAME = AIAssistantUtil.ProviderKeysColumn.NAME.ordinal(),
+            COL_PROVIDER = AIAssistantUtil.ProviderKeysColumn.PROVIDER.ordinal(),
+            COL_ENDPOINT = AIAssistantUtil.ProviderKeysColumn.ENDPOINT.ordinal(),
+            COL_USED = AIAssistantUtil.ProviderKeysColumn.USED.ordinal();
+    /** The headers, in column order, read from the enum. */
+    public static final String[] COLS = java.util.Arrays.stream(AIAssistantUtil.ProviderKeysColumn.values())
+            .map(AIAssistantUtil.ProviderKeysColumn::getDisplayName).toArray(String[]::new);
 
     public static final String UNNAMED = "Unnamed key";
     public static final String CHOOSE = "choose provider";
@@ -52,17 +59,17 @@ public class ProviderKeysTableModel extends AbstractTableModel {
 
     @Override
     public int getColumnCount() {
-        return COLS.length;
+        return AIAssistantUtil.ProviderKeysColumn.values().length;
     }
 
     @Override
     public String getColumnName(int column) {
-        return COLS[column];
+        return AIAssistantUtil.ProviderKeysColumn.values()[column].getDisplayName();
     }
 
     @Override
     public Class<?> getColumnClass(int column) {
-        return column == COL_USED ? Integer.class : String.class;
+        return AIAssistantUtil.ProviderKeysColumn.values()[column] == AIAssistantUtil.ProviderKeysColumn.USED ? Integer.class : String.class;
     }
 
     @Override
@@ -73,12 +80,11 @@ public class ProviderKeysTableModel extends AbstractTableModel {
     @Override
     public Object getValueAt(int rowIndex, int columnIndex) {
         Row r = rows.get(rowIndex);
-        return switch (columnIndex) {
-            case COL_NAME -> r.name();
-            case COL_PROVIDER -> r.provider();
-            case COL_ENDPOINT -> r.endpoint();
-            case COL_USED -> r.usedBy();
-            default -> "";
+        return switch (AIAssistantUtil.ProviderKeysColumn.values()[columnIndex]) {
+            case NAME -> r.name();
+            case PROVIDER -> r.provider();
+            case ENDPOINT -> r.endpoint();
+            case USED -> r.usedBy();
         };
     }
 }

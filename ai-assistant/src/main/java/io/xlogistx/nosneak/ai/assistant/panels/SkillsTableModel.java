@@ -1,10 +1,12 @@
 package io.xlogistx.nosneak.ai.assistant.panels;
 
+import io.xlogistx.nosneak.ai.assistant.AIAssistantUtil;
 import io.xlogistx.nosneak.ai.model.AISkill;
 import org.zoxweb.shared.util.SUS;
 
 import javax.swing.table.AbstractTableModel;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -14,8 +16,13 @@ import java.util.List;
  */
 public class SkillsTableModel extends AbstractTableModel {
 
-    public static final String[] COLS = {"Skill", "Type", "Description", "Updated"};
-    public static final int COL_NAME = 0, COL_TYPE = 1, COL_DESCRIPTION = 2, COL_UPDATED = 3;
+    /** The columns are {@link AIAssistantUtil.SkillsColumn}, in its order; the headers are the constants' display names. */
+    public static final String[] COLS = Arrays.stream(AIAssistantUtil.SkillsColumn.values())
+            .map(AIAssistantUtil.SkillsColumn::getDisplayName).toArray(String[]::new);
+    public static final int COL_NAME = AIAssistantUtil.SkillsColumn.NAME.ordinal(),
+            COL_TYPE = AIAssistantUtil.SkillsColumn.TYPE.ordinal(),
+            COL_DESCRIPTION = AIAssistantUtil.SkillsColumn.DESCRIPTION.ordinal(),
+            COL_UPDATED = AIAssistantUtil.SkillsColumn.UPDATED.ordinal();
 
     public static final String UNTITLED = "Untitled skill";
 
@@ -57,17 +64,17 @@ public class SkillsTableModel extends AbstractTableModel {
 
     @Override
     public int getColumnCount() {
-        return COLS.length;
+        return AIAssistantUtil.SkillsColumn.values().length;
     }
 
     @Override
     public String getColumnName(int column) {
-        return COLS[column];
+        return AIAssistantUtil.SkillsColumn.values()[column].getDisplayName();
     }
 
     @Override
     public Class<?> getColumnClass(int column) {
-        return column == COL_UPDATED ? Long.class : String.class;
+        return AIAssistantUtil.SkillsColumn.values()[column] == AIAssistantUtil.SkillsColumn.UPDATED ? Long.class : String.class;
     }
 
     @Override
@@ -78,12 +85,11 @@ public class SkillsTableModel extends AbstractTableModel {
     @Override
     public Object getValueAt(int rowIndex, int columnIndex) {
         AISkill s = rows.get(rowIndex);
-        return switch (columnIndex) {
-            case COL_NAME -> title(s);
-            case COL_TYPE -> type(s);
-            case COL_DESCRIPTION -> SUS.trimOrNull(s.getDescription()) != null ? s.getDescription().trim() : "";
-            case COL_UPDATED -> s.getLastTimeUpdated();
-            default -> "";
+        return switch (AIAssistantUtil.SkillsColumn.values()[columnIndex]) {
+            case NAME -> title(s);
+            case TYPE -> type(s);
+            case DESCRIPTION -> SUS.trimOrNull(s.getDescription()) != null ? s.getDescription().trim() : "";
+            case UPDATED -> s.getLastTimeUpdated();
         };
     }
 }

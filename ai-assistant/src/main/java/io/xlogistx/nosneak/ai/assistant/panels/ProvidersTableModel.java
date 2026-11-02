@@ -3,6 +3,7 @@ package io.xlogistx.nosneak.ai.assistant.panels;
 import io.xlogistx.nosneak.ai.AIModelCatalog;
 import io.xlogistx.nosneak.ai.AIProvider;
 import io.xlogistx.nosneak.ai.assistant.AIAPIProvider;
+import io.xlogistx.nosneak.ai.assistant.AIAssistantUtil;
 import org.zoxweb.shared.util.SUS;
 
 import javax.swing.table.AbstractTableModel;
@@ -23,8 +24,16 @@ public class ProvidersTableModel extends AbstractTableModel {
                       int models, Long lastSynced) {
     }
 
-    public static final String[] COLS = {"Provider", "Type", "Endpoint", "Default model", "Models", "Last sync"};
-    public static final int COL_NAME = 0, COL_TYPE = 1, COL_ENDPOINT = 2, COL_MODEL = 3, COL_MODELS = 4, COL_SYNCED = 5;
+    /** The columns are {@link AIAssistantUtil.ProvidersColumn}, in its order; the header is the constant's display name. */
+    public static final int COL_NAME = AIAssistantUtil.ProvidersColumn.NAME.ordinal(),
+            COL_TYPE = AIAssistantUtil.ProvidersColumn.TYPE.ordinal(),
+            COL_ENDPOINT = AIAssistantUtil.ProvidersColumn.ENDPOINT.ordinal(),
+            COL_MODEL = AIAssistantUtil.ProvidersColumn.MODEL.ordinal(),
+            COL_MODELS = AIAssistantUtil.ProvidersColumn.MODELS.ordinal(),
+            COL_SYNCED = AIAssistantUtil.ProvidersColumn.SYNCED.ordinal();
+    /** The headers, in column order, read from the enum. */
+    public static final String[] COLS = java.util.Arrays.stream(AIAssistantUtil.ProvidersColumn.values())
+            .map(AIAssistantUtil.ProvidersColumn::getDisplayName).toArray(String[]::new);
 
     public static final String UNNAMED = "Unnamed provider";
 
@@ -74,19 +83,19 @@ public class ProvidersTableModel extends AbstractTableModel {
 
     @Override
     public int getColumnCount() {
-        return COLS.length;
+        return AIAssistantUtil.ProvidersColumn.values().length;
     }
 
     @Override
     public String getColumnName(int column) {
-        return COLS[column];
+        return AIAssistantUtil.ProvidersColumn.values()[column].getDisplayName();
     }
 
     @Override
     public Class<?> getColumnClass(int column) {
-        return switch (column) {
-            case COL_MODELS -> Integer.class;
-            case COL_SYNCED -> Long.class;
+        return switch (AIAssistantUtil.ProvidersColumn.values()[column]) {
+            case MODELS -> Integer.class;
+            case SYNCED -> Long.class;
             default -> String.class;
         };
     }
@@ -99,14 +108,13 @@ public class ProvidersTableModel extends AbstractTableModel {
     @Override
     public Object getValueAt(int rowIndex, int columnIndex) {
         Row r = rows.get(rowIndex);
-        return switch (columnIndex) {
-            case COL_NAME -> r.name();
-            case COL_TYPE -> r.type();
-            case COL_ENDPOINT -> r.endpoint();
-            case COL_MODEL -> r.defaultModel();
-            case COL_MODELS -> r.models();
-            case COL_SYNCED -> r.lastSynced();
-            default -> "";
+        return switch (AIAssistantUtil.ProvidersColumn.values()[columnIndex]) {
+            case NAME -> r.name();
+            case TYPE -> r.type();
+            case ENDPOINT -> r.endpoint();
+            case MODEL -> r.defaultModel();
+            case MODELS -> r.models();
+            case SYNCED -> r.lastSynced();
         };
     }
 }

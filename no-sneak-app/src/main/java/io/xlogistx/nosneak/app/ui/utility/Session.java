@@ -2,6 +2,7 @@ package io.xlogistx.nosneak.app.ui.utility;
 
 import io.xlogistx.nosneak.app.NoSneakStore;
 import io.xlogistx.nosneak.data.ProbeContent;
+import io.xlogistx.nosneak.data.ProbeGroup;
 import io.xlogistx.nosneak.data.ReportContent;
 import io.xlogistx.nosneak.net.util.NSNetUtil;
 import io.xlogistx.shiro.SubjectSwap;
@@ -1044,6 +1045,34 @@ public class Session {
         String o = getSubjectGUID();
         if (SUS.isEmpty(o)) return List.of();
         return ds.userSearch(o, ProbeContent.NVC_PROBE_CONTENT, null);
+    }
+
+    // Probe groups (2026-11-01): named sets of probe names, subject-scoped like the probes.
+    // Same shape as the probe methods above; the group never reaches the engine.
+
+    public ProbeGroup saveProbeGroup(ProbeGroup group) {
+        if (SUS.isNotEmpty(group.getGUID())) {
+            group.setLastTimeUpdated(System.currentTimeMillis());
+            return ds.update(group);
+        }
+        group.setSubjectGUID(getSubjectGUID());
+        return ds.insert(group);
+    }
+
+    public void deleteProbeGroup(ProbeGroup group) {
+        ds.delete(group, true);
+    }
+
+    public ProbeGroup getProbeGroup(String guid) {
+        List<ProbeGroup> found = ds.userSearchByID(getSubjectGUID(), ProbeGroup.NVC_PROBE_GROUP, guid);
+        return found.isEmpty() ? null : found.getFirst();
+    }
+
+    /** The signed-in subject's groups; empty when signed out. */
+    public List<ProbeGroup> getAllProbeGroups() {
+        String o = getSubjectGUID();
+        if (SUS.isEmpty(o)) return List.of();
+        return ds.userSearch(o, ProbeGroup.NVC_PROBE_GROUP, null);
     }
 
 }

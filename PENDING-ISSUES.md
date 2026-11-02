@@ -44,7 +44,24 @@ detail lives in the module `CLAUDE.md` files, named below.*
      the application stays on screen and an area drawn over it shoots the application; ticked
      again, the window disappears for the sweep as before; the chat's send-time sweep follows
      the same box; with it unticked *Define area* draws over the application too (the overlay
-     sits on top of it).
+     sits on top of it);
+   - (2026-11-01, probe groups) on the Scan page tick ssh and https-pqc, Add probe › *Save
+     ticked as group…*, name it `web`: Add probe now shows `web` ticked under GROUPS, unticking
+     it clears those two chips and leaves any other; Probe library › *Groups*: the row reads
+     `2` probes, its members are badged *bundled*; *New group* with one of your own probes,
+     then delete that probe in the library: the group reads `1 (1 missing)`, the member is
+     badged *missing*, and ticking the group on the Scan page ticks what exists and puts the
+     "no longer exist" note under the command; a scan with the group ticked lists the probes'
+     names in the report's `probes`, never the group's.
+   - (2026-11-01 evening, UI descriptors) every label, tooltip, placeholder and dialog title now
+     comes from an `NSAppUtil` enum through `GUIUtil.applyProp`; headless renders of 11 pages were
+     pixel-identical before and after, but the popups and dialogs (Add probe, Save ticked as group,
+     Add API key, Add identifier, the Help/About cards, the file choosers) cannot be painted
+     headless: open each once and read its labels and tooltips; the Access Control view
+     subtitles were reworded to their tab tooltips on purpose. The assistant's pages went the
+     same way through `AIAssistantUtil` (nine views rendered identical before and after,
+     including the composer's + popup); open the New provider key page, the provider form,
+     the Edit chat form and the capture preview once.
 2. **Run-through on a display** of the pages not yet tried since the redesign: a stored report
    opened from history, API keys, Providers, a chat with chips, a capture, Profile, Settings
    (Backup and Restore), Access control. Since 2026-10-27 that includes what was re-laid out or
@@ -76,7 +93,7 @@ detail lives in the module `CLAUDE.md` files, named below.*
 - Installations written before 2026-10-21 (vault without super-admin, no `shiro.ini`, old table
   names) are refused by `open`: start fresh or write a migration.
 - PostgreSQL is the next datastore target (Mongo deprecated 2026-10-25; the Mongo branch of
-  `NoSneakUtil` is not to be extended).
+  `NSCoreUtil` is not to be extended).
 
 **ai-assistant** — the full list is `ai-assistant/CLAUDE.md` → *Known rough edges*; the ones that
 lose data or hang: no send cancel (the reply timeout is a Settings value since 2026-10-31, so a
@@ -569,7 +586,7 @@ the sign-in step with the reason inline; `UnlockPanelSignInTest`).
 **Decisions (2026-10-25, maintainer):** JetBrains Mono is dropped for good (the
 `xlogistx.monoFamily` hook stays, nothing more). **The Mongo datastore path is deprecated**: the
 app's store is the encrypted H2 file today and **PostgreSQL is the next datastore target**;
-`no-sneak-core` `NoSneakUtil`'s Mongo branch (D9) is legacy, not to be extended. The redesign
+`no-sneak-core` `NSCoreUtil`'s Mongo branch (D9) is legacy, not to be extended. The redesign
 is closed; new work starts after this session.
 
 **MAC vendors (2026-10-25, built to the maintainer's spec, uncommitted):** the maintainer added
@@ -963,7 +980,7 @@ further accounts still sign up from the login screen through the direct `createS
   the IntelliJ run configuration `NoSneakMain` is one of them: delete it and run without arguments
   for the setup screen, then put its vault password back in the run configuration.
 - The app was not launched with a window this session (tests only).
-- `no-sneak-core` `NoSneakUtil` (Mongo path, D9) and D5/D6 of the 2026-10-05 check unchanged
+- `no-sneak-core` `NSCoreUtil` (Mongo path, D9) and D5/D6 of the 2026-10-05 check unchanged
   (Mongo deprecated 2026-10-25: H2 now, PostgreSQL next).
 
 ## Status check (2026-10-05, Windows dev box) — the app absorbed the upstream security update
@@ -1012,7 +1029,7 @@ has no `loginUnboundSubject(principal, password, domain, app)`; the four lines l
   to `ds.location=<dir> ds.store-password=<pw>`, or run without arguments for the setup screen.
 - Existing no-sneak databases (pre-vault, subjects without subject keys, keys in clear) do not
   open through the new path — D6, start fresh or write a migration.
-- `no-sneak-core` `NoSneakUtil` (Mongo path) builds the Shiro manager but opens its store without
+- `no-sneak-core` `NSCoreUtil` (Mongo path) builds the Shiro manager but opens its store without
   a controller/key maker; Mongo is on standby (D9). **Deprecated 2026-10-25** — the store is H2,
   PostgreSQL is next; the Mongo branch is not to be extended.
 

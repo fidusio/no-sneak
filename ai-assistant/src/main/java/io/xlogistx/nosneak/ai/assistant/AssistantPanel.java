@@ -1,7 +1,6 @@
 package io.xlogistx.nosneak.ai.assistant;
 
-import org.zoxweb.shared.util.GetDescription;
-import org.zoxweb.shared.util.GetDisplayName;
+import io.xlogistx.nosneak.ai.assistant.AIAssistantUtil.Page;
 import io.xlogistx.gui.CardStack;
 import io.xlogistx.gui.ComponentRef;
 import io.xlogistx.nosneak.ai.assistant.panels.CapturePanel;
@@ -27,40 +26,6 @@ import java.util.function.Consumer;
  */
 public class AssistantPanel extends JPanel {
 
-    /**
-     * The pages. {@link #QUEUE} is a stub and is not offered by the host's navigation. Each page's
-     * title is its display name (2026-10-26): the panel shows it at the top of the page and the
-     * host's sidebar uses the same words, so one string names a page everywhere. {@link #CHAT} is
-     * the list of chats and the open conversation in one page (merged 2026-10-26).
-     */
-    public enum Page implements GetDisplayName, GetDescription {
-        CHAT("Chat", "Your chats with the assistant: open one, or start a new one"),
-        QUEUE("Job Queue", "Requests waiting for, or receiving, a reply"),
-        SKILLS("Skills", "Instructions the assistant carries into a chat"),
-        PROVIDERS("Providers", "Which of your API keys the assistant may use, and their models"),
-        CAPTURE("Capture", "Screen areas shot at once, kept for the chat");
-
-        /** The page title (the component's name); the same words as the sidebar's Screen. */
-        private final String displayName;
-        /** One line on what the page is for. */
-        private final String description;
-
-        Page(String displayName, String description) {
-            this.displayName = displayName;
-            this.description = description;
-        }
-
-        @Override
-        public String getDescription() {
-            return description;
-        }
-
-        @Override
-        public String getDisplayName() {
-            return displayName;
-        }
-    }
-
     private final AssistantContext context;
     private final CardStack cardStack = new CardStack();
     /** One ref per page (2026-10-27): the card component, keyed by the constant's name, with its title and description. */
@@ -80,6 +45,7 @@ public class AssistantPanel extends JPanel {
         this.context = context;
 
         setLayout(new BorderLayout());
+        setName(AIAssistantUtil.AssistantShell.PANEL.getName());
 
         chatPanel = new ChatPanel(context);
         providersPanel = new ProvidersPanel(context);

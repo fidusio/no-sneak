@@ -1,7 +1,9 @@
 package io.xlogistx.nosneak.app.ui;
 
+import io.xlogistx.nosneak.app.NSAppUtil;
 
 import io.xlogistx.gui.ComponentRef;
+import io.xlogistx.gui.GUIUtil;
 import io.xlogistx.gui.KeyValuePanel;
 import io.xlogistx.gui.MDViewerPanel;
 import io.xlogistx.gui.UITokens;
@@ -9,7 +11,6 @@ import io.xlogistx.gui.WrapLabel;
 import io.xlogistx.nosneak.app.NoSneakMain;
 import io.xlogistx.nosneak.app.ui.utility.AppContext;
 import io.xlogistx.nosneak.app.ui.utility.AppPrefs;
-import io.xlogistx.nosneak.app.ui.utility.Navigator;
 
 import net.miginfocom.swing.MigLayout;
 
@@ -58,37 +59,38 @@ public class MenuBarFactory {
 
     public JMenuBar buildMenu() {
         menuBar = new JMenuBar();
+        menuBar.setName(NSAppUtil.MenuBar.BAR.getName());
 
-        JMenu file = new JMenu("File");
-        JMenu view = new JMenu("View");
-        JMenu help = new JMenu("Help");
+        JMenu file = GUIUtil.applyProp(new JMenu(), NSAppUtil.MenuBar.FILE);
+        JMenu view = GUIUtil.applyProp(new JMenu(), NSAppUtil.MenuBar.VIEW);
+        JMenu help = GUIUtil.applyProp(new JMenu(), NSAppUtil.MenuBar.HELP);
 
-        JMenuItem logout = new JMenuItem("Sign out");
+        JMenuItem logout = GUIUtil.applyProp(new JMenuItem(), NSAppUtil.MenuBar.SIGN_OUT);
         logout.addActionListener(_ -> {
-            int ok = JOptionPane.showConfirmDialog(menuBar, "Sign out of NoSneak?", "Sign out",
+            int ok = JOptionPane.showConfirmDialog(menuBar, "Sign out of NoSneak?", NSAppUtil.MenuBar.SIGN_OUT_DIALOG.getDisplayName(),
                     JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE);
             if (ok == JOptionPane.OK_OPTION) ctx.session().logout();
         });
         file.add(logout);
 
-        view.add(page(Navigator.Screen.SCAN));
-        view.add(page(Navigator.Screen.SCAN_HISTORY));
-        view.add(page(Navigator.Screen.PROBES));
+        view.add(page(NSAppUtil.Screen.SCAN));
+        view.add(page(NSAppUtil.Screen.SCAN_HISTORY));
+        view.add(page(NSAppUtil.Screen.PROBES));
         view.addSeparator();
-        view.add(page("Assistant chat", Navigator.Screen.CHAT));
-        view.add(page(Navigator.Screen.CAPTURE));
-        view.add(page(Navigator.Screen.SKILLS));
-        view.add(page(Navigator.Screen.PROVIDERS));
+        view.add(page(NSAppUtil.MenuBar.VIEW_CHAT.getDisplayName(), NSAppUtil.Screen.CHAT));
+        view.add(page(NSAppUtil.Screen.CAPTURE));
+        view.add(page(NSAppUtil.Screen.SKILLS));
+        view.add(page(NSAppUtil.Screen.PROVIDERS));
         view.addSeparator();
-        view.add(page(Navigator.Screen.PROFILE));
-        view.add(page(Navigator.Screen.API_KEYS));
-        view.add(page(Navigator.Screen.SETTINGS));
+        view.add(page(NSAppUtil.Screen.PROFILE));
+        view.add(page(NSAppUtil.Screen.API_KEYS));
+        view.add(page(NSAppUtil.Screen.SETTINGS));
         view.addSeparator();
-        view.add(page(Navigator.Screen.ACL));
+        view.add(page(NSAppUtil.Screen.ACL));
 
-        JMenuItem aboutItem = new JMenuItem("About");
+        JMenuItem aboutItem = GUIUtil.applyProp(new JMenuItem(), NSAppUtil.MenuBar.ABOUT);
         aboutItem.addActionListener(_ -> showAbout());
-        JMenuItem appHelp = new JMenuItem("Help");
+        JMenuItem appHelp = GUIUtil.applyProp(new JMenuItem(), NSAppUtil.MenuBar.HELP_ITEM);
         appHelp.addActionListener(_ -> showDescription());
         help.add(appHelp);
         help.add(aboutItem);
@@ -102,39 +104,37 @@ public class MenuBarFactory {
 
 
     /** The View menu's items, each a ref over its screen (2026-10-27); for hosts that read the menu. */
-    private final List<ComponentRef<Navigator.Screen>> viewItems = new ArrayList<>();
+    private final List<ComponentRef<NSAppUtil.Screen>> viewItems = new ArrayList<>();
 
     /** A View item worded as the sidebar words the screen. */
-    private JMenuItem page(Navigator.Screen screen) {
+    private JMenuItem page(NSAppUtil.Screen screen) {
         return page(screen, null);
     }
 
     /**
-     * A View item for a screen, worded by {@code label} when given ("Assistant chat" for the Chat
+     * A View item for a screen, worded by {@code label} when given ({@code MenuBar.VIEW_CHAT} for the Chat
      * page): the ref's display name is the text, its description the tooltip, its source the
      * screen the item shows.
      */
-    private JMenuItem page(String label, Navigator.Screen screen) {
+    private JMenuItem page(String label, NSAppUtil.Screen screen) {
         return page(screen, label);
     }
 
-    private JMenuItem page(Navigator.Screen screen, String label) {
+    private JMenuItem page(NSAppUtil.Screen screen, String label) {
         JMenuItem item = new JMenuItem();
-        ComponentRef<Navigator.Screen> ref = new ComponentRef<>(item, screen, label);
-        item.setText(ref.getDisplayName());
-        item.setToolTipText(ref.getDescription());
+        ComponentRef<NSAppUtil.Screen> ref = GUIUtil.applyProp(new ComponentRef<>(item, screen, label));
         item.addActionListener(_ -> ctx.nav().show(ref.getSource()));
         viewItems.add(ref);
         return item;
     }
 
     /** The View menu's items as refs: text, tooltip and the screen each one shows. */
-    public List<ComponentRef<Navigator.Screen>> viewItems() {
+    public List<ComponentRef<NSAppUtil.Screen>> viewItems() {
         return Collections.unmodifiableList(viewItems);
     }
 
     public void showAbout() {
-        if (about == null) about = dialog("About " + NoSneakMain.VERSION.getName(), buildAbout(), null);
+        if (about == null) about = dialog(NSAppUtil.MenuBar.ABOUT_DIALOG.getDisplayName() + " " + NoSneakMain.VERSION.getName(), buildAbout(), null);
         show(about);
     }
 
@@ -142,7 +142,7 @@ public class MenuBarFactory {
         if (description == null) {
             MDViewerPanel viewer = new MDViewerPanel();
             viewer.setMarkdown(loadDescription());
-            description = dialog(NoSneakMain.VERSION.getName() + " — Help", viewer, new Dimension(680, 560));
+            description = dialog(NoSneakMain.VERSION.getName() + " — " + NSAppUtil.MenuBar.HELP_DIALOG.getDisplayName(), viewer, new Dimension(680, 560));
         }
         show(description);
     }
@@ -182,39 +182,41 @@ public class MenuBarFactory {
     /** The About card: name, tagline, summary, facts, a Help link. 460 px wide, packed to height. */
     private JComponent buildAbout() {
         JPanel card = new JPanel(new MigLayout("insets 24 32 24 32, wrap 1, gapy 0, fillx", "[460!]"));
+        card.setName(NSAppUtil.MenuBar.ABOUT_CARD.getName());
         card.setBackground(UITokens.surface());
 
-        JLabel name = new JLabel(NoSneakMain.VERSION.getName());
+        JLabel name = GUIUtil.applyProp(new JLabel(NoSneakMain.VERSION.getName()), NSAppUtil.MenuBar.ABOUT_NAME);
         name.setFont(UITokens.font(Font.BOLD, 8f));
         card.add(name, "growx");
 
-        JLabel tagline = new JLabel(TAGLINE);
+        JLabel tagline = GUIUtil.applyProp(new JLabel(TAGLINE), NSAppUtil.MenuBar.ABOUT_TAGLINE);
         tagline.setForeground(UITokens.muted());
         card.add(tagline, "growx, gaptop 2");
 
-        WrapLabel summary = new WrapLabel(SUMMARY);
+        WrapLabel summary = GUIUtil.applyProp(new WrapLabel(SUMMARY), NSAppUtil.MenuBar.ABOUT_SUMMARY);
         summary.setWrapWidth(460);
         card.add(summary, "growx, wmin 0, gaptop 14");
 
         card.add(new JSeparator(), "growx, gaptop 16, gapbottom 14");
 
         KeyValuePanel facts = new KeyValuePanel(80);
-        facts.putMono("Version", NoSneakMain.VERSION.version());
-        facts.putMono("Java", System.getProperty("java.version") + " (" + System.getProperty("java.vendor") + ")");
-        facts.putMono("Platform", System.getProperty("os.name") + " " + System.getProperty("os.version")
+        facts.setName(NSAppUtil.MenuBar.ABOUT_FACTS.getName());
+        facts.putMono(NSAppUtil.MenuBar.FACT_VERSION.getDisplayName(), NoSneakMain.VERSION.version());
+        facts.putMono(NSAppUtil.MenuBar.FACT_JAVA.getDisplayName(), System.getProperty("java.version") + " (" + System.getProperty("java.vendor") + ")");
+        facts.putMono(NSAppUtil.MenuBar.FACT_PLATFORM.getDisplayName(), System.getProperty("os.name") + " " + System.getProperty("os.version")
                 + " " + System.getProperty("os.arch"));
         File store = AppPrefs.storeLocation();
-        facts.putMono("Vault", store != null ? store.getAbsolutePath() : "(not open)");
-        facts.put("Store", STORE_NOTE);
+        facts.putMono(NSAppUtil.MenuBar.FACT_VAULT.getDisplayName(), store != null ? store.getAbsolutePath() : NSAppUtil.MenuBar.VAULT_NOT_OPEN.getDisplayName());
+        facts.put(NSAppUtil.MenuBar.FACT_STORE.getDisplayName(), STORE_NOTE);
         card.add(facts, "growx, wmin 0");
 
-        WrapLabel tips = new WrapLabel("Rest the pointer on any page, button, option or tab for a line on what it does.");
+        WrapLabel tips = GUIUtil.applyProp(new WrapLabel(""), NSAppUtil.MenuBar.ABOUT_TIPS);
         tips.setFont(UITokens.font(Font.PLAIN, -1f));
         tips.setForeground(UITokens.muted());
         tips.setWrapWidth(460);
         card.add(tips, "growx, wmin 0, gaptop 14");
 
-        JButton help = UITokens.link(new JButton("Help: every page, and what the tool will not do"));
+        JButton help = UITokens.link(GUIUtil.applyProp(new JButton(), NSAppUtil.MenuBar.ABOUT_HELP_LINK));
         help.addActionListener(_ -> showDescription());
         card.add(help, "gaptop 4, left");
         return card;

@@ -1,7 +1,6 @@
 package io.xlogistx.nosneak.app.ui.scan;
 
-import org.zoxweb.shared.util.GetDescription;
-import org.zoxweb.shared.util.GetDisplayName;
+import io.xlogistx.nosneak.app.NSAppUtil;
 import io.xlogistx.nosneak.data.ProbeContent;
 import io.xlogistx.nosneak.model.ProbeDefinition;
 import io.xlogistx.nosneak.model.ProbeDefinitionLoader;
@@ -52,33 +51,13 @@ public final class ProbeLibraryModel extends AbstractTableModel {
         }
     }
 
-    /** The All / Bundled / Mine segment: the display name is the segment's text, the description its tooltip (2026-10-27). */
-    public enum Filter implements GetDisplayName, GetDescription {
-        ALL("All", "Every probe: the bundled ones and yours"),
-        BUNDLED("Bundled", "The probes that ship with the app, read-only"),
-        MINE("Mine", "The probes stored under your account");
-
-        private final String displayName;
-        private final String description;
-
-        Filter(String displayName, String description) {
-            this.displayName = displayName;
-            this.description = description;
-        }
-
-        @Override
-        public String getDescription() {
-            return description;
-        }
-
-        @Override
-        public String getDisplayName() {
-            return displayName;
-        }
-    }
-
-    public static final String[] COLS = {"Name", "Service", "Ports", "Transport", "Priority", "Source"};
-    public static final int COL_NAME = 0, COL_SERVICE = 1, COL_PORTS = 2, COL_TRANSPORT = 3, COL_PRIORITY = 4, COL_SOURCE = 5;
+    /** The columns are {@link NSAppUtil.ProbeLibraryColumn}, in its order; the header is the constant's display name. */
+    public static final int COL_NAME = NSAppUtil.ProbeLibraryColumn.NAME.ordinal(),
+            COL_SERVICE = NSAppUtil.ProbeLibraryColumn.SERVICE.ordinal(),
+            COL_PORTS = NSAppUtil.ProbeLibraryColumn.PORTS.ordinal(),
+            COL_TRANSPORT = NSAppUtil.ProbeLibraryColumn.TRANSPORT.ordinal(),
+            COL_PRIORITY = NSAppUtil.ProbeLibraryColumn.PRIORITY.ordinal(),
+            COL_SOURCE = NSAppUtil.ProbeLibraryColumn.SOURCE.ordinal();
 
     private List<Row> rows = List.of();
 
@@ -120,9 +99,9 @@ public final class ProbeLibraryModel extends AbstractTableModel {
      * The row filter: the segment, then a free-text query matched case-insensitively against
      * the name, the service, the description and every declared port (so "22" finds ssh).
      */
-    public static boolean matches(Row row, Filter filter, String query) {
-        if (filter == Filter.BUNDLED && row.stored()) return false;
-        if (filter == Filter.MINE && !row.stored()) return false;
+    public static boolean matches(Row row, NSAppUtil.ProbeLibraryFilter filter, String query) {
+        if (filter == NSAppUtil.ProbeLibraryFilter.BUNDLED && row.stored()) return false;
+        if (filter == NSAppUtil.ProbeLibraryFilter.MINE && !row.stored()) return false;
         String q = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
         if (q.isEmpty()) return true;
         if (row.name().toLowerCase(Locale.ROOT).contains(q)) return true;
@@ -187,12 +166,12 @@ public final class ProbeLibraryModel extends AbstractTableModel {
 
     @Override
     public int getColumnCount() {
-        return COLS.length;
+        return NSAppUtil.ProbeLibraryColumn.values().length;
     }
 
     @Override
     public String getColumnName(int column) {
-        return COLS[column];
+        return NSAppUtil.ProbeLibraryColumn.values()[column].getDisplayName();
     }
 
     @Override
@@ -203,14 +182,13 @@ public final class ProbeLibraryModel extends AbstractTableModel {
     @Override
     public Object getValueAt(int rowIndex, int columnIndex) {
         Row r = rows.get(rowIndex);
-        return switch (columnIndex) {
-            case COL_NAME -> r.name();
-            case COL_SERVICE -> r.def() != null ? r.service() : "?";
-            case COL_PORTS -> r.def() != null ? ports(r.def()) : "";
-            case COL_TRANSPORT -> r.def() != null ? r.def().getTransport() : "";
-            case COL_PRIORITY -> r.priority();
-            case COL_SOURCE -> r.stored() ? "mine" : "bundled";
-            default -> "";
+        return switch (NSAppUtil.ProbeLibraryColumn.values()[columnIndex]) {
+            case NAME -> r.name();
+            case SERVICE -> r.def() != null ? r.service() : "?";
+            case PORTS -> r.def() != null ? ports(r.def()) : "";
+            case TRANSPORT -> r.def() != null ? r.def().getTransport() : "";
+            case PRIORITY -> r.priority();
+            case SOURCE -> r.stored() ? "mine" : "bundled";
         };
     }
 }

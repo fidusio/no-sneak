@@ -3,6 +3,7 @@ package io.xlogistx.nosneak.ai.assistant.panels;
 import io.xlogistx.gui.*;
 import io.xlogistx.nosneak.ai.AIProvider;
 import io.xlogistx.nosneak.ai.assistant.AIAPIProvider;
+import io.xlogistx.nosneak.ai.assistant.AIAssistantUtil;
 import io.xlogistx.nosneak.ai.assistant.AssistantCallback;
 import io.xlogistx.nosneak.ai.assistant.AssistantContext;
 import io.xlogistx.nosneak.ai.assistant.ModelFilter;
@@ -12,6 +13,7 @@ import io.xlogistx.nosneak.ai.model.*;
 import net.miginfocom.swing.MigLayout;
 import org.zoxweb.server.io.UByteArrayInputStream;
 import org.zoxweb.shared.security.AccessSecurityException;
+import org.zoxweb.shared.util.GetNameDescriptionDisplay;
 import org.zoxweb.shared.util.NVEntity;
 
 import javax.imageio.ImageIO;
@@ -49,7 +51,7 @@ public class ChatPanel extends JPanel {
     private final AssistantContext ctx;
 
     private Consumer<String> onSaveAsSkill;
-    /** The host's save targets (label to handler), one "Save as <label>" button per assistant bubble. */
+    /** The host's save targets (label to handler), one "Save as &lt;label&gt;" button per assistant bubble. */
     private final Map<String, BiConsumer<String, String>> saveTargets = new LinkedHashMap<>();
 
     /** {@code list} = the chats (and their forms), {@code chat} = the open conversation. */
@@ -80,7 +82,8 @@ public class ChatPanel extends JPanel {
     /** Empties the composer (2026-10-27): the X inside the input box, shown only while it holds text. */
     private JButton clearButton;
     /** Component name of {@link #clearButton}, for tests. */
-    public static final String CLEAR_PROMPT = "clear-prompt";
+    /** The clear X's component name: {@code AIAssistantUtil.Composer.CLEAR}. */
+    public static final String CLEAR_PROMPT = AIAssistantUtil.Composer.CLEAR.getName();
     private JButton attachSkillButton;
     private final List<AISkill> pendingSkills = new ArrayList<>();
 
@@ -186,13 +189,13 @@ public class ChatPanel extends JPanel {
     private final JFileChooser fileChooser = new JFileChooser();
     private final Set<CaptureArea> tickedAreas = Collections.newSetFromMap(new IdentityHashMap<>());
 
-    private final JCheckBox sendFullHistory = new JCheckBox("Send history", false);
+    private final JCheckBox sendFullHistory = GUIUtil.applyProp(new JCheckBox("", false), AIAssistantUtil.ChatPage.SEND_HISTORY);
     /**
      * When ticked, the fenced code blocks of each new reply are copied to the system clipboard as
      * they arrive, so a generated config or command can be pasted without reaching for the bubble's
      * Copy button. Session-scoped view state: never persisted, cleared by {@link #reset()}.
      */
-    private final JCheckBox autoCopyCode = new JCheckBox("Auto-copy code", false);
+    private final JCheckBox autoCopyCode = GUIUtil.applyProp(new JCheckBox("", false), AIAssistantUtil.ChatPage.AUTO_COPY_CODE);
 
     public ChatPanel(AssistantContext ctx) {
         this.ctx = ctx;
@@ -205,6 +208,7 @@ public class ChatPanel extends JPanel {
         });
         buildConversation();
 
+        chatHost.setName(AIAssistantUtil.ChatPage.PAGE.getName());
         chatCards.add(history, "list");
         chatCards.add(chatHost, "chat");
         chatCards.show("list");
@@ -219,7 +223,7 @@ public class ChatPanel extends JPanel {
 
     /**
      * Offers a host destination on every assistant reply (2026-10-26): the bubble gets a
-     * "Save as <label>" button that hands the reply's markdown to {@code handler} as
+     * "Save as &lt;label&gt;" button that hands the reply's markdown to {@code handler} as
      * {@code (name = "", content)}. A handler that throws has refused the content; its message
      * is shown and nothing else happens, so the reply stays where it is.
      */
@@ -427,7 +431,7 @@ public class ChatPanel extends JPanel {
      * filter, Send history, Auto-copy code) and the card (transcript over the composer bar).
      */
     private void buildConversation() {
-        transcript = new JPanel(new MigLayout("wrap 1, insets 14, gapy 10", "[grow]"));
+        transcript = GUIUtil.applyProp(new JPanel(new MigLayout("wrap 1, insets 14, gapy 10", "[grow]")), AIAssistantUtil.ChatPage.TRANSCRIPT);
         transcript.setBackground(UITokens.surface());
 
         modelSelector = new FilterComboBox<>();
@@ -436,28 +440,20 @@ public class ChatPanel extends JPanel {
             if (!typed.trim().equals(modelMatcher.getPatterns())) modelMatcher.setPatterns(typed);
             return modelMatcher.accepts(m);
         });
-        modelSelector.setToolTipText("The model the next message goes to. Type to narrow the list: gpt-4*, o3, !*preview*  "
-                + "(bare words match anywhere, ! excludes, blank hides non-chat models); a name the list does not offer is kept as typed");
+        GUIUtil.applyProp(modelSelector, AIAssistantUtil.ChatPage.MODEL_SELECTOR);
 
         providerSelector = new JComboBox<>();
         providerSelector.setEditable(false);
         providerSelector.setRenderer(providerRenderer(ctx));
-        providerSelector.setToolTipText("The assistant the next message goes to. Switching keeps this chat and its transcript; the model list follows");
+        GUIUtil.applyProp(providerSelector, AIAssistantUtil.ChatPage.PROVIDER_SELECTOR);
         providerSelector.addActionListener(_ -> onProviderPicked());
 
-        sendFullHistory.setToolTipText(
-                "Checked: each request carries the whole conversation. Unchecked: only the new message is sent.");
-        autoCopyCode.setToolTipText(
-                "Checked: the code blocks of every new reply are copied to the clipboard as it arrives.");
-
-        JButton allChats = new JButton("All chats", new IconUtil.BackIcon(16));
-        allChats.setToolTipText("Back to the list of chats");
+        JButton allChats = GUIUtil.applyProp(new JButton(new IconUtil.BackIcon(16)), AIAssistantUtil.ChatPage.ALL_CHATS);
         allChats.addActionListener(_ -> {
             history.refreshHistory();
             chatCards.show("list");
         });
-        JButton edit = new JButton("Edit", new IconUtil.EditIcon(16));
-        edit.setToolTipText("Rename this chat, or change its provider and model");
+        JButton edit = GUIUtil.applyProp(new JButton(new IconUtil.EditIcon(16)), AIAssistantUtil.ChatPage.EDIT);
         edit.addActionListener(_ -> {
             AIChat chat = ctx.currentChat();
             if (chat == null) return;
@@ -465,11 +461,9 @@ public class ChatPanel extends JPanel {
             history.editChat(chat);
             chatCards.show("list");
         });
-        JButton chatToPDF = new JButton("Chat as PDF", new IconUtil.PDFIcon(16));
-        chatToPDF.setToolTipText("Show the whole chat as a PDF");
+        JButton chatToPDF = GUIUtil.applyProp(new JButton(new IconUtil.PDFIcon(16)), AIAssistantUtil.ChatPage.CHAT_AS_PDF);
         chatToPDF.addActionListener(_ -> showChatAsPDF(chatToPDF));
-        JButton newChat = new JButton("New chat", new IconUtil.PlusIcon(16));
-        newChat.setToolTipText("Create a new chat");
+        JButton newChat = GUIUtil.applyProp(new JButton(new IconUtil.PlusIcon(16)), AIAssistantUtil.ChatPage.NEW_CHAT);
         newChat.addActionListener(_ -> {
             returnToConversation = true;
             history.startNewChat();
@@ -483,9 +477,9 @@ public class ChatPanel extends JPanel {
         headActions.add(chatToPDF);
         headActions.add(newChat);
 
-        JLabel providerLabel = new JLabel("Provider");
+        JLabel providerLabel = GUIUtil.applyProp(new JLabel(), AIAssistantUtil.ChatPage.PROVIDER);
         providerLabel.setForeground(UITokens.muted());
-        JLabel modelLabel = new JLabel("Model");
+        JLabel modelLabel = GUIUtil.applyProp(new JLabel(), AIAssistantUtil.ChatPage.MODEL);
         modelLabel.setForeground(UITokens.muted());
         options = new JPanel(new MigLayout("insets 0, gapx 8", "[][][][]push[][]"));
         options.setOpaque(false);
@@ -502,7 +496,7 @@ public class ChatPanel extends JPanel {
         transcriptScroll.getViewport().setBackground(UITokens.surface());
         transcriptScroll.getVerticalScrollBar().setUnitIncrement(16);
 
-        composer = new JTextArea(1, 20);
+        composer = GUIUtil.applyProp(new JTextArea(1, 20), AIAssistantUtil.Composer.INPUT);
         composer.setLineWrap(true);
         composer.setWrapStyleWord(true);
         composer.setBorder(BorderFactory.createEmptyBorder(6, 8, 6, 8));
@@ -531,7 +525,7 @@ public class ChatPanel extends JPanel {
         composerScroll.setOpaque(false);
         composerScroll.getViewport().setOpaque(false);
 
-        attachSkillButton = new JButton(new IconUtil.PlusIcon(16));
+        attachSkillButton = GUIUtil.applyProp(new JButton(new IconUtil.PlusIcon(16)), AIAssistantUtil.Composer.ATTACH);
 
         attachSkillButton.addActionListener(_ -> showAttachPopup());
 
@@ -550,13 +544,11 @@ public class ChatPanel extends JPanel {
         addSkillHolder.add(attachButtons, BorderLayout.NORTH);
 
         // the X at the right end of the input box, the + button's twin (2026-10-27)
-        clearButton = new JButton(new IconUtil.CancelIcon(16));
-        clearButton.setName(CLEAR_PROMPT);
+        clearButton = GUIUtil.applyProp(new JButton(new IconUtil.CancelIcon(16)), AIAssistantUtil.Composer.CLEAR);
         clearButton.putClientProperty("JButton.buttonType", "toolBarButton");
         clearButton.setFocusable(false);
         clearButton.setMargin(new Insets(0, 0, 0, 0));
         clearButton.setPreferredSize(new Dimension(28, 28));
-        clearButton.setToolTipText("Clear the prompt (what is attached stays)");
         clearButton.setVisible(false);
         clearButton.addActionListener(_ -> clearComposer());
 
@@ -573,7 +565,7 @@ public class ChatPanel extends JPanel {
         inputBox.add(composerScroll, BorderLayout.CENTER);
         inputBox.add(clearHolder, BorderLayout.EAST);
 
-        sendButton = UITokens.primary(new JButton("Send"));
+        sendButton = UITokens.primary(GUIUtil.applyProp(new JButton(), AIAssistantUtil.Composer.SEND));
         sendButton.addActionListener(_ -> onSend());
 
         // the card's footer: a line above it, the card's own ground
@@ -670,11 +662,11 @@ public class ChatPanel extends JPanel {
     private void showChatAsPDF(JComponent owner) {
         AIChat chat = ctx.currentChat();
         if (chat == null) {
-            JOptionPane.showMessageDialog(this, "Open a chat first (Chat > New chat)", "Chat as PDF", JOptionPane.INFORMATION_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Open a chat first (Chat > New chat)", AIAssistantUtil.ChatPage.PDF_DIALOG.getDisplayName(), JOptionPane.INFORMATION_MESSAGE);
             return;
         }
         if (chat.getMessages().size() == 0) {
-            JOptionPane.showMessageDialog(this, "This chat has no messages yet.", "Chat as PDF", JOptionPane.INFORMATION_MESSAGE);
+            JOptionPane.showMessageDialog(this, "This chat has no messages yet.", AIAssistantUtil.ChatPage.PDF_DIALOG.getDisplayName(), JOptionPane.INFORMATION_MESSAGE);
             return;
         }
         String title = ChatHistoryModel.title(chat);
@@ -754,20 +746,20 @@ public class ChatPanel extends JPanel {
         AIChat chat = ctx.currentChat();
         if (chat == null) {
             JOptionPane.showMessageDialog(this, "Open a chat first (Chat > New chat)",
-                    "Send", JOptionPane.INFORMATION_MESSAGE);
+                    AIAssistantUtil.ChatPage.SEND_DIALOG.getDisplayName(), JOptionPane.INFORMATION_MESSAGE);
             return;
         }
         Object sel = modelSelector.getSelectedItem();
         if (sel == null || sel.toString().isBlank()) {
             JOptionPane.showMessageDialog(this, "Pick a model first",
-                    "Send", JOptionPane.INFORMATION_MESSAGE);
+                    AIAssistantUtil.ChatPage.SEND_DIALOG.getDisplayName(), JOptionPane.INFORMATION_MESSAGE);
             return;
         }
         AIProvider p = ctx.lookupProvider(chat.getProvider());
         if (p == null) {
             JOptionPane.showMessageDialog(this,
                     "Provider \"" + chat.getProvider() + "\" is not linked. Add its key on the Providers page.",
-                    "Send", JOptionPane.WARNING_MESSAGE);
+                    AIAssistantUtil.ChatPage.SEND_DIALOG.getDisplayName(), JOptionPane.WARNING_MESSAGE);
             return;
         }
 
@@ -852,7 +844,7 @@ public class ChatPanel extends JPanel {
                 refreshPrompt();
                 if (composer.getText().isBlank()) composer.setText(text);
             }
-            showErrorDialog(this, "Send", "Send failed: " + err.getMessage(), err);
+            showErrorDialog(this, AIAssistantUtil.ChatPage.SEND_DIALOG.getDisplayName(), "Send failed: " + err.getMessage(), err);
         });
 
         String skill = skillSb.toString();
@@ -928,7 +920,7 @@ public class ChatPanel extends JPanel {
             refreshPrompt();
             if (composer.getText().isBlank()) composer.setText(text);
         }
-        showErrorDialog(this, "Send", "Send failed: " + e.getMessage() + timeoutHint(e, ctx.getCallTimeoutSeconds()), e);
+        showErrorDialog(this, AIAssistantUtil.ChatPage.SEND_DIALOG.getDisplayName(), "Send failed: " + e.getMessage() + timeoutHint(e, ctx.getCallTimeoutSeconds()), e);
     }
 
     /**
@@ -980,7 +972,7 @@ public class ChatPanel extends JPanel {
                         handler.accept("", response);
                     } catch (RuntimeException refused) {
                         JOptionPane.showMessageDialog(this, refused.getMessage(),
-                                "Not a valid " + label, JOptionPane.ERROR_MESSAGE);
+                                AIAssistantUtil.ChatPage.NOT_VALID_DIALOG.getDisplayName() + " " + label, JOptionPane.ERROR_MESSAGE);
                     }
                 });
             }
@@ -1078,8 +1070,7 @@ public class ChatPanel extends JPanel {
         header.add(name);
         header.add(detail, "wmin 0");
         if (onDelete != null) {
-            JButton delete = GUIUtil.iconButton(new IconUtil.DeleteIcon(16), true);
-            delete.setToolTipText("Drop this from the next message");
+            JButton delete = GUIUtil.applyProp(GUIUtil.iconButton(new IconUtil.DeleteIcon(16), true), AIAssistantUtil.Composer.DROP_SOURCE);
             delete.setFocusable(false);
             delete.addActionListener(_ -> onDelete.run());
             header.add(delete, "alignx trailing");
@@ -1149,10 +1140,10 @@ public class ChatPanel extends JPanel {
         JPanel content = new JPanel(new MigLayout("wrap 1, insets 10 12 10 12, gapy 4", "[grow]"));
         content.setOpaque(false);
 
-        content.add(sectionLabel("Skills for this message"));
+        content.add(sectionLabel(AIAssistantUtil.Composer.SECTION_SKILLS));
         List<AISkill> skills = ctx.getAllSkills();
         if (skills.isEmpty()) {
-            JLabel none = new JLabel("No skills yet");
+            JLabel none = GUIUtil.applyProp(new JLabel(), AIAssistantUtil.Composer.EMPTY_SKILLS);
             none.setEnabled(false);
             content.add(none);
         } else {
@@ -1174,17 +1165,17 @@ public class ChatPanel extends JPanel {
         }
 
         if (!builtInSkills.isEmpty()) {
-            content.add(sectionLabel("Built-in skills"), "gaptop 6");
+            content.add(sectionLabel(AIAssistantUtil.Composer.SECTION_BUILT_IN), "gaptop 6");
             for (BuiltInSkill b : builtInSkills.values()) content.add(builtInSkillRow(b));
         }
 
-        content.add(sectionLabel("Sources for this message"), "gaptop 10");
+        content.add(sectionLabel(AIAssistantUtil.Composer.SECTION_SOURCES), "gaptop 10");
         for (AISource source : pendingSources) content.add(sourceRow(source));
         content.add(attachImageRow(popup));
         content.add(attachFileRow(popup));
         content.add(attachURLRow(popup));
 
-        content.add(sectionLabel("Capture"), "gaptop 10");
+        content.add(sectionLabel(AIAssistantUtil.Composer.SECTION_CAPTURE), "gaptop 10");
         content.add(defineAreaRow(popup));
         content.add(areaSection(popup), "growx");
 
@@ -1205,7 +1196,7 @@ public class ChatPanel extends JPanel {
     private JComponent areaSection(JPopupMenu popup) {
         CaptureArea[] all = ctx.getCaptureAreaSet().getCaptureAreas();
         if (all.length == 0) {
-            JLabel none = new JLabel("No capture areas yet");
+            JLabel none = GUIUtil.applyProp(new JLabel(), AIAssistantUtil.Composer.EMPTY_AREAS);
             none.setEnabled(false);
             return none;
         }
@@ -1214,9 +1205,8 @@ public class ChatPanel extends JPanel {
         areas.setOpaque(false);
 
         List<JCheckBox> rowBoxes = new ArrayList<>();
-        JCheckBox allBox = new JCheckBox("All areas", areasToSend().length == all.length);
+        JCheckBox allBox = GUIUtil.applyProp(new JCheckBox("", areasToSend().length == all.length), AIAssistantUtil.Composer.ALL_AREAS);
         allBox.setOpaque(false);
-        allBox.setToolTipText("Send every capture area with the next message");
         allBox.addActionListener(_ -> {
             boolean on = allBox.isSelected();
             tickedAreas.clear();
@@ -1237,8 +1227,7 @@ public class ChatPanel extends JPanel {
             });
             rowBoxes.add(box);
 
-            JButton remove = GUIUtil.iconButton(new IconUtil.DeleteIcon(14), true);
-            remove.setToolTipText("Remove this capture area");
+            JButton remove = GUIUtil.applyProp(GUIUtil.iconButton(new IconUtil.DeleteIcon(14), true), AIAssistantUtil.Composer.REMOVE_AREA);
             remove.setFocusable(false);
 
             JPanel row = new JPanel(new BorderLayout());
@@ -1289,11 +1278,10 @@ public class ChatPanel extends JPanel {
     }
 
     private JButton attachFileRow(JPopupMenu popup) {
-        JButton button = new JButton("Attach file");
+        JButton button = GUIUtil.applyProp(new JButton(), AIAssistantUtil.Composer.ATTACH_FILE);
         button.putClientProperty("JButton.buttonType", "borderless");
         button.setHorizontalAlignment(SwingConstants.LEFT);
         button.setFocusable(false);
-        button.setToolTipText("Send the contents of a text file with this message");
         button.addActionListener(_ -> {
             popup.setVisible(false);
             chooseFile();
@@ -1302,11 +1290,10 @@ public class ChatPanel extends JPanel {
     }
 
     private JButton attachURLRow(JPopupMenu popup) {
-        JButton button = new JButton("Add URL");
+        JButton button = GUIUtil.applyProp(new JButton(), AIAssistantUtil.Composer.ADD_URL);
         button.putClientProperty("JButton.buttonType", "borderless");
         button.setHorizontalAlignment(SwingConstants.LEFT);
         button.setFocusable(false);
-        button.setToolTipText("Fetch a page and send its text with this message");
         button.addActionListener(_ -> {
             popup.setVisible(false);
             promptForURL();
@@ -1315,11 +1302,10 @@ public class ChatPanel extends JPanel {
     }
 
     private JButton attachImageRow(JPopupMenu popup) {
-        JButton button = new JButton("Attach image");
+        JButton button = GUIUtil.applyProp(new JButton(), AIAssistantUtil.Composer.ATTACH_IMAGE);
         button.putClientProperty("JButton.buttonType", "borderless");
         button.setHorizontalAlignment(SwingConstants.LEFT);
         button.setFocusable(false);
-        button.setToolTipText("Pick one or more png or jpeg files to send with this message");
         button.addActionListener(_ -> {
             popup.setVisible(false);
             chooseImage();
@@ -1328,11 +1314,10 @@ public class ChatPanel extends JPanel {
     }
 
     private JButton defineAreaRow(JPopupMenu popup) {
-        JButton button = new JButton("Capture area...", new IconUtil.AreaIcon(14));
+        JButton button = GUIUtil.applyProp(new JButton(new IconUtil.AreaIcon(14)), AIAssistantUtil.Composer.CAPTURE_AREA);
         button.putClientProperty("JButton.buttonType", "borderless");
         button.setHorizontalAlignment(SwingConstants.LEFT);
         button.setFocusable(false);
-        button.setToolTipText("Drag out a region and add it to the capture areas");
         button.addActionListener(_ -> {
             popup.setVisible(false);
             Window window = SwingUtilities.getWindowAncestor(this);
@@ -1357,9 +1342,9 @@ public class ChatPanel extends JPanel {
     }
 
     private void chooseImage() {
-        imageChooser.setDialogTitle("Attach image");
+        imageChooser.setDialogTitle(AIAssistantUtil.Composer.ATTACH_IMAGE.getDisplayName());
         imageChooser.setAcceptAllFileFilterUsed(false);
-        imageChooser.setFileFilter(new FileNameExtensionFilter("Images", "png", "jpg", "jpeg", "gif", "bmp"));
+        imageChooser.setFileFilter(new FileNameExtensionFilter(AIAssistantUtil.Composer.IMAGE_FILTER.getDisplayName(), "png", "jpg", "jpeg", "gif", "bmp"));
         imageChooser.setMultiSelectionEnabled(true);
         if (imageChooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) return;
 
@@ -1367,7 +1352,7 @@ public class ChatPanel extends JPanel {
             BackgroundTask.run(this, null, () -> ImageIO.read(file), image -> {
                 if (image == null) {
                     JOptionPane.showMessageDialog(this, "\"" + file.getName() + "\" is not a readable image.",
-                            "Attach image", JOptionPane.WARNING_MESSAGE);
+                            AIAssistantUtil.Composer.ATTACH_IMAGE.getDisplayName(), JOptionPane.WARNING_MESSAGE);
                     return;
                 }
                 attachImage(image, file.getName());
@@ -1376,7 +1361,7 @@ public class ChatPanel extends JPanel {
     }
 
     private void chooseFile() {
-        fileChooser.setDialogTitle("Attach file");
+        fileChooser.setDialogTitle(AIAssistantUtil.Composer.ATTACH_FILE.getDisplayName());
         fileChooser.setMultiSelectionEnabled(true);
         if (fileChooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) return;
 
@@ -1402,7 +1387,7 @@ public class ChatPanel extends JPanel {
     }
 
     private void promptForURL() {
-        String url = JOptionPane.showInputDialog(this, "Fetch a page and attach its text", "Add URL",
+        String url = JOptionPane.showInputDialog(this, "Fetch a page and attach its text", AIAssistantUtil.Composer.ADD_URL.getDisplayName(),
                 JOptionPane.PLAIN_MESSAGE);
         if (url == null || url.isBlank()) return;
 
@@ -1443,7 +1428,7 @@ public class ChatPanel extends JPanel {
         insert.setFocusable(false);
         insert.setToolTipText(skill.getDescription() != null && !skill.getDescription().isEmpty()
                 ? skill.getDescription() + " (inserts into the message)"
-                : "Insert into the message");
+                : AIAssistantUtil.Composer.INSERT_SKILL.getDescription());
         insert.addActionListener(_ -> {
             popup.setVisible(false);
             insertIntoComposer(skill.getContent());
@@ -1489,6 +1474,13 @@ public class ChatPanel extends JPanel {
         return byType;
     }
 
+    /** A popup section header named for its constant; the text is the display name in capitals. */
+    private static JLabel sectionLabel(GetNameDescriptionDisplay ref) {
+        JLabel label = sectionLabel(ref.getDisplayName());
+        label.setName(ref.getName());
+        return label;
+    }
+
     private static JLabel sectionLabel(String text) {
         JLabel label = new JLabel(text.toUpperCase());
         label.setFont(label.getFont().deriveFont(Font.BOLD, label.getFont().getSize2D() - 2f));
@@ -1504,7 +1496,7 @@ public class ChatPanel extends JPanel {
         refreshPendingChips();
         CaptureArea[] areas = areasToSend();
         if (pendingSkills.isEmpty() && pendingSources.isEmpty() && areas.length == 0) {
-            attachSkillButton.setToolTipText("Attach skills, sources or capture areas to the next message");
+            attachSkillButton.setToolTipText(AIAssistantUtil.Composer.ATTACH.getDescription());
             return;
         }
         StringBuilder names = new StringBuilder();
@@ -1520,7 +1512,7 @@ public class ChatPanel extends JPanel {
             if (!names.isEmpty()) names.append(", ");
             names.append(area.getName());
         }
-        attachSkillButton.setToolTipText("Attached to the next message: " + names);
+        attachSkillButton.setToolTipText(AIAssistantUtil.Composer.ATTACHED.getDisplayName() + " " + names);
     }
 
     /**

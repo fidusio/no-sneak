@@ -7,9 +7,7 @@ import io.xlogistx.shiro.ds.ShiroDSDomainSecurityManager;
 import org.zoxweb.server.util.ServerUtil;
 import org.zoxweb.shared.api.APIConfigInfo;
 import org.zoxweb.shared.api.APIDataStore;
-import org.zoxweb.shared.crypto.CIPassword;
 import org.zoxweb.shared.security.DomainSecurityManager;
-import org.zoxweb.shared.security.SubjectAPIKey;
 import org.zoxweb.shared.util.RegistrarMapDefault;
 
 /**
@@ -19,8 +17,8 @@ import org.zoxweb.shared.util.RegistrarMapDefault;
  * cached or freshly created — instead of only when the datastore is also absent, which left a
  * cached-datastore-but-no-manager path returning {@code null}.)
  */
-public final class NoSneakUtil {
-    public static final NoSneakUtil SINGLETON = new NoSneakUtil();
+public final class NSCoreUtil {
+    public static final NSCoreUtil SINGLETON = new NSCoreUtil();
 
     enum ObjName {
         DATA_STORE,
@@ -29,7 +27,7 @@ public final class NoSneakUtil {
 
     private static final RegistrarMapDefault<String, Object> cache = new RegistrarMapDefault<>();
 
-    private NoSneakUtil() {
+    private NSCoreUtil() {
         OPSecUtil.singleton();
     }
 

@@ -1,15 +1,16 @@
 package io.xlogistx.nosneak.ai.assistant.panels;
 
+import io.xlogistx.nosneak.ai.assistant.AIAssistantUtil;
 import io.xlogistx.api.ai.AIAPIBuilder;
 import io.xlogistx.gui.*;
 import io.xlogistx.nosneak.ai.AICredentialSource;
 import io.xlogistx.nosneak.ai.AIProvider;
 import io.xlogistx.nosneak.ai.assistant.AIAPIProvider;
 import io.xlogistx.nosneak.ai.assistant.AssistantContext;
-import io.xlogistx.nosneak.ai.assistant.AssistantPanel;
 import io.xlogistx.nosneak.ai.model.AIProviderConfig;
 import net.miginfocom.swing.MigLayout;
 import org.zoxweb.shared.security.APIKey;
+import org.zoxweb.shared.util.GetNameDescriptionDisplay;
 
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
@@ -66,14 +67,15 @@ public class ProvidersPanel extends JPanel {
 
     private final JPanel formHost = new JPanel(new BorderLayout());
     private JPanel providerForm;
-    private final JTextField providerFormLabel = PanelBuilder.textField("e.g. Claude prod");
-    private final JComboBox<String> providerFormType = new JComboBox<>(PROVIDER_DISPLAY);
-    private final JTextField providerFormBaseURL =
-            PanelBuilder.textField("Optional — provider default when empty");
-    private final JComboBox<String> providerFormModel = new JComboBox<>();
-    private final JLabel providerFormModelLabel = new JLabel("Default model");
-    private final JLabel providerFormKey = new JLabel();
-    private final JButton providerFormSave = UITokens.primary(new JButton("Save", new IconUtil.SaveIcon(16, Color.WHITE)));
+    private final JTextField providerFormLabel = GUIUtil.applyProp(
+            PanelBuilder.textField(AIAssistantUtil.ProviderForm.LABEL_FIELD.getDisplayName()), AIAssistantUtil.ProviderForm.LABEL_FIELD);
+    private final JComboBox<String> providerFormType = GUIUtil.applyProp(new JComboBox<>(PROVIDER_DISPLAY), AIAssistantUtil.ProviderForm.TYPE_FIELD);
+    private final JTextField providerFormBaseURL = GUIUtil.applyProp(
+            PanelBuilder.textField(AIAssistantUtil.ProviderForm.BASE_URL_FIELD.getDisplayName()), AIAssistantUtil.ProviderForm.BASE_URL_FIELD);
+    private final JComboBox<String> providerFormModel = GUIUtil.applyProp(new JComboBox<>(), AIAssistantUtil.ProviderForm.MODEL_FIELD);
+    private final JLabel providerFormModelLabel = GUIUtil.applyProp(new JLabel(), AIAssistantUtil.ProviderForm.MODEL);
+    private final JLabel providerFormKey = GUIUtil.applyProp(new JLabel(), AIAssistantUtil.ProviderForm.KEY_VALUE);
+    private final JButton providerFormSave = UITokens.primary(GUIUtil.applyProp(new JButton(new IconUtil.SaveIcon(16, Color.WHITE)), AIAssistantUtil.ProviderForm.SAVE));
     private AIProviderConfig editingConfig;
     private APIKey<String> editingKey;
 
@@ -91,6 +93,7 @@ public class ProvidersPanel extends JPanel {
      * reset lands on the table.
      */
     public JComponent buildProviderCardsPanel() {
+        providerCards.view().setName(AIAssistantUtil.ProvidersPage.PAGE.getName());
         providerCards.add(buildProviderPanel(), "list");
         providerCards.add(buildAddProvider(), "add");
         providerCards.add(buildCreateProviderKey(), "create");
@@ -101,30 +104,29 @@ public class ProvidersPanel extends JPanel {
     }
 
     public JPanel buildProviderPanel() {
-        PagePanel page = new PagePanel(AssistantPanel.Page.PROVIDERS.getDisplayName(),
-                "Keys come from your NoSneak credentials. Adding one here lets the assistant use it and discover its models.");
-        JButton add = UITokens.primary(new JButton("Add provider", IconUtil.svgIcon("io/xlogistx/gui/icons/plus.svg", 14, Color.WHITE)));
+        PagePanel page = new PagePanel(AIAssistantUtil.Page.PROVIDERS.getDisplayName(),
+                AIAssistantUtil.ProvidersPage.SUBTITLE.getDisplayName());
+        JButton add = UITokens.primary(GUIUtil.applyProp(new JButton(IconUtil.svgIcon("io/xlogistx/gui/icons/plus.svg", 14, Color.WHITE)), AIAssistantUtil.ProvidersPage.ADD));
         add.addActionListener(_ -> onAddProvider());
         page.action(add);
 
         JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", "[260!][]push[][]"));
         bar.setOpaque(false);
-        JTextField search = new JTextField();
-        search.putClientProperty("JTextField.placeholderText", "Search by label, type, endpoint or model");
+        JTextField search = GUIUtil.applyProp(new JTextField(), AIAssistantUtil.ProvidersPage.SEARCH);
         search.putClientProperty("JTextField.leadingIcon", new IconUtil.SearchIcon(14));
         bar.add(search, "growx");
+        GUIUtil.applyProp(providersCount, AIAssistantUtil.ProvidersPage.COUNT);
         providersCount.setForeground(UITokens.muted());
         providersCount.setFont(UITokens.font(Font.PLAIN, -1f));
         bar.add(providersCount);
-        JButton edit = toolButton("Edit", new IconUtil.EditIcon(16));
-        JButton remove = toolButton("Remove", new IconUtil.DeleteIcon(16));
-        remove.setToolTipText("Remove the provider; the key stays in your NoSneak credentials");
+        JButton edit = toolButton(AIAssistantUtil.ProvidersPage.EDIT, new IconUtil.EditIcon(16));
+        JButton remove = toolButton(AIAssistantUtil.ProvidersPage.REMOVE, new IconUtil.DeleteIcon(16));
         remove.setForeground(UITokens.danger());
         bar.add(edit);
         bar.add(remove);
         page.row(bar);
 
-        Tables.style(providersTable);
+        Tables.style(GUIUtil.applyProp(providersTable, AIAssistantUtil.ProvidersPage.TABLE));
         Tables.width(providersTable, ProvidersTableModel.COL_NAME, 200);
         Tables.width(providersTable, ProvidersTableModel.COL_TYPE, 100);
         Tables.width(providersTable, ProvidersTableModel.COL_ENDPOINT, 260);
@@ -173,8 +175,8 @@ public class ProvidersPanel extends JPanel {
         return page;
     }
 
-    private static JButton toolButton(String text, Icon icon) {
-        JButton b = new JButton(text, icon);
+    private static JButton toolButton(GetNameDescriptionDisplay ref, Icon icon) {
+        JButton b = GUIUtil.applyProp(new JButton(icon), ref);
         b.putClientProperty("JButton.buttonType", "toolBarButton");
         b.setEnabled(false);
         return b;
@@ -198,7 +200,7 @@ public class ProvidersPanel extends JPanel {
         @Override
         public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
             super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
-            if (stamp) setText(value instanceof Long l ? timestamp(l) : "never synced");
+            if (stamp) setText(value instanceof Long l ? timestamp(l) : AIAssistantUtil.ProvidersPage.NEVER_SYNCED.getDisplayName());
             if (!isSelected) setForeground(UITokens.muted());
             return this;
         }
@@ -212,16 +214,17 @@ public class ProvidersPanel extends JPanel {
     private void updateProvidersCount() {
         int shown = providersTable.getRowCount();
         int all = providersModel.getRowCount();
-        providersCount.setText(all == 0 ? "No providers yet" : shown == all ? all + (all == 1 ? " provider" : " providers") : shown + " of " + all + " providers");
+        providersCount.setText(all == 0 ? AIAssistantUtil.ProvidersPage.COUNT_EMPTY.getDisplayName() : shown == all ? all + (all == 1 ? " provider" : " providers") : shown + " of " + all + " providers");
     }
 
     /** The key picker page: every credential the source offers, Back / New key in the head, Use this key on the row. */
     public JPanel buildAddProvider() {
-        PagePanel page = new PagePanel("Add a provider",
-                "Pick a credential from your NoSneak key store, or add a brand-new key. One key can back several providers.");
-        JButton back = new JButton("Back", new IconUtil.BackIcon(16));
+        PagePanel page = new PagePanel(AIAssistantUtil.ProvidersPage.PICKER.getDisplayName(),
+                AIAssistantUtil.ProvidersPage.PICKER.getDescription());
+        page.setName(AIAssistantUtil.ProvidersPage.PICKER.getName());
+        JButton back = GUIUtil.applyProp(new JButton(new IconUtil.BackIcon(16)), AIAssistantUtil.ProvidersPage.PICKER_BACK);
         back.addActionListener(_ -> providerCards.show("list"));
-        JButton newKey = UITokens.primary(new JButton("New key", IconUtil.svgIcon("io/xlogistx/gui/icons/plus.svg", 14, Color.WHITE)));
+        JButton newKey = UITokens.primary(GUIUtil.applyProp(new JButton(IconUtil.svgIcon("io/xlogistx/gui/icons/plus.svg", 14, Color.WHITE)), AIAssistantUtil.ProvidersPage.PICKER_NEW_KEY));
         newKey.addActionListener(_ -> providerCards.show("create"));
         JPanel actions = new JPanel(new MigLayout("insets 0, gapx 8"));
         actions.setOpaque(false);
@@ -231,14 +234,15 @@ public class ProvidersPanel extends JPanel {
 
         JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", "[]push[]"));
         bar.setOpaque(false);
+        GUIUtil.applyProp(keysCount, AIAssistantUtil.ProvidersPage.PICKER_COUNT);
         keysCount.setForeground(UITokens.muted());
         keysCount.setFont(UITokens.font(Font.PLAIN, -1f));
         bar.add(keysCount);
-        JButton use = toolButton("Use this key", new IconUtil.NextIcon(16));
+        JButton use = toolButton(AIAssistantUtil.ProvidersPage.PICKER_USE, new IconUtil.NextIcon(16));
         bar.add(use);
         page.row(bar);
 
-        Tables.style(keysTable);
+        Tables.style(GUIUtil.applyProp(keysTable, AIAssistantUtil.ProvidersPage.PICKER_TABLE));
         Tables.width(keysTable, ProviderKeysTableModel.COL_NAME, 240);
         Tables.width(keysTable, ProviderKeysTableModel.COL_PROVIDER, 120);
         Tables.width(keysTable, ProviderKeysTableModel.COL_ENDPOINT, 300);
@@ -273,7 +277,7 @@ public class ProvidersPanel extends JPanel {
         }
         keysModel.setRows(rows);
         int n = rows.size();
-        keysCount.setText(n == 0 ? "No keys yet" : n + (n == 1 ? " key" : " keys"));
+        keysCount.setText(n == 0 ? AIAssistantUtil.ProvidersPage.PICKER_COUNT_EMPTY.getDisplayName() : n + (n == 1 ? " key" : " keys"));
     }
 
     /** A form for a page card: label / field rows, then the primary action beside Cancel; the caller adds it with {@code page.card(...)}. */
@@ -296,19 +300,20 @@ public class ProvidersPanel extends JPanel {
     }
 
     public JPanel buildCreateProviderKey() {
-        JTextField keyLabel = PanelBuilder.textField("e.g. Claude prod");
-        JComboBox<String> provider = new JComboBox<>(PROVIDER_DISPLAY);
-        JPasswordField secret = new JPasswordField(28);
-        secret.putClientProperty("JTextField.placeholderText", "Your API key");
-        JTextField baseURL = PanelBuilder.textField("Optional — provider default when empty");
-        JButton create = UITokens.primary(new JButton("Add to assistant", IconUtil.svgIcon("io/xlogistx/gui/icons/plus.svg", 14, Color.WHITE)));
+        JTextField keyLabel = GUIUtil.applyProp(
+                PanelBuilder.textField(AIAssistantUtil.ProviderKeyEditor.LABEL_FIELD.getDisplayName()), AIAssistantUtil.ProviderKeyEditor.LABEL_FIELD);
+        JComboBox<String> provider = GUIUtil.applyProp(new JComboBox<>(PROVIDER_DISPLAY), AIAssistantUtil.ProviderKeyEditor.PROVIDER_FIELD);
+        JPasswordField secret = GUIUtil.applyProp(new JPasswordField(28), AIAssistantUtil.ProviderKeyEditor.API_KEY_FIELD);
+        JTextField baseURL = GUIUtil.applyProp(
+                PanelBuilder.textField(AIAssistantUtil.ProviderKeyEditor.BASE_URL_FIELD.getDisplayName()), AIAssistantUtil.ProviderKeyEditor.BASE_URL_FIELD);
+        JButton create = UITokens.primary(GUIUtil.applyProp(new JButton(IconUtil.svgIcon("io/xlogistx/gui/icons/plus.svg", 14, Color.WHITE)), AIAssistantUtil.ProviderKeyEditor.CREATE));
 
         create.addActionListener(_ -> {
             String name = keyLabel.getText().trim();
             String rawKey = new String(secret.getPassword()).trim();
             if (name.isEmpty() || rawKey.isEmpty()) {
                 JOptionPane.showMessageDialog(this, "Enter a label and the API key.",
-                        "Missing information", JOptionPane.WARNING_MESSAGE);
+                        AIAssistantUtil.ProvidersPage.MISSING_DIALOG.getDisplayName(), JOptionPane.WARNING_MESSAGE);
                 return;
             }
             String canonical = PROVIDER_CANONICAL[provider.getSelectedIndex()];
@@ -324,16 +329,17 @@ public class ProvidersPanel extends JPanel {
                         showProviderForm(null, key);
                     });
         });
-        JButton cancel = new JButton("Cancel");
+        JButton cancel = GUIUtil.applyProp(new JButton(), AIAssistantUtil.ProviderKeyEditor.CANCEL);
         cancel.addActionListener(_ -> providerCards.show("add"));
 
-        PagePanel page = new PagePanel("New provider key",
-                "A key NoSneak does not have yet. It becomes an ordinary credential of yours, visible on the API Keys page.");
+        PagePanel page = new PagePanel(AIAssistantUtil.ProviderKeyEditor.PAGE.getDisplayName(),
+                AIAssistantUtil.ProviderKeyEditor.PAGE.getDescription());
+        page.setName(AIAssistantUtil.ProviderKeyEditor.PAGE.getName());
         page.card(formCard(new JComponent[][]{
-                {new JLabel("Label*"), keyLabel},
-                {new JLabel("Provider*"), provider},
-                {new JLabel("API key*"), PanelBuilder.passwordField(secret)},
-                {new JLabel("Base URL"), baseURL}}, create, cancel));
+                {label(AIAssistantUtil.ProviderKeyEditor.LABEL), keyLabel},
+                {label(AIAssistantUtil.ProviderKeyEditor.PROVIDER), provider},
+                {label(AIAssistantUtil.ProviderKeyEditor.API_KEY), PanelBuilder.passwordField(secret)},
+                {label(AIAssistantUtil.ProviderKeyEditor.BASE_URL), baseURL}}, create, cancel));
         return page;
     }
 
@@ -342,23 +348,30 @@ public class ProvidersPanel extends JPanel {
      * assistant routes on lives here rather than on the credential. The form is built once and
      * framed in a titled page on every open ({@link #showProviderForm}).
      */
+    /** A form row's label, named and worded by its constant. */
+    private static JLabel label(GetNameDescriptionDisplay ref) {
+        return GUIUtil.applyProp(new JLabel(), ref);
+    }
+
     public JPanel buildProviderForm() {
         providerFormModel.setEditable(true);
         providerFormSave.addActionListener(_ -> onSaveProviderConfig());
-        JButton cancel = new JButton("Cancel");
+        JButton cancel = GUIUtil.applyProp(new JButton(), AIAssistantUtil.ProviderForm.CANCEL);
         cancel.addActionListener(_ -> {
             editingConfig = null;
             editingKey = null;
             providerCards.show("list");
         });
         providerFormKey.setForeground(UITokens.muted());
-        return formCard(new JComponent[][]{
-                {new JLabel("Key"), providerFormKey},
-                {new JLabel("Label*"), providerFormLabel},
-                {new JLabel("Provider*"), providerFormType},
-                {new JLabel("Base URL"), providerFormBaseURL},
+        JPanel form = formCard(new JComponent[][]{
+                {label(AIAssistantUtil.ProviderForm.KEY), providerFormKey},
+                {label(AIAssistantUtil.ProviderForm.LABEL), providerFormLabel},
+                {label(AIAssistantUtil.ProviderForm.TYPE), providerFormType},
+                {label(AIAssistantUtil.ProviderForm.BASE_URL), providerFormBaseURL},
                 // hidden on the add path: discovery has not run yet, so the combo would be empty
                 {providerFormModelLabel, providerFormModel}}, providerFormSave, cancel);
+        form.setName(AIAssistantUtil.ProviderForm.FORM.getName());
+        return form;
     }
 
     /**
@@ -377,7 +390,7 @@ public class ProvidersPanel extends JPanel {
                 ? config.getName() : (key.getName() != null ? key.getName() : ""));
         providerFormType.setSelectedIndex(providerIndex(type));
         providerFormBaseURL.setText(baseURL != null ? baseURL : "");
-        providerFormSave.setText(config != null ? "Save" : "Add to assistant");
+        providerFormSave.setText((config != null ? AIAssistantUtil.ProviderForm.SAVE : AIAssistantUtil.ProviderForm.SAVE_ADD).getDisplayName());
 
         providerFormModel.removeAllItems();
         providerFormModelLabel.setVisible(config != null);
@@ -389,9 +402,9 @@ public class ProvidersPanel extends JPanel {
             providerFormModel.setSelectedItem("");
         }
 
-        PagePanel page = config != null
-                ? new PagePanel("Edit provider", "Change what the assistant calls it, which service it talks to, its endpoint and the model it starts with.")
-                : new PagePanel("Add provider", "Name it and confirm the service and endpoint; the default model can be picked once its models are discovered.");
+        AIAssistantUtil.ProviderForm framing = config != null ? AIAssistantUtil.ProviderForm.EDIT_PAGE : AIAssistantUtil.ProviderForm.ADD_PAGE;
+        PagePanel page = new PagePanel(framing.getDisplayName(), framing.getDescription());
+        page.setName(framing.getName());
         page.card(providerForm);
         formHost.removeAll();
         formHost.add(page, BorderLayout.CENTER);
@@ -404,7 +417,7 @@ public class ProvidersPanel extends JPanel {
         String label = providerFormLabel.getText().trim();
         if (label.isEmpty()) {
             JOptionPane.showMessageDialog(this, "Give the provider a label.",
-                    "Missing information", JOptionPane.WARNING_MESSAGE);
+                    AIAssistantUtil.ProvidersPage.MISSING_DIALOG.getDisplayName(), JOptionPane.WARNING_MESSAGE);
             return;
         }
         if (editingKey == null) return;
@@ -447,7 +460,7 @@ public class ProvidersPanel extends JPanel {
         if (keyIdentity(key) == null) {
             JOptionPane.showMessageDialog(this,
                     "This key has not been saved yet, so a provider cannot be attached to it.",
-                    "Add provider", JOptionPane.WARNING_MESSAGE);
+                    AIAssistantUtil.ProvidersPage.PICKER_UNSAVED_DIALOG.getDisplayName(), JOptionPane.WARNING_MESSAGE);
             return;
         }
         showProviderForm(null, key);
@@ -467,7 +480,7 @@ public class ProvidersPanel extends JPanel {
         if (!(provider instanceof AIAPIProvider p)) return;
         int res = JOptionPane.showConfirmDialog(this,
                 "Remove provider '" + p.getName() + "'? The key stays in your NoSneak credentials.",
-                "Remove provider", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
+                AIAssistantUtil.ProvidersPage.REMOVE_DIALOG.getDisplayName(), JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
         if (res != JOptionPane.OK_OPTION) return;
 
         AIProviderConfig config = p.getConfig();
@@ -545,7 +558,7 @@ public class ProvidersPanel extends JPanel {
             refreshProviderViews();
             if (!pass.issues().isEmpty()) {
                 JOptionPane.showMessageDialog(this, String.join("\n", pass.issues()),
-                        "Provider Error", JOptionPane.ERROR_MESSAGE);
+                        AIAssistantUtil.ProvidersPage.ERROR_DIALOG.getDisplayName(), JOptionPane.ERROR_MESSAGE);
             }
         });
     }

@@ -1,8 +1,9 @@
 package io.xlogistx.nosneak.ai.assistant.panels;
 
+import io.xlogistx.nosneak.ai.assistant.AIAssistantUtil;
 import io.xlogistx.gui.*;
+import io.xlogistx.gui.GUIUtil;
 import io.xlogistx.nosneak.ai.assistant.AssistantContext;
-import io.xlogistx.nosneak.ai.assistant.AssistantPanel;
 import io.xlogistx.nosneak.ai.model.AISkill;
 import net.miginfocom.swing.MigLayout;
 import org.zoxweb.shared.util.GetName;
@@ -62,6 +63,7 @@ public class SkillsPanel extends JPanel {
 
     public SkillsPanel(AssistantContext ctx) {
         this.ctx = ctx;
+        setName(AIAssistantUtil.SkillsPage.PAGE.getName());
         setLayout(new BorderLayout());
         add(buildSkillCards());
     }
@@ -92,23 +94,22 @@ public class SkillsPanel extends JPanel {
     }
 
     public JPanel buildSkillPanel() {
-        PagePanel page = new PagePanel(AssistantPanel.Page.SKILLS.getDisplayName(),
-                "Instructions the assistant can carry into a chat: an md skill goes with the message, a prompt skill is pasted into the composer.");
-        JButton newSkill = UITokens.primary(new JButton("New skill", IconUtil.svgIcon("io/xlogistx/gui/icons/plus.svg", 14, Color.WHITE)));
+        PagePanel page = new PagePanel(AIAssistantUtil.Page.SKILLS.getDisplayName(), AIAssistantUtil.SkillsPage.SUBTITLE.getDisplayName());
+        JButton newSkill = UITokens.primary(GUIUtil.applyProp(new JButton(IconUtil.svgIcon("io/xlogistx/gui/icons/plus.svg", 14, Color.WHITE)), AIAssistantUtil.SkillsPage.NEW_SKILL));
         newSkill.addActionListener(_ -> onAddSkill());
         page.action(newSkill);
 
         JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", "[260!][]push[][]"));
         bar.setOpaque(false);
-        JTextField search = new JTextField();
-        search.putClientProperty("JTextField.placeholderText", "Search by name, type or description");
+        JTextField search = GUIUtil.applyProp(new JTextField(), AIAssistantUtil.SkillsPage.SEARCH);
         search.putClientProperty("JTextField.leadingIcon", new IconUtil.SearchIcon(14));
         bar.add(search, "growx");
+        GUIUtil.applyProp(skillsCount, AIAssistantUtil.SkillsPage.COUNT);
         skillsCount.setForeground(UITokens.muted());
         skillsCount.setFont(UITokens.font(Font.PLAIN, -1f));
         bar.add(skillsCount);
-        JButton edit = new JButton("Edit", new IconUtil.EditIcon(16));
-        JButton delete = new JButton("Delete", new IconUtil.DeleteIcon(16));
+        JButton edit = GUIUtil.applyProp(new JButton(new IconUtil.EditIcon(16)), AIAssistantUtil.SkillsPage.EDIT);
+        JButton delete = GUIUtil.applyProp(new JButton(new IconUtil.DeleteIcon(16)), AIAssistantUtil.SkillsPage.DELETE);
         delete.setForeground(UITokens.danger());
         for (JButton b : new JButton[]{edit, delete}) {
             b.putClientProperty("JButton.buttonType", "toolBarButton");
@@ -117,6 +118,7 @@ public class SkillsPanel extends JPanel {
         }
         page.row(bar);
 
+        GUIUtil.applyProp(skillsTable, AIAssistantUtil.SkillsPage.TABLE);
         Tables.style(skillsTable);
         Tables.width(skillsTable, SkillsTableModel.COL_NAME, 220);
         Tables.width(skillsTable, SkillsTableModel.COL_TYPE, 110);
@@ -176,7 +178,7 @@ public class SkillsPanel extends JPanel {
     private void updateCount() {
         int shown = skillsTable.getRowCount();
         int all = skillsModel.getRowCount();
-        skillsCount.setText(all == 0 ? "No skills yet" : shown == all ? all + (all == 1 ? " skill" : " skills") : shown + " of " + all + " skills");
+        skillsCount.setText(all == 0 ? AIAssistantUtil.SkillsPage.COUNT_EMPTY.getDisplayName() : shown == all ? all + (all == 1 ? " skill" : " skills") : shown + " of " + all + " skills");
     }
 
     /** The type column plain, or a {@code yyyy-MM-dd HH:mm} stamp; both muted like the scan history's. */
@@ -197,10 +199,10 @@ public class SkillsPanel extends JPanel {
     }
 
     public MDEditorPanel buildSkillEditor() {
-        MDEditorPanel editor = new MDEditorPanel();
-        editor.setTitle("Skill instructions");
-        editor.withName("Name", "");
-        editor.withDescription("Description", "");
+        MDEditorPanel editor = GUIUtil.applyProp(new MDEditorPanel(), AIAssistantUtil.SkillEditor.EDITOR);
+        editor.setTitle(AIAssistantUtil.SkillEditor.TITLE.getDisplayName());
+        editor.withName(AIAssistantUtil.SkillEditor.NAME.getDisplayName(), "");
+        editor.withDescription(AIAssistantUtil.SkillEditor.DESCRIPTION.getDisplayName(), "");
         UITokens.primary(editor.getSaveButton()).setIcon(new IconUtil.SaveIcon(16, Color.WHITE)); // the page's primary, like Create / Save on the chat forms
         editor.setValidator(this::validateSkill);
         editor.setOnCommit(this::onSaveSkill);
@@ -212,8 +214,9 @@ public class SkillsPanel extends JPanel {
     }
 
     /** Frames the one editor in a titled page and shows it; the editor keeps its own Save / Cancel. */
-    private void showEditorPage(String title, String description) {
-        PagePanel page = new PagePanel(title, description);
+    private void showEditorPage(AIAssistantUtil.SkillEditor framing) {
+        PagePanel page = new PagePanel(framing.getDisplayName(), framing.getDescription());
+        page.setName(framing.getName());
         page.card(skillEditor);
         editorHost.removeAll();
         editorHost.add(page, BorderLayout.CENTER);
@@ -234,7 +237,7 @@ public class SkillsPanel extends JPanel {
         String name = document.getName() != null ? document.getName().trim() : "";
         if (name.isEmpty()) {
             JOptionPane.showMessageDialog(this, "Give the skill a name before saving.",
-                    "Skill", JOptionPane.WARNING_MESSAGE);
+                    AIAssistantUtil.SkillsPage.NAME_DIALOG.getDisplayName(), JOptionPane.WARNING_MESSAGE);
             return false;
         }
         return true;
@@ -253,7 +256,7 @@ public class SkillsPanel extends JPanel {
                             "Save this text as a " + label + " instead of updating skill \""
                                     + blankTo(selectedSkill.getName(), SkillsTableModel.UNTITLED)
                                     + "\"?\nThe skill itself will not be changed.",
-                            "Save as " + label, JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE);
+                            AIAssistantUtil.SkillsPage.SAVE_AS_DIALOG.getDisplayName() + " " + label, JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE);
                     if (ok != JOptionPane.OK_OPTION) {
                         skillEditor.markDirty();
                         return;
@@ -267,7 +270,7 @@ public class SkillsPanel extends JPanel {
                     // with the text intact, and the reason is the target's own message.
                     skillEditor.markDirty();
                     JOptionPane.showMessageDialog(this, refused.getMessage(),
-                            "Not a valid " + label, JOptionPane.ERROR_MESSAGE);
+                            AIAssistantUtil.SkillsPage.NOT_VALID_DIALOG.getDisplayName() + " " + label, JOptionPane.ERROR_MESSAGE);
                 }
                 return;
             }
@@ -305,34 +308,31 @@ public class SkillsPanel extends JPanel {
 
     private void onAddSkill() {
         selectedSkill = null;
-        showSkillEditor(null, "Create");
+        showSkillEditor(null, AIAssistantUtil.SkillEditor.CREATE.getDisplayName());
     }
 
     private void onEditSkill(AISkill skill) {
         if (skill == null) return;
         selectedSkill = skill;
-        showSkillEditor(skill, "Save");
+        showSkillEditor(skill, AIAssistantUtil.SkillEditor.SAVE.getDisplayName());
     }
 
     private void showSkillEditor(AISkill skill, String saveText) {
         showSkillEditorFields(skill, saveText);
-        if (skill == null)
-            showEditorPage("New skill", "Name it, pick what it is, and write the instructions in markdown. Save as sends the text elsewhere instead.");
-        else
-            showEditorPage("Edit skill", "Change the name, type, description or instructions. Cancel discards the edits.");
+        showEditorPage(skill == null ? AIAssistantUtil.SkillEditor.PAGE_NEW : AIAssistantUtil.SkillEditor.PAGE_EDIT);
     }
 
     public boolean startSkillFromResponse(String markdown) {
         if (skillEditor != null && skillEditor.isDirty()) {
             int ok = JOptionPane.showConfirmDialog(this,
                     "Discard the unsaved skill edits and start a new skill from this response?",
-                    "Unsaved skill", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
+                    AIAssistantUtil.SkillsPage.UNSAVED_DIALOG.getDisplayName(), JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
             if (ok != JOptionPane.OK_OPTION) return false;
         }
         selectedSkill = null;
-        showSkillEditorFields(null, "Create");
+        showSkillEditorFields(null, AIAssistantUtil.SkillEditor.CREATE.getDisplayName());
         skillEditor.setMarkdown(markdown);
-        showEditorPage("New skill", "The assistant's reply, ready to keep as a skill: name it and save.");
+        showEditorPage(AIAssistantUtil.SkillEditor.PAGE_FROM_RESPONSE);
         return true;
     }
 
@@ -342,7 +342,7 @@ public class SkillsPanel extends JPanel {
         // this panel is built, so a combo populated in buildSkillEditor would never show them.
         List<Object> targets = new ArrayList<>(List.of(AISkill.SkillType.values()));
         targets.addAll(saveTargets.keySet());
-        skillEditor.withTypes("Save as", targets,
+        skillEditor.withTypes(AIAssistantUtil.SkillEditor.TYPE.getDisplayName(), targets,
                 skill != null && skill.getSkillType() != null ? skill.getSkillType() : AISkill.SkillType.MD_SKILL,
                 SkillsPanel::targetLabel);
         skillEditor.setDocumentName(skill != null ? skill.getName() : "");
@@ -359,7 +359,7 @@ public class SkillsPanel extends JPanel {
     private void onRemoveSkill(AISkill skill) {
         if (skill == null) return;
         int res = JOptionPane.showConfirmDialog(this, deleteConfirm(SkillsTableModel.title(skill), "skill"),
-                "Delete skill", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
+                AIAssistantUtil.SkillsPage.DELETE_DIALOG.getDisplayName(), JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
         if (res != JOptionPane.OK_OPTION) return;
         BackgroundTask.runCatching(this, null, () -> ctx.deleteSkill(skill), () -> {
             if (selectedSkill == skill) selectedSkill = null;
@@ -387,6 +387,6 @@ public class SkillsPanel extends JPanel {
     public void reset() {
         skillsCards.show("list");
         selectedSkill = null;
-        if (skillEditor != null) showSkillEditorFields(null, "Create");
+        if (skillEditor != null) showSkillEditorFields(null, AIAssistantUtil.SkillEditor.CREATE.getDisplayName());
     }
 }

@@ -53,6 +53,20 @@
 > the JSON's `probes` list, an *Identifications* block in the host detail). **2026-11-01:** the
 > Scan page is titled *Scan* like its sidebar item, and a **New scan** button on that page clears
 > the form, the chips and the result (`ScanPanel.newScan`); the history page's button is unchanged.
+> **Same day, probe groups** (`PLAN-probe-groups.md`): a subject saves named sets of probes
+> (`ProbeGroup` in core, a csv of probe *names*), ticks one in the Add probe popup's
+> **GROUPS** section or keeps the chips as one with *Save ticked as group…*, and manages them on
+> a **Probe groups** page behind the library bar's *Probe groups manager* button (table, member badges,
+> an editor with a checklist). A group never reaches the engine: ticking it ticks its probes,
+> the report records the probes; a deleted member is reported as missing, not lost
+> (`ProbeGroupModel`, `no-sneak-app/CLAUDE.md` → *ScanPanel* → *Probe groups*). **Same evening,
+> UI descriptors:** every component the app builds now has a constant in `no-sneak-app`'s
+> `NSAppUtil` (36 enums implementing zoxweb's `GetNameDescriptionDisplay`: the page list `Screen`,
+> the tabs, filters and table columns that lived beside their panels, and one enum per panel) and
+> is rendered through gui-audio's `GUIUtil.applyProp` — no literal label, tooltip, placeholder or
+> dialog title is left in a panel (`no-sneak-app/CLAUDE.md` → *ScanPanel* → *Probe groups*, last
+> paragraph); `ai-assistant` has its twin, `AIAssistantUtil` (20 enums, the assistant's `Page`
+> among them), so the whole Swing surface follows the one rule.
 
 Assessment tooling for what a network endpoint exposes — TLS posture, **post-quantum
 readiness**, and running services — plus a Swing front-end and an AI-assistant layer.

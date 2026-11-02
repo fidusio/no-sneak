@@ -1,7 +1,9 @@
 package io.xlogistx.nosneak.app.ui;
 
+import io.xlogistx.nosneak.ai.assistant.AIAssistantUtil;
 
 import io.xlogistx.gui.BackgroundTask;
+import io.xlogistx.gui.GUIUtil;
 import io.xlogistx.gui.HeaderBar;
 import io.xlogistx.gui.IconUtil;
 import io.xlogistx.gui.SideNavPanel;
@@ -14,7 +16,8 @@ import io.xlogistx.nosneak.app.ui.assistant.SessionAICredentialSource;
 import io.xlogistx.nosneak.app.ui.utility.AppContext;
 import io.xlogistx.nosneak.app.ui.utility.AppPrefs;
 import io.xlogistx.nosneak.app.ui.utility.Navigator;
-import io.xlogistx.nosneak.app.ui.utility.Navigator.Screen;
+import io.xlogistx.nosneak.app.NSAppUtil;
+import io.xlogistx.nosneak.app.NSAppUtil.Screen;
 import io.xlogistx.nosneak.model.ProbeDefinitionLoader;
 
 import javax.swing.*;
@@ -41,8 +44,6 @@ import java.io.File;
  */
 public class AppShell extends JPanel {
 
-    private static final String SECTION_ADMIN = "admin";
-
     private final CardLayout cards = new CardLayout();
     private final JPanel content = new JPanel(cards);
     private final AppContext ctx;
@@ -59,6 +60,7 @@ public class AppShell extends JPanel {
 
     public AppShell(AppContext ctx) {
         setLayout(new BorderLayout());
+        setName(NSAppUtil.Shell.PANEL.getName());
         this.ctx = ctx;
 
         AssistantContext assistantContext = new AssistantContext(new SessionAICredentialSource(ctx.session()), new AssistantStorage(ctx.session()));
@@ -82,10 +84,10 @@ public class AppShell extends JPanel {
         navigator.register(Screen.SCAN, scanPanel, () -> scanPanel.show(ScanPanel.SECTION_SCAN));
         navigator.register(Screen.SCAN_HISTORY, scanPanel, () -> scanPanel.show(ScanPanel.SECTION_HISTORY));
         navigator.register(Screen.PROBES, scanPanel, () -> scanPanel.show(ScanPanel.SECTION_PROBES));
-        navigator.register(Screen.CHAT, assistantPanel, () -> assistantPanel.showPage(AssistantPanel.Page.CHAT));
-        navigator.register(Screen.CAPTURE, assistantPanel, () -> assistantPanel.showPage(AssistantPanel.Page.CAPTURE));
-        navigator.register(Screen.SKILLS, assistantPanel, () -> assistantPanel.showPage(AssistantPanel.Page.SKILLS));
-        navigator.register(Screen.PROVIDERS, assistantPanel, () -> assistantPanel.showPage(AssistantPanel.Page.PROVIDERS));
+        navigator.register(Screen.CHAT, assistantPanel, () -> assistantPanel.showPage(AIAssistantUtil.Page.CHAT));
+        navigator.register(Screen.CAPTURE, assistantPanel, () -> assistantPanel.showPage(AIAssistantUtil.Page.CAPTURE));
+        navigator.register(Screen.SKILLS, assistantPanel, () -> assistantPanel.showPage(AIAssistantUtil.Page.SKILLS));
+        navigator.register(Screen.PROVIDERS, assistantPanel, () -> assistantPanel.showPage(AIAssistantUtil.Page.PROVIDERS));
         navigator.register(Screen.PROFILE, subjectPanel, () -> subjectPanel.show(SubjectPanel.SECTION_PROFILE));
         navigator.register(Screen.API_KEYS, subjectPanel, () -> subjectPanel.show(SubjectPanel.SECTION_CREDENTIALS));
         navigator.register(Screen.SETTINGS, subjectPanel, () -> subjectPanel.show(SubjectPanel.SECTION_SETTINGS));
@@ -114,7 +116,7 @@ public class AppShell extends JPanel {
                 String principal = ctx.session().getPrincipalID();
                 boolean admin = isSuperAdmin();
                 header.setSubject(principal, admin ? "super-admin" : null);
-                nav.setSectionVisible(SECTION_ADMIN, admin);
+                nav.setSectionVisible(NSAppUtil.Shell.SECTION_ADMIN.getName(), admin);
                 assistantPanel.reloadProviders();
                 assistantPanel.refreshHistory();
                 assistantPanel.refreshSkills();
@@ -154,7 +156,7 @@ public class AppShell extends JPanel {
     }
 
     /** The sidebar screen of an assistant page, null for the job queue (not offered); package-private for {@code ScreenLabelsTest}. */
-    static Screen screenFor(AssistantPanel.Page page) {
+    static Screen screenFor(AIAssistantUtil.Page page) {
         return switch (page) {
             case CHAT -> Screen.CHAT;
             case CAPTURE -> Screen.CAPTURE;
@@ -165,17 +167,17 @@ public class AppShell extends JPanel {
     }
 
     private HeaderBar buildHeader() {
-        HeaderBar h = new HeaderBar(IconUtil.svgIcon("io/xlogistx/gui/icons/shield.svg", 20, UITokens.accent()), "NoSneak");
+        HeaderBar h = new HeaderBar(IconUtil.svgIcon("io/xlogistx/gui/icons/shield.svg", 20, UITokens.accent()), NSAppUtil.Shell.BRAND.getDisplayName());
         // The chip names the vault directory; the tooltip says what is inside it, in the About
         // card's words (2026-10-27), since the chip itself has room for one line.
         File store = AppPrefs.storeLocation();
         h.setStatus(IconUtil.svgIcon("io/xlogistx/gui/icons/lock.svg", 14, UITokens.muted()),
-                (store != null ? store.getAbsolutePath() : "store") + " · vault open",
-                MenuBarFactory.STORE_NOTE + " Settings > Backup saves a copy.");
-        JButton signOut = new JButton("Sign out", IconUtil.svgIcon("io/xlogistx/gui/icons/logout.svg", 16, UITokens.text()));
+                (store != null ? store.getAbsolutePath() : NSAppUtil.Shell.STORE_UNKNOWN.getDisplayName()) + " · " + NSAppUtil.Shell.STORE_CHIP.getDisplayName(),
+                MenuBarFactory.STORE_NOTE + " " + NSAppUtil.Shell.STORE_CHIP.getDescription());
+        JButton signOut = GUIUtil.applyProp(new JButton(IconUtil.svgIcon("io/xlogistx/gui/icons/logout.svg", 16, UITokens.text())), NSAppUtil.Shell.SIGN_OUT);
         signOut.putClientProperty("JButton.buttonType", "toolBarButton");
         signOut.addActionListener(_ -> {
-            int ok = JOptionPane.showConfirmDialog(this, "Sign out of NoSneak?", "Sign out",
+            int ok = JOptionPane.showConfirmDialog(this, "Sign out of NoSneak?", NSAppUtil.Shell.SIGN_OUT_DIALOG.getDisplayName(),
                     JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE);
             if (ok == JOptionPane.OK_OPTION) ctx.session().logout();
         });
@@ -184,39 +186,45 @@ public class AppShell extends JPanel {
     }
 
     private void buildSidebar() {
-        nav.section("scan", "Scan");
+        section(NSAppUtil.Shell.SECTION_SCAN);
         item(Screen.SCAN, "scan");
         item(Screen.SCAN_HISTORY, "clock");
         item(Screen.PROBES, "flask");
 
-        nav.section("assistant", "Assistant");
+        section(NSAppUtil.Shell.SECTION_ASSISTANT);
         item(Screen.CHAT, "chat");
         item(Screen.CAPTURE, "capture");
         item(Screen.SKILLS, "book");
         item(Screen.PROVIDERS, "plug");
 
-        nav.section("account", "Account");
+        section(NSAppUtil.Shell.SECTION_ACCOUNT);
         item(Screen.PROFILE, "user");
         item(Screen.API_KEYS, "key");
         item(Screen.SETTINGS, "settings");
 
-        nav.section(SECTION_ADMIN, "Admin");
+        section(NSAppUtil.Shell.SECTION_ADMIN);
         item(Screen.ACL, "shield");
-        nav.setSectionVisible(SECTION_ADMIN, false);
+        nav.setSectionVisible(NSAppUtil.Shell.SECTION_ADMIN.getName(), false);
 
-        nav.onSelect(key -> navigator.show(Screen.valueOf(key)));
+        nav.onSelect(key -> navigator.show(Screen.byName(key)));
 
         // Help opens the page-by-page description; the version line is the About entry (2026-10-27),
         // so the Java / platform / store facts live in the About card instead of the sidebar.
-        nav.footerAction(icon("help"), "Help", menus::showDescription);
+        GUIUtil.applyProp(nav.footerAction(icon("help"), NSAppUtil.Shell.HELP.getDisplayName(), menus::showDescription), NSAppUtil.Shell.HELP);
         JButton version = UITokens.link(new JButton(NoSneakMain.VERSION.getName() + " " + NoSneakMain.VERSION.version()));
+        version.setName(NSAppUtil.Shell.VERSION.getName());
         version.setFont(UITokens.mono(-2f));
         version.setForeground(UITokens.muted());
         version.setHorizontalAlignment(SwingConstants.LEFT);
         version.setBorder(BorderFactory.createEmptyBorder(6, 12, 2, 12));
-        version.setToolTipText("About " + NoSneakMain.VERSION.getName() + ": version, Java, platform, store");
+        version.setToolTipText("About " + NoSneakMain.VERSION.getName() + ": " + NSAppUtil.Shell.VERSION.getDescription());
         version.addActionListener(_ -> menus.showAbout());
         nav.footer(version);
+    }
+
+    /** A sidebar section header: the constant's name is the section's key, its display name the title. */
+    private void section(NSAppUtil.Shell section) {
+        nav.section(section.getName(), section.getDisplayName());
     }
 
     /**
@@ -241,18 +249,18 @@ public class AppShell extends JPanel {
      */
     private JPanel buildFooter() {
         JPanel footer = new JPanel(new BorderLayout());
+        footer.setName(NSAppUtil.StatusBar.BAR.getName());
         footer.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createMatteBorder(1, 0, 0, 0, UITokens.border()),
                 BorderFactory.createEmptyBorder(4, 12, 4, 12)));
         footer.setBackground(UITokens.surface());
 
-        JLabel session = new JLabel("Signed out");
-        JLabel vendors = new JLabel(" ");
+        JLabel session = GUIUtil.applyProp(new JLabel(), NSAppUtil.StatusBar.SESSION);
+        JLabel vendors = GUIUtil.applyProp(new JLabel(" "), NSAppUtil.StatusBar.VENDORS);
         session.setForeground(UITokens.muted());
         vendors.setForeground(UITokens.muted());
         session.setFont(UITokens.font(Font.PLAIN, -1f));
         vendors.setFont(UITokens.font(Font.PLAIN, -1f));
-        vendors.setToolTipText("The Wireshark manufacturer list that names each host's vendor in scan reports. Settings > Sync refreshes it.");
 
         Runnable refreshVendors = () -> {
             if (!ctx.session().isAuthenticated()) {
@@ -260,17 +268,17 @@ public class AppShell extends JPanel {
                 return;
             }
             if (!ctx.session().macVendorsLoaded()) {
-                vendors.setText("MAC vendors: loading…");
+                vendors.setText(NSAppUtil.StatusBar.VENDORS_LOADING.getDisplayName());
                 return;
             }
             BackgroundTask.run(this, null, () -> ctx.session().macVendorStatus(),
-                    status -> vendors.setText("MAC vendors: " + SubjectPanel.syncStatusText(status)));
+                    status -> vendors.setText(NSAppUtil.StatusBar.VENDORS_PREFIX.getDisplayName() + " " + SubjectPanel.syncStatusText(status)));
         };
         ctx.session().onAuthChange(e -> {
             if ((boolean) e.getNewValue()) {
-                session.setText("Signed in as " + ctx.session().getPrincipalID());
+                session.setText(NSAppUtil.StatusBar.SIGNED_IN.getDisplayName() + " " + ctx.session().getPrincipalID());
             } else {
-                session.setText("Signed out");
+                session.setText(NSAppUtil.StatusBar.SESSION.getDisplayName());
             }
             refreshVendors.run();
         });

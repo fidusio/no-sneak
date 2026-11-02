@@ -1,5 +1,7 @@
 package io.xlogistx.nosneak.app.ui;
 
+import io.xlogistx.gui.GUIUtil;
+import io.xlogistx.nosneak.app.NSAppUtil;
 import io.xlogistx.nosneak.app.ui.utility.AppContext;
 import io.xlogistx.gui.CardStack;
 import io.xlogistx.gui.PanelBuilder;
@@ -23,9 +25,12 @@ public class PQCRegistryPanel extends JPanel {
 
     public PQCRegistryPanel(AppContext ctx) {
         setLayout(new BorderLayout());
+        setName(NSAppUtil.PQCRegistryPage.PAGE.getName());
         cardStack.add(new JPanel(), "temp");
 
-        add(PanelBuilder.buildDefaultSplitPanel(cardStack.view(), new JToggleButton("PLACEHOLDER"), new JToggleButton("PLACEHOLDER")));
+        add(PanelBuilder.buildDefaultSplitPanel(cardStack.view(),
+                GUIUtil.applyProp(new JToggleButton(), NSAppUtil.PQCRegistryPage.PLACEHOLDER_LEFT),
+                GUIUtil.applyProp(new JToggleButton(), NSAppUtil.PQCRegistryPage.PLACEHOLDER_RIGHT)));
 
     }
 }

@@ -2,10 +2,12 @@ package io.xlogistx.nosneak.app.ui.scan;
 
 import io.xlogistx.gui.ChipPanel;
 import io.xlogistx.gui.FormPanel;
+import io.xlogistx.gui.GUIUtil;
 import io.xlogistx.gui.IconUtil;
 import io.xlogistx.gui.InlineMessage;
 import io.xlogistx.gui.SegmentedControl;
 import io.xlogistx.gui.UITokens;
+import io.xlogistx.nosneak.app.NSAppUtil;
 import io.xlogistx.nosneak.nmap.NMap;
 import io.xlogistx.nosneak.nmap.NMapConfig;
 import net.miginfocom.swing.MigLayout;
@@ -36,32 +38,34 @@ import java.util.List;
  */
 public class ScanFormPanel extends JPanel {
 
-    /** What an empty Ports field means when no probe is ticked: the engine's default list. */
-    public static final String PORTS_DEFAULT_HINT = "1-1024 (default when empty)";
+    /** What an empty Ports field means when no probe is ticked: the engine's default list ({@link NSAppUtil.ScanForm#PORTS_FIELD}'s placeholder). */
+    public static final String PORTS_DEFAULT_HINT = NSAppUtil.ScanForm.PORTS_FIELD.getDisplayName();
 
-    private final JTextField targets = new JTextField();
-    private final JTextField ports = new JTextField();
-    private final JTextField name = new JTextField();
-    private final JCheckBox serviceDetection = new JCheckBox("Service detection");
-    private final JCheckBox discoveryOnly = new JCheckBox("Host discovery only");
-    private final JCheckBox skipPing = new JCheckBox("Skip ping");
-    private final JCheckBox upOnly = new JCheckBox("Live hosts only");
-    private final JCheckBox openOnly = new JCheckBox("Open ports only");
-    private final SegmentedControl timing = new SegmentedControl(NMapConfig.Timing.values());
+    // every component is named, worded and described by NSAppUtil.ScanForm (the maintainer's rule, 2026-11-01)
+    private final JTextField targets = GUIUtil.applyProp(new JTextField(), NSAppUtil.ScanForm.TARGETS_FIELD);
+    private final JTextField ports = GUIUtil.applyProp(new JTextField(), NSAppUtil.ScanForm.PORTS_FIELD);
+    private final JTextField name = GUIUtil.applyProp(new JTextField(), NSAppUtil.ScanForm.NAME_FIELD);
+    private final JCheckBox serviceDetection = GUIUtil.applyProp(new JCheckBox(), NSAppUtil.ScanForm.SERVICE_DETECTION);
+    private final JCheckBox discoveryOnly = GUIUtil.applyProp(new JCheckBox(), NSAppUtil.ScanForm.DISCOVERY_ONLY);
+    private final JCheckBox skipPing = GUIUtil.applyProp(new JCheckBox(), NSAppUtil.ScanForm.SKIP_PING);
+    private final JCheckBox upOnly = GUIUtil.applyProp(new JCheckBox(), NSAppUtil.ScanForm.UP_ONLY);
+    private final JCheckBox openOnly = GUIUtil.applyProp(new JCheckBox(), NSAppUtil.ScanForm.OPEN_ONLY);
+    private final SegmentedControl timing = GUIUtil.applyProp(new SegmentedControl(NMapConfig.Timing.values()), NSAppUtil.ScanForm.TIMING_CONTROL);
     /** First / All — {@code --probe-match} (2026-10-31); the enum carries the labels and tooltips. */
-    private final SegmentedControl probeMatch = new SegmentedControl(NMapConfig.ProbeMatch.values());
-    private final JTextField maxInFlight = new JTextField(6);
-    private final JTextField minRtt = new JTextField(6);
-    private final JTextField command = new JTextField();
-    private final InlineMessage message = new InlineMessage();
-    private final JButton run = UITokens.primary(new JButton("Run scan", IconUtil.svgIcon("io/xlogistx/gui/icons/run.svg", 16, Color.WHITE)));
-    private final JButton stop = new JButton("Stop", new IconUtil.StopIcon(16));
-    private final JButton help = new JButton(new IconUtil.InfoIcon(16));
-    private final JPanel probeSlot = new JPanel(new BorderLayout());
+    private final SegmentedControl probeMatch = GUIUtil.applyProp(new SegmentedControl(NMapConfig.ProbeMatch.values()), NSAppUtil.ScanForm.MATCH_CONTROL);
+    private final JTextField maxInFlight = GUIUtil.applyProp(new JTextField(6), NSAppUtil.ScanForm.MAX_IN_FLIGHT_FIELD);
+    private final JTextField minRtt = GUIUtil.applyProp(new JTextField(6), NSAppUtil.ScanForm.MIN_RTT_FIELD);
+    private final JTextField command = GUIUtil.applyProp(new JTextField(), NSAppUtil.ScanForm.COMMAND_FIELD);
+    private final InlineMessage message = GUIUtil.applyProp(new InlineMessage(), NSAppUtil.ScanForm.MESSAGE);
+    private final JButton run = UITokens.primary(GUIUtil.applyProp(new JButton(IconUtil.svgIcon("io/xlogistx/gui/icons/run.svg", 16, Color.WHITE)), NSAppUtil.ScanForm.RUN));
+    private final JButton stop = GUIUtil.applyProp(new JButton(new IconUtil.StopIcon(16)), NSAppUtil.ScanForm.STOP);
+    private final JButton help = GUIUtil.applyProp(new JButton(new IconUtil.InfoIcon(16)), NSAppUtil.ScanForm.HELP);
+    private final JPanel probeSlot = GUIUtil.applyProp(new JPanel(new BorderLayout()), NSAppUtil.ScanForm.PROBE_SLOT);
     private boolean syncing;
 
     public ScanFormPanel() {
         super(new MigLayout("insets 20, fillx, wrap 1, gapy 12, hidemode 3", "[grow,fill]"));
+        GUIUtil.applyProp(this, NSAppUtil.ScanForm.PANEL);
         setBackground(UITokens.surface());
         setBorder(BorderFactory.createLineBorder(UITokens.border()));
 
@@ -71,32 +75,29 @@ public class ScanFormPanel extends JPanel {
         minRtt.setFont(UITokens.mono(0));
         command.setFont(UITokens.mono(-0.5f));
         command.setBackground(UITokens.color("xlogistx.chip", null, 0xF7F7FA));
-        name.putClientProperty("JTextField.placeholderText", "e.g. Office segment, weekly");
-        targets.putClientProperty("JTextField.placeholderText", "10.0.0.0/24  host.example.com  10.0.0.5-9");
-        ports.putClientProperty("JTextField.placeholderText", PORTS_DEFAULT_HINT);
 
         // row 1: targets · ports · name
         JPanel row1 = new JPanel(new MigLayout("insets 0, gapx 14, fillx", "[grow 5,fill][grow 3,fill][grow 4,fill]"));
         row1.setOpaque(false);
-        row1.add(field("Targets", targets, "Hosts, ranges or CIDR blocks you own or are authorised to assess."), "wmin 0");
-        row1.add(field("Ports", ports, null), "wmin 0");
-        row1.add(field("Name (optional)", name, null), "wmin 0");
+        row1.add(field(NSAppUtil.ScanForm.TARGETS, targets, NSAppUtil.ScanForm.TARGETS_HINT), "wmin 0");
+        row1.add(field(NSAppUtil.ScanForm.PORTS, ports, null), "wmin 0");
+        row1.add(field(NSAppUtil.ScanForm.NAME, name, null), "wmin 0");
         add(row1, "growx");
 
         // row 2: options
         JPanel options = new JPanel(new MigLayout("insets 0, gapx 18, gapy 6", "[]"));
         options.setOpaque(false);
-        options.add(FormPanel.fieldLabel("Options", false), "gapright 8");
+        options.add(label(NSAppUtil.ScanForm.OPTIONS), "gapright 8");
         options.add(serviceDetection);
-        options.add(mono("-sV"), "gapright 10");
+        options.add(mono(NSAppUtil.ScanForm.SERVICE_DETECTION_FLAG), "gapright 10");
         options.add(discoveryOnly);
-        options.add(mono("-sn"), "gapright 10");
+        options.add(mono(NSAppUtil.ScanForm.DISCOVERY_ONLY_FLAG), "gapright 10");
         options.add(skipPing);
-        options.add(mono("-Pn"), "gapright 10");
+        options.add(mono(NSAppUtil.ScanForm.SKIP_PING_FLAG), "gapright 10");
         options.add(upOnly);
-        options.add(mono("--up-only"), "gapright 10");
+        options.add(mono(NSAppUtil.ScanForm.UP_ONLY_FLAG), "gapright 10");
         options.add(openOnly);
-        options.add(mono("--open"));
+        options.add(mono(NSAppUtil.ScanForm.OPEN_ONLY_FLAG));
         for (JCheckBox b : new JCheckBox[]{serviceDetection, discoveryOnly, skipPing, upOnly, openOnly}) {
             b.setOpaque(false);
             b.addActionListener(_ -> fieldsChanged());
@@ -111,17 +112,17 @@ public class ScanFormPanel extends JPanel {
         row3.setOpaque(false);
         JPanel timingBox = new JPanel(new MigLayout("insets 0, wrap 1, gapy 6"));
         timingBox.setOpaque(false);
-        timingBox.add(FormPanel.fieldLabel("Timing", false));
+        timingBox.add(label(NSAppUtil.ScanForm.TIMING));
         timingBox.add(timing);
         row3.add(timingBox, "aligny top");
-        row3.add(field("Max in flight", maxInFlight, null), "aligny top, w 120!");
-        row3.add(field("Min RTT timeout (ms)", minRtt, null), "aligny top, w 150!");
+        row3.add(field(NSAppUtil.ScanForm.MAX_IN_FLIGHT, maxInFlight, null), "aligny top, w 120!");
+        row3.add(field(NSAppUtil.ScanForm.MIN_RTT, minRtt, null), "aligny top, w 150!");
         JPanel probeBox = new JPanel(new MigLayout("insets 0, wrap 1, gapy 6, fillx", "[grow,fill]"));
         probeBox.setOpaque(false);
         JPanel probeHead = new JPanel(new MigLayout("insets 0, gapx 8", "[]push[][]"));
         probeHead.setOpaque(false);
-        probeHead.add(FormPanel.fieldLabel("Probes", false));
-        probeHead.add(FormPanel.fieldLabel("Match", false));
+        probeHead.add(label(NSAppUtil.ScanForm.PROBES));
+        probeHead.add(label(NSAppUtil.ScanForm.MATCH));
         probeHead.add(probeMatch);
         probeBox.add(probeHead, "growx");
         probeSlot.setOpaque(false);
@@ -132,14 +133,14 @@ public class ScanFormPanel extends JPanel {
         // row 4: the command
         JPanel cmdHead = new JPanel(new MigLayout("insets 0, gapx 8", "[]push[]"));
         cmdHead.setOpaque(false);
-        JLabel cmdLabel = FormPanel.fieldLabel("Command", false);
-        JLabel cmdHint = FormPanel.hint("generated from the form · edit it and the form follows");
+        JLabel cmdLabel = label(NSAppUtil.ScanForm.COMMAND);
+        JLabel cmdHint = GUIUtil.applyProp(FormPanel.hint(NSAppUtil.ScanForm.COMMAND_HINT.getDisplayName()), NSAppUtil.ScanForm.COMMAND_HINT);
         JPanel cmdLabels = new JPanel(new MigLayout("insets 0, gapx 8"));
         cmdLabels.setOpaque(false);
         cmdLabels.add(cmdLabel);
         cmdLabels.add(cmdHint);
         cmdHead.add(cmdLabels);
-        JButton copy = new JButton("Copy", new IconUtil.CopyIcon(14));
+        JButton copy = GUIUtil.applyProp(new JButton(new IconUtil.CopyIcon(14)), NSAppUtil.ScanForm.COPY);
         copy.putClientProperty("JButton.buttonType", "toolBarButton");
         copy.addActionListener(_ -> {
             String text = command.getText();
@@ -149,11 +150,9 @@ public class ScanFormPanel extends JPanel {
         JPanel cmdRow = new JPanel(new MigLayout("insets 0, gapx 10, fillx", "[grow,fill][][][]"));
         cmdRow.setOpaque(false);
         cmdRow.add(command, "growx");
-        help.setToolTipText("Command-line reference");
         cmdRow.add(help);
         cmdRow.add(run);
         stop.setEnabled(false);
-        stop.setToolTipText("Stop the running scan; what completed so far is shown, nothing is saved");
         cmdRow.add(stop);
         JPanel cmdBox = new JPanel(new MigLayout("insets 14 0 0 0, wrap 1, gapy 6, fillx", "[grow,fill]"));
         cmdBox.setOpaque(false);
@@ -235,7 +234,8 @@ public class ScanFormPanel extends JPanel {
     public void setPortsPlaceholder(String text) {
         String hint = text != null ? text : PORTS_DEFAULT_HINT;
         ports.putClientProperty("JTextField.placeholderText", hint);
-        ports.setToolTipText("Empty: " + hint + ". Type a -p spec to scan other ports."); // the field is narrow
+        ports.setToolTipText(NSAppUtil.ScanForm.PORTS_EMPTY.getDisplayName() + ": " + hint + ". "
+                + NSAppUtil.ScanForm.PORTS_FIELD.getDescription()); // the field is narrow
         ports.repaint();
     }
 
@@ -282,6 +282,11 @@ public class ScanFormPanel extends JPanel {
     /** Shows a problem under the command (an engine refusal, a bad probe). */
     public void showError(String text) {
         message.error(text);
+    }
+
+    /** A note under the command that is not a refusal (a group with members that no longer exist, 2026-11-01). */
+    public void showNote(String text) {
+        message.info(text);
     }
 
     public void clearMessage() {
@@ -517,21 +522,27 @@ public class ScanFormPanel extends JPanel {
      * width from the panel's width ratchets (the label then reports that width as preferred, the
      * column grows, the width grows), which squeezed the Ports and Name columns to nothing.
      */
-    private static JPanel field(String label, JComponent c, String hint) {
+    private static JPanel field(NSAppUtil.ScanForm label, JComponent c, NSAppUtil.ScanForm hint) {
         JPanel p = new JPanel(new MigLayout("insets 0, wrap 1, gapy 6, fillx", "[grow,fill]"));
         p.setOpaque(false);
-        p.add(FormPanel.fieldLabel(label, false));
+        p.add(label(label));
         p.add(c, "growx, wmin 0");
         if (hint != null) {
-            io.xlogistx.gui.WrapLabel h = FormPanel.hint(hint);
+            io.xlogistx.gui.WrapLabel h = GUIUtil.applyProp(FormPanel.hint(hint.getDisplayName()), hint);
             h.setWrapWidth(360);
             p.add(h, "wmin 0");
         }
         return p;
     }
 
-    private static JLabel mono(String text) {
-        JLabel l = new JLabel(text);
+    /** A field label worded and named by its descriptor. */
+    private static JLabel label(NSAppUtil.ScanForm ref) {
+        return GUIUtil.applyProp(FormPanel.fieldLabel(ref.getDisplayName(), false), ref);
+    }
+
+    /** The flag beside an option, in the mono face. */
+    private static JLabel mono(NSAppUtil.ScanForm ref) {
+        JLabel l = GUIUtil.applyProp(new JLabel(), ref);
         l.setFont(UITokens.mono(-1.5f));
         l.setForeground(UITokens.muted());
         return l;

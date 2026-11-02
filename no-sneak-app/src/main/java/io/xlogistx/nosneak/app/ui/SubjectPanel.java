@@ -1,5 +1,6 @@
 package io.xlogistx.nosneak.app.ui;
 
+import io.xlogistx.nosneak.app.NSAppUtil;
 import io.xlogistx.datastore.h2p.H2PDataStore;
 import io.xlogistx.gui.GUIUtil;
 import io.xlogistx.gui.IconUtil;
@@ -16,6 +17,7 @@ import org.zoxweb.shared.security.APIKey;
 import org.zoxweb.shared.security.CredentialInfo;
 import org.zoxweb.shared.security.PrincipalIdentifier;
 import org.zoxweb.shared.security.SubjectAPIKey;
+import org.zoxweb.shared.util.GetNameDescriptionDisplay;
 import org.zoxweb.shared.util.NVGenericMap;
 import org.zoxweb.shared.util.NVPair;
 
@@ -44,7 +46,7 @@ public class SubjectPanel extends JPanel {
 
     /** A copied API-key secret is wiped from the clipboard after this long, if it is still there. */
     static final int SECRET_CLIPBOARD_MILLIS = 60_000;
-    private static final String COPIED_TIP = "Copied (cleared from the clipboard after 60 s)";
+    private static final String COPIED_TIP = NSAppUtil.ApiKeysPage.COPIED.getDescription();
 
     // ---- Services ----
     private final CardStack cardStack = new CardStack();
@@ -56,7 +58,7 @@ public class SubjectPanel extends JPanel {
     private final JTextField dob = new JTextField(20);
 
     private static final String[] PROFILE_KEYS = {"firstName", "lastName", "dob"};
-    private final JButton saveProfile = new JButton("Save Changes", new IconUtil.SaveIcon(16));
+    private final JButton saveProfile = GUIUtil.applyProp(new JButton(new IconUtil.SaveIcon(16)), NSAppUtil.ProfilePage.SAVE);
 
     // ---- Change-password fields ----
     private final JPasswordField currentPwd = new JPasswordField(35);
@@ -76,8 +78,8 @@ public class SubjectPanel extends JPanel {
     private SubjectAPIKey selectedKey;
     private boolean isKeyShown = false;
     private final char defaultEcho = editKeySecret.getEchoChar();
-    private final JButton showKey = GUIUtil.iconButton(new IconUtil.VisibleIcon(16));
-    private final JButton rotateKey = GUIUtil.iconButton(new IconUtil.RefreshIcon(16));
+    private final JButton showKey = GUIUtil.applyProp(GUIUtil.iconButton(new IconUtil.VisibleIcon(16)), NSAppUtil.ApiKeysPage.SHOW_KEY);
+    private final JButton rotateKey = GUIUtil.applyProp(GUIUtil.iconButton(new IconUtil.RefreshIcon(16)), NSAppUtil.ApiKeysPage.ROTATE);
 
     // ---- Edit-address fields (populated from the clicked address; null selection = new address) ----
     private final JTextField addrLabel = new JTextField(35);
@@ -113,11 +115,13 @@ public class SubjectPanel extends JPanel {
         // Phase 5 of the redesign (2026-10-24): Profile and Settings sit in the shared page frame;
         // Credentials already has its own two-card layout (Phase 4). Backup and Restore are
         // blocks of the Settings page since 2026-10-26 (they had a page of their own before).
-        PagePanel profilePage = new PagePanel(Navigator.Screen.PROFILE.getDisplayName(), "Your account: name, date of birth, identifiers and addresses.");
+        PagePanel profilePage = new PagePanel(NSAppUtil.Screen.PROFILE.getDisplayName(), NSAppUtil.ProfilePage.PAGE.getDescription());
+        profilePage.setName(NSAppUtil.ProfilePage.PAGE.getName());
         profilePage.card(scroll(buildProfileArea()));
         cardStack.add(profilePage, "Profile");
         cardStack.add(buildCredentials(), "Credentials");
-        PagePanel settingsPage = new PagePanel(Navigator.Screen.SETTINGS.getDisplayName(), "Reference data this installation keeps up to date, the assistant's reply timeout, and the store's backup.");
+        PagePanel settingsPage = new PagePanel(NSAppUtil.Screen.SETTINGS.getDisplayName(), NSAppUtil.SettingsPage.PAGE.getDescription());
+        settingsPage.setName(NSAppUtil.SettingsPage.PAGE.getName());
         settingsPage.card(scroll(buildSettingsArea()));
         cardStack.add(settingsPage, SECTION_SETTINGS);
         cardStack.show(SECTION_PROFILE);
@@ -199,7 +203,7 @@ public class SubjectPanel extends JPanel {
 
     // ============================ Settings ============================
 
-    private final JLabel syncStatus = new JLabel(" ");
+    private final JLabel syncStatus = blockStatus(NSAppUtil.SettingsPage.SYNC_STATUS);
 
     private JPanel buildSettingsArea() {
         JPanel area = new JPanel(new MigLayout("wrap 1, insets 0", "[grow,fill]"));
@@ -226,25 +230,14 @@ public class SubjectPanel extends JPanel {
     private JPanel buildSync() {
         JPanel panel = new JPanel(new MigLayout("wrap 1, insets 12, gapy 6", "[grow,fill]"));
 
-        panel.add(PanelBuilder.title("Sync"));
+        panel.add(title(NSAppUtil.SettingsPage.SYNC_TITLE));
 
         // WrapLabel, not a wrapping JTextArea: its height is computed at the wrap width, so the
         // block does not come out too tall on first show (the Phase 1 lesson)
-        WrapLabel note = new WrapLabel("""
-                MAC vendors — the Wireshark manufacturer list (wireshark.org, manuf) names the vendor \
-                of each host's network adapter in scan reports: the MAC and Vendor columns of the Hosts \
-                tab and the Network adapter block of the host detail. It is downloaded once at the \
-                first sign-in and kept in this store for every account; the status bar at the bottom \
-                of the window shows its state.
+        panel.add(blockNote(NSAppUtil.SettingsPage.SYNC_NOTE), "growx 0");
 
-                Sync downloads the current list and replaces the stored copy. Wireshark publishes a \
-                new one about once a week.""");
-        note.setWrapWidth(480);
-        note.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
-        panel.add(note, "growx 0");
-
-        JButton sync = new JButton("Sync MAC vendors",
-                IconUtil.svgIcon("io/xlogistx/gui/icons/refresh.svg", 16, UITokens.text()));
+        JButton sync = GUIUtil.applyProp(new JButton(IconUtil.svgIcon("io/xlogistx/gui/icons/refresh.svg", 16, UITokens.text())),
+                NSAppUtil.SettingsPage.SYNC);
         syncStatus.setForeground(UITokens.muted());
 
         sync.addActionListener(_ -> onSyncMacVendors(sync));
@@ -256,7 +249,7 @@ public class SubjectPanel extends JPanel {
 
     /** The "last sync" day in the status line says it was synced; the event-driven refresh shows it. */
     private void onSyncMacVendors(JButton sync) {
-        syncStatus.setText("Downloading the vendor list…");
+        syncStatus.setText(NSAppUtil.SettingsPage.SYNC_DOWNLOADING.getDisplayName());
         BackgroundTask.run(this, sync, () -> {
             try {
                 return ctx.session().syncMacVendors();
@@ -276,7 +269,7 @@ public class SubjectPanel extends JPanel {
             return;
         }
         if (!ctx.session().macVendorsLoaded()) {
-            syncStatus.setText("Loading the vendor list…");
+            syncStatus.setText(NSAppUtil.SettingsPage.SYNC_LOADING.getDisplayName());
             return;
         }
         BackgroundTask.run(this, null, () -> ctx.session().macVendorStatus(), status -> syncStatus.setText(syncStatusText(status)));
@@ -297,8 +290,8 @@ public class SubjectPanel extends JPanel {
 
     // ==================== Assistant (Settings block) ====================
 
-    /** The reply timeout spinner's component name. */
-    static final String REPLY_TIMEOUT = "settings.assistant.replyTimeout";
+    /** The reply timeout spinner's component name ({@link NSAppUtil.SettingsPage#REPLY_TIMEOUT}). */
+    static final String REPLY_TIMEOUT = NSAppUtil.SettingsPage.REPLY_TIMEOUT.getName();
 
     private IntConsumer onAssistantTimeoutChange = _ -> {};
 
@@ -328,32 +321,25 @@ public class SubjectPanel extends JPanel {
     static JPanel assistantBlock(int seconds, IntConsumer onChange) {
         JPanel panel = new JPanel(new MigLayout("wrap 1, insets 12, gapy 6", "[grow,fill]"));
 
-        panel.add(PanelBuilder.title("Assistant"));
-        panel.add(blockNote("""
-                Reply timeout — how long a request to an AI provider may wait for its answer before \
-                the send is given up and reported as failed. 40 seconds is right for a responsive \
-                endpoint; stretch it when the one you use is congested and sends time out, lower it \
-                to fail faster. It applies to the next request of every provider and is kept for \
-                this installation."""), "growx 0");
+        panel.add(title(NSAppUtil.SettingsPage.ASSISTANT_TITLE));
+        panel.add(blockNote(NSAppUtil.SettingsPage.ASSISTANT_NOTE), "growx 0");
 
         JSpinner spinner = new JSpinner(new SpinnerNumberModel(AppPrefs.clampAiTimeout(seconds),
                 AppPrefs.AI_TIMEOUT_MIN, AppPrefs.AI_TIMEOUT_MAX, 10));
-        spinner.setName(REPLY_TIMEOUT);
-        spinner.setToolTipText("Seconds a provider may take to answer one request, "
-                + AppPrefs.AI_TIMEOUT_MIN + " to " + AppPrefs.AI_TIMEOUT_MAX + "; the default is " + AppPrefs.AI_TIMEOUT_DEFAULT + ".");
+        GUIUtil.applyProp(spinner, NSAppUtil.SettingsPage.REPLY_TIMEOUT);
         JFormattedTextField field = ((JSpinner.DefaultEditor) spinner.getEditor()).getTextField();
         field.setColumns(4);
         // a typed value counts as soon as it is valid, not only on Enter or focus loss
         if (field.getFormatter() instanceof DefaultFormatter df) df.setCommitsOnValidEdit(true);
         spinner.addChangeListener(_ -> onChange.accept(((Number) spinner.getValue()).intValue()));
 
-        JLabel label = new JLabel("Reply timeout");
+        JLabel label = GUIUtil.applyProp(new JLabel(), NSAppUtil.SettingsPage.REPLY_TIMEOUT_LABEL);
         label.setLabelFor(spinner);
         JPanel row = new JPanel(new MigLayout("insets 0, gapx 8", "[][][]"));
         row.setOpaque(false);
         row.add(label);
         row.add(spinner);
-        row.add(new JLabel("seconds"));
+        row.add(GUIUtil.applyProp(new JLabel(), NSAppUtil.SettingsPage.REPLY_TIMEOUT_UNIT));
         panel.add(row, "growx 0");
 
         return panel;
@@ -361,19 +347,25 @@ public class SubjectPanel extends JPanel {
 
     // ==================== Backup and Restore (Settings blocks) ====================
 
-    private static final String[] RESTORE_MODES = {"Merge into this store", "Replace this store"};
+    private static final String[] RESTORE_MODES = {
+            NSAppUtil.SettingsPage.RESTORE_MODE_MERGE.getDisplayName(), NSAppUtil.SettingsPage.RESTORE_MODE_REPLACE.getDisplayName()};
 
-    /** A block's note: a WrapLabel at the Sync block's width (its height is right on first show). */
-    private static WrapLabel blockNote(String text) {
-        WrapLabel note = new WrapLabel(text);
+    /** A block's note: a WrapLabel at the Sync block's width (its height is right on first show), named and worded by its descriptor. */
+    private static WrapLabel blockNote(GetNameDescriptionDisplay ref) {
+        WrapLabel note = GUIUtil.applyProp(new WrapLabel(ref.getDisplayName()), ref);
         note.setWrapWidth(480);
         note.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
         return note;
     }
 
-    /** A block's muted status line. */
-    private static JLabel blockStatus() {
-        JLabel status = new JLabel(" ");
+    /** A block's title, named by its descriptor. */
+    private static JLabel title(GetNameDescriptionDisplay ref) {
+        return GUIUtil.applyProp(PanelBuilder.title(ref.getDisplayName()), ref);
+    }
+
+    /** A block's muted status line, named by its descriptor; its text is filled at run time. */
+    private static JLabel blockStatus(GetNameDescriptionDisplay ref) {
+        JLabel status = GUIUtil.applyProp(new JLabel(" "), ref);
         status.setForeground(UITokens.muted());
         return status;
     }
@@ -385,22 +377,12 @@ public class SubjectPanel extends JPanel {
     private JPanel buildDBRestore() {
         JPanel panel = new JPanel(new MigLayout("wrap 1, insets 12, gapy 6", "[grow,fill]"));
 
-        panel.add(PanelBuilder.title("Restore"));
-        panel.add(blockNote("""
-                Loads a backup archive back into this store: accounts and their API keys, scan reports, \
-                chats, captures, skills, probes and the MAC vendor list, all under the accounts that \
-                owned them. The vault is not touched; sealed values in the archive open only with the \
-                vault they were exported under.
+        panel.add(title(NSAppUtil.SettingsPage.RESTORE_TITLE));
+        panel.add(blockNote(NSAppUtil.SettingsPage.RESTORE_NOTE), "growx 0");
 
-                Merge keeps what is already here and adds or overwrites records from the archive. \
-                Replace clears the store first, so it ends up holding exactly what the archive holds.
-
-                You are signed out when the restore finishes — the account you are signed in as may \
-                have been rewritten or removed by it. Sign in again to carry on."""), "growx 0");
-
-        JComboBox<String> mode = new JComboBox<>(RESTORE_MODES);
-        JButton restore = new JButton("Restore backup", new IconUtil.RollbackIcon(16));
-        JLabel status = blockStatus();
+        JComboBox<String> mode = GUIUtil.applyProp(new JComboBox<>(RESTORE_MODES), NSAppUtil.SettingsPage.RESTORE_MODE);
+        JButton restore = GUIUtil.applyProp(new JButton(new IconUtil.RollbackIcon(16)), NSAppUtil.SettingsPage.RESTORE);
+        JLabel status = blockStatus(NSAppUtil.SettingsPage.RESTORE_STATUS);
 
         restore.addActionListener(_ -> onRestoreBackup(restore, status, mode.getSelectedIndex()));
         panel.add(mode, "growx 0, width 240!");
@@ -413,7 +395,7 @@ public class SubjectPanel extends JPanel {
     private void onRestoreBackup(JButton restore, JLabel status, int modeIndex) {
         if (!(ctx.session().getDomainSecurityManager().getDataStore() instanceof H2PDataStore ds)) {
             JOptionPane.showMessageDialog(this, "This data store cannot be restored.",
-                    "Restore", JOptionPane.ERROR_MESSAGE);
+                    NSAppUtil.SettingsPage.RESTORE_ERROR_DIALOG.getDisplayName(), JOptionPane.ERROR_MESSAGE);
             return;
         }
 
@@ -422,7 +404,7 @@ public class SubjectPanel extends JPanel {
                 : H2PDataStore.RestoreMode.MERGE;
 
         JFileChooser chooser = new JFileChooser();
-        chooser.setDialogTitle("Restore backup");
+        chooser.setDialogTitle(NSAppUtil.SettingsPage.RESTORE_DIALOG.getDisplayName());
         chooser.setCurrentDirectory(AppPrefs.fileDirectory());
         if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) return;
 
@@ -434,12 +416,12 @@ public class SubjectPanel extends JPanel {
                 : "Records from " + source.getName() + " will be added to this store, overwriting\n"
                 + "any that share the same id.\n\nContinue?";
 
-        if (JOptionPane.showConfirmDialog(this, warning, "Restore backup",
+        if (JOptionPane.showConfirmDialog(this, warning, NSAppUtil.SettingsPage.RESTORE_DIALOG.getDisplayName(),
                 JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE) != JOptionPane.OK_OPTION) {
             return;
         }
 
-        status.setText("Restoring…");
+        status.setText(NSAppUtil.SettingsPage.RESTORING.getDisplayName());
         BackgroundTask.run(this, restore,
                 // a whole-store restore needs the store's system context, not a subject
                 () -> ctx.session().runAsSystem(() -> {
@@ -450,7 +432,7 @@ public class SubjectPanel extends JPanel {
                     }
                 }),
                 _ -> {
-                    status.setText("Restored " + source.getName());
+                    status.setText(NSAppUtil.SettingsPage.RESTORED.getDisplayName() + " " + source.getName());
                     ctx.session().logout();
                     JOptionPane.showMessageDialog(this,
                             "Restore complete. You have been signed out — sign in again to use the "
@@ -465,18 +447,11 @@ public class SubjectPanel extends JPanel {
     private JPanel buildDBBackup() {
         JPanel panel = new JPanel(new MigLayout("wrap 1, insets 12, gapy 6", "[grow,fill]"));
 
-        panel.add(PanelBuilder.title("Backup"));
-        panel.add(blockNote("""
-                Exports every record in this store — accounts and their API keys, scan reports, chats, \
-                captures, skills, probes and the MAC vendor list — as one zip archive.
+        panel.add(title(NSAppUtil.SettingsPage.BACKUP_TITLE));
+        panel.add(blockNote(NSAppUtil.SettingsPage.BACKUP_NOTE), "growx 0");
 
-                The archive itself is not encrypted; the sealed values in it (API keys and other \
-                secrets) can only be opened again with this installation's vault, so keep the file \
-                somewhere you would keep the vault, and keep the vault. Scan reports in it carry \
-                your network's layout, so treat it as sensitive."""), "growx 0");
-
-        JButton export = new JButton("Export backup", new IconUtil.SaveIcon(16));
-        JLabel status = blockStatus();
+        JButton export = GUIUtil.applyProp(new JButton(new IconUtil.SaveIcon(16)), NSAppUtil.SettingsPage.EXPORT);
+        JLabel status = blockStatus(NSAppUtil.SettingsPage.BACKUP_STATUS);
 
         export.addActionListener(_ -> onExportBackup(export, status));
         panel.add(export, "growx 0");
@@ -488,12 +463,12 @@ public class SubjectPanel extends JPanel {
     private void onExportBackup(JButton export, JLabel status) {
         if (!(ctx.session().getDomainSecurityManager().getDataStore() instanceof H2PDataStore ds)) {
             JOptionPane.showMessageDialog(this, "This data store cannot be exported.",
-                    "Backup", JOptionPane.ERROR_MESSAGE);
+                    NSAppUtil.SettingsPage.BACKUP_ERROR_DIALOG.getDisplayName(), JOptionPane.ERROR_MESSAGE);
             return;
         }
 
         JFileChooser chooser = new JFileChooser();
-        chooser.setDialogTitle("Export backup");
+        chooser.setDialogTitle(NSAppUtil.SettingsPage.EXPORT_DIALOG.getDisplayName());
         chooser.setCurrentDirectory(AppPrefs.fileDirectory());
         chooser.setSelectedFile(new File(NoSneakMain.dbName + "-backup-" + LocalDate.now() + ".zip"));
         if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
@@ -501,12 +476,12 @@ public class SubjectPanel extends JPanel {
         File target = chooser.getSelectedFile();
         AppPrefs.fileDirectory(target);
         if (target.exists() && JOptionPane.showConfirmDialog(this,
-                target.getName() + " already exists. Replace it?", "Export backup",
+                target.getName() + " already exists. Replace it?", NSAppUtil.SettingsPage.EXPORT_DIALOG.getDisplayName(),
                 JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE) != JOptionPane.OK_OPTION) {
             return;
         }
 
-        status.setText("Exporting…");
+        status.setText(NSAppUtil.SettingsPage.EXPORTING.getDisplayName());
         BackgroundTask.run(this, export,
                 // a whole-store dump needs the store's system context, not a subject
                 () -> ctx.session().runAsSystem(() -> {
@@ -518,7 +493,7 @@ public class SubjectPanel extends JPanel {
                     return target.length();
                 }),
                 size -> {
-                    status.setText("Exported " + target.getName() + " — " + (size / 1024) + " KB");
+                    status.setText(NSAppUtil.SettingsPage.EXPORTED.getDisplayName() + " " + target.getName() + " — " + (size / 1024) + " KB");
                     JOptionPane.showMessageDialog(this, "Backup written to\n" + target.getAbsolutePath());
                 });
     }
@@ -540,7 +515,7 @@ public class SubjectPanel extends JPanel {
         return p;
     }
 
-    private final JLabel profileStatus = blockStatus();
+    private final JLabel profileStatus = blockStatus(NSAppUtil.ProfilePage.STATUS);
 
     /**
      * The profile card (re-laid out 2026-10-27 in the Settings page's shape): three blocks
@@ -551,36 +526,34 @@ public class SubjectPanel extends JPanel {
      */
     private JPanel buildProfile() {
         identifiers = ListSection.of(() -> ctx.session().getAllPrincipalIDForLoggedInUser())
-                .title("Identifiers")
-                .description("The names you can sign in with: usernames and email addresses. Deleting the one "
-                        + "you signed in with moves your account to another of them.")
-                .addButton("+ Add identifier", this::onAddIdentifier)
+                .title(NSAppUtil.ProfilePage.IDENTIFIERS.getDisplayName())
+                .description(NSAppUtil.ProfilePage.IDENTIFIERS.getDescription())
+                .addButton(NSAppUtil.ProfilePage.IDENTIFIERS_ADD.getDisplayName(), this::onAddIdentifier)
                 .label(PrincipalIdentifier::getPrincipalID)
                 .onRemove(p -> () -> onRemoveIdentifier(p))
                 .build();
 
         addressSection = ListSection.of(() -> ctx.session().getAllAddresses())
-                .title("Addresses")
-                .description("Postal addresses kept with your account, for your own records; nothing reads them.")
-                .addButton("+ Add address", this::onAddAddress)
+                .title(NSAppUtil.ProfilePage.ADDRESSES.getDisplayName())
+                .description(NSAppUtil.ProfilePage.ADDRESSES.getDescription())
+                .addButton(NSAppUtil.ProfilePage.ADDRESSES_ADD.getDisplayName(), this::onAddAddress)
                 .label(this::addressLabel)
                 .onEdit(p -> () -> onEditAddress(p))
                 .onRemove(p -> () -> onRemoveAddress(p))
-                .emptyText("No addresses yet")
+                .emptyText(NSAppUtil.ProfilePage.ADDRESSES_EMPTY.getDisplayName())
                 .build();
 
         FormPanel form = new FormPanel();
-        form.field("First name", firstName);
-        form.field("Last name", lastName);
-        form.field("Date of birth", dob, "Optional, as yyyy-mm-dd.");
-        saveProfile.setText("Save changes");
+        form.field(NSAppUtil.ProfilePage.FIRST_NAME.getDisplayName(), GUIUtil.applyProp(firstName, NSAppUtil.ProfilePage.FIRST_NAME_FIELD));
+        form.field(NSAppUtil.ProfilePage.LAST_NAME.getDisplayName(), GUIUtil.applyProp(lastName, NSAppUtil.ProfilePage.LAST_NAME_FIELD));
+        form.field(NSAppUtil.ProfilePage.DOB.getDisplayName(), GUIUtil.applyProp(dob, NSAppUtil.ProfilePage.DOB_FIELD), NSAppUtil.ProfilePage.DOB.getDescription());
         UITokens.primary(saveProfile);
         saveProfile.addActionListener(_ -> onSaveProfile());
 
         JPanel name = new JPanel(new MigLayout("wrap 1, insets 12, gapy 6", "[grow,fill]"));
         name.setOpaque(false);
-        name.add(PanelBuilder.title("Name"));
-        name.add(blockNote("How the account is shown; kept in this store under your account and nowhere else."), "growx 0");
+        name.add(title(NSAppUtil.ProfilePage.NAME_TITLE));
+        name.add(blockNote(NSAppUtil.ProfilePage.NAME_NOTE), "growx 0");
         name.add(form, "growx");
         name.add(saveProfile, "growx 0, gaptop 10");
         name.add(profileStatus);
@@ -600,10 +573,10 @@ public class SubjectPanel extends JPanel {
         fields.put("firstName", firstName.getText());
         fields.put("lastName", lastName.getText());
         fields.put("dob", dob.getText());
-        profileStatus.setText("Saving…");
+        profileStatus.setText(NSAppUtil.ProfilePage.SAVING.getDisplayName());
         BackgroundTask.runCatching(this, saveProfile,
                 () -> ctx.session().saveProfile(fields),
-                () -> profileStatus.setText("Saved."));
+                () -> profileStatus.setText(NSAppUtil.ProfilePage.SAVED.getDisplayName()));
     }
 
     private void populateProfile() {
@@ -617,10 +590,10 @@ public class SubjectPanel extends JPanel {
         JComboBox<String> kind = new JComboBox<>(new String[]{"Email", "Username"});
         JTextField value = new JTextField(24);
         JPanel form = new JPanel(new MigLayout("wrap 2, insets 8, gapx 10, gapy 6", "[left][grow,fill]"));
-        addRow(form, "Kind", kind);
-        addRow(form, "Value", value);
+        addRow(form, NSAppUtil.ProfilePage.ADD_IDENTIFIER_KIND.getDisplayName(), GUIUtil.applyProp(kind, NSAppUtil.ProfilePage.ADD_IDENTIFIER_KIND));
+        addRow(form, NSAppUtil.ProfilePage.ADD_IDENTIFIER_VALUE.getDisplayName(), GUIUtil.applyProp(value, NSAppUtil.ProfilePage.ADD_IDENTIFIER_VALUE_FIELD));
 
-        int ok = JOptionPane.showConfirmDialog(this, form, "Add identifier",
+        int ok = JOptionPane.showConfirmDialog(this, form, NSAppUtil.ProfilePage.ADD_IDENTIFIER_DIALOG.getDisplayName(),
                 JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
         if (ok != JOptionPane.OK_OPTION) return;
 
@@ -628,7 +601,7 @@ public class SubjectPanel extends JPanel {
         if (id.isEmpty()) return;
         if ("Email".equals(kind.getSelectedItem()) && !FilterType.EMAIL.isValid(id)) {
             JOptionPane.showMessageDialog(this, "Enter a valid email address.",
-                    "Invalid email", JOptionPane.WARNING_MESSAGE);
+                    NSAppUtil.ProfilePage.INVALID_EMAIL_DIALOG.getDisplayName(), JOptionPane.WARNING_MESSAGE);
             return;
         }
         BackgroundTask.runCatching(this, null,
@@ -643,7 +616,7 @@ public class SubjectPanel extends JPanel {
 
     private void onRemoveIdentifier(PrincipalIdentifier p) {
         int ok = JOptionPane.showConfirmDialog(this,
-                deleteConfirm(p.getPrincipalID(), "identifier"), "Delete identifier",
+                deleteConfirm(p.getPrincipalID(), "identifier"), NSAppUtil.ProfilePage.DELETE_IDENTIFIER_DIALOG.getDisplayName(),
                 JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
         if (ok != JOptionPane.OK_OPTION) return;
         BackgroundTask.runCatching(this, null,
@@ -685,7 +658,7 @@ public class SubjectPanel extends JPanel {
     private void onRemoveAddress(NVGenericMap addr) {
         int ok = JOptionPane.showConfirmDialog(this,
                 deleteConfirm(addressLabel(addr), "address"),
-                "Delete address", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
+                NSAppUtil.ProfilePage.DELETE_ADDRESS_DIALOG.getDisplayName(), JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
         if (ok != JOptionPane.OK_OPTION) return;
         BackgroundTask.runCatching(this, null,
                 () -> ctx.session().deleteAddress(addr),
@@ -699,25 +672,27 @@ public class SubjectPanel extends JPanel {
      * The address detail card (fields + Save), reached by "+ Add address" or a per-row Edit.
      */
     private JPanel buildEditAddress() {
-        JButton save = UITokens.primary(new JButton("Save address", new IconUtil.SaveIcon(16)));
+        JButton save = UITokens.primary(GUIUtil.applyProp(new JButton(new IconUtil.SaveIcon(16)), NSAppUtil.AddressEditor.SAVE));
         save.addActionListener(_ -> onSaveAddress(save));
 
         // the same stacked form as the Name block (2026-10-27); Back returns to the profile card
         FormPanel form = new FormPanel();
-        form.field("Label", addrLabel, "A name for it: Home, Work…");
-        form.field("Street", addrStreet);
-        form.field("City", addrCity);
-        form.field("State / region", addrRegion);
-        form.field("Postal code", addrPostCode);
-        form.field("Country", addrCountry);
+        form.field(NSAppUtil.AddressEditor.LABEL.getDisplayName(), GUIUtil.applyProp(addrLabel, NSAppUtil.AddressEditor.LABEL_FIELD), NSAppUtil.AddressEditor.LABEL.getDescription());
+        form.field(NSAppUtil.AddressEditor.STREET.getDisplayName(), GUIUtil.applyProp(addrStreet, NSAppUtil.AddressEditor.STREET_FIELD));
+        form.field(NSAppUtil.AddressEditor.CITY.getDisplayName(), GUIUtil.applyProp(addrCity, NSAppUtil.AddressEditor.CITY_FIELD));
+        form.field(NSAppUtil.AddressEditor.REGION.getDisplayName(), GUIUtil.applyProp(addrRegion, NSAppUtil.AddressEditor.REGION_FIELD));
+        form.field(NSAppUtil.AddressEditor.POSTAL.getDisplayName(), GUIUtil.applyProp(addrPostCode, NSAppUtil.AddressEditor.POSTAL_FIELD));
+        form.field(NSAppUtil.AddressEditor.COUNTRY.getDisplayName(), GUIUtil.applyProp(addrCountry, NSAppUtil.AddressEditor.COUNTRY_FIELD));
 
-        return PanelBuilder.detail("Address",
+        JPanel detail = PanelBuilder.detail(NSAppUtil.AddressEditor.EDITOR.getDisplayName(),
                 () -> profileCards.show("profile"),
                 panel -> {
-                    panel.add(blockNote("A label or a street is enough to save it."), "growx, wmin 0");
+                    panel.add(blockNote(NSAppUtil.AddressEditor.NOTE), "growx, wmin 0");
                     panel.add(form, "growx, wmin 0");
                     panel.add(save, "gaptop 12");
                 });
+        detail.setName(NSAppUtil.AddressEditor.EDITOR.getName());
+        return detail;
     }
 
     /**
@@ -742,7 +717,7 @@ public class SubjectPanel extends JPanel {
         if (addrLabel.getText().isBlank() && addrStreet.getText().isBlank()) {
             JOptionPane.showMessageDialog(this,
                     "Enter at least a label or a street before saving.",
-                    "Missing information", JOptionPane.WARNING_MESSAGE);
+                    NSAppUtil.AddressEditor.MISSING_DIALOG.getDisplayName(), JOptionPane.WARNING_MESSAGE);
             return;
         }
 
@@ -781,7 +756,7 @@ public class SubjectPanel extends JPanel {
      * right thing without touching those call sites.
      */
     private JPanel buildCredentials() {
-        JLabel placeholder = new JLabel("Select a key to edit it, or add one.", SwingConstants.CENTER);
+        JLabel placeholder = GUIUtil.applyProp(new JLabel("", SwingConstants.CENTER), NSAppUtil.ApiKeysPage.PLACEHOLDER);
         placeholder.setForeground(UITokens.muted());
         JPanel empty = new JPanel(new BorderLayout());
         empty.setOpaque(false);
@@ -809,9 +784,9 @@ public class SubjectPanel extends JPanel {
         split.add(left, "wmin 0, hmin 0, aligny top, growy");
         split.add(right, "wmin 0, hmin 0, aligny top, growy");
 
-        PagePanel page = new PagePanel(Navigator.Screen.API_KEYS.getDisplayName(),
-                "Your password, and the third-party API keys the assistant borrows; it holds none of its own.");
-        JButton addKey = UITokens.primary(new JButton("Add API key", new IconUtil.PlusIcon(16)));
+        PagePanel page = new PagePanel(NSAppUtil.Screen.API_KEYS.getDisplayName(), NSAppUtil.ApiKeysPage.PAGE.getDescription());
+        page.setName(NSAppUtil.ApiKeysPage.PAGE.getName());
+        JButton addKey = UITokens.primary(GUIUtil.applyProp(new JButton(new IconUtil.PlusIcon(16)), NSAppUtil.ApiKeysPage.ADD));
         addKey.addActionListener(_ -> onAddAPIKey());
         page.action(addKey);
         page.add(split, "grow, push");
@@ -821,23 +796,22 @@ public class SubjectPanel extends JPanel {
     private JPanel buildCredentialList() {
 
         passwordSection = ListSection.of(() -> ctx.session().getAllCredentialForUserByType(CredentialInfo.Type.PASSWORD).stream().filter(CIPassword.class::isInstance).map(CIPassword.class::cast).toList())
-                .title("Password")
-                .description("The password you sign in with. The vault password is a different one and is not kept here.")
+                .title(NSAppUtil.ApiKeysPage.PASSWORD_SECTION.getDisplayName())
+                .description(NSAppUtil.ApiKeysPage.PASSWORD_SECTION.getDescription())
                 .label(SubjectPanel::passwordLabel)
                 .onEdit(_ -> () -> credentialCards.show("changePassword"))
                 .build();
 
         apiKeySection = ListSection.of(() -> ctx.session().getAllCredentialForUserByType(CredentialInfo.Type.API_KEY).stream().filter(SubjectAPIKey.class::isInstance).map(SubjectAPIKey.class::cast).toList())
-                .title("API keys")
-                .description("Keys of third-party AI providers, kept sealed in this store under your account. "
-                        + "The assistant's Providers page picks among them; a key is never sent anywhere but to its own provider.")
+                .title(NSAppUtil.ApiKeysPage.KEYS_SECTION.getDisplayName())
+                .description(NSAppUtil.ApiKeysPage.KEYS_SECTION.getDescription())
                 .label(p -> {
                     String label = p.getName();
                     return (label == null || label.isBlank()) ? "API key" : "API key — " + label;
                 })
                 .onEdit(p -> () -> onEditAPIKey(p))
                 .onRemove(p -> () -> onDeleteAPIKey(p))
-                .emptyText("No API keys yet")
+                .emptyText(NSAppUtil.ApiKeysPage.KEYS_EMPTY.getDisplayName())
                 .build();
 
         JPanel content = new JPanel(new MigLayout("wrap 1, insets 4, gapy 12", "[grow,fill]"));
@@ -867,36 +841,34 @@ public class SubjectPanel extends JPanel {
         try {
             generated = ctx.session().generateAPIKey();
         } catch (AccessSecurityException e) {
-            JOptionPane.showMessageDialog(this, e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(this, e.getMessage(), NSAppUtil.ApiKeysPage.ERROR_DIALOG.getDisplayName(), JOptionPane.ERROR_MESSAGE);
             return;
         }
 
         // --- Generate card: label + read-only (copyable) key + Copy ---
-        JTextField genLabel = textField("e.g Claude prod");
-        JTextField genDescription = textField("What this key is for");
-        JTextField genKey = new JTextField(generated.getAPIKey(), 28);
+        JTextField genLabel = GUIUtil.applyProp(textField(""), NSAppUtil.ApiKeysPage.GENERATE_LABEL_FIELD);
+        JTextField genDescription = GUIUtil.applyProp(textField(""), NSAppUtil.ApiKeysPage.DESCRIPTION_FIELD);
+        JTextField genKey = GUIUtil.applyProp(new JTextField(generated.getAPIKey(), 28), NSAppUtil.ApiKeysPage.GENERATE_KEY);
         genKey.setEditable(false);               // selectable + copyable, not editable
-        JButton copy = GUIUtil.iconButton(new IconUtil.CopyIcon(16));
-        copy.setToolTipText("Copy");
+        JButton copy = GUIUtil.applyProp(GUIUtil.iconButton(new IconUtil.CopyIcon(16)), NSAppUtil.ApiKeysPage.GENERATE_COPY);
         copy.addActionListener(_ -> {
             GUIUtil.copyToClipboard(genKey.getText(), SECRET_CLIPBOARD_MILLIS);
             copy.setIcon(new IconUtil.CheckIcon(16));
             copy.setToolTipText(COPIED_TIP);
         });
-        JButton refresh = GUIUtil.iconButton(new IconUtil.RefreshIcon(16));
-        refresh.setToolTipText("Refresh");
+        JButton refresh = GUIUtil.applyProp(GUIUtil.iconButton(new IconUtil.RefreshIcon(16)), NSAppUtil.ApiKeysPage.GENERATE_REFRESH);
         refresh.addActionListener(_ -> {
             APIKey<String> refreshed;
             try {
                 refreshed = ctx.session().generateAPIKey();
             } catch (AccessSecurityException e) {
-                JOptionPane.showMessageDialog(this, e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+                JOptionPane.showMessageDialog(this, e.getMessage(), NSAppUtil.ApiKeysPage.ERROR_DIALOG.getDisplayName(), JOptionPane.ERROR_MESSAGE);
                 return;
             }
             genKey.setText(refreshed.getAPIKey());
             // new key → the old "Copied" state no longer applies
             copy.setIcon(new IconUtil.CopyIcon(16));
-            copy.setToolTipText("Copy");
+            copy.setToolTipText(NSAppUtil.ApiKeysPage.GENERATE_COPY.getDescription());
         });
         JPanel copyRow = new JPanel(new FlowLayout(FlowLayout.LEFT));
         copyRow.add(genKey);
@@ -908,10 +880,10 @@ public class SubjectPanel extends JPanel {
                 "[left][grow,fill]"
         ));
 
-        addSection(generateCard, "Key");
-        addRow(generateCard, "Label", genLabel);
-        addRow(generateCard, "Description", genDescription);
-        addRow(generateCard, "API Key", copyRow);
+        addSection(generateCard, NSAppUtil.ApiKeysPage.SECTION_KEY.getDisplayName());
+        addRow(generateCard, NSAppUtil.ApiKeysPage.LABEL.getDisplayName(), genLabel);
+        addRow(generateCard, NSAppUtil.ApiKeysPage.DESCRIPTION.getDisplayName(), genDescription);
+        addRow(generateCard, NSAppUtil.ApiKeysPage.GENERATE_KEY.getDisplayName(), copyRow);
 
         // --- Enter-existing card: the stacked form (2026-10-27), see newAddKeyForm ---
         AddKeyForm in = newAddKeyForm();
@@ -922,8 +894,8 @@ public class SubjectPanel extends JPanel {
         cards.add(in.panel, "input");
         cards.show("input");
 
-        String[] actions = {"Create key", "Cancel"};
-        int result = JOptionPane.showOptionDialog(this, cards.view(), "Add API key",
+        String[] actions = {NSAppUtil.ApiKeysPage.ADD_CREATE.getDisplayName(), NSAppUtil.ApiKeysPage.ADD_CANCEL.getDisplayName()};
+        int result = JOptionPane.showOptionDialog(this, cards.view(), NSAppUtil.ApiKeysPage.ADD_DIALOG.getDisplayName(),
                 JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE, null, actions, actions[0]);
         if (result != 0) return;   // Cancel or dialog closed
 
@@ -941,13 +913,13 @@ public class SubjectPanel extends JPanel {
         if (!generating && (label.isBlank() || key.isBlank())) {
             JOptionPane.showMessageDialog(this,
                     "Label and API key are required.",
-                    "Missing information", JOptionPane.WARNING_MESSAGE);
+                    NSAppUtil.ApiKeysPage.MISSING_DIALOG.getDisplayName(), JOptionPane.WARNING_MESSAGE);
             return;
         }
         if (!generating && (appId.isBlank() != domainId.isBlank())) {
             JOptionPane.showMessageDialog(this,
                     "Provide both App ID and Domain ID, or leave both empty.",
-                    "Missing information", JOptionPane.WARNING_MESSAGE);
+                    NSAppUtil.ApiKeysPage.MISSING_DIALOG.getDisplayName(), JOptionPane.WARNING_MESSAGE);
             return;
         }
 
@@ -964,30 +936,29 @@ public class SubjectPanel extends JPanel {
     /** The add dialog's form and its fields (one object so the dialog and the render harness share it). */
     private static final class AddKeyForm {
         final JPanel panel;
-        final JTextField label = textField("e.g. Claude prod");
-        final JTextField description = textField("What this key is for");
-        final JPasswordField key = new JPasswordField(28);
-        final JTextField appID = textField("e.g. nosneak");
-        final JTextField domainID = textField("e.g. xlogistx.io");
-        final JTextField baseURI = textField("e.g. https://api.anthropic.com");
-        final JTextField authScheme = textField("e.g. Bearer Token");
-        final JTextField headerName = textField("e.g. x-api-key");
+        final JTextField label = GUIUtil.applyProp(textField(""), NSAppUtil.ApiKeysPage.LABEL_FIELD);
+        final JTextField description = GUIUtil.applyProp(textField(""), NSAppUtil.ApiKeysPage.DESCRIPTION_FIELD);
+        final JPasswordField key = GUIUtil.applyProp(new JPasswordField(28), NSAppUtil.ApiKeysPage.KEY_FIELD);
+        final JTextField appID = GUIUtil.applyProp(textField(""), NSAppUtil.ApiKeysPage.APP_ID_FIELD);
+        final JTextField domainID = GUIUtil.applyProp(textField(""), NSAppUtil.ApiKeysPage.DOMAIN_ID_FIELD);
+        final JTextField baseURI = GUIUtil.applyProp(textField(""), NSAppUtil.ApiKeysPage.BASE_URL_FIELD);
+        final JTextField authScheme = GUIUtil.applyProp(textField(""), NSAppUtil.ApiKeysPage.AUTH_SCHEME_FIELD);
+        final JTextField headerName = GUIUtil.applyProp(textField(""), NSAppUtil.ApiKeysPage.HEADER_NAME_FIELD);
 
         AddKeyForm(JComboBox<String> provider) {
-            key.putClientProperty("JTextField.placeholderText", "Your API key");
             FormPanel form = new FormPanel();
-            form.row(PanelBuilder.title("Add a third-party API key"), "growx");
-            form.row(blockNote("The key is sealed in this store under your account and sent only to its own provider."), "growx, wmin 0");
-            form.row(PanelBuilder.sectionHeader("Key"), "growx, gaptop 10");
-            form.requiredField("Label", label);
-            form.field("Description", description);
-            form.requiredField("API key", PanelBuilder.passwordField(key));
-            form.row(PanelBuilder.sectionHeader("Scope"), "growx, gaptop 10");
-            form.field("App ID", appID);
-            form.field("Domain ID", domainID, "Both, or neither.");
-            form.row(PanelBuilder.sectionHeader("Provider endpoint"), "growx, gaptop 10");
-            form.field("Provider", provider, "Pick one, or type the name of another.");
-            form.field("Base URL", baseURI);
+            form.row(title(NSAppUtil.ApiKeysPage.ADD_TITLE), "growx");
+            form.row(blockNote(NSAppUtil.ApiKeysPage.ADD_NOTE), "growx, wmin 0");
+            form.row(PanelBuilder.sectionHeader(NSAppUtil.ApiKeysPage.SECTION_KEY.getDisplayName()), "growx, gaptop 10");
+            form.requiredField(NSAppUtil.ApiKeysPage.LABEL.getDisplayName(), label);
+            form.field(NSAppUtil.ApiKeysPage.DESCRIPTION.getDisplayName(), description);
+            form.requiredField(NSAppUtil.ApiKeysPage.KEY.getDisplayName(), PanelBuilder.passwordField(key));
+            form.row(PanelBuilder.sectionHeader(NSAppUtil.ApiKeysPage.SECTION_SCOPE.getDisplayName()), "growx, gaptop 10");
+            form.field(NSAppUtil.ApiKeysPage.APP_ID.getDisplayName(), appID);
+            form.field(NSAppUtil.ApiKeysPage.DOMAIN_ID.getDisplayName(), domainID, NSAppUtil.ApiKeysPage.DOMAIN_ID.getDescription());
+            form.row(PanelBuilder.sectionHeader(NSAppUtil.ApiKeysPage.SECTION_ENDPOINT.getDisplayName()), "growx, gaptop 10");
+            form.field(NSAppUtil.ApiKeysPage.PROVIDER.getDisplayName(), provider, NSAppUtil.ApiKeysPage.PROVIDER.getDescription());
+            form.field(NSAppUtil.ApiKeysPage.BASE_URL.getDisplayName(), baseURI);
             panel = new JPanel(new MigLayout("insets 12", "[480!]")); // the note's wrap width
             panel.setOpaque(false);
             panel.add(form, "growx");
@@ -998,7 +969,7 @@ public class SubjectPanel extends JPanel {
         inProvider.setEditable(true);
         inProvider.setSelectedItem(null);
         if (inProvider.getEditor().getEditorComponent() instanceof JTextField providerEditor) {
-            providerEditor.putClientProperty("JTextField.placeholderText", "Select or type a provider");
+            GUIUtil.applyProp(providerEditor, NSAppUtil.ApiKeysPage.PROVIDER_FIELD);
         }
         return new AddKeyForm(inProvider);
     }
@@ -1007,21 +978,24 @@ public class SubjectPanel extends JPanel {
 
     /** The change-password card (the stacked form since 2026-10-27; Back returns to the placeholder). */
     private JPanel buildChangePassword() {
-        JButton submit = UITokens.primary(new JButton("Change password", new IconUtil.SaveIcon(16)));
+        JButton submit = UITokens.primary(GUIUtil.applyProp(new JButton(new IconUtil.SaveIcon(16)), NSAppUtil.PasswordEditor.SUBMIT));
         submit.addActionListener(_ -> onChangePassword(submit));
 
         FormPanel form = new FormPanel();
-        form.requiredField("Current password", PanelBuilder.passwordField(currentPwd));
-        form.requiredField("New password", PanelBuilder.passwordField(newPwd));
-        form.requiredField("Confirm new password", PanelBuilder.passwordField(confirmPwd), "Type the new password again.");
+        form.requiredField(NSAppUtil.PasswordEditor.CURRENT.getDisplayName(), PanelBuilder.passwordField(GUIUtil.applyProp(currentPwd, NSAppUtil.PasswordEditor.CURRENT_FIELD)));
+        form.requiredField(NSAppUtil.PasswordEditor.NEW.getDisplayName(), PanelBuilder.passwordField(GUIUtil.applyProp(newPwd, NSAppUtil.PasswordEditor.NEW_FIELD)));
+        form.requiredField(NSAppUtil.PasswordEditor.CONFIRM.getDisplayName(), PanelBuilder.passwordField(GUIUtil.applyProp(confirmPwd, NSAppUtil.PasswordEditor.CONFIRM_FIELD)),
+                NSAppUtil.PasswordEditor.CONFIRM.getDescription());
 
-        return PanelBuilder.detail("Change password",
+        JPanel detail = PanelBuilder.detail(NSAppUtil.PasswordEditor.EDITOR.getDisplayName(),
                 () -> credentialCards.show("list"),
                 panel -> {
-                    panel.add(blockNote("The password you sign in with. The vault password is changed outside the app."), "growx, wmin 0");
+                    panel.add(blockNote(NSAppUtil.PasswordEditor.NOTE), "growx, wmin 0");
                     panel.add(form, "growx, wmin 0");
                     panel.add(submit, "gaptop 12");
                 });
+        detail.setName(NSAppUtil.PasswordEditor.EDITOR.getName());
+        return detail;
     }
 
     private void onChangePassword(JButton submit) {
@@ -1029,7 +1003,7 @@ public class SubjectPanel extends JPanel {
         char[] next = newPwd.getPassword();
 
         if (!Arrays.equals(next, confirmPwd.getPassword())) {
-            JOptionPane.showMessageDialog(this, "New passwords do not match.", "Error", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(this, "New passwords do not match.", NSAppUtil.PasswordEditor.ERROR_DIALOG.getDisplayName(), JOptionPane.ERROR_MESSAGE);
             return;
         }
 
@@ -1051,15 +1025,12 @@ public class SubjectPanel extends JPanel {
     private JPanel buildEditAPIKey() {
 
         // save api key button
-        JButton submit = new JButton("Save", new IconUtil.SaveIcon(16));
-        submit.setToolTipText("Save");
+        JButton submit = GUIUtil.applyProp(new JButton(new IconUtil.SaveIcon(16)), NSAppUtil.ApiKeysPage.SAVE);
 
-        rotateKey.setToolTipText("Rotate");
         rotateKey.addActionListener(_ -> onRotateAPIKey(rotateKey));
 
         // copy api key button
-        JButton copyKey = GUIUtil.iconButton(new IconUtil.CopyIcon(16));
-        copyKey.setToolTipText("Copy");
+        JButton copyKey = GUIUtil.applyProp(GUIUtil.iconButton(new IconUtil.CopyIcon(16)), NSAppUtil.ApiKeysPage.COPY_KEY);
         submit.addActionListener(_ -> onEditAPIDetails(submit));
         copyKey.addActionListener(_ -> {
             if (selectedKey != null && selectedKey.getAPIKey() != null) {
@@ -1087,32 +1058,33 @@ public class SubjectPanel extends JPanel {
         // the stacked form since 2026-10-27, with the add dialog's sections
         UITokens.primary(submit);
         FormPanel form = new FormPanel();
-        form.row(PanelBuilder.sectionHeader("Key"), "growx");
-        form.requiredField("Label", editKeyLabel);
-        form.field("Description", editKeyDescription);
-        form.requiredField("API key", keyView, "Copy it, or show it; it cannot be edited here. Delete the key and add the new one instead.");
-        form.row(PanelBuilder.sectionHeader("Scope"), "growx, gaptop 10");
-        form.field("App ID", keyAppID);
-        form.field("Domain ID", keyDomainID, "Both, or neither.");
-        form.row(PanelBuilder.sectionHeader("Provider endpoint"), "growx, gaptop 10");
-        form.field("Provider", keyProvider, "Pick one, or type the name of another.");
-        form.field("Base URL", keyURI);
+        form.row(PanelBuilder.sectionHeader(NSAppUtil.ApiKeysPage.SECTION_KEY.getDisplayName()), "growx");
+        form.requiredField(NSAppUtil.ApiKeysPage.LABEL.getDisplayName(), GUIUtil.applyProp(editKeyLabel, NSAppUtil.ApiKeysPage.LABEL_EDIT_FIELD));
+        form.field(NSAppUtil.ApiKeysPage.DESCRIPTION.getDisplayName(), GUIUtil.applyProp(editKeyDescription, NSAppUtil.ApiKeysPage.DESCRIPTION_EDIT_FIELD));
+        form.requiredField(NSAppUtil.ApiKeysPage.EDIT_KEY.getDisplayName(), GUIUtil.applyProp(keyView, NSAppUtil.ApiKeysPage.EDIT_KEY), NSAppUtil.ApiKeysPage.EDIT_KEY.getDescription());
+        form.row(PanelBuilder.sectionHeader(NSAppUtil.ApiKeysPage.SECTION_SCOPE.getDisplayName()), "growx, gaptop 10");
+        form.field(NSAppUtil.ApiKeysPage.APP_ID.getDisplayName(), GUIUtil.applyProp(keyAppID, NSAppUtil.ApiKeysPage.APP_ID_EDIT_FIELD));
+        form.field(NSAppUtil.ApiKeysPage.DOMAIN_ID.getDisplayName(), GUIUtil.applyProp(keyDomainID, NSAppUtil.ApiKeysPage.DOMAIN_ID_EDIT_FIELD), NSAppUtil.ApiKeysPage.DOMAIN_ID.getDescription());
+        form.row(PanelBuilder.sectionHeader(NSAppUtil.ApiKeysPage.SECTION_ENDPOINT.getDisplayName()), "growx, gaptop 10");
+        form.field(NSAppUtil.ApiKeysPage.PROVIDER.getDisplayName(), GUIUtil.applyProp(keyProvider, NSAppUtil.ApiKeysPage.PROVIDER), NSAppUtil.ApiKeysPage.PROVIDER.getDescription());
+        form.field(NSAppUtil.ApiKeysPage.BASE_URL.getDisplayName(), GUIUtil.applyProp(keyURI, NSAppUtil.ApiKeysPage.BASE_URL_EDIT_FIELD));
 
-        JButton deleteKey = new JButton("Delete", new IconUtil.DeleteIcon(16));
-        deleteKey.setToolTipText("Permanently delete this API key");
+        JButton deleteKey = GUIUtil.applyProp(new JButton(new IconUtil.DeleteIcon(16)), NSAppUtil.ApiKeysPage.DELETE);
         deleteKey.addActionListener(_ -> onDeleteAPIKey(selectedKey));
         JPanel actions = new JPanel(new MigLayout("insets 0, gapx 8"));
         actions.setOpaque(false);
         actions.add(submit);
         actions.add(deleteKey);
 
-        return PanelBuilder.detail("Edit API key",
+        JPanel detail = PanelBuilder.detail(NSAppUtil.ApiKeysPage.EDITOR.getDisplayName(),
                 () -> credentialCards.show("list"),
                 panel -> {
                     panel.add(form, "growx, wmin 0");
                     panel.add(actions, "gaptop 12");
                 }
         );
+        detail.setName(NSAppUtil.ApiKeysPage.EDITOR.getName());
+        return detail;
     }
 
     private void onEditAPIKey(SubjectAPIKey key) {
@@ -1121,7 +1093,7 @@ public class SubjectPanel extends JPanel {
         // External (third-party) keys aren't issued by us, so they can't be rotated.
         boolean external = ctx.session().isExternalKey(key);
         rotateKey.setEnabled(!external);
-        rotateKey.setToolTipText(external ? "External keys can't be rotated" : "Rotate");
+        rotateKey.setToolTipText(external ? NSAppUtil.ApiKeysPage.ROTATE_EXTERNAL.getDescription() : NSAppUtil.ApiKeysPage.ROTATE.getDescription());
 
         editKeySecret.setText(key.getAPIKey());
         editKeySecret.setCaretPosition(0);
@@ -1163,7 +1135,7 @@ public class SubjectPanel extends JPanel {
     private void setKeyMasked(boolean masked) {
         editKeySecret.setEchoChar(masked ? defaultEcho : (char) 0);
         showKey.setIcon(masked ? new IconUtil.VisibleIcon(16) : new IconUtil.InvisibleIcon(16));
-        showKey.setToolTipText(masked ? "Show" : "Hide");
+        showKey.setToolTipText(masked ? NSAppUtil.ApiKeysPage.SHOW_KEY.getDescription() : NSAppUtil.ApiKeysPage.HIDE_KEY.getDescription());
         isKeyShown = !masked;
     }
 
@@ -1174,7 +1146,7 @@ public class SubjectPanel extends JPanel {
         if (label.isBlank()) {
             JOptionPane.showMessageDialog(this,
                     "Label is required.",
-                    "Missing information", JOptionPane.WARNING_MESSAGE);
+                    NSAppUtil.ApiKeysPage.MISSING_DIALOG.getDisplayName(), JOptionPane.WARNING_MESSAGE);
             return;
         }
 
@@ -1183,7 +1155,7 @@ public class SubjectPanel extends JPanel {
         if (appID.isBlank() != domainID.isBlank()) {
             JOptionPane.showMessageDialog(this,
                     "Provide both App ID and Domain ID, or leave both empty.",
-                    "Missing information", JOptionPane.WARNING_MESSAGE);
+                    NSAppUtil.ApiKeysPage.MISSING_DIALOG.getDisplayName(), JOptionPane.WARNING_MESSAGE);
             return;
         }
         String provider = comboText(keyProvider);
@@ -1216,7 +1188,7 @@ public class SubjectPanel extends JPanel {
         if (selectedKey == null) return;
         int ok = JOptionPane.showConfirmDialog(this,
                 "Rotate this key? The current secret stops working immediately.",
-                "Rotate API key", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
+                NSAppUtil.ApiKeysPage.ROTATE_DIALOG.getDisplayName(), JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
         if (ok != JOptionPane.OK_OPTION) return;
 
         BackgroundTask.runCatching(this, src,
@@ -1233,7 +1205,7 @@ public class SubjectPanel extends JPanel {
         if (key == null) return;
         int ok = JOptionPane.showConfirmDialog(this,
                 deleteConfirm(key.getName(), "API key"),
-                "Delete API key", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
+                NSAppUtil.ApiKeysPage.DELETE_DIALOG.getDisplayName(), JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
         if (ok != JOptionPane.OK_OPTION) return;
 
         BackgroundTask.runCatching(this, null,

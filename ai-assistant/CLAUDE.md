@@ -528,6 +528,7 @@ split out of `AssistantPanel`, which is now just wiring:
 | Class | What it is |
 |---|---|
 | `AssistantPanel` | Wiring only: builds the six page panels, the sidebar, and the top-level `CardStack` |
+| `AIAssistantUtil` | The module's UI descriptors (2026-11-01, the twin of the app's `NSAppUtil`): 20 enums implementing zoxweb's `GetNameDescriptionDisplay` — `Page` (moved here from `AssistantPanel`), `AssistantShell`, and one per page, editor, popup, bubble and table (`ChatPage`, `Composer`, `ChatBubble`, `ChatHistoryPage`, `ChatEditor`, `ChatHistoryColumn`, `SkillsPage`, `SkillEditor`, `SkillsColumn`, `ProvidersPage`, `ProviderKeyEditor`, `ProviderForm`, `ProvidersColumn`, `ProviderKeysColumn`, `CapturePage`, `CaptureColumn`, `CaptureAreaColumn`, `JobQueuePage`). Every component the module builds is named, worded and tooltipped through gui-audio's `GUIUtil.applyProp(component, ref)`; no panel holds a literal label, tooltip, placeholder, column header or dialog title. Each enum wraps a `GetNameDescriptionDisplayImpl`, whose constructor is `(name, description, displayName)` while the enum constructors are `(name, displayName, description)`. The public name constants tests find components by (`AssistantUtil.REUSE_PROMPT` = `bubble.reuse`, `ChatPanel.CLEAR_PROMPT` = `composer.clear`, `CapturePanel.HIDE_WINDOW` = `hide-window`) read the enum. The table models' `COL_*` are the column enums' ordinals and their `COLS` arrays are derived from them. `AIAssistantUtilTest` finds the enums by reflection and pins distinct non-blank names and the mapping |
 | `AssistantContext` | Swing-free state holder: injected services + current selection + caches + the session `CaptureAreaSet` + the `hideWindowOnCapture` preference (2026-10-29) + the `callTimeoutSeconds` the host sets and the one shared `OkHttpClient` built from it, pushed to every provider (2026-10-31) |
 | `ModelFilter` | The model-filter grammar: two `TokenMatcher`s (include / `!`exclude) over a typed pattern list, falling back to the built-in non-chat markers; the conversation combo's `Matcher` since 2026-10-28, no session state |
 | `AIAPIProvider` | The `AIProvider` implementation over `io.xlogistx.api.ai.AIAPI` (+ inner `ModelCatalog`) |
@@ -611,7 +612,10 @@ ref's name is the card key, so `showPage` and `resetPanel` flip by it); `page(Pa
 hand the refs to a host that wants a page's component, title or description. Since 2026-10-26
 `Page implements GetDisplayName`: each page's title at the top of its panel (`ChatHistoryPanel`,
 `CapturePanel`, `SkillsPanel`, `ProvidersPanel`, `JobQueuePanel`) reads `Page.X.getDisplayName()`,
-and the host's `Navigator.Screen` carries the same words, pinned by the app's `ScreenLabelsTest`.
+and the host's `NSAppUtil.Screen` carries the same words, pinned by the app's `ScreenLabelsTest`.
+**Since 2026-11-01 `Page` is `AIAssistantUtil.Page`** (see the source map): it implements
+`GetNameDescriptionDisplay` like every other descriptor of the module, and the host refers to it
+as `AIAssistantUtil.Page`.
 Since 2026-10-27 `Page` also implements `GetDescription` (one line per page, the same as the
 screen's, pinned by the same test); the host shows it as the sidebar tooltip.
 
@@ -1170,7 +1174,8 @@ read like the real store does; `CaptureSupportTest` (6) pins the headless-safe c
 `GUIUtil.compressImage` replaced); `ModelFilterTest` (7) pins the model-filter grammar (blank →
 built-in markers, bare word → contains, glob include, `!` exclude, exclude-only, `*`,
 round-trip/clear, and a lone `!` being ignored rather than blocking everything); and
-`ChatBubbleSaveAsSkillTest` (4) covers the "Save as skill"
+`AIAssistantUtilTest` (3, 2026-11-01) pins the UI descriptors (every enum found by reflection,
+distinct non-blank names, `GUIUtil.applyProp` mapping, the page titles); `ChatBubbleSaveAsSkillTest` (4) covers the "Save as skill"
 affordance; `ChatBubbleReuseTest` (3, 2026-10-27) the user bubble's copy icon (present with a
 handler, clickable, never on a reply); `ChatPanelClearTest` (1, 2026-10-27) drives a real
 `ChatPanel` over `AssistantContextTest.MemoryRepository` (package-private for that) with a current

@@ -42,7 +42,10 @@ option, filter segment and tab carries the same kind of tooltip.
   22, 2222, 443, 8443), and the field's placeholder names them; with no chip it is 1-1024. Type
   a range (`1-2048`) and every port of it is scanned, with the probes on each open one.
 - **Probes are the chips.** *Add probe* ticks bundled and your own probes into the run; a chip's
-  × removes it. **No chip means no probing** — the scan then reports open ports only. The
+  × removes it. The popup's **Groups** section ticks a saved group of probes in one go (its
+  tooltip lists the members; unticking it removes just those), and **Save ticked as group…** at
+  the bottom keeps the chips as they stand under a name — the chips stay individual probes, and
+  the report records the probes, never the group. **No chip means no probing** — the scan then reports open ports only. The
   *Service detection* box is the shortcut: ticking it with no chips selects every probe,
   unticking it clears them. The **Match** segment beside the chips says what happens once a
   probe has identified an open port: *First* (the default) stops the others, *All* lets every
@@ -69,7 +72,11 @@ option, filter segment and tab carries the same kind of tooltip.
   *Check* says whether it is valid and what it would probe), or **Write with the assistant** —
   name the service and port, the definition is attached and the request typed for you, and the
   reply carries a **Save as probe** button. A probe of yours with a bundled name replaces that
-  probe in your scans.
+  probe in your scans. The bar's **Probe groups manager** button opens **Probe groups**: your named sets of
+  probes (name, how many resolve, description), each with its members badged *bundled*, *mine*
+  or *missing* when a probe of yours was deleted since. **New group** names one and ticks its
+  probes in a checklist; **Edit** and **Delete** sit beside the selected group's name; a group
+  stores probe names, so it keeps working across edits and says what no longer exists.
 
 ### Assistant
 

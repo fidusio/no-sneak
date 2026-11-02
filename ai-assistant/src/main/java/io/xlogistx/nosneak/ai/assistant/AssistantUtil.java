@@ -1,6 +1,7 @@
 package io.xlogistx.nosneak.ai.assistant;
 
 import io.xlogistx.common.util.NVColor;
+import io.xlogistx.gui.GUIUtil;
 import io.xlogistx.gui.IconUtil;
 import io.xlogistx.gui.BackgroundTask;
 import io.xlogistx.gui.MDToPDF;
@@ -16,7 +17,8 @@ import java.util.concurrent.Callable;
 public class AssistantUtil {
 
     /** Component name of the user bubble's copy icon (puts the prompt back in the composer). */
-    public static final String REUSE_PROMPT = "reuse-prompt";
+    /** The reuse-prompt icon's component name: {@code AIAssistantUtil.ChatBubble.REUSE}. */
+    public static final String REUSE_PROMPT = AIAssistantUtil.ChatBubble.REUSE.getName();
 
     public static JComponent chatBubble(NVGenericMap response, boolean user, Integer latency,
                                         Integer inTokens, Integer outTokens) {
@@ -64,7 +66,7 @@ public class AssistantUtil {
     /**
      * @param onReuse what a click on the user bubble's copy icon does (2026-10-27): the host puts
      *                the prompt back in the composer so it can be sent again. User bubbles only;
-     *                null = no icon. The button is named {@value #REUSE_PROMPT} for tests.
+     *                null = no icon. The button is named {@code REUSE_PROMPT} for tests.
      */
     public static JComponent chatBubble(String markdown, String who, boolean user, Integer latency,
                                         Integer inTokens, Integer outTokens, Runnable onSaveAsSkill,
@@ -95,61 +97,58 @@ public class AssistantUtil {
             south.setOpaque(false);
             south.setBorder(BorderFactory.createEmptyBorder(0, 12, 6, 12));
             if (detail != null) {
-                JLabel label = new JLabel(detail);
+                JLabel label = GUIUtil.applyProp(new JLabel(detail), AIAssistantUtil.ChatBubble.DETAIL);
                 label.setFont(label.getFont().deriveFont(label.getFont().getSize2D() - 2f));
                 label.setForeground(UIManager.getColor("Label.disabledForeground"));
                 south.add(label);
             }
             if (onSaveAsSkill != null) {
-                JButton saveAsSkill = new JButton("Save as skill");
+                JButton saveAsSkill = GUIUtil.applyProp(new JButton(), AIAssistantUtil.ChatBubble.SAVE_AS_SKILL);
                 saveAsSkill.putClientProperty("JButton.buttonType", "borderless");
                 saveAsSkill.setFont(saveAsSkill.getFont().deriveFont(saveAsSkill.getFont().getSize2D() - 2f));
                 saveAsSkill.setForeground(UIManager.getColor("Label.disabledForeground"));
                 saveAsSkill.setFocusable(false);
-                saveAsSkill.setToolTipText("Open the skill editor seeded with this response");
                 saveAsSkill.addActionListener(_ -> onSaveAsSkill.run());
                 south.add(saveAsSkill);
             }
             if (targets) {
                 for (Map.Entry<String, Runnable> target : saveAs.entrySet()) {
-                    JButton saveAsTarget = new JButton("Save as " + target.getKey());
+                    JButton saveAsTarget = GUIUtil.applyProp(new JButton(), AIAssistantUtil.ChatBubble.SAVE_AS);
+                    saveAsTarget.setName(AIAssistantUtil.ChatBubble.SAVE_AS.getName() + "." + target.getKey());
+                    saveAsTarget.setText(AIAssistantUtil.ChatBubble.SAVE_AS.getDisplayName() + " " + target.getKey());
                     saveAsTarget.putClientProperty("JButton.buttonType", "borderless");
                     saveAsTarget.setFont(saveAsTarget.getFont().deriveFont(saveAsTarget.getFont().getSize2D() - 2f));
                     saveAsTarget.setForeground(UIManager.getColor("Label.disabledForeground"));
                     saveAsTarget.setFocusable(false);
-                    saveAsTarget.setToolTipText("Save this response as a " + target.getKey());
+                    saveAsTarget.setToolTipText(AIAssistantUtil.ChatBubble.SAVE_AS.getDescription() + " " + target.getKey());
                     saveAsTarget.addActionListener(_ -> target.getValue().run());
                     south.add(saveAsTarget);
                 }
             }
             if (reuse) {
-                JButton reusePrompt = new JButton(new IconUtil.CopyIcon(16, Color.WHITE));
-                reusePrompt.setName(REUSE_PROMPT);
+                JButton reusePrompt = GUIUtil.applyProp(new JButton(new IconUtil.CopyIcon(16, Color.WHITE)), AIAssistantUtil.ChatBubble.REUSE);
                 reusePrompt.putClientProperty("JButton.buttonType", "borderless");
                 reusePrompt.setOpaque(false);
                 reusePrompt.setContentAreaFilled(false);
                 reusePrompt.setFocusable(false);
-                reusePrompt.setToolTipText("Put this prompt back in the composer to send it again");
                 reusePrompt.addActionListener(_ -> onReuse.run());
                 south.add(reusePrompt);
             }
             if (!user && markdown != null) {
-                JButton copyMarkdown = new JButton(new IconUtil.CopyIcon(16));
+                JButton copyMarkdown = GUIUtil.applyProp(new JButton(new IconUtil.CopyIcon(16)), AIAssistantUtil.ChatBubble.COPY);
                 copyMarkdown.putClientProperty("JButton.buttonType", "borderless");
                 copyMarkdown.setFont(copyMarkdown.getFont().deriveFont(copyMarkdown.getFont().getSize2D() - 2f));
                 copyMarkdown.setForeground(UIManager.getColor("Label.disabledForeground"));
                 copyMarkdown.setFocusable(false);
-                copyMarkdown.setToolTipText("Copy the response text");
                 copyMarkdown.addActionListener(_ -> copyResponse(pane));
                 south.add(copyMarkdown);
 
-                JButton convertMDToPDF = new JButton(new IconUtil.PDFIcon(16, Color.WHITE));
+                JButton convertMDToPDF = GUIUtil.applyProp(new JButton(new IconUtil.PDFIcon(16, Color.WHITE)), AIAssistantUtil.ChatBubble.PDF);
                 convertMDToPDF.putClientProperty("JButton.buttonType", "borderless");
                 convertMDToPDF.setFont(convertMDToPDF.getFont().deriveFont(convertMDToPDF.getFont().getSize2D() - 2f));
                 convertMDToPDF.setForeground(UIManager.getColor("Label.disabledForeground"));
                 convertMDToPDF.setFocusable(false);
-                convertMDToPDF.setToolTipText("Show this response as a PDF");
-                convertMDToPDF.addActionListener(_ -> showAsPDF(convertMDToPDF, "Response as PDF", markdown));
+                convertMDToPDF.addActionListener(_ -> showAsPDF(convertMDToPDF, AIAssistantUtil.ChatBubble.PDF_DIALOG.getDisplayName(), markdown));
                 south.add(convertMDToPDF);
             }
             bubble.add(south, BorderLayout.SOUTH);

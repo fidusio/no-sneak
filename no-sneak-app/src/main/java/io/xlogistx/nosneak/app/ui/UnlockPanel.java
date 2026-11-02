@@ -4,6 +4,7 @@ import io.xlogistx.gui.BackgroundTask;
 import io.xlogistx.gui.BadgeLabel;
 import io.xlogistx.gui.DirectoryField;
 import io.xlogistx.gui.FormPanel;
+import io.xlogistx.gui.GUIUtil;
 import io.xlogistx.gui.IconUtil;
 import io.xlogistx.gui.InlineMessage;
 import io.xlogistx.gui.PanelBuilder;
@@ -12,10 +13,13 @@ import io.xlogistx.gui.SplashSidePanel;
 import io.xlogistx.gui.StepperPanel;
 import io.xlogistx.gui.UITokens;
 import io.xlogistx.gui.WrapLabel;
+import io.xlogistx.nosneak.app.NSAppUtil;
 import io.xlogistx.nosneak.app.NoSneakMain;
 import io.xlogistx.nosneak.app.NoSneakStore;
 import io.xlogistx.nosneak.app.ui.utility.AppPrefs;
 import io.xlogistx.nosneak.app.ui.utility.Session;
+import io.xlogistx.nosneak.app.NSAppUtil.SignInForm;
+import io.xlogistx.nosneak.app.NSAppUtil.UnlockPage;
 import io.xlogistx.shiro.ds.ShiroDSDomainSecurityManager;
 import net.miginfocom.swing.MigLayout;
 import org.zoxweb.shared.filters.FilterType;
@@ -40,7 +44,8 @@ import java.util.function.Consumer;
  *       vault the step grows the first-run rows — the operator's account (the store's super-admin)
  *       and the database settings — and the button reads <i>Create</i>; otherwise <i>Open</i>.
  *       Every input carries a tooltip and a warning row under the vault password says it is not
- *       recoverable ({@link Form#VAULT_PASSWORD_WARNING}, 2026-10-29).
+ *       recoverable ({@link Form#VAULT_PASSWORD_WARNING}, 2026-10-29). Every label, tooltip and
+ *       button text is a constant of {@link UnlockPage} / {@link SignInForm} (2026-11-01).
  *       Enter in the vault password field is the click. The work runs off the EDT through the
  *       injected {@link StoreOpener} ({@code NoSneakStore.openOrCreate} in production); a failure
  *       (wrong vault password, an installation from before the 2026-10-21 model) stays on the step
@@ -73,9 +78,7 @@ public class UnlockPanel extends JPanel {
          * Shown under the vault password field on every run and in its tooltip (2026-10-29): the
          * vault password is the one secret nothing can bring back.
          */
-        public static final String VAULT_PASSWORD_WARNING = "Keep the vault password safe. IT IS NOT RECOVERABLE: "
-                + "there is no reset, no recovery and nobody who can retrieve it. Lose it and the vault, the database "
-                + "and everything they hold are gone for good.";
+        public static final String VAULT_PASSWORD_WARNING = UnlockPage.VAULT_PASSWORD_WARNING.getDisplayName();
 
         private Form() {
         }
@@ -141,19 +144,6 @@ public class UnlockPanel extends JPanel {
     private static final String FIRST_RUN = "firstRun";
     private static final String REGISTER = "register";
 
-    // step-1 tooltips (2026-10-29): what each input is for, hovered on the field itself
-    private static final String TIP_LOCATION = "The directory NoSneak keeps its vault and encrypted database in. "
-            + "An empty folder creates a new store; a folder that already holds a vault opens it.";
-    private static final String TIP_VAULT_PASSWORD = "Unlocks the vault that holds every other secret of this store. "
-            + "It is never written anywhere and it cannot be recovered or reset: keep it safe.";
-    private static final String TIP_OPERATOR = "The store's super-admin: the account you sign in with from now on.";
-    private static final String TIP_OPERATOR_PASSWORD = "The operator's sign-in password; different from the vault password. "
-            + "It can be changed later from Account \u2192 Profile.";
-    private static final String TIP_OPERATOR_CONFIRM = "Type the operator password again.";
-    private static final String TIP_DB_USER = "The H2 database account; leave the default unless you have a reason.";
-    private static final String TIP_DB_PASSWORD = "The H2 database password. Empty = generated and kept only in the vault.";
-    private static final String TIP_DB_ENCRYPTION = "The password that encrypts the H2 file on disk. Empty = generated and kept only in the vault.";
-
     private final StoreOpener opener;
     private final Consumer<ShiroDSDomainSecurityManager> onStoreOpened;
     private Session session;
@@ -164,25 +154,26 @@ public class UnlockPanel extends JPanel {
     private boolean storeOpen;
 
     // step 1
-    private final DirectoryField location = new DirectoryField();
-    private final JPasswordField vaultPassword = new JPasswordField(20);
+    // step-1 tooltips (2026-10-29) are the *_FIELD descriptions of UnlockPage, hovered on the field itself
+    private final DirectoryField location = GUIUtil.applyProp(new DirectoryField(), UnlockPage.LOCATION_FIELD);
+    private final JPasswordField vaultPassword = GUIUtil.applyProp(new JPasswordField(20), UnlockPage.VAULT_PASSWORD_FIELD);
     private final InlineMessage storeMessage = new InlineMessage();
-    private final FormPanel storeForm = new FormPanel();
-    private final JTextField operatorID = PanelBuilder.textField("", 20);
-    private final JPasswordField operatorPassword = new JPasswordField(20);
-    private final JPasswordField operatorConfirm = new JPasswordField(20);
-    private final JTextField dbUser = PanelBuilder.textField(NoSneakStore.DEFAULT_DB_USER, 20);
-    private final JPasswordField dbPassword = new JPasswordField(20);
-    private final JPasswordField dbEncryptionPassword = new JPasswordField(20);
-    private final JButton openButton = UITokens.primary(new JButton("Open"));
+    private final FormPanel storeForm = GUIUtil.applyProp(new FormPanel(), UnlockPage.STORE_FORM);
+    private final JTextField operatorID = GUIUtil.applyProp(PanelBuilder.textField("", 20), UnlockPage.OPERATOR_FIELD);
+    private final JPasswordField operatorPassword = GUIUtil.applyProp(new JPasswordField(20), UnlockPage.OPERATOR_PASSWORD_FIELD);
+    private final JPasswordField operatorConfirm = GUIUtil.applyProp(new JPasswordField(20), UnlockPage.OPERATOR_CONFIRM_FIELD);
+    private final JTextField dbUser = GUIUtil.applyProp(PanelBuilder.textField(NoSneakStore.DEFAULT_DB_USER, 20), UnlockPage.DB_USER_FIELD);
+    private final JPasswordField dbPassword = GUIUtil.applyProp(new JPasswordField(20), UnlockPage.DB_PASSWORD_FIELD);
+    private final JPasswordField dbEncryptionPassword = GUIUtil.applyProp(new JPasswordField(20), UnlockPage.DB_ENCRYPTION_FIELD);
+    private final JButton openButton = UITokens.primary(GUIUtil.applyProp(new JButton(), UnlockPage.OPEN));
 
     // step 2
-    private final JTextField username = new JTextField(20);
-    private final JPasswordField password = new JPasswordField(20);
-    private final JPasswordField confirmPassword = new JPasswordField(20);
-    private final FormPanel signForm = new FormPanel();
+    private final JTextField username = GUIUtil.applyProp(new JTextField(20), SignInForm.USERNAME_FIELD);
+    private final JPasswordField password = GUIUtil.applyProp(new JPasswordField(20), SignInForm.PASSWORD_FIELD);
+    private final JPasswordField confirmPassword = GUIUtil.applyProp(new JPasswordField(20), SignInForm.CONFIRM_FIELD);
+    private final FormPanel signForm = GUIUtil.applyProp(new FormPanel(), SignInForm.FORM);
     private final InlineMessage signMessage = new InlineMessage();
-    private final JButton signButton = UITokens.primary(new JButton("Sign in"));
+    private final JButton signButton = UITokens.primary(GUIUtil.applyProp(new JButton(), SignInForm.SIGN_IN));
     private final JButton modeToggle = UITokens.link(new JButton());
     private boolean registering;
 
@@ -195,12 +186,13 @@ public class UnlockPanel extends JPanel {
         super(new MigLayout("insets 0, gap 0, fill, hidemode 3", "[400::520,fill][grow,fill]", "[grow,fill]"));
         this.opener = opener;
         this.onStoreOpened = onStoreOpened;
+        setName(UnlockPage.PAGE.getName());
 
         add(buildSplash(), "growy");
         add(buildRight(), "grow");
 
-        stepOpen = steps.addStep("Open store", "The directory NoSneak keeps its vault and encrypted database in", buildOpenStep());
-        stepSign = steps.addStep("Sign in", "Your account in this store", buildSignStep());
+        stepOpen = steps.addStep(UnlockPage.STEP_OPEN.getDisplayName(), UnlockPage.STEP_OPEN.getDescription(), buildOpenStep());
+        stepSign = steps.addStep(UnlockPage.STEP_SIGN_IN.getDisplayName(), UnlockPage.STEP_SIGN_IN.getDescription(), buildSignStep());
         steps.setStepEnabled(stepSign, false);
 
         File last = AppPrefs.storeLocation();
@@ -233,18 +225,17 @@ public class UnlockPanel extends JPanel {
      */
     private JComponent buildSplash() {
         List<String> points = List.of(
-                "Scans run from this machine under its own address. Nothing hides, nothing floods, nothing breaks in.",
-                "Reports, chats, captures and skills stay in a local encrypted store, opened with your own vault password and kept under your account.",
-                "The assistant runs on a provider you configure with your own API key, and sees a report only when you attach it.");
+                UnlockPage.SPLASH_POINT_SCANS.getDisplayName(),
+                UnlockPage.SPLASH_POINT_STORE.getDisplayName(),
+                UnlockPage.SPLASH_POINT_ASSISTANT.getDisplayName());
         String footer = NoSneakMain.VERSION.getName() + " " + NoSneakMain.VERSION.version()
                 + " · Java " + System.getProperty("java.version")
                 + " · " + System.getProperty("os.name") + " " + System.getProperty("os.arch");
         return new SplashSidePanel(
                 IconUtil.svgIcon("io/xlogistx/gui/icons/shield.svg", 26, new Color(0xA9A8F0)),
-                "NoSneak",
-                "What does your network expose, and how good is its posture?",
-                MenuBarFactory.TAGLINE + ". TLS and certificate trust, running services, live hosts with their MAC and vendor. "
-                        + "It looks and reports; it never breaks in.",
+                UnlockPage.SPLASH_BRAND.getDisplayName(),
+                UnlockPage.SPLASH_TITLE.getDisplayName(),
+                MenuBarFactory.TAGLINE + ". " + UnlockPage.SPLASH_TAGLINE.getDisplayName(),
                 points, footer);
     }
 
@@ -256,8 +247,7 @@ public class UnlockPanel extends JPanel {
         card.setBorder(BorderFactory.createLineBorder(UITokens.border()));
         card.add(steps, "growx");
 
-        WrapLabel text = new WrapLabel("First time here? Pick an empty folder in step 1 and NoSneak creates the vault, the encrypted database "
-                + "and your operator account in one go. Installations made before October 2026 cannot be opened and say why.");
+        WrapLabel text = GUIUtil.applyProp(new WrapLabel(""), UnlockPage.FIRST_RUN_NOTE);
         text.setFont(UITokens.font(Font.PLAIN, -1f));
         card.add(callout(new IconUtil.InfoIcon(16), text, ground), "growx, gaptop 16");
 
@@ -297,42 +287,35 @@ public class UnlockPanel extends JPanel {
     }
 
     private JComponent buildOpenStep() {
-        location.dialogTitle("Choose the no-sneak directory")
-                .placeholder("No directory chosen")
+        location.dialogTitle(UnlockPage.LOCATION_DIALOG.getDisplayName())
+                .placeholder(UnlockPage.LOCATION_PLACEHOLDER.getDisplayName())
                 .startDirectory(() -> {
                     File last = AppPrefs.storeLocation();
                     return last != null ? last : new File(System.getProperty("user.home"));
                 });
         location.onChange(_ -> applyStoreMode(path()));
 
-        location.setToolTipText(TIP_LOCATION);
-        location.getPathField().setToolTipText(TIP_LOCATION);
-        location.getChooseButton().setToolTipText("Choose the directory");
-        vaultPassword.setToolTipText(TIP_VAULT_PASSWORD);
-        operatorID.setToolTipText(TIP_OPERATOR);
-        operatorPassword.setToolTipText(TIP_OPERATOR_PASSWORD);
-        operatorConfirm.setToolTipText(TIP_OPERATOR_CONFIRM);
-        dbUser.setToolTipText(TIP_DB_USER);
-        dbPassword.setToolTipText(TIP_DB_PASSWORD);
-        dbEncryptionPassword.setToolTipText(TIP_DB_ENCRYPTION);
+        // the field itself carries the tooltip (applied with its descriptor); the path field inside it says the same
+        location.getPathField().setToolTipText(UnlockPage.LOCATION_FIELD.getDescription());
+        GUIUtil.applyProp(location.getChooseButton(), UnlockPage.LOCATION_CHOOSE);
 
-        storeForm.field("Location", location);
+        storeForm.field(UnlockPage.LOCATION.getDisplayName(), location);
         storeForm.row(storeMessage, "growx, gaptop 4");
-        storeForm.requiredField("Vault password", PanelBuilder.passwordField(vaultPassword),
-                "The one secret every later run needs. It is never written anywhere.");
+        storeForm.requiredField(UnlockPage.VAULT_PASSWORD.getDisplayName(), PanelBuilder.passwordField(vaultPassword),
+                UnlockPage.VAULT_PASSWORD_HINT.getDisplayName());
         // the warning stands out from the muted hints: bold, in the warning colour, on its own tinted row
-        WrapLabel warning = new WrapLabel(Form.VAULT_PASSWORD_WARNING);
+        WrapLabel warning = GUIUtil.applyProp(new WrapLabel(""), UnlockPage.VAULT_PASSWORD_WARNING);
         warning.setFont(UITokens.font(Font.BOLD, -1f));
         warning.setForeground(UITokens.warn());
         storeForm.row(callout(IconUtil.svgIcon("io/xlogistx/gui/icons/alert.svg", 16, UITokens.warn()), warning, UITokens.warnSoft()),
                 "growx, gaptop 6");
         storeForm.group(FIRST_RUN, () -> {
-            storeForm.requiredField("Operator username", operatorID, "The store's super-admin: the account you sign in with from now on.");
-            storeForm.requiredField("Operator password", PanelBuilder.passwordField(operatorPassword));
-            storeForm.requiredField("Confirm operator password", PanelBuilder.passwordField(operatorConfirm));
-            storeForm.field("Database username", dbUser);
-            storeForm.field("Database password", PanelBuilder.passwordField(dbPassword), "Empty = generated and kept only in the vault.");
-            storeForm.field("Database encryption password", PanelBuilder.passwordField(dbEncryptionPassword), "Empty = generated and kept only in the vault.");
+            storeForm.requiredField(UnlockPage.OPERATOR.getDisplayName(), operatorID, UnlockPage.OPERATOR_FIELD.getDescription());
+            storeForm.requiredField(UnlockPage.OPERATOR_PASSWORD.getDisplayName(), PanelBuilder.passwordField(operatorPassword));
+            storeForm.requiredField(UnlockPage.OPERATOR_CONFIRM.getDisplayName(), PanelBuilder.passwordField(operatorConfirm));
+            storeForm.field(UnlockPage.DB_USER.getDisplayName(), dbUser);
+            storeForm.field(UnlockPage.DB_PASSWORD.getDisplayName(), PanelBuilder.passwordField(dbPassword), UnlockPage.DB_GENERATED_HINT.getDisplayName());
+            storeForm.field(UnlockPage.DB_ENCRYPTION.getDisplayName(), PanelBuilder.passwordField(dbEncryptionPassword), UnlockPage.DB_GENERATED_HINT.getDisplayName());
         });
 
         JPanel actions = new JPanel(new MigLayout("insets 0", "[grow][]"));
@@ -347,9 +330,9 @@ public class UnlockPanel extends JPanel {
     }
 
     private JComponent buildSignStep() {
-        signForm.field("Username", username);
-        signForm.field("Password", PanelBuilder.passwordField(password));
-        signForm.group(REGISTER, () -> signForm.field("Confirm password", PanelBuilder.passwordField(confirmPassword)));
+        signForm.field(SignInForm.USERNAME.getDisplayName(), username);
+        signForm.field(SignInForm.PASSWORD.getDisplayName(), PanelBuilder.passwordField(password));
+        signForm.group(REGISTER, () -> signForm.field(SignInForm.CONFIRM.getDisplayName(), PanelBuilder.passwordField(confirmPassword)));
         signForm.row(signMessage, "growx, gaptop 4");
 
         JPanel actions = new JPanel(new MigLayout("insets 0, gapx 12", "[grow][]"));
@@ -380,7 +363,7 @@ public class UnlockPanel extends JPanel {
     private void applyStoreMode(String path) {
         boolean create = Form.creates(path);
         storeForm.showGroup(FIRST_RUN, create);
-        openButton.setText(create ? "Create" : "Open");
+        GUIUtil.applyProp(openButton, create ? UnlockPage.CREATE : UnlockPage.OPEN);
         String hint = Form.storeHint(path);
         if (hint != null) storeMessage.info(hint);
         else storeMessage.clear();
@@ -456,7 +439,7 @@ public class UnlockPanel extends JPanel {
         if (storeOpen) return;
         storeOpen = true;
         storeMessage.clear();
-        steps.complete(stepOpen, (path != null ? path : "") + " · vault unlocked", null);
+        steps.complete(stepOpen, (path != null ? path : "") + " · " + UnlockPage.VAULT_UNLOCKED.getDisplayName(), null);
         steps.setStepEnabled(stepSign, true);
         steps.activate(stepSign);
         SwingUtilities.invokeLater(username::requestFocusInWindow);
@@ -502,8 +485,8 @@ public class UnlockPanel extends JPanel {
 
     private void applySignMode() {
         signForm.showGroup(REGISTER, registering);
-        signButton.setText(registering ? "Register" : "Sign in");
-        modeToggle.setText(registering ? "Already have an account? Sign in" : "Create another account in this store");
+        GUIUtil.applyProp(signButton, registering ? SignInForm.REGISTER : SignInForm.SIGN_IN);
+        GUIUtil.applyProp(modeToggle, registering ? SignInForm.TO_SIGN_IN : SignInForm.TO_REGISTER);
         signMessage.clear();
         if (!registering) confirmPassword.setText("");
     }
@@ -591,6 +574,6 @@ public class UnlockPanel extends JPanel {
 
     /** A pill the host may show beside the store once it is open; here for the frame's title bar or footer. */
     public static BadgeLabel vaultBadge() {
-        return new BadgeLabel("vault unlocked", IconUtil.svgIcon("io/xlogistx/gui/icons/lock.svg", 12, UITokens.ok()), BadgeLabel.Tone.OK);
+        return GUIUtil.applyProp(new BadgeLabel("", IconUtil.svgIcon("io/xlogistx/gui/icons/lock.svg", 12, UITokens.ok()), BadgeLabel.Tone.OK), UnlockPage.VAULT_UNLOCKED);
     }
 }

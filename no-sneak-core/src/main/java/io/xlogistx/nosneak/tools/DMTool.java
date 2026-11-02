@@ -126,7 +126,7 @@ public class DMTool {
             String password = params.stringValue(Param.PASSWORD);
             String dbURL = resolveDbUrl(params.stringValue(Param.DB_URL, null),
                     System.getenv(DB_URL_ENV), System.getProperty(DB_URL_PROPERTY));
-            DomainSecurityManager dsm = NoSneakUtil.SINGLETON.createDomainSecManager(dbURL);
+            DomainSecurityManager dsm = NSCoreUtil.SINGLETON.createDomainSecManager(dbURL);
             log.getLogger().info("Domain security manager: " + dsm);
 
             switch (command) {

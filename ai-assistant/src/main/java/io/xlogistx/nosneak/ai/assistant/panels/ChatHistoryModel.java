@@ -1,11 +1,13 @@
 package io.xlogistx.nosneak.ai.assistant.panels;
 
+import io.xlogistx.nosneak.ai.assistant.AIAssistantUtil;
 import io.xlogistx.nosneak.ai.model.AIChat;
 import io.xlogistx.nosneak.ai.model.AIResponse;
 import org.zoxweb.shared.util.SUS;
 
 import javax.swing.table.AbstractTableModel;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.function.Function;
 
@@ -17,8 +19,15 @@ import java.util.function.Function;
  */
 public class ChatHistoryModel extends AbstractTableModel {
 
-    public static final String[] COLS = {"Chat", "Provider", "Model", "Messages", "Created", "Updated"};
-    public static final int COL_TITLE = 0, COL_PROVIDER = 1, COL_MODEL = 2, COL_MESSAGES = 3, COL_CREATED = 4, COL_UPDATED = 5;
+    /** The columns are {@link AIAssistantUtil.ChatHistoryColumn}, in its order; the headers are the constants' display names. */
+    public static final String[] COLS = Arrays.stream(AIAssistantUtil.ChatHistoryColumn.values())
+            .map(AIAssistantUtil.ChatHistoryColumn::getDisplayName).toArray(String[]::new);
+    public static final int COL_TITLE = AIAssistantUtil.ChatHistoryColumn.TITLE.ordinal(),
+            COL_PROVIDER = AIAssistantUtil.ChatHistoryColumn.PROVIDER.ordinal(),
+            COL_MODEL = AIAssistantUtil.ChatHistoryColumn.MODEL.ordinal(),
+            COL_MESSAGES = AIAssistantUtil.ChatHistoryColumn.MESSAGES.ordinal(),
+            COL_CREATED = AIAssistantUtil.ChatHistoryColumn.CREATED.ordinal(),
+            COL_UPDATED = AIAssistantUtil.ChatHistoryColumn.UPDATED.ordinal();
 
     public static final String UNTITLED = "Untitled chat";
     public static final String NO_PROVIDER = "no provider";
@@ -97,19 +106,19 @@ public class ChatHistoryModel extends AbstractTableModel {
 
     @Override
     public int getColumnCount() {
-        return COLS.length;
+        return AIAssistantUtil.ChatHistoryColumn.values().length;
     }
 
     @Override
     public String getColumnName(int column) {
-        return COLS[column];
+        return AIAssistantUtil.ChatHistoryColumn.values()[column].getDisplayName();
     }
 
     @Override
     public Class<?> getColumnClass(int column) {
-        return switch (column) {
-            case COL_MESSAGES -> Integer.class;
-            case COL_CREATED, COL_UPDATED -> Long.class;
+        return switch (AIAssistantUtil.ChatHistoryColumn.values()[column]) {
+            case MESSAGES -> Integer.class;
+            case CREATED, UPDATED -> Long.class;
             default -> String.class;
         };
     }
@@ -122,14 +131,13 @@ public class ChatHistoryModel extends AbstractTableModel {
     @Override
     public Object getValueAt(int rowIndex, int columnIndex) {
         AIChat c = rows.get(rowIndex);
-        return switch (columnIndex) {
-            case COL_TITLE -> title(c);
-            case COL_PROVIDER -> provider(c);
-            case COL_MODEL -> SUS.trimOrNull(c.getModel()) != null ? c.getModel().trim() : "";
-            case COL_MESSAGES -> c.getMessages() != null ? c.getMessages().size() : 0;
-            case COL_CREATED -> c.getCreationTime();
-            case COL_UPDATED -> c.getLastTimeUpdated();
-            default -> "";
+        return switch (AIAssistantUtil.ChatHistoryColumn.values()[columnIndex]) {
+            case TITLE -> title(c);
+            case PROVIDER -> provider(c);
+            case MODEL -> SUS.trimOrNull(c.getModel()) != null ? c.getModel().trim() : "";
+            case MESSAGES -> c.getMessages() != null ? c.getMessages().size() : 0;
+            case CREATED -> c.getCreationTime();
+            case UPDATED -> c.getLastTimeUpdated();
         };
     }
 }

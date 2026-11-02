@@ -1,5 +1,6 @@
 package io.xlogistx.nosneak.ai.assistant.panels;
 
+import io.xlogistx.nosneak.ai.assistant.AIAssistantUtil;
 import io.xlogistx.nosneak.ai.model.AICapture;
 import org.zoxweb.shared.util.SUS;
 
@@ -17,8 +18,15 @@ import java.util.Map;
  */
 public class CaptureTableModel extends AbstractTableModel {
 
-    public static final String[] COLS = {"", "Capture", "Area", "Size", "Bytes", "Taken"};
-    public static final int COL_THUMB = 0, COL_NAME = 1, COL_AREA = 2, COL_SIZE = 3, COL_BYTES = 4, COL_TAKEN = 5;
+    /** The columns are {@link AIAssistantUtil.CaptureColumn}, in its order; the header is the constant's display name. {@code COLS} is that list of headers, kept for callers that read it. */
+    public static final String[] COLS = java.util.Arrays.stream(AIAssistantUtil.CaptureColumn.values())
+            .map(AIAssistantUtil.CaptureColumn::getDisplayName).toArray(String[]::new);
+    public static final int COL_THUMB = AIAssistantUtil.CaptureColumn.THUMB.ordinal(),
+            COL_NAME = AIAssistantUtil.CaptureColumn.NAME.ordinal(),
+            COL_AREA = AIAssistantUtil.CaptureColumn.AREA.ordinal(),
+            COL_SIZE = AIAssistantUtil.CaptureColumn.SIZE.ordinal(),
+            COL_BYTES = AIAssistantUtil.CaptureColumn.BYTES.ordinal(),
+            COL_TAKEN = AIAssistantUtil.CaptureColumn.TAKEN.ordinal();
 
     public static final String UNTITLED = "Untitled capture";
 
@@ -66,20 +74,20 @@ public class CaptureTableModel extends AbstractTableModel {
 
     @Override
     public int getColumnCount() {
-        return COLS.length;
+        return AIAssistantUtil.CaptureColumn.values().length;
     }
 
     @Override
     public String getColumnName(int column) {
-        return COLS[column];
+        return AIAssistantUtil.CaptureColumn.values()[column].getDisplayName();
     }
 
     @Override
     public Class<?> getColumnClass(int column) {
-        return switch (column) {
-            case COL_THUMB -> Icon.class;
-            case COL_BYTES -> Integer.class;
-            case COL_TAKEN -> Long.class;
+        return switch (AIAssistantUtil.CaptureColumn.values()[column]) {
+            case THUMB -> Icon.class;
+            case BYTES -> Integer.class;
+            case TAKEN -> Long.class;
             default -> String.class;
         };
     }
@@ -92,14 +100,13 @@ public class CaptureTableModel extends AbstractTableModel {
     @Override
     public Object getValueAt(int rowIndex, int columnIndex) {
         AICapture c = rows.get(rowIndex);
-        return switch (columnIndex) {
-            case COL_THUMB -> c.getGUID() != null ? icons.get(c.getGUID()) : null;
-            case COL_NAME -> title(c);
-            case COL_AREA -> SUS.trimOrNull(c.getFromArea()) != null ? c.getFromArea().trim() : "";
-            case COL_SIZE -> size(c);
-            case COL_BYTES -> c.getNumBytes();
-            case COL_TAKEN -> c.getCreationTime();
-            default -> "";
+        return switch (AIAssistantUtil.CaptureColumn.values()[columnIndex]) {
+            case THUMB -> c.getGUID() != null ? icons.get(c.getGUID()) : null;
+            case NAME -> title(c);
+            case AREA -> SUS.trimOrNull(c.getFromArea()) != null ? c.getFromArea().trim() : "";
+            case SIZE -> size(c);
+            case BYTES -> c.getNumBytes();
+            case TAKEN -> c.getCreationTime();
         };
     }
 }
