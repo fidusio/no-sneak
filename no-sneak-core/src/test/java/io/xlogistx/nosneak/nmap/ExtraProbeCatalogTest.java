@@ -103,6 +103,34 @@ public class ExtraProbeCatalogTest {
         assertTrue(report.warnings.isEmpty(), report.warnings.toString());
     }
 
+    /**
+     * {@code bundledCatalog(false)} (2026-11-02, the desktop app whose subject owns a copy of every
+     * probe): the catalog is exactly the extras, in priority order, with nothing to shadow.
+     */
+    @Test
+    public void withoutTheBundleTheCatalogIsExactlyTheExtras() throws Exception {
+        NMapConfig cfg = new NMapConfig().target("10.0.0.1").bundledCatalog(false);
+        cfg.extraProbe(extra("ssh", 5, 2222));
+        cfg.extraProbe(extra("top", 999, 7007));
+        ScanReport report = new ScanReport();
+
+        List<ProbeDefinition> catalog = catalogOf(build(cfg, report));
+
+        assertEquals(List.of("top", "ssh"), catalog.stream().map(ProbeDefinition::getName).toList(),
+                "the two extras, by priority; no bundled probe, so a bundled name is not a shadow");
+        assertEquals("custom", catalog.get(1).getService());
+        assertTrue(report.warnings.isEmpty(), report.warnings.toString());
+
+        NMapConfig byName = new NMapConfig().target("10.0.0.1").bundledCatalog(false).probe("ssh");
+        byName.extraProbe(extra("ssh", 5, 2222));
+        byName.extraProbe(extra("top", 999, 7007));
+        assertEquals(1, catalogOf(build(byName, new ScanReport())).size());
+
+        NMapConfig empty = new NMapConfig().target("10.0.0.1").bundledCatalog(false);
+        assertNull(build(empty, new ScanReport()), "no extras and no bundle: nothing probed");
+        assertTrue(new NMapConfig().bundledCatalog, "the default keeps the bundle, so the CLI is unchanged");
+    }
+
     /** A subject-authored probe that reuses a bundled name replaces it — one definition per name. */
     @Test
     public void aStoredProbeShadowsTheBundledProbeOfTheSameName() throws Exception {

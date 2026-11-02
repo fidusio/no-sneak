@@ -145,7 +145,7 @@ network scanner screen** over `no-sneak-core`; the PQC file-sharing screen is st
 > **The `SCAN` screen is real now.** `ScanPanel` fronts the `no-sneak-core` engine: the command
 > box takes the full `NMap` CLI surface through `NMap.parseCommand`, a probe selector ticks
 > bundled and subject-authored probes into the run, results persist as `ReportContent` rows, and
-> probes persist as `ProbeContent` rows (both DAOs live in `no-sneak-core`'s
+> probes persist as `ProbeType` rows (both DAOs live in `no-sneak-core`'s
 > `io.xlogistx.nosneak.data`). It is also wired to the assistant **both ways** — a scan result
 > can be sent into a chat, and a chat response can be saved back as a probe. See `ScanPanel` below.
 >
@@ -187,7 +187,7 @@ when the subject attaches one to a chat themselves. Nothing here uploads, phones
 io.xlogistx.nosneak.app
 ├── NoSneakMain.java               ← entry point; ds.location/ds.store-password (+ subject=/password=) or the unlock screen; AppFrame swaps unlock ↔ shell, loads the MAC vendors after login (2026-10-25)
 ├── NoSneakStore.java              ← vault + encrypted H2 + shiro.ini: create (H2PSetup) / open (attached manager) / secure / bootstrap / grantAppUser / setRegistrarPassword (2026-10-21)
-├── NSAppUtil.java                 ← the UI descriptors (2026-11-01): 36 enums, one per panel/feature/table, each wrapping zoxweb GetNameDescriptionDisplayImpl; EVERY component the app builds (every panel, label, button, field, tab, column, dialog title) has a constant here and gui-audio's GUIUtil.applyProp(component, ref) maps it on; the page enum Screen, ScanResultTab, AclView, ProbeLibraryFilter/Column live here too (NSAppUtilTest finds the enums by reflection)
+├── NSAppUtil.java                 ← the UI descriptors (2026-11-01): 36 enums, one per panel/feature/table, each wrapping zoxweb GetNameDescriptionDisplayImpl; EVERY component the app builds (every panel, label, button, field, tab, column, dialog title) has a constant here and gui-audio's GUIUtil.applyProp(component, ref) maps it on; the page enum Screen, ScanResultTab, AclView, ProbeLibraryColumn live here too (NSAppUtilTest finds the enums by reflection)
 └── ui/                            ← UI (screens, menu, session/access wiring)
     ├── AppShell.java              ← the signed-in window: HeaderBar + SideNavPanel + CardLayout host (2026-10-24), mounts ai-assistant's AssistantPanel
     ├── UnlockPanel.java           ← the pre-auth screen (2026-10-24): step 1 open/create the store, step 2 sign in / register; replaced LoginPanel + DataStoreSetupPanel. 2026-10-29: every step-1 input has a tooltip and a warning row under the vault password says it is NOT RECOVERABLE (`Form.VAULT_PASSWORD_WARNING`)
@@ -198,9 +198,9 @@ io.xlogistx.nosneak.app
     ├── scan/
     │   ├── ScanFormPanel.java     ← the form that generates the command line (and follows an edited one); Service detection = all / none of the chips
     │   ├── ScanResultView.java    ← header counts + Hosts (MAC and Vendor columns, blank when the report has none) / Services / Raw JSON, host detail with the Network adapter block
-    │   ├── ProbeSelection.java    ← the scanner card's pure rules: ticks → NMapConfig, b:/s: keys, keysForNames, portsPlaceholder (moved out of ScanPanel 2026-11-01; ScanPanelTest)
-    │   ├── ProbeLibraryModel.java ← the Probe library's table rows and filter (pure; ProbeLibraryModelTest)
-    │   ├── ProbeGroupModel.java   ← probe groups (2026-11-01): the groups table, names ↔ tick keys, tick/untick, missing members (pure; ProbeGroupModelTest)
+    │   ├── ProbeSelection.java    ← the scanner card's pure rules: ticks → NMapConfig (bundled catalog off), s: keys, keysForNames / keysForMembers, nameTaken, the origin property, portsPlaceholder (moved out of ScanPanel 2026-11-01; ScanPanelTest)
+    │   ├── ProbeLibraryModel.java ← the Probe library's table: rows over the subject's probes, the Origin column, the search (pure; ProbeLibraryModelTest)
+    │   ├── ProbeGroupModel.java   ← probe groups (2026-11-01): the groups table, names ↔ tick keys, tick/untick, missing members, a rename followed into the groups (pure; ProbeGroupModelTest)
     │   └── ReportView.java        ← the engine's JSON parsed into records (pure; ReportViewTest)
     ├── MenuBarFactory.java        ← builds the application menu bar
     ├── assistant/                 ← app-side bindings for the ai-assistant module
@@ -208,7 +208,7 @@ io.xlogistx.nosneak.app
     │   └── AssistantStorage.java  ← AIRepository impl (chats + skills + provider configs), GUID-keyed over the H2P APIDataStore
     └── utility/
         ├── AppContext.java        ← per-app service locator (Session + Navigator)
-        ├── Session.java           ← auth (unbound Shiro subject) + identifiers + credentials + profile + addresses + the subject view of the store + the app-wide MAC vendor record (loadMacVendors / syncMacVendors, system context)
+        ├── Session.java           ← auth (unbound Shiro subject) + identifiers + credentials + profile + addresses + the subject view of the store + the app-wide MAC vendor record (loadMacVendors / syncMacVendors, system context) + the one-time copy of the bundled probes at a first login (seedBundledProbes, 2026-11-02)
         ├── Navigator.java         ← top-level screen switching over a CardLayout
         └── AppPrefs.java          ← java.util.prefs of the OS user: last store location + last chooser directory (2026-10-22) + the assistant's reply timeout (2026-10-31)
 
@@ -304,8 +304,8 @@ Settings `PagePanel`s, the API Keys header and the Access Control page all read
 and in the menu. The assistant's own pages (`ai-assistant`, which cannot see `Navigator`) take
 their titles from `AssistantPanel.Page.getDisplayName()`, and `ScreenLabelsTest` pins that each
 assistant page and its `Screen` (`AppShell.screenFor`, package-private for the test) carry the same
-words, that every screen label is distinct, and that the two segment enums (`NSAppUtil.ProbeLibraryFilter`,
-`NMapConfig.Timing`) label themselves. The remaining GUI enums are not label sources:
+words, that every screen label is distinct, and that the segment enum `NMapConfig.Timing` labels
+itself (the library's All / Bundled / Mine segment, `NSAppUtil.ProbeLibraryFilter`, went on 2026-11-02 with the bundled source). The remaining GUI enums are not label sources:
 `ReportView.Tone` is a colour, `Session.APIKeyInfo` is a property key.
 
 | Section | Items (`Screen.getDisplayName()`) → `NSAppUtil.Screen` → card · section |
@@ -566,11 +566,13 @@ button still navigates here) nor a stored report open on its card — then
   those ports are not scanned. Nothing is ever greyed: a first fix disabled the field under `-sn`
   and the maintainer read it as "I can no longer specify the port range". A parsed command is not
   typing: `-sn` in the command ticks the box and empties the field without unticking anything.
-- **Probes are chips, not checkboxes.** *Add probe* opens a popup with a check item per bundled and
-  stored probe (grouped, an *All* per group, the bundled tooltip of service · ports); ticked probes
-  show as chips (`ChipPanel`; a stored one carries a *mine* badge) and a chip's × unticks it. The
-  ticks are still `tickedProbes`, keyed as before (`b:<name>` / `s:<guid>`), still applied to the
-  parsed config by `ProbeSelection.applyTo` — never spliced into the command. **The ticks are the
+- **Probes are chips, not checkboxes.** *Add probe* opens a popup with a check item per probe
+  (one section with an *All* since 2026-11-02, the tooltip service · ports); ticked probes
+  show as chips (`ChipPanel`) and a chip's × unticks it. The
+  ticks are still `tickedProbes`, keyed by the stored row's identity (`s:<guid>`; the `b:<name>`
+  keys went with the bundled source on 2026-11-02), still applied to the
+  parsed config by `ProbeSelection.applyTo` — never spliced into the command, and with the
+  engine's bundled catalog switched off (`NMapConfig.bundledCatalog`), so the run is exactly the ticks. **The ticks are the
   only source of probing (maintainer, 2026-10-26): no chip, no probing.** `applyTo` with an empty
   selection sets `probeScan` false and clears any `--probes` the command carried (a bare `-sV`
   would otherwise run the engine's whole catalog); a non-empty one implies `-sV` and names the
@@ -589,8 +591,7 @@ button still navigates here) nor a stored report open on its card — then
   command, and the command sets the segment back. `ScanPanelTest.thePortsPlaceholderNamesTheTickedProbesPorts`
   and `ScanFormPanelTest.theMatchSegmentFollowsTheCommandBothWays` / `thePortsPlaceholderIsSetByTheOwner`
   pin it. The *Service detection* box mirrors the chips both ways (`refreshProbeChips`) and is the
-  all / none shortcut when the user clicks it: a tick with no chips ticks every bundled and stored
-  probe (`tickAllProbes`, through `ScanFormPanel.onServiceDetectionToggled`, which programmatic
+  all / none shortcut when the user clicks it: a tick with no chips ticks every probe (`tickAllProbes`, through `ScanFormPanel.onServiceDetectionToggled`, which programmatic
   `setServiceDetection` does not fire), an untick clears them. The empty chip strip says so. The
   engine side of the rule is in `NMapScanner.buildChecker`: a requested set that matches nothing
   now probes nothing (null checker, warning *nothing probed*) instead of falling back to all.
@@ -638,7 +639,7 @@ deletes every projected row through the subject view (so only this subject's sca
 list reloads empty (`SessionScanHistoryTest`). Double-click views. **Scan again** (2026-10-25, asked for during
 the run-through; also a header button on the stored report's view, `ScanResultView.onRerun`)
 puts the report's saved `command`, `probes` (names mapped back to ticks by
-`ProbeSelection.keysForNames`: bundled by name, stored by name, deleted ones dropped) and name
+`ProbeSelection.keysForNames` among the subject's rows, deleted ones dropped) and name
 into the New scan form and navigates there; nothing runs until Run is pressed, so the command can
 be adjusted first. A report without a `command` property falls back to its description cut before
 the `· probes:` suffix. Rows are still projections re-fetched by GUID before their
@@ -650,32 +651,75 @@ tables as a fresh run. `showResult(name, json)` feeds the scanner page a report 
 
 **Probe library (2026-10-26, on the maintainer's instruction).** `buildProbePanel` is the same
 shape as the history page: a head (title, *Write with the assistant*, the primary *New probe*), a
-bar (search, an All / Bundled / Mine `SegmentedControl` built from `NSAppUtil.ProbeLibraryFilter.values()`
-— the enum carries its labels, 2026-10-26 —, the count, *Probe definition*), and a split
-card — left a table on `ui/scan/ProbeLibraryModel` (rows = `bundledProbes` + the stored probes,
-columns Name · Service · Ports · Transport · Priority · Source, Source a `BadgeLabel`, sorted by
+bar (search, the count, *Restore bundled probes*, *Probe groups manager*, *Probe definition*), and a split
+card — left a table on `ui/scan/ProbeLibraryModel` (rows = the subject's probes, every one of
+them theirs since 2026-11-02, below; columns Name · Service · Ports · Transport · Priority · Origin,
+Origin a `BadgeLabel` *bundled copy* / *mine* from the row's `origin` property, sorted by
 priority then name as the engine orders its catalog; `ProbeLibraryModel.matches` is the row filter:
-segment, then a query against name, service, description and exact port), right a detail
+a query against name, service, description and exact port), right a detail
 `CardStack`: **howto** with nothing selected (what a probe is, and the three ways to add one as
-link buttons: copy a bundled probe, write with the assistant, new probe) and **probe** for a
-selected row (the name with the actions on the same header row — *Copy to my probes* for a
-bundled row, *Edit* and a confirmed *Delete* for a stored one; moved from under the JSON to the
-top on 2026-10-30 because a reader looks for them beside the name — then a `KeyValuePanel` of its
-facts — Description, service, transport, ports, priority, port-scoped, watchdog, states and
-start, source — and the JSON read-only in the mono font; double-click does the same as Edit/Copy). The bundled JSON comes from core's `ProbeDefinitionLoader.bundledSource(name)`,
-read once into `bundledSources` by `reloadProbes()` (public now, for the render harness). A stored
-probe whose JSON no longer parses keeps its row with the loader's reason in the detail pane. The
-selection survives a reload by name and source.
+link buttons: edit any probe, write with the assistant, new probe) and **probe** for a
+selected row (the name with *Edit* and a confirmed *Delete* on the same header row; moved from
+under the JSON to the top on 2026-10-30 because a reader looks for them beside the name — then a
+`KeyValuePanel` of its facts — Description, service, transport, ports, priority, port-scoped,
+watchdog, states and start, origin — and the JSON read-only in the mono font; double-click
+edits). `reloadProbes()` (public, for the render harness) reads the subject's rows off the EDT
+and parses each once into `libraryRows`, which the popup, the chips and the Ports placeholder
+read too. A probe whose JSON no longer parses keeps its row with the loader's reason in the
+detail pane. The selection survives a reload by name.
+
+**One probe source (2026-11-02, `PLAN-single-probe-source.md`; the maintainer: "convert the
+bundled at startup time as user probe, it is a one time setup").** Until then a probe had two
+sources — the 18 bundled files on core's classpath, read-only, keyed `b:<name>`, and the
+subject's `ProbeType` rows, keyed `s:<guid>` — with a stored probe shadowing a bundled one of
+the same name. Now there is one: at a subject's **first login** `Session.seedBundledProbes(false)`
+copies every bundled definition they do not have, by name, into their own rows (the definition's
+name and description, the file's JSON as the content, the property `origin=bundled` —
+`ProbeSelection.markBundledCopy`) and writes the marker `probes-seeded` (the day) on the
+subject identifier's property bag, where the profile fields live; it runs inside
+`loginUsernamePassword`, before the `authenticated` event, so every listener already sees the
+copies, and a failure is printed and does not stop the login (the marker stays unset, the next
+login tries again). It is a one-time copy, **not** a start-up sync: a later login copies nothing,
+a deleted probe stays deleted, and a bundled probe fixed in a later version does not reach a
+seeded subject — by the maintainer's decision. The one escape hatch is **Restore bundled
+probes** on the library bar (`seedBundledProbes(true)`): the marker is ignored, every bundled
+name the subject no longer has comes back, nothing they changed is touched, and a dialog says how
+many. No new entity and no new param: the origin and the marker are property-bag entries. What
+changed with it: the `b:` keys, the All / Bundled / Mine segment (`NSAppUtil.ProbeLibraryFilter`),
+*Copy to my probes*, the editor's shadow note and the *bundled* / *mine* badges on a group's
+members are gone; every library row has *Edit* and *Delete*; the popup and the group editor's
+checklist have one PROBES section; the engine is handed exactly the ticked definitions with its
+bundled catalog switched off (`ProbeSelection.applyTo` → `NMapConfig.bundledCatalog(false)`,
+set in code like `extraProbes`, never printed into or parsed from the command, so
+`formatCommand` / `parseCommand` and the CLI are untouched — `no-sneak-core/CLAUDE.md`, *Engine
+reference*). **A probe's name is unique among the subject's rows** (the engine's catalog, a
+group's members and a report's `probes` all know a probe by its name): `probeToSave` refuses to
+rename a stored row to a name another row holds (`ProbeSelection.nameTaken`; *A probe of yours
+already has the name "x"*, inline and in the dialog), while a new draft whose name exists still
+updates that row, as the assistant's *Save as probe* relies on; and **a rename follows into the
+groups** (`ProbeGroupModel.renamed`, saved off the EDT with the probe, then `reloadProbeGroups`).
+**A name must already be lower-case and trimmed** (later that day the maintainer renamed the
+entity `ProbeContent` → `ProbeType`, param `content` → `definition`, table `probe_type`, and
+its `setName` now lower-cases and trims): the JSON's `name` and the row's must stay one
+string, so `ProbeSelection.nameForm` makes `probeToSave` and the Check button
+(`ProbeLibraryModel.checkMessage`) refuse *Probe names are lower-case and trimmed: name it
+"x"* instead of storing a re-cased row the dedupe rules and the reports would not find.
+Pinned by `SessionProbeSeedTest` (a real store: first login copies 18 with the origin and the
+marker, a later login copies nothing even after a delete, Restore brings back exactly the missing
+one and leaves an edited one alone, each subject is seeded on their own and sees only their
+rows), `ScanPanelTest` (every key `s:`, the bundle off, `nameTaken`, the origin), core's
+`ExtraProbeCatalogTest.withoutTheBundleTheCatalogIsExactlyTheExtras`, `ProbeLibraryModelTest`
+(the origin column, the search) and `ProbeGroupModelTest` (`renamed`).
 
 **The probe editor** (`buildEditProbe`, card `Edit_probe`, opened by `openProbeEditor(row, title)`:
 *New probe* / *Edit probe* / *Copy of <name>*) is a mono, non-wrapping text area under a help
-line (*See the Probe definition, or let the assistant write it*, two link buttons) and the shadow
-note (a stored probe with a bundled name replaces that probe in scans). *Check* runs
+line (*See the Probe definition, or let the assistant write it*, two link buttons). *Check* runs
 `ProbeLibraryModel.checkMessage` — the loader's verdict, *Valid: ssh · tcp 22, 2222 · 5 states from
 connect* or its reason — into an `InlineMessage`; the name is a label read from the JSON
 (`refreshEditName`), no field to disagree with it; Save goes through `probeToSave` as before
-(name from the JSON, update-by-name, a modal only on failure). `saveProbeFromEditor` is still
-the assistant's route in.
+(name from the JSON, update-by-name, a modal only on failure; since 2026-11-02 a stored row
+renamed to a name another row holds is refused, and a rename follows into the groups).
+`saveProbeFromEditor` is still the assistant's route in.
 
 **Probe definition** (`showProbeDefinition`, card `Probe_definition`): `PROBE-DEFINITION.md`
 in gui-audio's `MDViewerPanel`, loaded from the classpath on first use
@@ -695,7 +739,7 @@ stored row, the filter, the check message, the prompt).
 
 **Probe groups (2026-11-01, plan `PLAN-probe-groups.md` at the repo root).** A subject saves
 named sets of probes and ticks a whole group when setting up a scan. The entity is core's
-`io.xlogistx.nosneak.data.ProbeGroup` (`PropertyImpl` like `ProbeContent`; the DAO's name
+`io.xlogistx.nosneak.data.ProbeGroup` (`PropertyImpl` like `ProbeType`; the DAO's name
 and description, one param `probes` = a set of probe **names** — an `NVStringSet`, `Set<String>`
 in insertion order, since the maintainer's change of 2026-11-01 (it was a csv `String`); the store
 keeps it as a JSON column; `setProbes(Set)` replaces the members, `setProbes(String csv)` and
@@ -704,18 +748,19 @@ keeps it as a JSON column; `setProbes(Set)` replaces the members, `setProbes(Str
 probe methods' shape (subject-scoped, empty when signed out; `SessionProbeGroupTest` on a real
 store). **The rule: a group never reaches the engine and never changes what a report stores.**
 `tickedProbes` stays the only source of probing; a group resolves to tick keys the moment it is
-used, through `ProbeSelection.keysForNames` (bundled first, mine by name, a deleted member
-dropped — exactly as *Scan again* resolves a report's `probes`), so a renamed or re-saved probe
-does not break it and a missing member is reported, not silently lost. The pure rules are
+used, through `ProbeSelection.keysForMembers` (by name among the subject's rows, a deleted member
+dropped — exactly as *Scan again* resolves a report's `probes`), so a re-saved probe does not
+break it, a renamed one is followed (2026-11-02) and a missing member is reported, not silently lost. The pure rules are
 **`ui.scan.ProbeGroupModel`** (the groups table, Name · Probes = `4` or `4 (1 missing)` ·
 Description, sorted by name; `members` (the entity's set, empty for null), `memberKeys`,
-`missing`, `namesFromTicks` — the inverse, an ordered set of names in catalog order: bundled by
-priority then name, then mine by name —, `describe` (that set as `ssh, https-pqc`), `applyTick` (a tick adds
+`missing`, `namesFromTicks` — the inverse, an ordered set of names in catalog order, by
+priority then name —, `describe` (that set as `ssh, https-pqc`), `renamed` (the groups a probe
+rename changes, for the caller to save), `applyTick` (a tick adds
 exactly the members, an untick removes exactly them), `isTicked` (every live member ticked and
 at least one), `missingNote`, `existingByName` (case-insensitive, stored rows only), `validate`
 (a name and a probe), `matches`; `rows(mine, presets, …)` keeps a seam for bundled groups,
 none ship yet). Three places in the panel:
-- **The Add probe popup** opens with a **GROUPS** section over the probe sections: one check
+- **The Add probe popup** opens with a **GROUPS** section over the PROBES section: one check
   item per group, ticked when `isTicked`, tooltip = the members with ` (missing)` suffixed;
   `tickGroup` applies the tick and, for a group with missing members, puts
   `Group "<name>": N probe(s) no longer exist (…)` under the command through the form's new
@@ -731,12 +776,12 @@ none ship yet). Three places in the panel:
   **howto** with nothing selected (what a group is, *New group*, *Save ticked as group on the
   Scan page*) and **group** for a selected row — name with *Edit* and a confirmed *Delete* on
   the header row, a `KeyValuePanel` (Description, Probes, Missing, Source) and the member list,
-  one line per name with a `BadgeLabel` *bundled* / *mine* / *missing*. Double-click edits; the
+  one line per name, a *missing* `BadgeLabel` where the name matches no probe. Double-click edits; the
   selection survives a reload by name; `reloadProbes` refreshes the rows too, since the resolved
   count follows the probes known now.
 - **The group editor** (card `Edit_probe_group`, `buildEditProbeGroup`, `openGroupEditor(group
-  | null)`): Name, Description, a search box over a checklist of every probe (Bundled / My
-  probes with an *All* each, the same `probeRows()` as the popup), a live *N probes ticked*
+  | null)`): Name, Description, a search box over a checklist of every probe (one section with
+  an *All*, the same `probeRows()` as the popup), a live *N probes ticked*
   label, an `InlineMessage` (a stored group's members that no longer exist are named and
   dropped on save; validation errors land there), *Save* / *Cancel*. Save goes through
   `validate`, dedupes by name, `Session.saveProbeGroup` off the EDT, then back to the groups
@@ -765,8 +810,8 @@ enums by reflection, so a new one is covered the moment it is declared.
 UI enums that lived beside their panels moved in — `Screen` (was `Navigator.Screen`; the
 sidebar's key is now the constant's component name, `nav.scan`, resolved by `Screen.byName`),
 `ScanResultTab` (was `ScanResultView.Tab`), `AclView` (was `SubjectSecManagerPanel.View`),
-`ProbeLibraryFilter` (was `ProbeLibraryModel.Filter`) and `ProbeLibraryColumn` (was the
-`COLS` array; `COL_*` are its ordinals) — and every panel got its own: `Shell`, `StatusBar`,
+`ProbeLibraryFilter` (was `ProbeLibraryModel.Filter`; deleted on 2026-11-02 with the bundled
+source) and `ProbeLibraryColumn` (was the `COLS` array; `COL_*` are its ordinals) — and every panel got its own: `Shell`, `StatusBar`,
 `MenuBar`, `UnlockPage`, `SignInForm`, `MainWindow`, `ScanPage`, `ScanForm`, `ScanResult`
 (+ `ScanResultHostColumn`, `ScanResultServiceColumn`, `HostDetail`), `ProbeMenu`,
 `ProbeLibraryPage`, `ProbeDefinitionPage`, `AskProbe`, `ScanHistoryPage` (+ `ScanHistoryColumn`),
@@ -816,7 +861,7 @@ richer on 2026-10-29 ("update the help content make richer to reflect the recent
 the pages grouped under Scan / Assistant / Account headings, and the recent work spelled out —
 the command-is-the-truth rule and the `-sn` / ports exclusivity, no chip = no probing, the MAC
 and vendor columns and the Network adapter block, Scan again and Stop, multi-select Delete and
-Delete all, the Probe library's three ways to add a probe, the Provider box and the provider ·
+Delete all, the Probe library's three ways to add a probe (one source of probes since 2026-11-02), the Provider box and the provider ·
 model line on replies, the Model box filter grammar, Send history / Auto-copy code, the chips,
 the copy icon on past prompts and the × in the input box, Chat as PDF, the Capture page's Hide
 window box, one key backing several providers, the clipboard wipe on Copy, Backup / Restore; About =
@@ -825,7 +870,7 @@ the Help's "what it will and won't do", a `KeyValuePanel` of Version / Java / Pl
 (the directory) / Store (`STORE_NOTE`),
 a muted line that every page, button, option and tab carries a tooltip (same day, when the
 enums gained descriptions), and a `UITokens.link` button that opens Help. The Help text says the
-same under *Where things live* and names the T0 to T5 and All / Bundled / Mine segments. Keep
+same under *Where things live* and names the T0 to T5 segment. Keep
 both in step when a page is added or merged.)
 Both dialogs are modeless and owned by the application window. `showDescription()` / `showAbout()`
 are public so the sidebar's footer (*Help*, and the version line for About) can open them. The old *Tools* / *Mode* menus and
@@ -1030,7 +1075,7 @@ Account data (backed by `DomainSecurityManager`, keyed off the signed-in subject
 - `saveProfile(Map)` / `loadProfile(String...)` — name/DOB only (flat keys) in the subject's
   property bag, persisted via `updateSubjectID`.
 
-Scan data (`ReportContent` / `ProbeContent`, both from `no-sneak-core`'s
+Scan data (`ReportContent` / `ProbeType`, both from `no-sneak-core`'s
 `io.xlogistx.nosneak.data`, owner-scoped by subjectGUID and stored in the same H2P
 `APIDataStore`). `saveScanResult` / `saveProbe` branch on `getGUID()` — non-empty updates and
 stamps `lastTimeUpdated`, empty stamps the owner and inserts — the same upsert-by-GUID shape
@@ -1039,7 +1084,11 @@ stamps `lastTimeUpdated`, empty stamps the owner and inserts — the same upsert
 (2026-11-01, the probe groups: name, description, a set of probe names) has the same four
 methods — `saveProbeGroup` / `deleteProbeGroup` / `getProbeGroup` / `getAllProbeGroups` — in
 the same shape; `SessionProbeGroupTest` pins save, update-in-place, delete and the subject scope
-on a real store.
+on a real store. **`seedBundledProbes(force)`** (2026-11-02) is the one-time copy of the bundled
+probes into the subject's rows — run by `loginUsernamePassword` with `force=false` (the marker
+`PROBES_SEEDED` on the subject identifier's bag makes it a no-op after the first time), by the
+library's *Restore bundled probes* with `true` (only the missing names, never an overwrite);
+`probesSeeded()` reads the marker. See *ScanPanel* → *One probe source*.
 
 > **`getAllScanResults()` is a projected read** — it names its columns and **omits `content`**,
 > because a single `/24` report is ~53 KB of JSON and the list only renders a name, the command
@@ -1278,7 +1327,8 @@ All target-only, because the model has nowhere to store them: per-identifier **s
   marking mandatory fields with a trailing `*` and everything else explicitly optional.
 
 ### Scan panel (`ScanPanel`)
-- **`ProbeContent` carries one param.** Just `content`; the Probe library parses every stored
+- **`ProbeType` carries one param.** Just `definition` (`ProbeContent` with a `content` param
+  until the maintainer renamed it on 2026-11-02, table `probe_type`); the Probe library parses every stored
   blob once per reload (`ProbeLibraryModel.rows`, off the EDT) to show service, ports and
   priority. Adding columns is no longer a store hazard — H2P has done `ALTER TABLE ADD COLUMN`
   for a new param since 2026-09-23 — so the only reason left to add them is a search that

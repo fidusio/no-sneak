@@ -30,7 +30,7 @@ public class NSAppUtil {
         COUNT("probeGroups.count", "", "How many groups are listed"),
         TABLE("probeGroups.table", "Groups", "Your probe groups; select one to read it, double-click to edit it"),
         HOWTO_TITLE("probeGroups.howto", "What a group is", null),
-        HOWTO_TEXT("probeGroups.howto.text", "A group is a named list of probes — bundled ones and yours — that you select in one go "
+        HOWTO_TEXT("probeGroups.howto.text", "A group is a named list of your probes that you select in one go "
                 + "under Add probe on the Scan page. It stores the probes' names, so it keeps working when a probe "
                 + "is renamed or re-saved, and it says which members no longer exist. The scan runs the probes; "
                 + "the report records them, never the group. Two ways to make one:", null),
@@ -46,10 +46,8 @@ public class NSAppUtil {
         FACT_SOURCE("probeGroups.group.source", "Source", null),
         SOURCE_MINE("probeGroups.group.source.mine", "mine, stored under your account", null),
         SOURCE_PRESET("probeGroups.group.source.preset", "bundled with no-sneak", null),
-        MEMBERS("probeGroups.group.members", "Probes", "The members: bundled, yours, or missing"),
+        MEMBERS("probeGroups.group.members", "Probes", "The members; one that no longer exists is marked missing"),
         MEMBER_LIST("probeGroups.group.members.list", "", "One line per member probe"),
-        BADGE_BUNDLED("probeGroups.badge.bundled", "bundled", "A probe that ships with no-sneak"),
-        BADGE_MINE("probeGroups.badge.mine", "mine", "A probe stored under your account"),
         BADGE_MISSING("probeGroups.badge.missing", "missing", "No probe of this name exists any more; dropped when the group is saved again");
 
         private final GetNameDescriptionDisplay gndd;
@@ -90,10 +88,8 @@ public class NSAppUtil {
         COUNT("probeGroupEditor.count", "", "How many probes are selected"),
         CHECK("probeGroupEditor.check", "", "Not in the library any more, dropped on save"),
         LIST("probeGroupEditor.list", "", "Every probe a scan can run; select the members"),
-        SECTION_BUNDLED("probeGroupEditor.bundled", "Bundled probes", "The probes that ship with the app"),
-        SECTION_MINE("probeGroupEditor.mine", "My probes", "The probes stored under your account"),
-        EMPTY_BUNDLED("probeGroupEditor.bundled.empty", "None loaded", null),
-        EMPTY_MINE("probeGroupEditor.mine.empty", "No probes yet", null),
+        SECTION_PROBES("probeGroupEditor.probes", "Probes", "Every probe stored under your account"),
+        EMPTY_PROBES("probeGroupEditor.probes.empty", "No probes yet", null),
         ALL("probeGroupEditor.all", "All", "Tick or untick every probe of this section"),
         SAVE("probeGroupEditor.save", "Save", "Store the group and go back to the list"),
         CANCEL("probeGroupEditor.cancel", "Cancel", "Discard the changes");
@@ -286,34 +282,6 @@ public class NSAppUtil {
         }
     }
 
-    /** The Probe library's All / Bundled / Mine segment (2026-10-27, moved here from {@code ProbeLibraryModel.Filter}): the display name is the segment's text, the description its tooltip. */
-    public enum ProbeLibraryFilter implements GetNameDescriptionDisplay {
-        ALL("probeLibrary.filter.all", "All", "Every probe: the bundled ones and yours"),
-        BUNDLED("probeLibrary.filter.bundled", "Bundled", "The probes that ship with the app, read-only"),
-        MINE("probeLibrary.filter.mine", "Mine", "The probes stored under your account");
-
-        private final GetNameDescriptionDisplay gndd;
-
-        ProbeLibraryFilter(String name, String displayName, String description) {
-            gndd = new GetNameDescriptionDisplayImpl(name, description, displayName);
-        }
-
-        @Override
-        public String getName() {
-            return gndd.getName();
-        }
-
-        @Override
-        public String getDisplayName() {
-            return gndd.getDisplayName();
-        }
-
-        @Override
-        public String getDescription() {
-            return gndd.getDescription();
-        }
-    }
-
     /** The columns of the Probe library table, in order; {@code ProbeLibraryModel} reads its headers here and its {@code COL_*} are the ordinals. */
     public enum ProbeLibraryColumn implements GetNameDescriptionDisplay {
         NAME("probeLibrary.col.name", "Name", "The probe's name"),
@@ -321,7 +289,7 @@ public class NSAppUtil {
         PORTS("probeLibrary.col.ports", "Ports", "The ports the probe declares"),
         TRANSPORT("probeLibrary.col.transport", "Transport", "tcp or udp"),
         PRIORITY("probeLibrary.col.priority", "Priority", "Higher runs first on an open port"),
-        SOURCE("probeLibrary.col.source", "Source", "bundled with the app, or mine");
+        SOURCE("probeLibrary.col.source", "Origin", "a copy of a bundled probe, or written here");
 
         private final GetNameDescriptionDisplay gndd;
 
@@ -1206,7 +1174,6 @@ public class NSAppUtil {
         NEW_SCAN("scanPage.newScan", "New scan", "Start over: clear the targets, ports, name, options, probes and the last result"),
         PROBES_EMPTY("scanPage.probes.empty", "none · no probing (tick Service detection for all)", null),
         ADD_PROBE("scanPage.probes.add", "Add probe", null),
-        CHIP_MINE("scanPage.probes.chip.mine", "mine", null),
         SESSION_ENDED_DIALOG("scanPage.sessionEnded.dialog", "Scan", null),
         USAGE_DIALOG("scanPage.usage.dialog", "Usage", null),
         SEND_TO_CHAT_DIALOG("scanPage.sendToChat.dialog", "Send to chat", null);
@@ -1235,10 +1202,8 @@ public class NSAppUtil {
 
     /** The Add probe popup's probe sections (the GROUPS section is {@link ProbeGroupMenu}): a header, an empty text and an All item per section. */
     public enum ProbeMenu implements GetNameDescriptionDisplay {
-        SECTION_BUNDLED("probeMenu.bundled", "Bundled probes", null),
-        EMPTY_BUNDLED("probeMenu.bundled.empty", "None loaded", null),
-        SECTION_MINE("probeMenu.mine", "My probes", null),
-        EMPTY_MINE("probeMenu.mine.empty", "No probes yet", null),
+        SECTION_PROBES("probeMenu.probes", "Probes", null),
+        EMPTY_PROBES("probeMenu.probes.empty", "No probes yet", null),
         ALL("probeMenu.all", "All", null);
 
         private final GetNameDescriptionDisplay gndd;
@@ -1263,24 +1228,27 @@ public class NSAppUtil {
         }
     }
 
-    /** The Probe library page (2026-10-26): head, bar, table, the how-to card with nothing selected and the selected probe's card; the filter segment is {@link ProbeLibraryFilter}, the columns {@link ProbeLibraryColumn}. */
+    /** The Probe library page (2026-10-26): head, bar, table, the how-to card with nothing selected and the selected probe's card; the columns are {@link ProbeLibraryColumn} (the All / Bundled / Mine segment went on 2026-11-02 with the one probe source). */
     public enum ProbeLibraryPage implements GetNameDescriptionDisplay {
-        PAGE("probeLibrary", "Probe library", "Every probe a scan can run: the bundled set and your own"),
+        PAGE("probeLibrary", "Probe library", "Every probe a scan can run, stored under your account"),
         TITLE("probeLibrary.title", "Probe library", null),
-        SUBTITLE("probeLibrary.subtitle", "The service probes a scan can run: the bundled set and your own. Select one to read it.", null),
+        SUBTITLE("probeLibrary.subtitle", "The service probes a scan can run. The bundled set was copied to your account at your first sign-in, so every probe is yours to edit. Select one to read it.", null),
         WRITE_WITH_ASSISTANT("probeLibrary.writeWithAssistant", "Write with the assistant", "Hand the assistant the probe definition and ask it for a probe"),
         NEW_PROBE("probeLibrary.newProbe", "New probe", null),
         SEARCH("probeLibrary.search", "Search name, service, port", null),
         COUNT("probeLibrary.count", "", null),
         TABLE("probeLibrary.table", "", null),
         DEFINITION("probeLibrary.definition", "Probe definition", "The contract a probe file follows, with examples"),
+        RESTORE("probeLibrary.restore", "Restore bundled probes", "Add back any bundled probe you no longer have; nothing you changed is touched"),
+        RESTORE_DIALOG("probeLibrary.restore.dialog", "Restore bundled probes", null),
+        RESTORE_NONE("probeLibrary.restore.none", "Nothing to restore: every bundled probe is in your library.", null),
+        RESTORE_DONE("probeLibrary.restore.done", "restored.", null),
         HOWTO_TITLE("probeLibrary.howto", "How to add a probe", null),
         HOWTO_TEXT("probeLibrary.howto.text", "A probe is one JSON file: a small state machine that connects, sends the minimum the protocol needs, matches the reply and records the service. Select a probe on the left to read it. Three ways to add one:", null),
-        HOWTO_COPY("probeLibrary.howto.copy", "Copy a bundled probe", "Pick one on the left, then Copy to my probes and change what you need."),
+        HOWTO_EDIT("probeLibrary.howto.edit", "Edit any probe", "Pick one on the left and Edit; the bundled copies are yours to change, and Restore bundled probes brings an original back."),
         HOWTO_ASK("probeLibrary.howto.ask", "Write with the assistant", "It gets the probe definition and returns the JSON; one click on the reply saves it here."),
         HOWTO_NEW("probeLibrary.howto.new", "New probe", "Start from an empty editor, with the Probe definition one click away."),
         PROBE_TITLE("probeLibrary.probe.title", "", null),
-        COPY("probeLibrary.probe.copy", "Copy to my probes", "Open the editor with this probe's JSON as your draft"),
         EDIT("probeLibrary.probe.edit", "Edit", null),
         DELETE("probeLibrary.probe.delete", "Delete", null),
         DELETE_DIALOG("probeLibrary.probe.delete.dialog", "Delete probe", null),
@@ -1293,10 +1261,10 @@ public class NSAppUtil {
         FACT_PORT_SCOPED("probeLibrary.probe.fact.portScoped", "Port-scoped", null),
         FACT_WATCHDOG("probeLibrary.probe.fact.watchdog", "Watchdog", null),
         FACT_STATES("probeLibrary.probe.fact.states", "States", null),
-        FACT_SOURCE("probeLibrary.probe.fact.source", "Source", null),
-        SOURCE_MINE("probeLibrary.probe.source.mine", "mine, stored under your account", null),
-        SOURCE_BUNDLED("probeLibrary.probe.source.bundled", "bundled with no-sneak", null),
-        BADGE_BUNDLED("probeLibrary.badge.bundled", "bundled", null),
+        FACT_SOURCE("probeLibrary.probe.fact.source", "Origin", null),
+        SOURCE_MINE("probeLibrary.probe.source.mine", "written here, stored under your account", null),
+        SOURCE_BUNDLED("probeLibrary.probe.source.bundled", "a copy of the probe bundled with no-sneak, stored under your account", null),
+        BADGE_BUNDLED("probeLibrary.badge.bundled", "bundled copy", null),
         BADGE_MINE("probeLibrary.badge.mine", "mine", null);
 
         private final GetNameDescriptionDisplay gndd;
@@ -1488,17 +1456,17 @@ public class NSAppUtil {
         TITLE("probeEditor.title", "", null),
         TITLE_NEW("probeEditor.title.new", "New probe", null),
         TITLE_EDIT("probeEditor.title.edit", "Edit probe", null),
-        TITLE_COPY("probeEditor.title.copy", "Copy of", null),
         HELP_ONE("probeEditor.help.one", "One JSON object. See the", null),
         HELP_DEFINITION("probeEditor.help.definition", "Probe definition", null),
         HELP_OR("probeEditor.help.or", ", or let the", null),
         HELP_ASK("probeEditor.help.ask", "assistant write it", null),
-        SHADOW("probeEditor.shadow", "A stored probe with a bundled probe's name replaces that probe in your scans (the report says so); rename it in the JSON to keep both.", null),
         SAVE("probeEditor.save", "Save", null),
         CHECK("probeEditor.check", "Check", "Validate the draft the way the engine will"),
         NAME("probeEditor.name", "", null),
         NAME_PENDING("probeEditor.name.pending", "Name: taken from the JSON once it is valid", null),
         NAME_PREFIX("probeEditor.name.prefix", "Name:", null),
+        NAME_TAKEN("probeEditor.name.taken", "A probe of yours already has the name", null),
+        NAME_FORM("probeEditor.name.form", "Probe names are lower-case and trimmed: name it", null),
         SOURCE("probeEditor.source", "", null),
         INVALID_DIALOG("probeEditor.invalid.dialog", "Not a valid probe", null),
         SAVED_DIALOG("probeEditor.saved.dialog", "Probe", null);

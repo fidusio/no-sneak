@@ -1,7 +1,7 @@
 package io.xlogistx.nosneak.app.ui.scan;
 
 import io.xlogistx.nosneak.app.NSAppUtil;
-import io.xlogistx.nosneak.data.ProbeContent;
+import io.xlogistx.nosneak.data.ProbeType;
 import io.xlogistx.nosneak.model.ProbeDefinition;
 import io.xlogistx.nosneak.model.ProbeDefinitionLoader;
 
@@ -10,11 +10,11 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 
 /**
- * The Probe library's table (2026-10-26): every probe a scan can run, the bundled set and the
- * subject's own, one row each, in the engine's order (priority first, then name). Pure and
+ * The Probe library's table (2026-10-26): every probe a scan can run — the subject's own rows,
+ * the one source of probes since 2026-11-02 (the bundled set was copied in at their first
+ * login) — one row each, in the engine's order (priority first, then name). Pure and
  * Swing-free apart from the table-model contract, so {@code ProbeLibraryModelTest} pins the
  * rows, the filter and the editor's check message without a display.
  * <p>
@@ -25,13 +25,13 @@ import java.util.Map;
 public final class ProbeLibraryModel extends AbstractTableModel {
 
     /**
-     * One probe. {@code def} is null only for a stored probe that fails to parse; then {@code
-     * error} says why. {@code source} is the JSON text as the reader sees it (the bundled file,
-     * or the stored content).
+     * One probe. {@code def} is null only for a probe that fails to parse; then {@code error}
+     * says why. {@code source} is the JSON text as the reader sees it (the stored content).
      */
-    public record Row(ProbeDefinition def, String source, ProbeContent content, String error) {
-        public boolean stored() {
-            return content != null;
+    public record Row(ProbeDefinition def, String source, ProbeType content, String error) {
+        /** {@code bundled} for a copy the seed made of a bundled probe, else {@code mine}; the Origin column. */
+        public String origin() {
+            return ProbeSelection.isBundledCopy(content) ? ProbeSelection.ORIGIN_BUNDLED : "mine";
         }
 
         public String name() {
@@ -62,17 +62,14 @@ public final class ProbeLibraryModel extends AbstractTableModel {
     private List<Row> rows = List.of();
 
     /**
-     * The rows for a library: the bundled definitions (their JSON from {@code bundledSources},
-     * by name) and the stored probes (parsed here; an unparsable one keeps its row with the
-     * reason), sorted by priority descending then name, as the engine orders its catalog.
+     * The rows for a library: the subject's stored probes (parsed here; an unparsable one keeps
+     * its row with the reason), sorted by priority descending then name, as the engine orders
+     * its catalog.
      */
-    public static List<Row> rows(List<ProbeDefinition> bundled, Map<String, String> bundledSources, List<ProbeContent> stored) {
+    public static List<Row> rows(List<ProbeType> stored) {
         List<Row> out = new ArrayList<>();
-        for (ProbeDefinition d : bundled) {
-            out.add(new Row(d, bundledSources.getOrDefault(d.getName(), ""), null, null));
-        }
-        for (ProbeContent p : stored) {
-            String json = p.getContent() == null ? "" : p.getContent();
+        for (ProbeType p : stored) {
+            String json = p.getDefinition() == null ? "" : p.getDefinition();
             try {
                 out.add(new Row(ProbeDefinitionLoader.parse(json, String.valueOf(p.getName())), json, p, null));
             } catch (IllegalArgumentException e) {
@@ -96,12 +93,10 @@ public final class ProbeLibraryModel extends AbstractTableModel {
     }
 
     /**
-     * The row filter: the segment, then a free-text query matched case-insensitively against
-     * the name, the service, the description and every declared port (so "22" finds ssh).
+     * The row filter: a free-text query matched case-insensitively against the name, the
+     * service, the description and every declared port (so "22" finds ssh).
      */
-    public static boolean matches(Row row, NSAppUtil.ProbeLibraryFilter filter, String query) {
-        if (filter == NSAppUtil.ProbeLibraryFilter.BUNDLED && row.stored()) return false;
-        if (filter == NSAppUtil.ProbeLibraryFilter.MINE && !row.stored()) return false;
+    public static boolean matches(Row row, String query) {
         String q = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
         if (q.isEmpty()) return true;
         if (row.name().toLowerCase(Locale.ROOT).contains(q)) return true;
@@ -123,6 +118,10 @@ public final class ProbeLibraryModel extends AbstractTableModel {
      */
     public static String checkMessage(String draft) {
         ProbeDefinition def = ProbeDefinitionLoader.parse(unfence(draft), "draft");
+        String form = ProbeSelection.nameForm(def.getName());
+        if (form != null) {
+            throw new IllegalArgumentException(NSAppUtil.ProbeEditor.NAME_FORM.getDisplayName() + " \"" + form + "\".");
+        }
         int states = def.getStates() == null ? 0 : def.getStates().size();
         return "Valid: " + def.getName() + " · " + def.getTransport() + " " + ports(def)
                 + " · " + states + " state" + (states == 1 ? "" : "s") + " from " + def.getStart();
@@ -188,7 +187,7 @@ public final class ProbeLibraryModel extends AbstractTableModel {
             case PORTS -> r.def() != null ? ports(r.def()) : "";
             case TRANSPORT -> r.def() != null ? r.def().getTransport() : "";
             case PRIORITY -> r.priority();
-            case SOURCE -> r.stored() ? "mine" : "bundled";
+            case SOURCE -> r.origin();
         };
     }
 }

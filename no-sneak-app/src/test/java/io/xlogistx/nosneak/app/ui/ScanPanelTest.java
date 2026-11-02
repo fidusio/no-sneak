@@ -1,7 +1,8 @@
 package io.xlogistx.nosneak.app.ui;
 
+import io.xlogistx.nosneak.app.ui.scan.ProbeGroupModel;
 import io.xlogistx.nosneak.app.ui.scan.ProbeSelection;
-import io.xlogistx.nosneak.data.ProbeContent;
+import io.xlogistx.nosneak.data.ProbeType;
 import io.xlogistx.nosneak.data.ProbeGroup;
 import io.xlogistx.nosneak.model.ProbeDefinition;
 import io.xlogistx.nosneak.model.ProbeDefinitionLoader;
@@ -23,8 +24,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Pins the scanner card's pure rules ({@link ProbeSelection}): ticks become
- * {@code NMapConfig} state and never touch the command string, ticks are keyed by identity,
- * a re-saved probe replaces its row, and a timeout reads as a timeout. No Swing, no store.
+ * {@code NMapConfig} state and never touch the command string, ticks are keyed by the stored
+ * row's identity, the engine's bundled catalog is switched off (one source of probes since
+ * 2026-11-02), a re-saved probe replaces its row, a name is unique among the subject's rows,
+ * and a timeout reads as a timeout. No Swing, no store.
  */
 class ScanPanelTest {
 
@@ -36,15 +39,15 @@ class ScanPanelTest {
                 + "\"d\":{\"action\":\"done\"}}}";
     }
 
-    private static ProbeContent stored(String guid, String name) {
-        ProbeContent p = new ProbeContent();
+    private static ProbeType stored(String guid, String name) {
+        ProbeType p = new ProbeType();
         if (guid != null) p.setGUID(guid);
         p.setName(name);
-        p.setContent(json(name));
+        p.setDefinition(json(name));
         return p;
     }
 
-    private static List<ProbeDefinition> bundled(String... names) {
+    private static List<ProbeDefinition> defs(String... names) {
         return java.util.Arrays.stream(names).map(n -> ProbeDefinitionLoader.parse(json(n), n)).toList();
     }
 
@@ -70,18 +73,17 @@ class ScanPanelTest {
         assertEquals(io.xlogistx.nosneak.app.ui.scan.ScanFormPanel.PORTS_DEFAULT_HINT,
                 ProbeSelection.portsPlaceholder(bundledNamed("tls-scan")), "tls-scan declares no port");
         assertEquals("6379 (ticked probes)",
-                ProbeSelection.portsPlaceholder(bundled("my-redis")), "a stored probe counts the same");
+                ProbeSelection.portsPlaceholder(defs("my-redis")), "a probe written here counts the same");
     }
 
     @Test
     void aProbeNameWithSpacesNeverBecomesAScanTarget() {
         String typed = "10.0.0.0/24 -p 6379";
         NMapConfig cfg = NMap.parseCommand(typed);
-        ProbeContent redis = stored("g1", "Redis TLS handshake");
+        ProbeType redis = stored("g1", "Redis TLS handshake");
         Set<String> ticks = Set.of(ProbeSelection.storedKey(redis));
 
-        ProbeSelection.Selection sel =
-                ProbeSelection.select(bundled("ssh"), List.of(redis), ticks);
+        ProbeSelection.Selection sel = ProbeSelection.select(List.of(stored("g0", "ssh"), redis), ticks);
         ProbeSelection.applyTo(cfg, sel);
 
         assertEquals(List.of("10.0.0.0/24"), cfg.targets, "the words of the name are not targets");
@@ -90,6 +92,7 @@ class ScanPanelTest {
         assertEquals(1, cfg.extraProbes.size());
         assertEquals("Redis TLS handshake", cfg.extraProbes.get(0).getName());
         assertEquals("Redis TLS handshake", ProbeSelection.describe(sel));
+        assertFalse(cfg.bundledCatalog, "the engine runs the ticked definitions only, never its own bundle");
     }
 
     /**
@@ -101,13 +104,13 @@ class ScanPanelTest {
     void noTicksMeanNoProbingWhateverTheCommandSays() {
         for (String typed : new String[]{"10.0.0.1", "10.0.0.1 -sV", "10.0.0.1 -sV --probes ssh"}) {
             NMapConfig cfg = NMap.parseCommand(typed);
-            ProbeSelection.Selection sel =
-                    ProbeSelection.select(bundled("ssh"), List.of(stored("g1", "x")), Set.of());
+            ProbeSelection.Selection sel = ProbeSelection.select(List.of(stored("g0", "ssh"), stored("g1", "x")), Set.of());
             ProbeSelection.applyTo(cfg, sel);
 
             assertFalse(cfg.probeScan, typed);
             assertTrue(cfg.probeNames.isEmpty(), typed);
             assertTrue(cfg.extraProbes.isEmpty(), typed);
+            assertFalse(cfg.bundledCatalog, typed);
             assertEquals("", ProbeSelection.describe(sel));
         }
     }
@@ -115,52 +118,65 @@ class ScanPanelTest {
     @Test
     void allTickedNamesEveryProbe() {
         NMapConfig cfg = NMap.parseCommand("10.0.0.1");
-        ProbeContent mine = stored("g1", "mine");
-        Set<String> all = Set.of(ProbeSelection.bundledKey("ssh"), ProbeSelection.bundledKey("http"),
-                ProbeSelection.storedKey(mine));
-        ProbeSelection.Selection sel =
-                ProbeSelection.select(bundled("ssh", "http"), List.of(mine), all);
+        List<ProbeType> stored = List.of(stored("g0", "ssh"), stored("g1", "http"), stored("g2", "mine"));
+        Set<String> all = new HashSet<>();
+        for (ProbeType p : stored) all.add(ProbeSelection.storedKey(p));
+        ProbeSelection.Selection sel = ProbeSelection.select(stored, all);
         ProbeSelection.applyTo(cfg, sel);
 
         assertTrue(cfg.probeScan);
         assertEquals(Set.of("ssh", "http", "mine"), Set.copyOf(cfg.probeNames));
-        assertEquals(1, cfg.extraProbes.size());
+        assertEquals(3, cfg.extraProbes.size(), "every ticked definition is handed over; the engine has no bundle to add");
     }
 
+    /** 2026-11-02: a name is unique among the subject's own rows; the row being saved may keep its own. */
     @Test
-    void aStoredProbeSharingABundledNameHasItsOwnTick() {
-        List<ProbeDefinition> bundled = bundled("ssh", "http");
-        ProbeContent mine = stored("g7", "ssh");
+    void aNameIsTakenWhenAnotherStoredRowCarriesIt() {
+        List<ProbeType> stored = List.of(stored("g1", "ssh"), stored("g2", "http"), stored(null, "draft"));
+        assertTrue(ProbeSelection.nameTaken(stored, "ssh", null), "a new row cannot take ssh");
+        assertTrue(ProbeSelection.nameTaken(stored, "ssh", "g2"), "http renamed to ssh is refused");
+        assertFalse(ProbeSelection.nameTaken(stored, "ssh", "g1"), "ssh keeps its own name");
+        assertFalse(ProbeSelection.nameTaken(stored, "draft", null), "an unsaved row holds no name");
+        assertFalse(ProbeSelection.nameTaken(stored, "smtp", null));
+        assertFalse(ProbeSelection.nameTaken(stored, null, null));
+        assertTrue(ProbeSelection.nameTaken(stored, " SSH", null), "matched in the row's form");
+        assertSame(stored.get(0), ProbeSelection.existingByName(stored, "SSH "), "a report's old spelling still finds the row");
+    }
 
-        // Ticking the stored one selects only the stored one...
-        Set<String> ticks = new HashSet<>(Set.of(ProbeSelection.storedKey(mine)));
-        ProbeSelection.Selection sel = ProbeSelection.select(bundled, List.of(mine), ticks);
-        assertTrue(sel.bundledNames().isEmpty());
-        assertEquals(1, sel.stored().size());
-
-        // ...and ticking every bundled box does not pull the stored one in.
-        ticks.clear();
-        for (ProbeDefinition d : bundled) ticks.add(ProbeSelection.bundledKey(d.getName()));
-        sel = ProbeSelection.select(bundled, List.of(mine), ticks);
-        assertEquals(List.of("ssh", "http"), sel.bundledNames());
-        assertTrue(sel.stored().isEmpty());
+    /**
+     * 2026-11-02, maintainer: {@code ProbeType.setName} lower-cases and trims. The app mirrors
+     * the rule and refuses a JSON name that is not already in that form, so the row's name and
+     * the JSON's never disagree (the engine, the groups and the reports read the JSON's).
+     */
+    @Test
+    void aProbeNameMustAlreadyBeWhatTheRowWouldStore() {
+        assertEquals("ssh", ProbeSelection.canonicalName("  SSH "));
+        assertNull(ProbeSelection.canonicalName("   "));
+        assertNull(ProbeSelection.canonicalName(null));
+        assertNull(ProbeSelection.nameForm("my-redis"), "already what the row stores");
+        assertEquals("myredis", ProbeSelection.nameForm("MyRedis"));
+        assertEquals("ssh", ProbeSelection.nameForm("ssh "));
+        assertEquals("", ProbeSelection.nameForm(" "));
+        ProbeType row = new ProbeType();
+        row.setName(" SSH ");
+        assertEquals("ssh", row.getName(), "the entity's own rule, which the app mirrors");
     }
 
     @Test
     void anInvalidStoredProbeIsNamedInTheError() {
-        ProbeContent broken = stored("g2", "broken");
-        broken.setContent("{\"name\":\"broken\",\"start\":\"nowhere\",\"states\":{}}");
+        ProbeType broken = stored("g2", "broken");
+        broken.setDefinition("{\"name\":\"broken\",\"start\":\"nowhere\",\"states\":{}}");
         Set<String> ticks = Set.of(ProbeSelection.storedKey(broken));
 
         IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
-                () -> ProbeSelection.select(List.of(), List.of(broken), ticks));
+                () -> ProbeSelection.select(List.of(broken), ticks));
         assertTrue(e.getMessage().contains("broken"), e.getMessage());
     }
 
     @Test
     void reSavingADefinitionFindsTheRowItReplaces() {
-        ProbeContent a = stored("g1", "alpha");
-        ProbeContent b = stored("g2", "beta");
+        ProbeType a = stored("g1", "alpha");
+        ProbeType b = stored("g2", "beta");
         assertSame(b, ProbeSelection.existingByName(List.of(a, b), "beta"));
         assertNull(ProbeSelection.existingByName(List.of(a, b), "gamma"));
         assertNull(ProbeSelection.existingByName(List.of(a, b), null));
@@ -180,12 +196,12 @@ class ScanPanelTest {
     /** Scan again (2026-10-25): a report's saved probe names become ticks against what exists now. */
     @Test
     void aStoredReportsProbeNamesBecomeTicksAgain() {
-        ProbeContent mine = stored("g1", "Redis TLS handshake");
-        Set<String> keys = ProbeSelection.keysForNames("ssh, Redis TLS handshake, deleted-since",
-                bundled("ssh"), List.of(mine));
-        assertEquals(Set.of("b:ssh", "s:g1"), keys, "bundled by name, stored by name, unknown dropped");
-        assertTrue(ProbeSelection.keysForNames(null, bundled("ssh"), List.of()).isEmpty());
-        assertTrue(ProbeSelection.keysForNames("  ", bundled("ssh"), List.of()).isEmpty());
+        ProbeType ssh = stored("g0", "ssh");
+        ProbeType mine = stored("g1", "Redis TLS handshake");
+        Set<String> keys = ProbeSelection.keysForNames("ssh, Redis TLS handshake, deleted-since", List.of(ssh, mine));
+        assertEquals(Set.of("s:g0", "s:g1"), keys, "by name among the subject's rows, unknown dropped");
+        assertTrue(ProbeSelection.keysForNames(null, List.of(ssh)).isEmpty());
+        assertTrue(ProbeSelection.keysForNames("  ", List.of(ssh)).isEmpty());
     }
 
     /**
@@ -195,34 +211,47 @@ class ScanPanelTest {
      */
     @Test
     void aGroupTicksItsProbesAndNothingElseReachesTheEngine() {
-        ProbeContent mine = stored("g1", "Redis TLS handshake");
-        List<ProbeDefinition> bundled = bundled("ssh", "http");
+        ProbeType ssh = stored("g0", "ssh");
+        ProbeType http = stored("g2", "http");
+        ProbeType mine = stored("g1", "Redis TLS handshake");
+        List<ProbeType> stored = List.of(ssh, http, mine);
         ProbeGroup web = new ProbeGroup();
         web.setName("web");
         web.setProbes("http, Redis TLS handshake, deleted-since");
-        Set<String> members = io.xlogistx.nosneak.app.ui.scan.ProbeGroupModel.memberKeys(web, bundled, List.of(mine));
-        assertEquals(Set.of("b:http", "s:g1"), members, "the missing member resolves to nothing");
+        Set<String> members = ProbeGroupModel.memberKeys(web, stored);
+        assertEquals(Set.of("s:g2", "s:g1"), members, "the missing member resolves to nothing");
 
-        Set<String> ticks = new HashSet<>(Set.of("b:ssh"));
-        io.xlogistx.nosneak.app.ui.scan.ProbeGroupModel.applyTick(ticks, members, true);
+        Set<String> ticks = new HashSet<>(Set.of("s:g0"));
+        ProbeGroupModel.applyTick(ticks, members, true);
         NMapConfig cfg = NMap.parseCommand("10.0.0.1");
-        ProbeSelection.Selection sel = ProbeSelection.select(bundled, List.of(mine), ticks);
+        ProbeSelection.Selection sel = ProbeSelection.select(stored, ticks);
         ProbeSelection.applyTo(cfg, sel);
         assertTrue(cfg.probeScan);
         assertEquals(Set.of("ssh", "http", "Redis TLS handshake"), Set.copyOf(cfg.probeNames), "the probes, never the group");
         assertEquals("ssh, http, Redis TLS handshake", ProbeSelection.describe(sel), "what the report records");
 
-        io.xlogistx.nosneak.app.ui.scan.ProbeGroupModel.applyTick(ticks, members, false);
-        assertEquals(Set.of("b:ssh"), ticks, "unticking the group leaves the earlier tick");
-        // and Save ticked as group would store exactly the live names, in catalog order
-        assertEquals(Set.of("ssh"), io.xlogistx.nosneak.app.ui.scan.ProbeGroupModel.namesFromTicks(ticks, bundled, List.of(mine)));
+        ProbeGroupModel.applyTick(ticks, members, false);
+        assertEquals(Set.of("s:g0"), ticks, "unticking the group leaves the earlier tick");
+        // and Save ticked as group would store exactly the live names
+        assertEquals(Set.of("ssh"), ProbeGroupModel.namesFromTicks(ticks, stored));
     }
 
     @Test
-    void keysAreDistinctPerKind() {
-        ProbeContent mine = stored("g1", "ssh");
-        assertEquals("b:ssh", ProbeSelection.bundledKey("ssh"));
+    void aTickIsTheStoredRowsIdentity() {
+        ProbeType mine = stored("g1", "ssh");
         assertEquals("s:g1", ProbeSelection.storedKey(mine));
         assertEquals("s:name:draft", ProbeSelection.storedKey(stored(null, "draft")));
+    }
+
+    /** The origin property (2026-11-02): set by the seed on a copy of a bundled probe, absent on a probe written here. */
+    @Test
+    void theOriginMarksACopyOfABundledProbe() {
+        ProbeType copy = stored("g1", "ssh");
+        assertEquals("", ProbeSelection.originOf(copy));
+        assertFalse(ProbeSelection.isBundledCopy(copy));
+        ProbeSelection.markBundledCopy(copy);
+        assertEquals("bundled", ProbeSelection.originOf(copy));
+        assertTrue(ProbeSelection.isBundledCopy(copy));
+        assertEquals("", ProbeSelection.originOf(null));
     }
 }

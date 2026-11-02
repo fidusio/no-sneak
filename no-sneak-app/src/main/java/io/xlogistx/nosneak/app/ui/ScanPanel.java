@@ -8,7 +8,7 @@ import io.xlogistx.nosneak.app.ui.scan.ProbeSelection;
 import io.xlogistx.nosneak.app.ui.scan.ScanFormPanel;
 import io.xlogistx.nosneak.app.ui.scan.ScanResultView;
 import io.xlogistx.nosneak.app.ui.utility.AppContext;
-import io.xlogistx.nosneak.data.ProbeContent;
+import io.xlogistx.nosneak.data.ProbeType;
 import io.xlogistx.nosneak.data.ProbeGroup;
 import io.xlogistx.nosneak.data.ReportContent;
 import io.xlogistx.nosneak.model.ProbeDefinition;
@@ -87,21 +87,19 @@ public class ScanPanel extends JPanel {
     private final JTable libraryTable = new JTable(libraryModel);
     private final TableRowSorter<ProbeLibraryModel> librarySorter = new TableRowSorter<>(libraryModel);
     private final JTextField librarySearch = new JTextField();
-    private final SegmentedControl libraryFilter = new SegmentedControl(NSAppUtil.ProbeLibraryFilter.values());
     private final JLabel libraryCount = GUIUtil.applyProp(new JLabel(), NSAppUtil.ProbeLibraryPage.COUNT);
     private final CardStack libraryDetail = new CardStack();
     private final JLabel probeTitle = GUIUtil.applyProp(new JLabel(), NSAppUtil.ProbeLibraryPage.PROBE_TITLE);
     private final KeyValuePanel probeFacts = new KeyValuePanel(110);
     private final JTextArea probeSource = new JTextArea();
     private final InlineMessage probeProblem = new InlineMessage();
-    private final JButton copyProbe = GUIUtil.applyProp(new JButton(new IconUtil.CopyIcon(16)), NSAppUtil.ProbeLibraryPage.COPY);
     private final JButton editProbe = GUIUtil.applyProp(new JButton(new IconUtil.EditIcon(16)), NSAppUtil.ProbeLibraryPage.EDIT);
     private final JButton deleteProbe = GUIUtil.applyProp(new JButton(new IconUtil.DeleteIcon(16)), NSAppUtil.ProbeLibraryPage.DELETE);
-    /** The bundled files' JSON text by probe name, read once with the definitions. */
-    private Map<String, String> bundledSources = Map.of();
+    /** The library's rows: every stored probe parsed once per reload (off the EDT); the popup, the chips and the placeholder read them. */
+    private List<ProbeLibraryModel.Row> libraryRows = List.of();
     private MDViewerPanel definitionView;
     private List<ReportContent> scanResults = List.of();
-    private List<ProbeContent> probes = List.of();
+    private List<ProbeType> probes = List.of();
 
     // Probe groups (2026-11-01): named sets of probe names a subject ticks in one go. Managed
     // under the Probe library (buildProbeGroupsPanel), picked in the Add probe popup. The
@@ -146,7 +144,7 @@ public class ScanPanel extends JPanel {
     /** The scan in progress, or null. Set on the worker, read on the EDT by the Stop button. */
     private volatile NMapScanner.ScanHandle running;
     private ReportContent selectedScan;
-    private ProbeContent selectedProbe;
+    private ProbeType selectedProbe;
 
     // The probe editor (2026-10-26): the name is read from the JSON, Check validates inline
     private final JLabel editTitle = GUIUtil.applyProp(new JLabel(), NSAppUtil.ProbeEditor.TITLE);
@@ -154,9 +152,8 @@ public class ScanPanel extends JPanel {
     private final InlineMessage editCheck = new InlineMessage();
     private JTextArea viewProbeTextArea;
 
-    /** Tick keys — see {@link ProbeSelection#bundledKey} and {@link ProbeSelection#storedKey}. */
+    /** Tick keys — see {@link ProbeSelection#storedKey}; one source of probes since 2026-11-02. */
     private final Set<String> tickedProbes = new HashSet<>();
-    private List<ProbeDefinition> bundledProbes = List.of();
 
     /**
      * How this panel hands content to the assistant: a text attachment with a short label, and
@@ -232,6 +229,7 @@ public class ScanPanel extends JPanel {
         onStop();
         scanResults = List.of();
         probes = List.of();
+        libraryRows = List.of();
         probeGroups = List.of();
         editingGroup = null;
         groupEditTicks.clear();
@@ -326,7 +324,7 @@ public class ScanPanel extends JPanel {
         ProbeSelection.Selection selected;
         try {
             cfg = form.toConfig();
-            selected = ProbeSelection.select(bundledProbes, probes, tickedProbes);
+            selected = ProbeSelection.select(probes, tickedProbes);
             ProbeSelection.applyTo(cfg, selected);
         } catch (IllegalArgumentException ex) {
             form.showError(ex.getMessage());
@@ -396,27 +394,24 @@ public class ScanPanel extends JPanel {
         return typed.isEmpty() ? String.join(" ", cfg.targets) : typed;
     }
 
-    /** One selectable probe: the label shown and the tick key behind it. */
-    private record ProbeRow(String key, String label, String tooltip, boolean stored) {}
+    /** One selectable probe: the label shown, the tick key behind it and its service · ports tooltip. */
+    private record ProbeRow(String key, String label, String tooltip) {}
 
+    /** Every probe of the subject, in the library's order (priority, then name). */
     private List<ProbeRow> probeRows() {
         List<ProbeRow> rows = new ArrayList<>();
-        for (ProbeDefinition d : bundledProbes) {
-            rows.add(new ProbeRow(ProbeSelection.bundledKey(d.getName()), d.getName(), bundledTip(d), false));
-        }
-        for (ProbeContent p : probes) {
-            if (p.getName() != null && !p.getName().isBlank()) {
-                rows.add(new ProbeRow(ProbeSelection.storedKey(p), p.getName(), null, true));
-            }
+        for (ProbeLibraryModel.Row r : libraryRows) {
+            if (r.name().isBlank()) continue;
+            rows.add(new ProbeRow(ProbeSelection.storedKey(r.content()), r.name(), r.def() != null ? probeTip(r.def()) : null));
         }
         return rows;
     }
 
-    /** The chips are the ticked probes; a stored one carries a "mine" badge. */
+    /** The chips are the ticked probes. */
     private void refreshProbeChips() {
         List<ChipPanel.Chip> chips = new ArrayList<>();
         for (ProbeRow row : probeRows()) {
-            if (tickedProbes.contains(row.key())) chips.add(new ChipPanel.Chip(row.key(), row.label(), row.stored() ? NSAppUtil.ScanPage.CHIP_MINE.getDisplayName() : null));
+            if (tickedProbes.contains(row.key())) chips.add(new ChipPanel.Chip(row.key(), row.label(), null));
         }
         probeChips.setChips(chips);
         form.setServiceDetection(!chips.isEmpty()); // -sV mirrors the chips both ways, as applyTo does
@@ -425,26 +420,18 @@ public class ScanPanel extends JPanel {
     }
 
     /**
-     * The definitions behind the ticks, for the Ports placeholder: bundled ones by name, stored
-     * ones parsed; a stored probe that does not parse is left out here (the run reports it).
+     * The definitions behind the ticks, for the Ports placeholder (parsed once by the reload); a
+     * probe that does not parse is left out here (the run reports it).
      */
     private List<ProbeDefinition> tickedDefinitions() {
         List<ProbeDefinition> defs = new ArrayList<>();
-        for (ProbeDefinition d : bundledProbes) {
-            if (tickedProbes.contains(ProbeSelection.bundledKey(d.getName()))) defs.add(d);
-        }
-        for (ProbeContent p : probes) {
-            if (p.getName() == null || !tickedProbes.contains(ProbeSelection.storedKey(p))) continue;
-            try {
-                defs.add(ProbeDefinitionLoader.parse(p.getContent(), p.getName()));
-            } catch (IllegalArgumentException ignored) {
-                // the run says which probe is invalid; the placeholder just skips it
-            }
+        for (ProbeLibraryModel.Row r : libraryRows) {
+            if (r.def() != null && tickedProbes.contains(ProbeSelection.storedKey(r.content()))) defs.add(r.def());
         }
         return defs;
     }
 
-    /** Every bundled and stored probe ticked: what the Service detection box means on its own. */
+    /** Every probe ticked: what the Service detection box means on its own. */
     private void tickAllProbes() {
         for (ProbeRow row : probeRows()) tickedProbes.add(row.key());
     }
@@ -453,16 +440,13 @@ public class ScanPanel extends JPanel {
      * The Add probe menu: a GROUPS section (2026-11-01: one check item per saved group, ticked
      * when every member that still exists is ticked; a tick adds exactly the members' keys, an
      * untick removes exactly them; a footer saves the current ticks as a group), then a check
-     * item per bundled and stored probe, grouped, with an All per group.
+     * item per probe with an All (one section since 2026-11-02: every probe is the subject's).
      */
     private void showProbeMenu() {
         JPopupMenu menu = new JPopupMenu();
         addGroupSection(menu);
         menu.addSeparator();
-        List<ProbeRow> rows = probeRows();
-        addProbeGroup(menu, NSAppUtil.ProbeMenu.SECTION_BUNDLED, rows.stream().filter(r -> !r.stored()).toList(), NSAppUtil.ProbeMenu.EMPTY_BUNDLED);
-        menu.addSeparator();
-        addProbeGroup(menu, NSAppUtil.ProbeMenu.SECTION_MINE, rows.stream().filter(ProbeRow::stored).toList(), NSAppUtil.ProbeMenu.EMPTY_MINE);
+        addProbeGroup(menu, NSAppUtil.ProbeMenu.SECTION_PROBES, probeRows(), NSAppUtil.ProbeMenu.EMPTY_PROBES);
         menu.addSeparator();
         JMenuItem saveAs = GUIUtil.applyProp(new JMenuItem("", IconUtil.svgIcon("io/xlogistx/gui/icons/folder.svg", 14, UITokens.text())), NSAppUtil.ProbeGroupMenu.SAVE_AS);
         saveAs.setEnabled(!tickedProbes.isEmpty());
@@ -483,7 +467,7 @@ public class ScanPanel extends JPanel {
             menu.add(none);
             return;
         }
-        for (ProbeGroupModel.Row row : ProbeGroupModel.rows(probeGroups, List.of(), bundledProbes, probes)) {
+        for (ProbeGroupModel.Row row : ProbeGroupModel.rows(probeGroups, List.of(), probes)) {
             JCheckBoxMenuItem item = new JCheckBoxMenuItem(row.name(), ProbeGroupModel.isTicked(tickedProbes, row.keys()));
             item.setToolTipText(groupTip(row));
             item.addActionListener(_ -> tickGroup(row, item.isSelected()));
@@ -513,7 +497,7 @@ public class ScanPanel extends JPanel {
      * group stores the probes' names in catalog order; a name already in use updates that group.
      */
     private void saveTickedAsGroup() {
-        Set<String> names = ProbeGroupModel.namesFromTicks(tickedProbes, bundledProbes, probes);
+        Set<String> names = ProbeGroupModel.namesFromTicks(tickedProbes, probes);
         String csv = ProbeGroupModel.describe(names);
         JTextField name = new JTextField(22);
         JTextField description = new JTextField(22);
@@ -579,7 +563,7 @@ public class ScanPanel extends JPanel {
         }
     }
 
-    private static String bundledTip(ProbeDefinition d) {
+    private static String probeTip(ProbeDefinition d) {
         StringBuilder sb = new StringBuilder();
         if (d.getService() != null) sb.append(d.getService());
         int[] ports = d.getPorts();
@@ -602,9 +586,10 @@ public class ScanPanel extends JPanel {
 
     /**
      * The Probe library (2026-10-26, on the maintainer's instruction: "the bundled probes can't
-     * be read, and it doesn't explain how to create one"): a table of every probe a scan can run,
-     * bundled and stored, with the selected one read-only in a detail pane; with nothing selected
-     * the pane says what a probe is and the three ways to add one. Same shape as the history page.
+     * be read, and it doesn't explain how to create one"): a table of every probe a scan can run
+     * — the subject's own rows, the bundled set among them since the one-time copy of 2026-11-02
+     * — with the selected one read-only in a detail pane; with nothing selected the pane says
+     * what a probe is and the three ways to add one. Same shape as the history page.
      */
     private JPanel buildProbePanel() {
         JPanel out = new JPanel(new MigLayout("insets 20 24 24 24, wrap 1, gapy 14, fill", "[grow,fill]", "[][]0[grow,fill]"));
@@ -630,17 +615,18 @@ public class ScanPanel extends JPanel {
         head.add(newProbe);
         out.add(head, "growx");
 
-        JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", "[260!][][]push[]"));
+        JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", "[260!][]push[][][]"));
         bar.setOpaque(false);
         GUIUtil.applyProp(librarySearch, NSAppUtil.ProbeLibraryPage.SEARCH);
         librarySearch.putClientProperty("JTextField.leadingIcon", new IconUtil.SearchIcon(14));
         bar.add(librarySearch, "growx");
-        libraryFilter.select(NSAppUtil.ProbeLibraryFilter.ALL);
-        libraryFilter.onChange(_ -> filterLibrary());
-        bar.add(libraryFilter);
         libraryCount.setForeground(UITokens.muted());
         libraryCount.setFont(UITokens.font(Font.PLAIN, -1f));
         bar.add(libraryCount);
+        JButton restore = GUIUtil.applyProp(new JButton(new IconUtil.RollbackIcon(16)), NSAppUtil.ProbeLibraryPage.RESTORE);
+        restore.putClientProperty("JButton.buttonType", "toolBarButton");
+        restore.addActionListener(_ -> onRestoreBundledProbes(restore));
+        bar.add(restore);
         JButton groups = GUIUtil.applyProp(new JButton(IconUtil.svgIcon("io/xlogistx/gui/icons/folder.svg", 16, UITokens.text())), NSAppUtil.ProbeGroupsPage.OPEN);
         groups.putClientProperty("JButton.buttonType", "toolBarButton");
         groups.addActionListener(_ -> showProbeGroups());
@@ -657,7 +643,7 @@ public class ScanPanel extends JPanel {
         Tables.width(libraryTable, ProbeLibraryModel.COL_PORTS, 150);
         Tables.width(libraryTable, ProbeLibraryModel.COL_TRANSPORT, 80);
         Tables.width(libraryTable, ProbeLibraryModel.COL_PRIORITY, 70);
-        Tables.width(libraryTable, ProbeLibraryModel.COL_SOURCE, 90);
+        Tables.width(libraryTable, ProbeLibraryModel.COL_SOURCE, 110);
         libraryTable.getColumnModel().getColumn(ProbeLibraryModel.COL_NAME).setCellRenderer(new MonoRenderer());
         libraryTable.getColumnModel().getColumn(ProbeLibraryModel.COL_SOURCE).setCellRenderer(new SourceRenderer());
         libraryTable.setRowSorter(librarySorter);
@@ -670,9 +656,7 @@ public class ScanPanel extends JPanel {
             public void mouseClicked(java.awt.event.MouseEvent e) {
                 if (e.getClickCount() != 2) return;
                 ProbeLibraryModel.Row row = selectedLibraryRow();
-                if (row == null) return;
-                if (row.stored()) onEditProbe(row.content());
-                else onCopyBundledProbe(row);
+                if (row != null) onEditProbe(row.content());
             }
         });
         librarySearch.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
@@ -725,10 +709,10 @@ public class ScanPanel extends JPanel {
         p.add(what, "gapbottom 8");
 
         // each way is a link; the constant's description is the note under it
-        JButton copy = UITokens.link(GUIUtil.applyProp(new JButton(), NSAppUtil.ProbeLibraryPage.HOWTO_COPY));
-        copy.addActionListener(_ -> selectFirstBundledRow());
-        p.add(copy, "growx 0");
-        p.add(note(NSAppUtil.ProbeLibraryPage.HOWTO_COPY.getDescription()));
+        JButton any = UITokens.link(GUIUtil.applyProp(new JButton(), NSAppUtil.ProbeLibraryPage.HOWTO_EDIT));
+        any.addActionListener(_ -> selectFirstLibraryRow());
+        p.add(any, "growx 0");
+        p.add(note(NSAppUtil.ProbeLibraryPage.HOWTO_EDIT.getDescription()));
 
         JButton ask = UITokens.link(GUIUtil.applyProp(new JButton(), NSAppUtil.ProbeLibraryPage.HOWTO_ASK));
         ask.addActionListener(_ -> onWriteProbeWithAssistant());
@@ -755,25 +739,24 @@ public class ScanPanel extends JPanel {
         JPanel p = new JPanel(new MigLayout("insets 16, wrap 1, gapy 8, fill", "[grow,fill]", "[][][][grow,fill]"));
         p.setOpaque(false);
         probeTitle.setFont(UITokens.font(Font.BOLD, 2f));
-        // Title on the left, the actions (Copy / Edit / Delete) on the right of the same row: a human
+        // Title on the left, the actions (Edit / Delete) on the right of the same row: a human
         // looks for "what can I do with this" next to the name, not under a long JSON listing (2026-10-30).
-        JPanel header = new JPanel(new MigLayout("insets 0, gapx 8", "[grow][][][]"));
+        JPanel header = new JPanel(new MigLayout("insets 0, gapx 8", "[grow][][]"));
         header.setOpaque(false);
         header.add(probeTitle, "growx");
-        copyProbe.addActionListener(_ -> onCopyBundledProbe(selectedLibraryRow()));
         editProbe.addActionListener(_ -> {
             ProbeLibraryModel.Row row = selectedLibraryRow();
-            if (row != null && row.stored()) onEditProbe(row.content());
+            if (row != null) onEditProbe(row.content());
         });
         deleteProbe.setForeground(UITokens.danger());
         deleteProbe.addActionListener(_ -> {
             ProbeLibraryModel.Row row = selectedLibraryRow();
-            if (row == null || !row.stored()) return;
+            if (row == null) return;
             int ok = JOptionPane.showConfirmDialog(this, "Delete the probe \"" + row.name() + "\"?", NSAppUtil.ProbeLibraryPage.DELETE_DIALOG.getDisplayName(),
                     JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
             if (ok == JOptionPane.OK_OPTION) onRemoveProbe(row.content());
         });
-        for (JButton b : new JButton[]{copyProbe, editProbe, deleteProbe}) {
+        for (JButton b : new JButton[]{editProbe, deleteProbe}) {
             b.putClientProperty("JButton.buttonType", "toolBarButton");
             header.add(b, "hidemode 3");
         }
@@ -816,13 +799,10 @@ public class ScanPanel extends JPanel {
             probeProblem.error("This probe no longer loads: " + row.error());
         }
         probeFacts.put(NSAppUtil.ProbeLibraryPage.FACT_SOURCE.getDisplayName(),
-                (row.stored() ? NSAppUtil.ProbeLibraryPage.SOURCE_MINE : NSAppUtil.ProbeLibraryPage.SOURCE_BUNDLED).getDisplayName());
+                (ProbeSelection.isBundledCopy(row.content()) ? NSAppUtil.ProbeLibraryPage.SOURCE_BUNDLED : NSAppUtil.ProbeLibraryPage.SOURCE_MINE).getDisplayName());
         probeProblem.setVisible(probeProblem.hasMessage());
         probeSource.setText(row.source());
         probeSource.setCaretPosition(0);
-        copyProbe.setVisible(!row.stored());
-        editProbe.setVisible(row.stored());
-        deleteProbe.setVisible(row.stored());
         libraryDetail.show("probe");
     }
 
@@ -831,19 +811,15 @@ public class ScanPanel extends JPanel {
         return row < 0 ? null : libraryModel.at(libraryTable.convertRowIndexToModel(row));
     }
 
-    private void selectFirstBundledRow() {
-        for (int i = 0; i < libraryTable.getRowCount(); i++) {
-            if (!libraryModel.at(libraryTable.convertRowIndexToModel(i)).stored()) {
-                libraryTable.setRowSelectionInterval(i, i);
-                libraryTable.scrollRectToVisible(libraryTable.getCellRect(i, 0, true));
-                return;
-            }
-        }
+    private void selectFirstLibraryRow() {
+        if (libraryTable.getRowCount() == 0) return;
+        libraryTable.setRowSelectionInterval(0, 0);
+        libraryTable.scrollRectToVisible(libraryTable.getCellRect(0, 0, true));
     }
 
-    /** Rebuilds the table from the bundled definitions and the stored probes (on the EDT; used by reset). */
+    /** Re-installs the rows the last reload built (on the EDT; used by reset). */
     private void refreshLibraryRows() {
-        refreshLibraryRows(ProbeLibraryModel.rows(bundledProbes, bundledSources, probes));
+        refreshLibraryRows(libraryRows);
     }
 
     /** Installs rows built elsewhere (the reload builds them off the EDT); keeps the selection by name. */
@@ -854,7 +830,7 @@ public class ScanPanel extends JPanel {
         if (before != null) {
             for (int i = 0; i < libraryTable.getRowCount(); i++) {
                 ProbeLibraryModel.Row r = libraryModel.at(libraryTable.convertRowIndexToModel(i));
-                if (r.stored() == before.stored() && r.name().equals(before.name())) {
+                if (r.name().equals(before.name())) {
                     libraryTable.setRowSelectionInterval(i, i);
                     return;
                 }
@@ -865,13 +841,11 @@ public class ScanPanel extends JPanel {
     }
 
     private void filterLibrary() {
-        NSAppUtil.ProbeLibraryFilter chosen = libraryFilter.selectedSource();
-        NSAppUtil.ProbeLibraryFilter f = chosen != null ? chosen : NSAppUtil.ProbeLibraryFilter.ALL;
         String q = librarySearch.getText();
         librarySorter.setRowFilter(new RowFilter<>() {
             @Override
             public boolean include(Entry<? extends ProbeLibraryModel, ? extends Integer> entry) {
-                return ProbeLibraryModel.matches(entry.getModel().at(entry.getIdentifier()), f, q);
+                return ProbeLibraryModel.matches(entry.getModel().at(entry.getIdentifier()), q);
             }
         });
         int shown = libraryTable.getRowCount(), all = libraryModel.getRowCount();
@@ -880,15 +854,21 @@ public class ScanPanel extends JPanel {
 
     /** Opens the editor on an empty draft. */
     public void newProbe() {
-        openProbeEditor(new ProbeContent(), NSAppUtil.ProbeEditor.TITLE_NEW.getDisplayName());
+        openProbeEditor(new ProbeType(), NSAppUtil.ProbeEditor.TITLE_NEW.getDisplayName());
     }
 
-    /** Opens the editor with a bundled probe's JSON as a new draft (2026-10-26). */
-    private void onCopyBundledProbe(ProbeLibraryModel.Row row) {
-        if (row == null || row.stored()) return;
-        ProbeContent draft = new ProbeContent();
-        draft.setContent(row.source());
-        openProbeEditor(draft, NSAppUtil.ProbeEditor.TITLE_COPY.getDisplayName() + " " + row.name());
+    /**
+     * Restore bundled probes (2026-11-02): re-adds every bundled probe the subject no longer has
+     * ({@code Session.seedBundledProbes(true)}); a probe they changed is never touched. Says how
+     * many came back.
+     */
+    private void onRestoreBundledProbes(JButton button) {
+        BackgroundTask.run(this, button, () -> ctx.session().seedBundledProbes(true), restored -> {
+            reloadProbes();
+            String text = restored == 0 ? NSAppUtil.ProbeLibraryPage.RESTORE_NONE.getDisplayName()
+                    : restored + " probe" + (restored == 1 ? "" : "s") + " " + NSAppUtil.ProbeLibraryPage.RESTORE_DONE.getDisplayName();
+            JOptionPane.showMessageDialog(this, text, NSAppUtil.ProbeLibraryPage.RESTORE_DIALOG.getDisplayName(), JOptionPane.INFORMATION_MESSAGE);
+        });
     }
 
     /**
@@ -1132,10 +1112,9 @@ public class ScanPanel extends JPanel {
             JLabel l = new JLabel(name);
             l.setFont(UITokens.mono(-1f));
             line.add(l);
-            Set<String> keys = ProbeSelection.keysForNames(name, bundledProbes, probes);
-            if (keys.isEmpty()) line.add(GUIUtil.applyProp(new BadgeLabel("", BadgeLabel.Tone.WARN), NSAppUtil.ProbeGroupsPage.BADGE_MISSING));
-            else if (keys.iterator().next().startsWith("b:")) line.add(GUIUtil.applyProp(new BadgeLabel("", BadgeLabel.Tone.NEUTRAL), NSAppUtil.ProbeGroupsPage.BADGE_BUNDLED));
-            else line.add(GUIUtil.applyProp(new BadgeLabel("", BadgeLabel.Tone.ACCENT), NSAppUtil.ProbeGroupsPage.BADGE_MINE));
+            if (ProbeSelection.keysForNames(name, probes).isEmpty()) {
+                line.add(GUIUtil.applyProp(new BadgeLabel("", BadgeLabel.Tone.WARN), NSAppUtil.ProbeGroupsPage.BADGE_MISSING));
+            }
             groupMembers.add(line);
         }
         groupMembers.revalidate();
@@ -1151,7 +1130,7 @@ public class ScanPanel extends JPanel {
     /** Rebuilds the groups table from the groups and the probes known now; keeps the selection by name. */
     private void refreshGroupRows() {
         ProbeGroupModel.Row before = selectedGroupRow();
-        groupModel.setRows(ProbeGroupModel.rows(probeGroups, List.of(), bundledProbes, probes));
+        groupModel.setRows(ProbeGroupModel.rows(probeGroups, List.of(), probes));
         filterGroups();
         if (before != null && selectGroupByName(before.name())) return;
         groupTable.clearSelection();
@@ -1189,9 +1168,9 @@ public class ScanPanel extends JPanel {
         groupEditDescription.setText(Objects.toString(editingGroup.getDescription(), ""));
         groupEditSearch.setText("");
         groupEditTicks.clear();
-        groupEditTicks.addAll(ProbeGroupModel.memberKeys(editingGroup, bundledProbes, probes));
+        groupEditTicks.addAll(ProbeGroupModel.memberKeys(editingGroup, probes));
         groupEditCheck.clear();
-        List<String> missing = ProbeGroupModel.missing(editingGroup, bundledProbes, probes);
+        List<String> missing = ProbeGroupModel.missing(editingGroup, probes);
         if (!missing.isEmpty()) groupEditCheck.info(NSAppUtil.ProbeGroupEditor.CHECK.getDescription() + ": " + String.join(", ", missing));
         refreshGroupEditList();
         cardStack.show("Edit_probe_group");
@@ -1271,9 +1250,7 @@ public class ScanPanel extends JPanel {
     private void refreshGroupEditList() {
         groupEditList.removeAll();
         String q = groupEditSearch.getText().trim().toLowerCase(Locale.ROOT);
-        List<ProbeRow> rows = probeRows();
-        addGroupEditSection(NSAppUtil.ProbeGroupEditor.SECTION_BUNDLED, rows.stream().filter(r -> !r.stored()).toList(), q, NSAppUtil.ProbeGroupEditor.EMPTY_BUNDLED);
-        addGroupEditSection(NSAppUtil.ProbeGroupEditor.SECTION_MINE, rows.stream().filter(ProbeRow::stored).toList(), q, NSAppUtil.ProbeGroupEditor.EMPTY_MINE);
+        addGroupEditSection(NSAppUtil.ProbeGroupEditor.SECTION_PROBES, probeRows(), q, NSAppUtil.ProbeGroupEditor.EMPTY_PROBES);
         int n = groupEditTicks.size();
         groupEditCount.setText(n == 0 ? "no probe ticked" : n + " probe" + (n == 1 ? "" : "s") + " ticked");
         groupEditList.revalidate();
@@ -1319,7 +1296,7 @@ public class ScanPanel extends JPanel {
     /** Save: validate inline, dedupe by name, store off the EDT, back to the groups page with the row selected. */
     private void saveGroupFromEditor(JButton save) {
         if (editingGroup == null) return;
-        Set<String> names = ProbeGroupModel.namesFromTicks(groupEditTicks, bundledProbes, probes);
+        Set<String> names = ProbeGroupModel.namesFromTicks(groupEditTicks, probes);
         String problem = ProbeGroupModel.validate(groupEditName.getText(), names);
         if (problem != null) {
             groupEditCheck.error(problem);
@@ -1597,7 +1574,7 @@ public class ScanPanel extends JPanel {
         }
         Object saved = scan.getProperties() != null ? scan.getProperties().getValue("probes") : null;
         tickedProbes.clear();
-        tickedProbes.addAll(ProbeSelection.keysForNames(saved != null ? saved.toString() : null, bundledProbes, probes));
+        tickedProbes.addAll(ProbeSelection.keysForNames(saved != null ? saved.toString() : null, probes));
         form.setCommand(command);
         form.setScanName(scan.getName());
         refreshProbeChips();
@@ -1660,25 +1637,19 @@ public class ScanPanel extends JPanel {
         });
     }
 
-    /** Re-reads the stored probes (and, once, the bundled set) off the EDT and refreshes the library and the chips. */
+    /** Re-reads the subject's probes off the EDT and refreshes the library, the groups and the chips. */
     public void reloadProbes() {
         BackgroundTask.run(this, null, () -> {
-            if (bundledProbes.isEmpty()) bundledProbes = ProbeDefinitionLoader.loadBundled();
-            if (bundledSources.isEmpty()) {
-                Map<String, String> sources = new LinkedHashMap<>();
-                for (ProbeDefinition d : bundledProbes) sources.put(d.getName(), ProbeDefinitionLoader.bundledSource(d.getName()));
-                bundledSources = sources;
-            }
-            List<ProbeContent> stored = ctx.session().getAllProbes();
+            List<ProbeType> stored = ctx.session().getAllProbes();
             // the library's rows (every stored probe parsed once) are built here, off the EDT
-            return new ProbeLoad(stored, ProbeLibraryModel.rows(bundledProbes, bundledSources, stored));
+            return new ProbeLoad(stored, ProbeLibraryModel.rows(stored));
         }, loaded -> {
             probes = loaded.probes();
+            libraryRows = loaded.rows();
             // A tick for a row that no longer exists (deleted, or another subject's) is dropped
             // here rather than kept forever in the set.
             Set<String> live = new HashSet<>();
-            for (ProbeDefinition d : bundledProbes) live.add(ProbeSelection.bundledKey(d.getName()));
-            for (ProbeContent p : probes) live.add(ProbeSelection.storedKey(p));
+            for (ProbeType p : probes) live.add(ProbeSelection.storedKey(p));
             tickedProbes.retainAll(live);
             refreshLibraryRows(loaded.rows());
             refreshGroupRows(); // a group's resolved count follows the probes known now
@@ -1695,7 +1666,7 @@ public class ScanPanel extends JPanel {
     }
 
     /** What one probe reload produced: the stored rows and the library's rows built from them. */
-    private record ProbeLoad(List<ProbeContent> probes, List<ProbeLibraryModel.Row> rows) {}
+    private record ProbeLoad(List<ProbeType> probes, List<ProbeLibraryModel.Row> rows) {}
 
     private void onViewScanResult(ReportContent row) {
         if (row == null) return;
@@ -1734,16 +1705,16 @@ public class ScanPanel extends JPanel {
         BackgroundTask.run(this, historyDeleteAll, () -> ctx.session().deleteAllScanResults(), _ -> reloadScanResults());
     }
 
-    private void onEditProbe(ProbeContent probeContent) {
-        if (probeContent == null) return;
-        openProbeEditor(probeContent, (SUS.isEmpty(probeContent.getGUID()) ? NSAppUtil.ProbeEditor.TITLE_NEW : NSAppUtil.ProbeEditor.TITLE_EDIT).getDisplayName());
+    private void onEditProbe(ProbeType probeType) {
+        if (probeType == null) return;
+        openProbeEditor(probeType, (SUS.isEmpty(probeType.getGUID()) ? NSAppUtil.ProbeEditor.TITLE_NEW : NSAppUtil.ProbeEditor.TITLE_EDIT).getDisplayName());
     }
 
     /** Shows the editor on {@code probeContent} (a stored row, or a fresh draft) under {@code title}. */
-    private void openProbeEditor(ProbeContent probeContent, String title) {
-        this.selectedProbe = probeContent;
+    private void openProbeEditor(ProbeType probeType, String title) {
+        this.selectedProbe = probeType;
         editTitle.setText(title);
-        viewProbeTextArea.setText(Objects.toString(probeContent.getContent(), ""));
+        viewProbeTextArea.setText(Objects.toString(probeType.getDefinition(), ""));
         viewProbeTextArea.setCaretPosition(0);
         editCheck.clear();
         refreshEditName();
@@ -1798,10 +1769,6 @@ public class ScanPanel extends JPanel {
             ask.addActionListener(_ -> onWriteProbeWithAssistant());
             help.add(ask);
             content.add(help);
-            WrapLabel shadow = GUIUtil.applyProp(new WrapLabel(""), NSAppUtil.ProbeEditor.SHADOW);
-            shadow.setWrapWidth(640);
-            shadow.setForeground(UITokens.muted());
-            content.add(shadow, "gapbottom 4");
 
             JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", "[][][]push[]"));
             bar.setOpaque(false);
@@ -1810,7 +1777,9 @@ public class ScanPanel extends JPanel {
             check.addActionListener(_ -> checkDraft());
             save.addActionListener(_ -> {
                 if (selectedProbe == null) return;
-                ProbeContent p;
+                // a stored row renamed in the JSON: the groups that named it follow (2026-11-02)
+                String oldName = SUS.isNotEmpty(selectedProbe.getGUID()) ? selectedProbe.getName() : null;
+                ProbeType p;
                 try {
                     p = probeToSave(selectedProbe, "", viewProbeTextArea.getText());
                 } catch (IllegalArgumentException ex) {
@@ -1818,9 +1787,18 @@ public class ScanPanel extends JPanel {
                     JOptionPane.showMessageDialog(this, ex.getMessage(), NSAppUtil.ProbeEditor.INVALID_DIALOG.getDisplayName(), JOptionPane.ERROR_MESSAGE);
                     return;
                 }
-                BackgroundTask.run(this, save, () -> ctx.session().saveProbe(p), saved -> {
+                boolean renamed = oldName != null && !oldName.equals(p.getName());
+                List<ProbeGroup> groups = probeGroups;
+                BackgroundTask.run(this, save, () -> {
+                    ProbeType saved = ctx.session().saveProbe(p);
+                    if (renamed) {
+                        for (ProbeGroup g : ProbeGroupModel.renamed(groups, oldName, p.getName())) ctx.session().saveProbeGroup(g);
+                    }
+                    return saved;
+                }, saved -> {
                     selectedProbe = saved;
                     reloadProbes();
+                    if (renamed) reloadProbeGroups();
                     cardStack.show("Probe");
                 });
             });
@@ -1863,7 +1841,7 @@ public class ScanPanel extends JPanel {
      *                                  open and dirty rather than reading as saved
      */
     public void saveProbeFromEditor(String name, String content) {
-        ProbeContent p = probeToSave(new ProbeContent(), name, content);
+        ProbeType p = probeToSave(new ProbeType(), name, content);
         boolean updated = SUS.isNotEmpty(p.getGUID());
         BackgroundTask.run(this, null, () -> ctx.session().saveProbe(p), saved -> {
             reloadProbes();
@@ -1879,20 +1857,33 @@ public class ScanPanel extends JPanel {
      * it is an existing row, otherwise the library row that already carries the definition's name
      * (so a re-save updates instead of duplicating), otherwise {@code target} as a new row. Both
      * save paths go through here so they cannot diverge on fence handling, on where the name
-     * comes from — always the parsed definition's — or on the dedupe rule.
+     * comes from — always the parsed definition's — or on the dedupe rule. A stored row cannot
+     * take the name of another stored row (2026-11-02): the engine, the groups and the reports
+     * all know a probe by its name. And the name must already be lower-case and trimmed
+     * ({@link ProbeSelection#nameForm}): {@code ProbeType.setName} stores it that way, and the
+     * JSON's name and the row's must stay one string.
      *
-     * @throws IllegalArgumentException when the content is not a valid probe, with the reason
+     * @throws IllegalArgumentException when the content is not a valid probe, with the reason,
+     *                                  when its name is not in the form the row would store, or
+     *                                  when a stored row is renamed to a name another row holds
      */
-    private ProbeContent probeToSave(ProbeContent target, String name, String content) {
+    private ProbeType probeToSave(ProbeType target, String name, String content) {
         String json = fencedBlock(content);
         ProbeDefinition def = ProbeDefinitionLoader.parse(json, SUS.isEmpty(name) ? "probe" : name);
-        ProbeContent row = target;
+        String form = ProbeSelection.nameForm(def.getName());
+        if (form != null) {
+            throw new IllegalArgumentException(NSAppUtil.ProbeEditor.NAME_FORM.getDisplayName() + " \"" + form + "\".");
+        }
+        if (SUS.isNotEmpty(target.getGUID()) && ProbeSelection.nameTaken(probes, def.getName(), target.getGUID())) {
+            throw new IllegalArgumentException(NSAppUtil.ProbeEditor.NAME_TAKEN.getDisplayName() + " \"" + def.getName() + "\".");
+        }
+        ProbeType row = target;
         if (SUS.isEmpty(target.getGUID())) {
-            ProbeContent existing = ProbeSelection.existingByName(probes, def.getName());
+            ProbeType existing = ProbeSelection.existingByName(probes, def.getName());
             if (existing != null) row = existing;
         }
         row.setName(def.getName());
-        row.setContent(json);
+        row.setDefinition(json);
         return row;
     }
 
@@ -1902,8 +1893,8 @@ public class ScanPanel extends JPanel {
         return m.find() ? m.group(1) : markdown.trim();
     }
 
-    private void onRemoveProbe(ProbeContent probeContent) {
-        BackgroundTask.runCatching(this, null, () -> ctx.session().deleteProbe(probeContent),
+    private void onRemoveProbe(ProbeType probeType) {
+        BackgroundTask.runCatching(this, null, () -> ctx.session().deleteProbe(probeType),
                 this::reloadProbes);
     }
 

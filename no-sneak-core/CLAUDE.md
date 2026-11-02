@@ -189,6 +189,10 @@ higher-priority candidate can still complete, the rest are aborted. **match-all*
 scanner's catalog merges bundled and subject-authored definitions **by name**: a stored probe
 with a bundled name replaces it (warning names the shadowed probe), a second stored definition
 with a used name is ignored (warning), and `--probes` names that match nothing probe nothing.
+`NMapConfig.bundledCatalog = false` (2026-11-02; set in code, never a command-line option)
+leaves the bundled definitions out, so the catalog is exactly `extraProbes` — the desktop
+app's case, whose subject owns a copy of every probe since that day; the CLI keeps the
+default and the bundle (`ExtraProbeCatalogTest.withoutTheBundleTheCatalogIsExactlyTheExtras`).
 The nmap scanner runs match-first unless `--probe-match all` is given (2026-10-31), and with
 `--probes` and no `-p` it scans the named probes' declared ports (*The scan pipeline*).
 
@@ -289,7 +293,8 @@ io.xlogistx.nosneak
 ├── service/                Checker — REST /check-qdz/{domain}/{detailed}
 └── tools/                  DMTool · NoSneakUtil
 
-src/main/resources/probes/   18 bundled probe definitions (the 2 unbundled ones were deleted 2026-10-26)
+src/main/resources/probes/   18 bundled probe definitions (the 2 unbundled ones were deleted 2026-10-26); the CLI's catalog, and
+                            what the desktop app copies into each subject's own probes at their first login (2026-11-02)
 src/test/java/io/xlogistx/nosneak/   403 tests in 36 classes, all green (2026-09-22); + nmap/ProbePortsTest and two end-to-end cases (2026-10-31) + NoSneakNIOHTTPServer harness. Pure and socket-free except
                                     nmap/NMapScannerEndToEndTest (a loopback listener) and nmap/ScanGateThroughputTest
                                     (measures the gate on real pools); model/ProbeDefinitionGuideTest pins

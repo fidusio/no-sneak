@@ -66,7 +66,22 @@
 > is rendered through gui-audio's `GUIUtil.applyProp` — no literal label, tooltip, placeholder or
 > dialog title is left in a panel (`no-sneak-app/CLAUDE.md` → *ScanPanel* → *Probe groups*, last
 > paragraph); `ai-assistant` has its twin, `AIAssistantUtil` (20 enums, the assistant's `Page`
-> among them), so the whole Swing surface follows the one rule.
+> among them), so the whole Swing surface follows the one rule. **2026-11-02, one probe
+> source** (`PLAN-single-probe-source.md`): the 18 bundled probes are copied into a subject's
+> own `ProbeType` rows once, at their first login (`Session.seedBundledProbes`; the marker
+> `probes-seeded` on the subject's property bag, `origin=bundled` on each copy — no new entity,
+> no new param). From then on every probe is theirs to tick, edit, delete and group: the Add
+> probe popup and the library have one section, *Restore bundled probes* on the library bar
+> re-adds the missing ones and never overwrites, a probe's name is unique among the subject's
+> rows and a rename follows into the groups. The engine takes exactly the ticked definitions
+> with its bundled catalog switched off (`NMapConfig.bundledCatalog`, set in code, never on the
+> command line, so the CLI is unchanged). No upgrade path, by decision: a bundled probe fixed in
+> a later version reaches a seeded subject only through Restore, and only if they deleted theirs.
+> **Later that day** the maintainer renamed the entity `ProbeContent` → **`ProbeType`** (param
+> `content` → `definition`, table `probe_type`, `setName` lower-cases and trims); the app refuses
+> a definition whose name is not already in that form (`ProbeSelection.nameForm`). A store from
+> before the rename keeps its old `probe_content` table unread: its subjects, already marked as
+> seeded, see an empty library until *Restore bundled probes*.
 
 Assessment tooling for what a network endpoint exposes — TLS posture, **post-quantum
 readiness**, and running services — plus a Swing front-end and an AI-assistant layer.

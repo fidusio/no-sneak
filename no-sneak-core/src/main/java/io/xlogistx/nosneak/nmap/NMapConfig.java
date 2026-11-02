@@ -91,6 +91,13 @@ public final class NMapConfig {
     /** Definitions to scan with alongside the bundled ones; they join the catalog {@link #probeNames} resolves against. */
     public final List<ProbeDefinition> extraProbes = new ArrayList<>();
     /**
+     * Whether the bundled definitions are part of the catalog (2026-11-02). {@code false} makes the
+     * catalog exactly {@link #extraProbes} — the desktop app's case, whose subject owns a copy of
+     * every probe — so nothing is shadowed and nothing runs that the caller did not hand over.
+     * Not a command-line option: set in code, like {@link #extraProbes}, never printed or parsed.
+     */
+    public boolean bundledCatalog = true;
+    /**
      * How many probes may identify one open port (2026-10-31, {@code --probe-match}): {@link ProbeMatch#FIRST},
      * the default, stops the others once one has; {@link ProbeMatch#ALL} keeps every identification.
      */
@@ -267,6 +274,7 @@ public final class NMapConfig {
     public NMapConfig probeScan(boolean b) { this.probeScan = b; return this; }
     public NMapConfig probe(String name) { if (name != null && !name.isEmpty()) probeNames.add(name); return this; }
     public NMapConfig extraProbe(ProbeDefinition d) { if (d != null) extraProbes.add(d); return this; }
+    public NMapConfig bundledCatalog(boolean b) { this.bundledCatalog = b; return this; }
     public NMapConfig probeMatch(ProbeMatch m) { if (m != null) this.probeMatch = m; return this; }
     public NMapConfig rate(int maxInFlight, int maxPerSec) { this.maxInFlight = maxInFlight; this.maxPerSec = maxPerSec; return this; }
     public NMapConfig timeoutInSec(int s) { this.timeoutSec = s > 0 ? s : DEFAULT_TIMEOUT_SEC; return this; }

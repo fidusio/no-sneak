@@ -16,7 +16,13 @@ detail lives in the module `CLAUDE.md` files, named below.*
      sign-in does not download; *Account → Settings → Sync MAC vendors* replaces the list;
    - a scan with no probe chips sends no probe traffic; ticking *Service detection* fills the strip;
    - Probe library: *Write with the assistant* on an open chat, then *Save as probe* on the reply;
-     *Copy to my probes* of `ssh`, Save, and a scan reports the shadow warning;
+     (2026-11-02, one probe source) a first sign-in on a fresh installation lists the 18 bundled
+     probes as *bundled copy*, a scan with `ssh` ticked identifies as before and its report carries
+     no shadow warning, Delete `ssh` then *Restore bundled probes* brings it back alone, renaming
+     `http` in the editor renames it in its group, renaming it to `ssh` is refused inline; after
+     the `ProbeType` rename (same day) a draft named `My-Redis` is refused by Check and Save with
+     *name it "my-redis"*, and a store from before the rename (old `probe_content` table, subject
+     already marked as seeded) shows an empty library that *Restore bundled probes* refills;
    - `postgres-tls` against a real PostgreSQL with `ssl = on` (the version needs `trust` auth for
      the probe's user; otherwise `postgresql-tls-auth-required`, still a completed identification);
    - (2026-10-27, hardening) *Copy* of an API-key secret: the clipboard is blank a minute later

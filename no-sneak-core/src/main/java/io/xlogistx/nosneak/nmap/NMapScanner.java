@@ -1191,8 +1191,10 @@ public final class NMapScanner {
         // two connections per open port for one answer (PENDING-ISSUES P22). Among stored
         // duplicates the first wins. Both cases are reported, never silent.
         java.util.Map<String, ProbeDefinition> byName = new LinkedHashMap<>();
-        for (ProbeDefinition d : ProbeDefinitionLoader.loadBundled()) {
-            byName.put(d.getName(), d);
+        if (cfg.bundledCatalog) {
+            for (ProbeDefinition d : ProbeDefinitionLoader.loadBundled()) {
+                byName.put(d.getName(), d);
+            }
         }
         Set<String> storedNames = new java.util.HashSet<>();
         for (ProbeDefinition d : cfg.extraProbes) {

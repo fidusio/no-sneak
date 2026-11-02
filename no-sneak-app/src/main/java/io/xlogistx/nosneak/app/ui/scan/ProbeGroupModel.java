@@ -1,9 +1,9 @@
 package io.xlogistx.nosneak.app.ui.scan;
 
 import io.xlogistx.nosneak.app.NSAppUtil;
-import io.xlogistx.nosneak.data.ProbeContent;
+import io.xlogistx.nosneak.data.ProbeType;
 import io.xlogistx.nosneak.data.ProbeGroup;
-import io.xlogistx.nosneak.model.ProbeDefinition;
+import io.xlogistx.nosneak.model.ProbeDefinitionLoader;
 import org.zoxweb.shared.util.SUS;
 
 import javax.swing.table.AbstractTableModel;
@@ -23,9 +23,10 @@ import java.util.Set;
  * The one rule that matters: a group is a convenience over the ticks. Ticking it adds its
  * members' keys to {@code tickedProbes} ({@link #applyTick}); the chips stay individual probes;
  * the report records the probes, never the group. Names resolve through
- * {@link ProbeSelection#keysForNames} — bundled first, then the subject's own by name, a name
- * that matches nothing dropped — exactly as a stored report's {@code probes} do for <i>Scan
- * again</i>, so a group outlives the deletion of a member and simply says what is missing.
+ * {@link ProbeSelection#keysForMembers} — by name among the subject's own rows, the one source
+ * of probes since 2026-11-02, a name that matches nothing dropped — exactly as a stored report's
+ * {@code probes} do for <i>Scan again</i>, so a group outlives the deletion of a member and
+ * simply says what is missing; a probe renamed in the editor is followed ({@link #renamed}).
  */
 public final class ProbeGroupModel extends AbstractTableModel {
 
@@ -56,11 +57,10 @@ public final class ProbeGroupModel extends AbstractTableModel {
      * The rows: the subject's groups, then any preset ones (the seam for bundled groups), each
      * resolved against the probes known now, sorted by name.
      */
-    public static List<Row> rows(List<ProbeGroup> mine, List<ProbeGroup> presets,
-                                 List<ProbeDefinition> bundled, List<ProbeContent> stored) {
+    public static List<Row> rows(List<ProbeGroup> mine, List<ProbeGroup> presets, List<ProbeType> stored) {
         List<Row> out = new ArrayList<>();
-        for (ProbeGroup g : mine) out.add(new Row(g, false, memberKeys(g, bundled, stored), missing(g, bundled, stored)));
-        for (ProbeGroup g : presets) out.add(new Row(g, true, memberKeys(g, bundled, stored), missing(g, bundled, stored)));
+        for (ProbeGroup g : mine) out.add(new Row(g, false, memberKeys(g, stored), missing(g, stored)));
+        for (ProbeGroup g : presets) out.add(new Row(g, true, memberKeys(g, stored), missing(g, stored)));
         out.sort(Comparator.comparing(Row::name, String.CASE_INSENSITIVE_ORDER));
         return out;
     }
@@ -71,42 +71,65 @@ public final class ProbeGroupModel extends AbstractTableModel {
         return probes == null ? Set.of() : probes;
     }
 
-    /** The tick keys the group's names resolve to now (bundled first, then mine by name; unknown dropped). */
-    public static Set<String> memberKeys(ProbeGroup g, List<ProbeDefinition> bundled, List<ProbeContent> stored) {
-        return ProbeSelection.keysForMembers(members(g), bundled, stored);
+    /** The tick keys the group's names resolve to now (by name among the subject's rows; unknown dropped). */
+    public static Set<String> memberKeys(ProbeGroup g, List<ProbeType> stored) {
+        return ProbeSelection.keysForMembers(members(g), stored);
     }
 
-    /** The member names that resolve to nothing — a stored probe deleted since the group was saved. */
-    public static List<String> missing(ProbeGroup g, List<ProbeDefinition> bundled, List<ProbeContent> stored) {
+    /** The member names that resolve to nothing — a probe deleted since the group was saved. */
+    public static List<String> missing(ProbeGroup g, List<ProbeType> stored) {
         List<String> out = new ArrayList<>();
         for (String name : members(g)) {
-            if (ProbeSelection.keysForNames(name, bundled, stored).isEmpty()) out.add(name);
+            if (ProbeSelection.keysForNames(name, stored).isEmpty()) out.add(name);
         }
         return out;
     }
 
     /**
-     * The inverse of {@link #memberKeys}: the ticked probes' names in catalog order — bundled by
-     * priority then name, as the engine orders them, then mine by name — so a group saved from
-     * the chips reads the same way every time (the set keeps insertion order, so it goes into
-     * {@code ProbeGroup.setProbes(Set)} as is). A tick for a probe that no longer exists
-     * contributes nothing.
+     * The inverse of {@link #memberKeys}: the ticked probes' names in catalog order — by
+     * priority then name, as the library lists them and the engine runs them; a probe whose
+     * JSON does not parse sorts last — so a group saved from the chips reads the same way every
+     * time (the set keeps insertion order, so it goes into {@code ProbeGroup.setProbes(Set)} as
+     * is). A tick for a probe that no longer exists contributes nothing.
      */
-    public static Set<String> namesFromTicks(Set<String> ticks, List<ProbeDefinition> bundled, List<ProbeContent> stored) {
-        List<ProbeDefinition> b = new ArrayList<>(bundled);
-        b.sort(Comparator.comparingInt(ProbeDefinition::getPriority).reversed()
-                .thenComparing(ProbeDefinition::getName, String.CASE_INSENSITIVE_ORDER));
+    public static Set<String> namesFromTicks(Set<String> ticks, List<ProbeType> stored) {
+        List<ProbeType> s = new ArrayList<>();
+        for (ProbeType p : stored) if (p.getName() != null && !p.getName().isBlank()) s.add(p);
+        s.sort(Comparator.comparingInt(ProbeGroupModel::priorityOf).reversed()
+                .thenComparing(ProbeType::getName, String.CASE_INSENSITIVE_ORDER));
         Set<String> names = new LinkedHashSet<>();
-        for (ProbeDefinition d : b) {
-            if (ticks.contains(ProbeSelection.bundledKey(d.getName()))) names.add(d.getName());
-        }
-        List<ProbeContent> s = new ArrayList<>();
-        for (ProbeContent p : stored) if (p.getName() != null && !p.getName().isBlank()) s.add(p);
-        s.sort(Comparator.comparing(ProbeContent::getName, String.CASE_INSENSITIVE_ORDER));
-        for (ProbeContent p : s) {
+        for (ProbeType p : s) {
             if (ticks.contains(ProbeSelection.storedKey(p))) names.add(p.getName());
         }
         return names;
+    }
+
+    /** The declared priority of a stored probe; the lowest possible for one that does not parse. */
+    private static int priorityOf(ProbeType p) {
+        try {
+            return ProbeDefinitionLoader.parse(p.getDefinition(), p.getName()).getPriority();
+        } catch (RuntimeException e) {
+            return Integer.MIN_VALUE;
+        }
+    }
+
+    /**
+     * A probe rename follows into the groups (2026-11-02): every group whose members hold
+     * {@code oldName} gets {@code newName} in its place, order kept, and is returned for the
+     * caller to save. Nothing for a null or unchanged name.
+     */
+    public static List<ProbeGroup> renamed(List<ProbeGroup> groups, String oldName, String newName) {
+        List<ProbeGroup> out = new ArrayList<>();
+        if (oldName == null || newName == null || oldName.equals(newName)) return out;
+        for (ProbeGroup g : groups) {
+            Set<String> before = members(g);
+            if (!before.contains(oldName)) continue;
+            Set<String> after = new LinkedHashSet<>();
+            for (String n : before) after.add(oldName.equals(n) ? newName : n);
+            g.setProbes(after);
+            out.add(g);
+        }
+        return out;
     }
 
     /** The members as the dialogs show them: {@code ssh, https-pqc}. */

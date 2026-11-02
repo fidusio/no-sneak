@@ -41,7 +41,7 @@ option, filter segment and tab carries the same kind of tooltip.
   the ticked probes decide**: the scan covers the ports they declare (ssh and https ticked:
   22, 2222, 443, 8443), and the field's placeholder names them; with no chip it is 1-1024. Type
   a range (`1-2048`) and every port of it is scanned, with the probes on each open one.
-- **Probes are the chips.** *Add probe* ticks bundled and your own probes into the run; a chip's
+- **Probes are the chips.** *Add probe* ticks your probes into the run; a chip's
   × removes it. The popup's **Groups** section ticks a saved group of probes in one go (its
   tooltip lists the members; unticking it removes just those), and **Save ticked as group…** at
   the bottom keeps the chips as they stand under a name — the chips stay individual probes, and
@@ -64,17 +64,20 @@ option, filter segment and tab carries the same kind of tooltip.
   over every column. Select a row to **View**, **Scan again**, copy its command or result,
   **Send to assistant**, or **Delete** it; select several rows to delete them together, or
   **Delete all** to clear the list after one confirmation.
-- **Probe Library** — every probe, bundled and yours, in one table (name, service, ports,
-  transport, priority, source); **All**, **Bundled** and **Mine** filter it, the search box
-  matches name, service, description or an exact port. Select a row to read its facts and its
-  JSON in full. Three ways to add one: **Copy to my probes** a bundled one and change it, write
-  one by hand with **New probe** against the *Probe definition* shown in the app (the editor's
-  *Check* says whether it is valid and what it would probe), or **Write with the assistant** —
-  name the service and port, the definition is attached and the request typed for you, and the
-  reply carries a **Save as probe** button. A probe of yours with a bundled name replaces that
-  probe in your scans. The bar's **Probe groups manager** button opens **Probe groups**: your named sets of
-  probes (name, how many resolve, description), each with its members badged *bundled*, *mine*
-  or *missing* when a probe of yours was deleted since. **New group** names one and ticks its
+- **Probe Library** — every probe of yours in one table (name, service, ports, transport,
+  priority, origin); the search box matches name, service, description or an exact port. The
+  probes that ship with the app were copied into your account the first time you signed in
+  (origin *bundled copy*), so every one of them is yours to read, edit, delete and group; a
+  probe's name is unique among yours, and renaming one in the editor renames it in your groups
+  too. **Restore bundled probes** on the bar adds back any of the shipped probes you no longer
+  have and never touches one you changed. Select a row to read its facts and its JSON in full,
+  **Edit** or **Delete** it beside its name. Three ways to add one: edit any probe and change
+  it, write one by hand with **New probe** against the *Probe definition* shown in the app (the
+  editor's *Check* says whether it is valid and what it would probe), or **Write with the
+  assistant** — name the service and port, the definition is attached and the request typed for
+  you, and the reply carries a **Save as probe** button. The bar's **Probe groups manager**
+  button opens **Probe groups**: your named sets of probes (name, how many resolve, description),
+  each with its members, badged *missing* when a probe was deleted since. **New group** names one and ticks its
   probes in a checklist; **Edit** and **Delete** sit beside the selected group's name; a group
   stores probe names, so it keeps working across edits and says what no longer exists.
 

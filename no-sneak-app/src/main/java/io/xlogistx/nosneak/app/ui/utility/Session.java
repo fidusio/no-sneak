@@ -1,9 +1,12 @@
 package io.xlogistx.nosneak.app.ui.utility;
 
 import io.xlogistx.nosneak.app.NoSneakStore;
-import io.xlogistx.nosneak.data.ProbeContent;
+import io.xlogistx.nosneak.data.ProbeType;
 import io.xlogistx.nosneak.data.ProbeGroup;
 import io.xlogistx.nosneak.data.ReportContent;
+import io.xlogistx.nosneak.app.ui.scan.ProbeSelection;
+import io.xlogistx.nosneak.model.ProbeDefinition;
+import io.xlogistx.nosneak.model.ProbeDefinitionLoader;
 import io.xlogistx.nosneak.net.util.NSNetUtil;
 import io.xlogistx.shiro.SubjectSwap;
 import io.xlogistx.shiro.authc.DomainUsernamePasswordToken;
@@ -426,6 +429,14 @@ public class Session {
         Object principal = shiro.getPrincipal();
         this.principalID = principal != null ? principal.toString() : subject.trim();
         if (previous != null) endSubject(previous);
+        // 2026-11-02: the bundled probes become the subject's own at their first login, before
+        // any listener loads the probe list. A failure is reported and does not stop the login;
+        // the marker stays unset, so the next login tries again.
+        try {
+            seedBundledProbes(false);
+        } catch (RuntimeException e) {
+            System.err.println("no-sneak: the bundled probes could not be copied for " + this.principalID + ": " + e.getMessage());
+        }
         boolean old = this.authenticated;
         this.authenticated = true;
         pcs.firePropertyChange("authenticated", old, true);
@@ -1023,28 +1034,73 @@ public class Session {
     }
 
 
-    public ProbeContent saveProbe(ProbeContent probeContent) {
-        if (SUS.isNotEmpty(probeContent.getGUID())) {
-            probeContent.setLastTimeUpdated(System.currentTimeMillis());
-            return ds.update(probeContent);
+    public ProbeType saveProbe(ProbeType probeType) {
+        if (SUS.isNotEmpty(probeType.getGUID())) {
+            probeType.setLastTimeUpdated(System.currentTimeMillis());
+            return ds.update(probeType);
         }
-        probeContent.setSubjectGUID(getSubjectGUID());
-        return ds.insert(probeContent);
+        probeType.setSubjectGUID(getSubjectGUID());
+        return ds.insert(probeType);
     }
 
-    public void deleteProbe(ProbeContent probeContent) {
-        ds.delete(probeContent, true);
+    public void deleteProbe(ProbeType probeType) {
+        ds.delete(probeType, true);
     }
 
-    public ProbeContent getProbe(String guid) {
-        List<ProbeContent> found = ds.userSearchByID(getSubjectGUID(), ProbeContent.NVC_PROBE_CONTENT, guid);
+    public ProbeType getProbe(String guid) {
+        List<ProbeType> found = ds.userSearchByID(getSubjectGUID(), ProbeType.NVC_PROBE_TYPE, guid);
         return found.isEmpty() ? null : found.getFirst();
     }
 
-    public List<ProbeContent> getAllProbes() {
+    public List<ProbeType> getAllProbes() {
         String o = getSubjectGUID();
         if (SUS.isEmpty(o)) return List.of();
-        return ds.userSearch(o, ProbeContent.NVC_PROBE_CONTENT, null);
+        return ds.userSearch(o, ProbeType.NVC_PROBE_TYPE, null);
+    }
+
+    /** The property on the subject identifier's bag that records the one-time copy of the bundled probes: the day it ran. */
+    public static final String PROBES_SEEDED = "probes-seeded";
+
+    /**
+     * One probe source (2026-11-02, {@code PLAN-single-probe-source.md}): copies every bundled
+     * probe definition the subject does not have, by name, into their own {@link ProbeType}
+     * rows — the definition's name and description, the bundled file's JSON as the content,
+     * {@link ProbeSelection#ORIGIN} = {@code bundled} on the row — and returns how many were
+     * inserted. Runs once per subject, at their first login: afterwards the marker
+     * {@link #PROBES_SEEDED} is set and the call returns 0 without looking, so a probe the
+     * subject deleted stays deleted. {@code force} ignores the marker (the library's <i>Restore
+     * bundled probes</i>): still only the missing names are added, a row the subject has is
+     * never overwritten. The marker is written last, so a copy interrupted half-way completes
+     * at the next login.
+     *
+     * @throws AccessSecurityException {@code "Not signed in"}
+     */
+    public int seedBundledProbes(boolean force) throws AccessSecurityException {
+        requireSignedIn();
+        boolean seeded = probesSeeded();
+        if (seeded && !force) return 0;
+        Set<String> have = new HashSet<>();
+        for (ProbeType p : getAllProbes()) {
+            if (p.getName() != null) have.add(p.getName());
+        }
+        int inserted = 0;
+        for (ProbeDefinition d : ProbeDefinitionLoader.loadBundled()) {
+            if (have.contains(d.getName())) continue;
+            ProbeType copy = new ProbeType();
+            copy.setName(d.getName());
+            if (d.getDescription() != null) copy.setDescription(d.getDescription());
+            copy.setDefinition(ProbeDefinitionLoader.bundledSource(d.getName()));
+            ProbeSelection.markBundledCopy(copy);
+            saveProbe(copy);
+            inserted++;
+        }
+        if (!seeded) saveProfile(Map.of(PROBES_SEEDED, java.time.LocalDate.now().toString()));
+        return inserted;
+    }
+
+    /** Whether the signed-in subject's bundled probes were copied in already; false when signed out. */
+    public boolean probesSeeded() {
+        return SUS.isNotEmpty(loadProfile(PROBES_SEEDED).get(PROBES_SEEDED));
     }
 
     // Probe groups (2026-11-01): named sets of probe names, subject-scoped like the probes.

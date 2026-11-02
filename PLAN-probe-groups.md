@@ -35,7 +35,7 @@ existing ticks — it never reaches the engine and never changes what a report s
 
 ## Step 1 — Data entity (no-sneak-core)
 `no-sneak-core/src/main/java/io/xlogistx/nosneak/data/ProbeGroupContent.java`
-- `extends PropertyImpl`, mirror `ProbeContent` exactly.
+- `extends PropertyImpl`, mirror `ProbeType` exactly.
 - `Param.PROBES` → NVConfig `"probes"` (String, csv of probe names).
 - `NVC_PROBE_GROUP_CONTENT = new NVConfigEntityPortable("probe_group", null, "ProbeGroupContent", …)`.
 - Name and description come from the DAO base (`setName` / `setDescription`).
@@ -53,7 +53,7 @@ Next to the probe methods (~L1025):
 `AbstractTableModel`, Swing-free except the contract. Columns: **Name · Probes · Description**
 (`Probes` = resolved count, e.g. `4` or `4 (1 missing)`).
 Static helpers:
-- `Set<String> memberKeys(ProbeGroupContent g, List<ProbeDefinition> bundled, List<ProbeContent> stored)` → `ProbeSelection.keysForNames(g.getProbes(), bundled, stored)` (make `keysForNames` package-visible or move it; keep one implementation).
+- `Set<String> memberKeys(ProbeGroupContent g, List<ProbeDefinition> bundled, List<ProbeType> stored)` → `ProbeSelection.keysForNames(g.getProbes(), bundled, stored)` (make `keysForNames` package-visible or move it; keep one implementation).
 - `List<String> missing(g, bundled, stored)` → names that resolve to nothing.
 - `String csvFromTicks(Set<String> ticks, bundled, stored)` → names of ticked probes in catalog order (bundled by priority/name, then mine) — inverse of `memberKeys`.
 - `ProbeGroupContent existingByName(List<ProbeGroupContent>, String name)` (case-insensitive, GUID present).

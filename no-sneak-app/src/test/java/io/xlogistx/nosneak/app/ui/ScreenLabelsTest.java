@@ -52,8 +52,6 @@ class ScreenLabelsTest {
             NSAppUtil.Screen screen = AppShell.screenFor(p);
             if (screen != null) assertEquals(screen.getDescription(), p.getDescription(), p.name() + " says the same as its screen");
         }
-        for (NSAppUtil.ProbeLibraryFilter f : NSAppUtil.ProbeLibraryFilter.values())
-            assertFalse(f.getDescription().isBlank(), f.name());
         for (NSAppUtil.ScanResultTab t : NSAppUtil.ScanResultTab.values())
             assertFalse(t.getDescription().isBlank(), t.name());
         for (NSAppUtil.AclView v : NSAppUtil.AclView.values())
@@ -64,8 +62,6 @@ class ScreenLabelsTest {
 
     @Test
     void segmentEnumsLabelThemselves() {
-        assertEquals("All", NSAppUtil.ProbeLibraryFilter.ALL.getDisplayName());
-        assertEquals("Mine", NSAppUtil.ProbeLibraryFilter.MINE.getDisplayName());
         for (NMapConfig.Timing t : NMapConfig.Timing.values())
             assertEquals(t.name(), t.getDisplayName(), "the -T token is the label");
     }

@@ -8,7 +8,7 @@ import java.util.Set;
 
 /**
  * A named set of probes a subject saves to tick in one go (2026-11-01). Mirrors
- * {@link ProbeContent}: the DAO base carries the name and the description, the one param here
+ * {@link ProbeType}: the DAO base carries the name and the description, the one param here
  * is the member probes as an ordered set of <b>names</b> (an {@code NVStringSet}, stored as a
  * JSON column) — not tick keys — resolved against the bundled set and the subject's own probes
  * whenever the group is used, exactly as a stored report's {@code probes} property is resolved

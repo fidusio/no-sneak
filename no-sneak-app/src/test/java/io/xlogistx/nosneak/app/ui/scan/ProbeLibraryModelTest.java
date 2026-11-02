@@ -1,13 +1,12 @@
 package io.xlogistx.nosneak.app.ui.scan;
 
-import io.xlogistx.nosneak.app.NSAppUtil;
-import io.xlogistx.nosneak.data.ProbeContent;
+import io.xlogistx.nosneak.data.ProbeType;
 import io.xlogistx.nosneak.model.ProbeDefinition;
 import io.xlogistx.nosneak.model.ProbeDefinitionLoader;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -17,9 +16,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Pins the Probe library's rows (bundled + stored, engine order, an unparsable stored probe kept
- * with its reason), the All / Bundled / Mine + search filter, the Check message and the request
- * typed into the assistant. No Swing, no store.
+ * Pins the Probe library's rows (the subject's probes — the copies of the bundled set the seed
+ * made and the ones written here — in engine order, an unparsable one kept with its reason),
+ * the origin column, the search filter, the Check message and the request typed into the
+ * assistant. No Swing, no store.
  */
 class ProbeLibraryModelTest {
 
@@ -31,26 +31,33 @@ class ProbeLibraryModelTest {
                 + "\"d\":{\"action\":\"done\"}}}";
     }
 
-    private static ProbeContent stored(String name, String content) {
-        ProbeContent p = new ProbeContent();
+    private static ProbeType stored(String name, String content) {
+        ProbeType p = new ProbeType();
         p.setGUID("g-" + name);
         p.setName(name);
-        p.setContent(content);
+        p.setDefinition(content);
         return p;
     }
 
+    /** What a seeded subject's library holds: a copy of every bundled probe, plus two of their own. */
+    private static List<ProbeType> probes() {
+        List<ProbeType> mine = new ArrayList<>();
+        for (ProbeDefinition d : ProbeDefinitionLoader.loadBundled()) {
+            ProbeType copy = stored(d.getName(), ProbeDefinitionLoader.bundledSource(d.getName()));
+            ProbeSelection.markBundledCopy(copy);
+            mine.add(copy);
+        }
+        mine.add(stored("my-redis", json("my-redis", 60, "My Redis on 6380")));
+        mine.add(stored("broken", "{ not json"));
+        return mine;
+    }
+
     private static List<ProbeLibraryModel.Row> library() {
-        List<ProbeDefinition> bundled = ProbeDefinitionLoader.loadBundled();
-        Map<String, String> sources = new java.util.HashMap<>();
-        for (ProbeDefinition d : bundled) sources.put(d.getName(), ProbeDefinitionLoader.bundledSource(d.getName()));
-        List<ProbeContent> mine = List.of(
-                stored("my-redis", json("my-redis", 60, "My Redis on 6380")),
-                stored("broken", "{ not json"));
-        return ProbeLibraryModel.rows(bundled, sources, mine);
+        return ProbeLibraryModel.rows(probes());
     }
 
     @Test
-    void rowsAreBundledPlusStoredInEngineOrder() {
+    void rowsAreTheSubjectsProbesInEngineOrder() {
         List<ProbeLibraryModel.Row> rows = library();
         assertEquals(ProbeDefinitionLoader.BUNDLED.length + 2, rows.size());
         assertEquals("https-scan", rows.get(0).name(), "highest priority first, as the engine runs them");
@@ -58,16 +65,21 @@ class ProbeLibraryModelTest {
             assertTrue(rows.get(i - 1).priority() >= rows.get(i).priority(), "priority descending");
         }
         ProbeLibraryModel.Row ssh = rows.stream().filter(r -> r.name().equals("ssh")).findFirst().orElseThrow();
-        assertFalse(ssh.stored());
-        assertTrue(ssh.source().contains("\"name\": \"ssh\""), "the bundled file's own text");
+        assertEquals("bundled", ssh.origin(), "a copy the seed made");
+        assertTrue(ssh.source().contains("\"name\": \"ssh\""), "the copied file's own text");
         assertNotNull(ssh.description(), "every bundled probe carries a description");
         assertEquals("22, 2222", ProbeLibraryModel.ports(ssh.def()));
+        ProbeLibraryModel.Row redis = rows.stream().filter(r -> r.name().equals("my-redis")).findFirst().orElseThrow();
+        assertEquals("mine", redis.origin(), "written here");
+        ProbeLibraryModel model = new ProbeLibraryModel();
+        model.setRows(List.of(ssh, redis));
+        assertEquals("bundled", model.getValueAt(0, ProbeLibraryModel.COL_SOURCE));
+        assertEquals("mine", model.getValueAt(1, ProbeLibraryModel.COL_SOURCE));
     }
 
     @Test
     void aStoredProbeThatDoesNotParseKeepsItsRowWithTheReason() {
         ProbeLibraryModel.Row broken = library().stream().filter(r -> r.name().equals("broken")).findFirst().orElseThrow();
-        assertTrue(broken.stored());
         assertNull(broken.def());
         assertNotNull(broken.error());
         assertTrue(broken.error().contains("Malformed"), broken.error());
@@ -79,21 +91,18 @@ class ProbeLibraryModelTest {
     }
 
     @Test
-    void theFilterIsSegmentThenSearch() {
+    void theFilterIsTheSearch() {
         List<ProbeLibraryModel.Row> rows = library();
-        long mine = rows.stream().filter(r -> ProbeLibraryModel.matches(r, NSAppUtil.ProbeLibraryFilter.MINE, "")).count();
-        long bundled = rows.stream().filter(r -> ProbeLibraryModel.matches(r, NSAppUtil.ProbeLibraryFilter.BUNDLED, "")).count();
-        assertEquals(2, mine);
-        assertEquals(ProbeDefinitionLoader.BUNDLED.length, bundled);
-        assertEquals(rows.size(), rows.stream().filter(r -> ProbeLibraryModel.matches(r, NSAppUtil.ProbeLibraryFilter.ALL, " ")).count());
+        assertEquals(rows.size(), rows.stream().filter(r -> ProbeLibraryModel.matches(r, " ")).count(), "blank: everything");
+        assertEquals(rows.size(), rows.stream().filter(r -> ProbeLibraryModel.matches(r, null)).count());
 
-        List<String> byPort = rows.stream().filter(r -> ProbeLibraryModel.matches(r, NSAppUtil.ProbeLibraryFilter.ALL, "2222")).map(ProbeLibraryModel.Row::name).toList();
+        List<String> byPort = rows.stream().filter(r -> ProbeLibraryModel.matches(r, "2222")).map(ProbeLibraryModel.Row::name).toList();
         assertEquals(List.of("ssh"), byPort, "a port matches exactly, not as a substring");
-        assertTrue(rows.stream().anyMatch(r -> r.name().equals("mysql") && ProbeLibraryModel.matches(r, NSAppUtil.ProbeLibraryFilter.ALL, "MYSQL")), "name, any case");
-        List<String> byService = rows.stream().filter(r -> ProbeLibraryModel.matches(r, NSAppUtil.ProbeLibraryFilter.ALL, "postgresql")).map(ProbeLibraryModel.Row::name).toList();
+        assertTrue(rows.stream().anyMatch(r -> r.name().equals("mysql") && ProbeLibraryModel.matches(r, "MYSQL")), "name, any case");
+        List<String> byService = rows.stream().filter(r -> ProbeLibraryModel.matches(r, "postgresql")).map(ProbeLibraryModel.Row::name).toList();
         assertEquals(3, byService.size(), "service: the three postgres probes");
-        assertTrue(rows.stream().anyMatch(r -> r.name().equals("my-redis") && ProbeLibraryModel.matches(r, NSAppUtil.ProbeLibraryFilter.MINE, "6380 ")), "description text");
-        assertFalse(rows.stream().anyMatch(r -> r.name().equals("my-redis") && ProbeLibraryModel.matches(r, NSAppUtil.ProbeLibraryFilter.BUNDLED, "my-redis")));
+        assertTrue(rows.stream().anyMatch(r -> r.name().equals("my-redis") && ProbeLibraryModel.matches(r, "6380 ")), "description text");
+        assertFalse(rows.stream().anyMatch(r -> r.name().equals("ssh") && ProbeLibraryModel.matches(r, "my-redis")));
     }
 
     @Test
@@ -105,6 +114,9 @@ class ProbeLibraryModelTest {
         IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
                 () -> ProbeLibraryModel.checkMessage("{\"name\":\"x\",\"start\":\"nowhere\",\"states\":{}}"));
         assertTrue(refused.getMessage().contains("Probe x"), "the loader's own reason: " + refused.getMessage());
+        IllegalArgumentException recased = assertThrows(IllegalArgumentException.class,
+                () -> ProbeLibraryModel.checkMessage(json("My-Redis", 60, null)), "a name the row would re-case");
+        assertTrue(recased.getMessage().endsWith("name it \"my-redis\"."), recased.getMessage());
     }
 
     @Test

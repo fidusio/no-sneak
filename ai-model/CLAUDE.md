@@ -136,10 +136,11 @@ drops the nested entity on JSON round-trip.
   exercises the sync path, and a type change is a migration, not an edit. (History: before the
   sync existed, `AISkill.skillType` did break the dev store this way.)
   > **This is a property of the H2P store, not of this module**, so it governs every
-  > `PropertyImpl` the app persists — including `no-sneak-core`'s `ProbeContent` / `ReportContent`
+  > `PropertyImpl` the app persists — including `no-sneak-core`'s `ProbeType` / `ReportContent`
   > (`io.xlogistx.nosneak.data`), which `no-sneak-app`'s `Session` writes to the same store.
-  > `ProbeContent` currently has a single `content` param and wants several more; that is cheap
-  > only until a `probe_content` table exists somewhere. See `no-sneak-app/CLAUDE.md` → *Scan
+  > `ProbeType` currently has a single `definition` param (the entity was `ProbeContent` with
+  > a `content` param until the maintainer renamed it on 2026-11-02; the table is `probe_type`)
+  > and wants several more; that is cheap only until a `probe_type` table exists somewhere. See `no-sneak-app/CLAUDE.md` → *Scan
   > panel*.
 - **None of these DAOs collide with the inherited `PropertyImpl` chain**, and new params must
   keep it that way. The reserved attribute names are `guid` / `subject_guid`
