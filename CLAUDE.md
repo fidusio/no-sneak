@@ -54,7 +54,7 @@
 > Scan page is titled *Scan* like its sidebar item, and a **New scan** button on that page clears
 > the form, the chips and the result (`ScanPanel.newScan`); the history page's button is unchanged.
 > **Same day, probe groups** (`PLAN-probe-groups.md`): a subject saves named sets of probes
-> (`ProbeGroup` in core, a csv of probe *names*), ticks one in the Add probe popup's
+> (`ProbeGroup` in core, a set of probe *names*, an `NVStringSet`), ticks one in the Add probe popup's
 > **GROUPS** section or keeps the chips as one with *Save ticked as group…*, and manages them on
 > a **Probe groups** page behind the library bar's *Probe groups manager* button (table, member badges,
 > an editor with a checklist). A group never reaches the engine: ticking it ticks its probes,

@@ -696,7 +696,10 @@ stored row, the filter, the check message, the prompt).
 **Probe groups (2026-11-01, plan `PLAN-probe-groups.md` at the repo root).** A subject saves
 named sets of probes and ticks a whole group when setting up a scan. The entity is core's
 `io.xlogistx.nosneak.data.ProbeGroup` (`PropertyImpl` like `ProbeContent`; the DAO's name
-and description, one param `probes` = a csv of probe **names**, `probeNames()` parses it);
+and description, one param `probes` = a set of probe **names** — an `NVStringSet`, `Set<String>`
+in insertion order, since the maintainer's change of 2026-11-01 (it was a csv `String`); the store
+keeps it as a JSON column; `setProbes(Set)` replaces the members, `setProbes(String csv)` and
+`parseNames` still take a comma-separated list);
 `Session.saveProbeGroup` / `deleteProbeGroup` / `getProbeGroup` / `getAllProbeGroups` are the
 probe methods' shape (subject-scoped, empty when signed out; `SessionProbeGroupTest` on a real
 store). **The rule: a group never reaches the engine and never changes what a report stores.**
@@ -705,8 +708,9 @@ used, through `ProbeSelection.keysForNames` (bundled first, mine by name, a dele
 dropped — exactly as *Scan again* resolves a report's `probes`), so a renamed or re-saved probe
 does not break it and a missing member is reported, not silently lost. The pure rules are
 **`ui.scan.ProbeGroupModel`** (the groups table, Name · Probes = `4` or `4 (1 missing)` ·
-Description, sorted by name; `memberKeys`, `missing`, `csvFromTicks` — the inverse, names in
-catalog order: bundled by priority then name, then mine by name —, `applyTick` (a tick adds
+Description, sorted by name; `members` (the entity's set, empty for null), `memberKeys`,
+`missing`, `namesFromTicks` — the inverse, an ordered set of names in catalog order: bundled by
+priority then name, then mine by name —, `describe` (that set as `ssh, https-pqc`), `applyTick` (a tick adds
 exactly the members, an untick removes exactly them), `isTicked` (every live member ticked and
 at least one), `missingNote`, `existingByName` (case-insensitive, stored rows only), `validate`
 (a name and a probe), `matches`; `rows(mine, presets, …)` keeps a seam for bundled groups,
@@ -717,7 +721,7 @@ none ship yet). Three places in the panel:
   `Group "<name>": N probe(s) no longer exist (…)` under the command through the form's new
   `showNote` (an info `InlineMessage`, not a refusal). With no group the section says so. A
   footer, **Save ticked as group…** (enabled with ≥ 1 tick), asks for a name and a description,
-  stores `csvFromTicks` of the chips, updates a group of the same name instead of adding one,
+  stores `namesFromTicks` of the chips, updates a group of the same name instead of adding one,
   and reloads (`reloadProbeGroups`, public, off the EDT, called on login beside `reloadProbes`;
   `resetPanel` clears the list and the editor draft).
 - **The Probe groups page** (card `Probe_groups`, `buildProbeGroupsPanel`, the library bar's
@@ -782,7 +786,7 @@ cannot see `NSAppUtil` (the dependency runs the other way), so it got its own tw
 evening: `AIAssistantUtil` (20 enums; the assistant's `Page` moved there from `AssistantPanel`,
 and the app refers to it as `AIAssistantUtil.Page`) — `ai-assistant/CLAUDE.md` → *Source map*.
 
-Pinned by `ProbeGroupModelTest` (the csv ↔ keys round trip and its ordering, bundled-first /
+Pinned by `ProbeGroupModelTest` (the names ↔ keys round trip and its ordering, bundled-first /
 mine / unknown-dropped, a group whose members are all gone ticks nothing and says so, the
 rows and columns, the seam for presets, `existingByName`, `validate`, `matches`),
 `ScanPanelTest.aGroupTicksItsProbesAndNothingElseReachesTheEngine` (a ticked group puts exactly
@@ -1032,7 +1036,7 @@ Scan data (`ReportContent` / `ProbeContent`, both from `no-sneak-core`'s
 stamps `lastTimeUpdated`, empty stamps the owner and inserts — the same upsert-by-GUID shape
 `AssistantStorage` uses, and for the same reason (see the timestamp note in `ai-model/CLAUDE.md`).
 `getAllScanResults` / `getAllProbes` return empty when signed out. `ProbeGroup`
-(2026-11-01, the probe groups: name, description, a csv of probe names) has the same four
+(2026-11-01, the probe groups: name, description, a set of probe names) has the same four
 methods — `saveProbeGroup` / `deleteProbeGroup` / `getProbeGroup` / `getAllProbeGroups` — in
 the same shape; `SessionProbeGroupTest` pins save, update-in-place, delete and the subject scope
 on a real store.

@@ -16,7 +16,8 @@ import java.util.Set;
 
 /**
  * The Probe groups table (2026-11-01) and the pure rules behind a group: a named set of probe
- * <b>names</b> that resolves to tick keys the moment it is used. Swing-free apart from the
+ * <b>names</b> (the entity's {@code probes}, an {@code NVStringSet}) that resolves to tick keys
+ * the moment it is used. Swing-free apart from the
  * table-model contract, so {@code ProbeGroupModelTest} pins every rule without a display.
  * <p>
  * The one rule that matters: a group is a convenience over the ticks. Ticking it adds its
@@ -64,27 +65,34 @@ public final class ProbeGroupModel extends AbstractTableModel {
         return out;
     }
 
+    /** The group's member names in stored order; empty, never null, for a group with none. */
+    public static Set<String> members(ProbeGroup g) {
+        Set<String> probes = g.getProbes();
+        return probes == null ? Set.of() : probes;
+    }
+
     /** The tick keys the group's names resolve to now (bundled first, then mine by name; unknown dropped). */
     public static Set<String> memberKeys(ProbeGroup g, List<ProbeDefinition> bundled, List<ProbeContent> stored) {
-        return ProbeSelection.keysForNames(g.getProbes(), bundled, stored);
+        return ProbeSelection.keysForMembers(members(g), bundled, stored);
     }
 
     /** The member names that resolve to nothing — a stored probe deleted since the group was saved. */
     public static List<String> missing(ProbeGroup g, List<ProbeDefinition> bundled, List<ProbeContent> stored) {
         List<String> out = new ArrayList<>();
-        for (String name : g.probeNames()) {
+        for (String name : members(g)) {
             if (ProbeSelection.keysForNames(name, bundled, stored).isEmpty()) out.add(name);
         }
         return out;
     }
 
     /**
-     * The inverse of {@link #memberKeys}: the ticked probes as a csv of names in catalog order —
-     * bundled by priority then name, as the engine orders them, then mine by name — so a group
-     * saved from the chips reads the same way every time. A tick for a probe that no longer
-     * exists contributes nothing.
+     * The inverse of {@link #memberKeys}: the ticked probes' names in catalog order — bundled by
+     * priority then name, as the engine orders them, then mine by name — so a group saved from
+     * the chips reads the same way every time (the set keeps insertion order, so it goes into
+     * {@code ProbeGroup.setProbes(Set)} as is). A tick for a probe that no longer exists
+     * contributes nothing.
      */
-    public static String csvFromTicks(Set<String> ticks, List<ProbeDefinition> bundled, List<ProbeContent> stored) {
+    public static Set<String> namesFromTicks(Set<String> ticks, List<ProbeDefinition> bundled, List<ProbeContent> stored) {
         List<ProbeDefinition> b = new ArrayList<>(bundled);
         b.sort(Comparator.comparingInt(ProbeDefinition::getPriority).reversed()
                 .thenComparing(ProbeDefinition::getName, String.CASE_INSENSITIVE_ORDER));
@@ -98,7 +106,12 @@ public final class ProbeGroupModel extends AbstractTableModel {
         for (ProbeContent p : s) {
             if (ticks.contains(ProbeSelection.storedKey(p))) names.add(p.getName());
         }
-        return String.join(", ", names);
+        return names;
+    }
+
+    /** The members as the dialogs show them: {@code ssh, https-pqc}. */
+    public static String describe(Set<String> names) {
+        return names == null ? "" : String.join(", ", names);
     }
 
     /**
@@ -134,9 +147,9 @@ public final class ProbeGroupModel extends AbstractTableModel {
     }
 
     /** Null when a group can be saved, else the reason: a blank name, or no probes. */
-    public static String validate(String name, String csv) {
+    public static String validate(String name, Set<String> probes) {
         if (name == null || name.isBlank()) return "Give the group a name.";
-        if (ProbeGroup.parseNames(csv).isEmpty()) return "Tick at least one probe.";
+        if (probes == null || probes.stream().noneMatch(p -> p != null && !p.isBlank())) return "Tick at least one probe.";
         return null;
     }
 
@@ -146,7 +159,7 @@ public final class ProbeGroupModel extends AbstractTableModel {
         if (q.isEmpty()) return true;
         if (g.getName() != null && g.getName().toLowerCase(Locale.ROOT).contains(q)) return true;
         if (g.getDescription() != null && g.getDescription().toLowerCase(Locale.ROOT).contains(q)) return true;
-        for (String name : g.probeNames()) {
+        for (String name : members(g)) {
             if (name.toLowerCase(Locale.ROOT).contains(q)) return true;
         }
         return false;

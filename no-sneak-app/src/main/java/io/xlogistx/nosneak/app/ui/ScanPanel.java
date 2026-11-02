@@ -494,7 +494,7 @@ public class ScanPanel extends JPanel {
     /** The member names, a missing one suffixed; the tooltip of a group's check item. */
     private static String groupTip(ProbeGroupModel.Row row) {
         List<String> parts = new ArrayList<>();
-        for (String name : row.group().probeNames()) {
+        for (String name : ProbeGroupModel.members(row.group())) {
             parts.add(row.missing().contains(name) ? name + " (missing)" : name);
         }
         return parts.isEmpty() ? "No probes" : String.join(", ", parts);
@@ -513,7 +513,8 @@ public class ScanPanel extends JPanel {
      * group stores the probes' names in catalog order; a name already in use updates that group.
      */
     private void saveTickedAsGroup() {
-        String csv = ProbeGroupModel.csvFromTicks(tickedProbes, bundledProbes, probes);
+        Set<String> names = ProbeGroupModel.namesFromTicks(tickedProbes, bundledProbes, probes);
+        String csv = ProbeGroupModel.describe(names);
         JTextField name = new JTextField(22);
         JTextField description = new JTextField(22);
         JPanel ask = new JPanel(new MigLayout("insets 0, wrap 2, gapy 6", "[][grow,fill]"));
@@ -530,7 +531,7 @@ public class ScanPanel extends JPanel {
             int ok = JOptionPane.showConfirmDialog(this, ask, NSAppUtil.ProbeGroupMenu.SAVE_AS_DIALOG.getDisplayName(),
                     JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
             if (ok != JOptionPane.OK_OPTION) return;
-            String problem = ProbeGroupModel.validate(name.getText(), csv);
+            String problem = ProbeGroupModel.validate(name.getText(), names);
             if (problem == null) break;
             JOptionPane.showMessageDialog(this, problem, NSAppUtil.ProbeGroupMenu.SAVE_AS_DIALOG.getDisplayName(), JOptionPane.WARNING_MESSAGE);
         }
@@ -538,7 +539,7 @@ public class ScanPanel extends JPanel {
         ProbeGroup g = existing != null ? existing : new ProbeGroup();
         g.setName(name.getText().trim());
         if (existing == null || !description.getText().isBlank()) g.setDescription(description.getText().trim());
-        g.setProbes(csv);
+        g.setProbes(names);
         boolean updated = existing != null;
         BackgroundTask.run(this, null, () -> ctx.session().saveProbeGroup(g), saved -> {
             reloadProbeGroups();
@@ -1125,7 +1126,7 @@ public class ScanPanel extends JPanel {
         if (!row.missing().isEmpty()) groupFacts.put(NSAppUtil.ProbeGroupsPage.FACT_MISSING.getDisplayName(), String.join(", ", row.missing()));
         groupFacts.put(NSAppUtil.ProbeGroupsPage.FACT_SOURCE.getDisplayName(), (row.preset() ? NSAppUtil.ProbeGroupsPage.SOURCE_PRESET : NSAppUtil.ProbeGroupsPage.SOURCE_MINE).getDisplayName());
         groupMembers.removeAll();
-        for (String name : row.group().probeNames()) {
+        for (String name : ProbeGroupModel.members(row.group())) {
             JPanel line = new JPanel(new MigLayout("insets 0, gapx 8", "[][]"));
             line.setOpaque(false);
             JLabel l = new JLabel(name);
@@ -1318,8 +1319,8 @@ public class ScanPanel extends JPanel {
     /** Save: validate inline, dedupe by name, store off the EDT, back to the groups page with the row selected. */
     private void saveGroupFromEditor(JButton save) {
         if (editingGroup == null) return;
-        String csv = ProbeGroupModel.csvFromTicks(groupEditTicks, bundledProbes, probes);
-        String problem = ProbeGroupModel.validate(groupEditName.getText(), csv);
+        Set<String> names = ProbeGroupModel.namesFromTicks(groupEditTicks, bundledProbes, probes);
+        String problem = ProbeGroupModel.validate(groupEditName.getText(), names);
         if (problem != null) {
             groupEditCheck.error(problem);
             return;
@@ -1331,7 +1332,7 @@ public class ScanPanel extends JPanel {
         }
         g.setName(groupEditName.getText().trim());
         g.setDescription(groupEditDescription.getText().trim());
-        g.setProbes(csv);
+        g.setProbes(names);
         ProbeGroup toSave = g;
         BackgroundTask.run(this, save, () -> ctx.session().saveProbeGroup(toSave), saved -> {
             editingGroup = null;

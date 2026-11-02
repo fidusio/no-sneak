@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.File;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -68,16 +69,16 @@ public class SessionProbeGroupTest {
             assertNotNull(read);
             assertEquals("web", read.getName());
             assertEquals("desc of web", read.getDescription());
-            assertEquals(List.of("ssh", "https-pqc"), read.probeNames(), "the csv round-trips");
+            assertEquals(List.of("ssh", "https-pqc"), List.copyOf(read.getProbes()), "the set round-trips in order");
 
             // a second save of the same row updates it: still two groups, the content changed
-            read.setProbes("ssh");
+            read.setProbes(Set.of("ssh"));
             read.setDescription("just ssh");
             ProbeGroup updated = s.saveProbeGroup(read);
             assertEquals(web.getGUID(), updated.getGUID());
             assertTrue(updated.getLastTimeUpdated() > 0, "update stamps lastTimeUpdated");
             assertEquals(2, s.getAllProbeGroups().size(), "an edit does not duplicate the row");
-            assertEquals(List.of("ssh"), s.getProbeGroup(web.getGUID()).probeNames());
+            assertEquals(Set.of("ssh"), s.getProbeGroup(web.getGUID()).getProbes());
             assertEquals("just ssh", s.getProbeGroup(web.getGUID()).getDescription());
 
             s.deleteProbeGroup(updated);

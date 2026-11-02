@@ -10,6 +10,7 @@ import io.xlogistx.nosneak.nmap.ScanReport;
 import org.zoxweb.shared.util.SUS;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -110,10 +111,16 @@ public final class ProbeSelection {
      * nothing (a stored probe deleted since) is dropped. Null or blank gives no ticks.
      */
     public static Set<String> keysForNames(String csv, List<ProbeDefinition> bundled, List<ProbeContent> stored) {
+        if (csv == null || csv.isBlank()) return new HashSet<>();
+        return keysForMembers(List.of(csv.split(",")), bundled, stored);
+    }
+
+    /** The same for names already split (a {@code ProbeGroup}'s members): trimmed, blanks skipped. */
+    public static Set<String> keysForMembers(Collection<String> names, List<ProbeDefinition> bundled, List<ProbeContent> stored) {
         Set<String> keys = new HashSet<>();
-        if (csv == null || csv.isBlank()) return keys;
-        for (String raw : csv.split(",")) {
-            String name = raw.trim();
+        if (names == null) return keys;
+        for (String raw : names) {
+            String name = raw == null ? "" : raw.trim();
             if (name.isEmpty()) continue;
             boolean found = false;
             for (ProbeDefinition d : bundled) {

@@ -215,7 +215,7 @@ class ScanPanelTest {
         io.xlogistx.nosneak.app.ui.scan.ProbeGroupModel.applyTick(ticks, members, false);
         assertEquals(Set.of("b:ssh"), ticks, "unticking the group leaves the earlier tick");
         // and Save ticked as group would store exactly the live names, in catalog order
-        assertEquals("ssh", io.xlogistx.nosneak.app.ui.scan.ProbeGroupModel.csvFromTicks(ticks, bundled, List.of(mine)));
+        assertEquals(Set.of("ssh"), io.xlogistx.nosneak.app.ui.scan.ProbeGroupModel.namesFromTicks(ticks, bundled, List.of(mine)));
     }
 
     @Test

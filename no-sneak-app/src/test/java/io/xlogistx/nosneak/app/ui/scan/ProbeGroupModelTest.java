@@ -17,9 +17,9 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Pins the probe groups' rules (2026-11-01): a group stores names and resolves to tick keys
- * when used — bundled first, mine by name, unknown dropped; the csv a tick set produces reads
- * back to the same ticks; a tick adds and an untick removes exactly the members; validation,
+ * Pins the probe groups' rules (2026-11-01): a group stores a set of names and resolves to tick
+ * keys when used — bundled first, mine by name, unknown dropped; the names a tick set produces
+ * read back to the same ticks; a tick adds and an untick removes exactly the members; validation,
  * dedupe by name, the search. No Swing, no store.
  */
 class ProbeGroupModelTest {
@@ -53,10 +53,15 @@ class ProbeGroupModelTest {
     }
 
     @Test
-    void theEntityParsesItsCsv() {
-        assertEquals(List.of("ssh", "https-pqc"), group(null, "g", " ssh ,https-pqc,, ").probeNames());
-        assertTrue(group(null, "g", null).probeNames().isEmpty());
+    void theEntityKeepsAnOrderedSetOfNames() {
+        assertEquals(List.of("ssh", "https-pqc"), List.copyOf(group(null, "g", " ssh ,https-pqc,, ssh ").getProbes()),
+                "trimmed, blanks dropped, a repeat kept once, stored order");
+        assertTrue(group(null, "g", null).getProbes().isEmpty());
         assertTrue(ProbeGroup.parseNames("  ").isEmpty());
+        ProbeGroup g = group(null, "g", "ssh");
+        g.setProbes(Set.of("http"));
+        assertEquals(Set.of("http"), g.getProbes(), "the set setter replaces the members");
+        assertTrue(ProbeGroupModel.members(new ProbeGroup()).isEmpty(), "a fresh group has no members, never null");
     }
 
     @Test
@@ -71,15 +76,19 @@ class ProbeGroupModelTest {
     }
 
     @Test
-    void csvFromTicksIsTheInverseInCatalogOrder() {
+    void namesFromTicksIsTheInverseInCatalogOrder() {
         ProbeContent mine = stored("g1", "zz-mine");
         ProbeContent other = stored("g2", "aa-mine");
         Set<String> ticks = new HashSet<>(Set.of("b:ssh", "b:http", "s:g1", "s:g2", "b:gone", "s:g9"));
-        String csv = ProbeGroupModel.csvFromTicks(ticks, bundled(), List.of(mine, other));
-        assertEquals("http, ssh, aa-mine, zz-mine", csv, "bundled by priority then name, then mine by name; dead ticks dropped");
-        ProbeGroup g = group(null, "all", csv);
+        Set<String> names = ProbeGroupModel.namesFromTicks(ticks, bundled(), List.of(mine, other));
+        assertEquals(List.of("http", "ssh", "aa-mine", "zz-mine"), List.copyOf(names), "bundled by priority then name, then mine by name; dead ticks dropped");
+        assertEquals("http, ssh, aa-mine, zz-mine", ProbeGroupModel.describe(names));
+        ProbeGroup g = new ProbeGroup();
+        g.setName("all");
+        g.setProbes(names);
         assertEquals(Set.of("b:ssh", "b:http", "s:g1", "s:g2"), ProbeGroupModel.memberKeys(g, bundled(), List.of(mine, other)));
-        assertEquals("", ProbeGroupModel.csvFromTicks(Set.of(), bundled(), List.of(mine)));
+        assertTrue(ProbeGroupModel.namesFromTicks(Set.of(), bundled(), List.of(mine)).isEmpty());
+        assertEquals("", ProbeGroupModel.describe(Set.of()));
     }
 
     @Test
@@ -148,10 +157,11 @@ class ProbeGroupModelTest {
 
     @Test
     void validateWantsANameAndAProbe() {
-        assertNull(ProbeGroupModel.validate("web", "ssh"));
-        assertEquals("Give the group a name.", ProbeGroupModel.validate("  ", "ssh"));
-        assertEquals("Give the group a name.", ProbeGroupModel.validate(null, "ssh"));
-        assertEquals("Tick at least one probe.", ProbeGroupModel.validate("web", " , "));
+        assertNull(ProbeGroupModel.validate("web", Set.of("ssh")));
+        assertEquals("Give the group a name.", ProbeGroupModel.validate("  ", Set.of("ssh")));
+        assertEquals("Give the group a name.", ProbeGroupModel.validate(null, Set.of("ssh")));
+        assertEquals("Tick at least one probe.", ProbeGroupModel.validate("web", Set.of(" ")));
+        assertEquals("Tick at least one probe.", ProbeGroupModel.validate("web", Set.of()));
         assertEquals("Tick at least one probe.", ProbeGroupModel.validate("web", null));
     }
 
