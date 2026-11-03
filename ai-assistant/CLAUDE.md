@@ -358,23 +358,23 @@ has chosen to use.
 >   saying "timeout" is in the chain. Pinned by `CallTimeoutTest` (6). Cancel is still not
 >   built, see the rough edges.
 > - **The module has two outward hooks, and they are the whole coupling to the scanner.**
->   **`AssistantPanel.sendToChat(text, name)`** attaches plain text as a pending `AISource`
->   (rendered in full as the last transcript entry, with a Delete button until it is sent, 2026-10-22) and
->   flips to the Chat card — `no-sneak-app` hands it to `ScanPanel` so a scan report can be sent
->   into a conversation. It throws a `SecurityException` (message shown by the caller) when there
->   is no current chat, since an attachment with nowhere to land is silently lost otherwise.
->   **`sendToChat(text, name, composerText)`** (2026-10-26) does the same and types
->   `composerText` into the composer (`ChatPanel.setComposerText`, the public face of
->   `insertIntoComposer`: appended at the caret when something is already typed) so the subject
->   only has to press Send; the Probe library attaches `PROBE-DEFINITION.md` and asks for a
->   probe this way.
->   **`AssistantPanel.addSaveTarget(label, BiConsumer<String,String>)`** registers an extra
->   destination in the skill editor's **"Save as"** combo **and** a "Save as <label>" button on
->   every assistant reply (2026-10-26, above); the app registers `"probe"` there, so a
->   response can be saved into the probe store instead of the skill store (§5). The handler takes
->   `(name, content)` rather than an `MDDocument` deliberately: the host never references this
->   module's editor types, and this module never learns what a probe is — it has no view of
->   `no-sneak-core` and could not validate one anyway.
+> **`AssistantPanel.sendToChat(text, name)`** attaches plain text as a pending `AISource`
+> (rendered in full as the last transcript entry, with a Delete button until it is sent, 2026-10-22) and
+> flips to the Chat card — `no-sneak-app` hands it to `ScanPanel` so a scan report can be sent
+> into a conversation. It throws a `SecurityException` (message shown by the caller) when there
+> is no current chat, since an attachment with nowhere to land is silently lost otherwise.
+> **`sendToChat(text, name, composerText)`** (2026-10-26) does the same and types
+> `composerText` into the composer (`ChatPanel.setComposerText`, the public face of
+> `insertIntoComposer`: appended at the caret when something is already typed) so the subject
+> only has to press Send; the Probe library attaches `PROBE-DEFINITION.md` and asks for a
+> probe this way.
+> **`AssistantPanel.addSaveTarget(label, BiConsumer<String,String>)`** registers an extra
+> destination in the skill editor's **"Save as"** combo **and** a "Save as <label>" button on
+> every assistant reply (2026-10-26, above); the app registers `"probe"` there, so a
+> response can be saved into the probe store instead of the skill store (§5). The handler takes
+> `(name, content)` rather than an `MDDocument` deliberately: the host never references this
+> module's editor types, and this module never learns what a probe is — it has no view of
+> `xlogistx-scan` and could not validate one anyway.
 > - **A message is persisted before dispatch.** `onSend` saves the chat right after
 >   `chat.addMessage(msg)`, not only from the response callback, so a turn that is never answered
 >   (provider down, logout while in flight) survives. `failSend` still *removes* the message on a

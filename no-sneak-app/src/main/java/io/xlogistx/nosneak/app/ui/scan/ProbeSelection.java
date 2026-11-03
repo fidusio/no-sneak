@@ -1,12 +1,12 @@
 package io.xlogistx.nosneak.app.ui.scan;
 
-import io.xlogistx.nosneak.data.ProbeType;
-import io.xlogistx.nosneak.model.ProbeDefinition;
-import io.xlogistx.nosneak.model.ProbeDefinitionLoader;
-import io.xlogistx.nosneak.nmap.NMap;
-import io.xlogistx.nosneak.nmap.NMapConfig;
-import io.xlogistx.nosneak.nmap.NMapScanner;
-import io.xlogistx.nosneak.nmap.ScanReport;
+import io.xlogistx.scan.data.ProbeType;
+import io.xlogistx.scan.model.ProbeDefinition;
+import io.xlogistx.scan.model.ProbeDefinitionLoader;
+import io.xlogistx.scan.nmap.NMap;
+import io.xlogistx.scan.nmap.NMapConfig;
+import io.xlogistx.scan.nmap.NMapScanner;
+import io.xlogistx.scan.nmap.ScanReport;
 import org.zoxweb.shared.data.PropertyImpl;
 import org.zoxweb.shared.util.DataEncoder;
 import org.zoxweb.shared.util.NVGenericMap;

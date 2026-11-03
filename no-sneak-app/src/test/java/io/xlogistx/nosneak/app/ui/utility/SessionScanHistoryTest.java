@@ -1,7 +1,7 @@
 package io.xlogistx.nosneak.app.ui.utility;
 
 import io.xlogistx.nosneak.app.NoSneakStore;
-import io.xlogistx.nosneak.data.ReportContent;
+import io.xlogistx.scan.data.ReportContent;
 import io.xlogistx.shiro.ds.ShiroDSDomainSecurityManager;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;

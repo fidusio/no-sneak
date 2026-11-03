@@ -23,8 +23,18 @@
 
         <dependency>
             <groupId>io.xlogistx</groupId>
-            <artifactId>no-sneak-core</artifactId>
-            <version>${no-sneak.version}</version>
+            <artifactId>xlogistx-scan</artifactId>
+            <version>${xlogistx.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.xlogistx</groupId>
+            <artifactId>xlogistx-net</artifactId>
+            <version>${xlogistx.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.zoxweb</groupId>
+            <artifactId>xlogistx-datastore</artifactId>
         </dependency>
 
         <dependency>

@@ -1,7 +1,7 @@
 package io.xlogistx.nosneak.app.ui.scan;
 
-import io.xlogistx.nosneak.nmap.NMap;
-import io.xlogistx.nosneak.nmap.NMapConfig;
+import io.xlogistx.scan.nmap.NMap;
+import io.xlogistx.scan.nmap.NMapConfig;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 

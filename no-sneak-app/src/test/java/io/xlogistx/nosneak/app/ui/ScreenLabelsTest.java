@@ -2,7 +2,7 @@ package io.xlogistx.nosneak.app.ui;
 
 import io.xlogistx.nosneak.ai.assistant.AIAssistantUtil;
 import io.xlogistx.nosneak.app.NSAppUtil;
-import io.xlogistx.nosneak.nmap.NMapConfig;
+import io.xlogistx.scan.nmap.NMapConfig;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashSet;

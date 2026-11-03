@@ -18,7 +18,7 @@ import io.xlogistx.nosneak.app.ui.utility.AppPrefs;
 import io.xlogistx.nosneak.app.ui.utility.Navigator;
 import io.xlogistx.nosneak.app.NSAppUtil;
 import io.xlogistx.nosneak.app.NSAppUtil.Screen;
-import io.xlogistx.nosneak.model.ProbeDefinitionLoader;
+import io.xlogistx.scan.model.ProbeDefinitionLoader;
 
 import javax.swing.*;
 import java.awt.*;

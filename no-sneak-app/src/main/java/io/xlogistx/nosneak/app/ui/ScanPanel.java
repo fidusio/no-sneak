@@ -8,17 +8,17 @@ import io.xlogistx.nosneak.app.ui.scan.ProbeSelection;
 import io.xlogistx.nosneak.app.ui.scan.ScanFormPanel;
 import io.xlogistx.nosneak.app.ui.scan.ScanResultView;
 import io.xlogistx.nosneak.app.ui.utility.AppContext;
-import io.xlogistx.nosneak.data.ProbeType;
-import io.xlogistx.nosneak.data.ProbeGroup;
-import io.xlogistx.nosneak.data.ReportContent;
-import io.xlogistx.nosneak.model.ProbeDefinition;
-import io.xlogistx.nosneak.model.ProbeDefinitionLoader;
+import io.xlogistx.scan.data.ProbeType;
+import io.xlogistx.scan.data.ProbeGroup;
+import io.xlogistx.scan.data.ReportContent;
+import io.xlogistx.scan.model.ProbeDefinition;
+import io.xlogistx.scan.model.ProbeDefinitionLoader;
 
-import io.xlogistx.nosneak.nmap.NMap;
-import io.xlogistx.nosneak.nmap.NMapConfig;
-import io.xlogistx.nosneak.nmap.NMapScanner;
-import io.xlogistx.nosneak.nmap.ScanReport;
-import io.xlogistx.nosneak.nmap.output.OutputFormat;
+import io.xlogistx.scan.nmap.NMap;
+import io.xlogistx.scan.nmap.NMapConfig;
+import io.xlogistx.scan.nmap.NMapScanner;
+import io.xlogistx.scan.nmap.ScanReport;
+import io.xlogistx.scan.nmap.output.OutputFormat;
 import net.miginfocom.swing.MigLayout;
 import org.zoxweb.shared.security.AccessSecurityException;
 import org.zoxweb.shared.task.CallableConsumerTask;
@@ -67,7 +67,7 @@ import java.util.regex.Pattern;
  * Everything the previous subject left on screen is cleared on every login and logout
  * ({@link #resetPanel()}): a scan report is that subject's network topology.
  *
- * @see io.xlogistx.nosneak.nmap.NMap#parseCommand(String)
+ * @see io.xlogistx.scan.nmap.NMap#parseCommand(String)
  */
 public class ScanPanel extends JPanel {
     private static final DateTimeFormatter STAMP =

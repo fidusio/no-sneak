@@ -2,7 +2,7 @@ package io.xlogistx.nosneak.app.ui;
 
 import io.xlogistx.nosneak.app.NoSneakStore;
 import io.xlogistx.nosneak.app.ui.utility.AppContext;
-import io.xlogistx.nosneak.model.ProbeDefinitionLoader;
+import io.xlogistx.scan.model.ProbeDefinitionLoader;
 import io.xlogistx.shiro.ds.ShiroDSDomainSecurityManager;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;

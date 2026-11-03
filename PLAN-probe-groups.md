@@ -34,7 +34,7 @@ existing ticks — it never reaches the engine and never changes what a report s
 ---
 
 ## Step 1 — Data entity (no-sneak-core)
-`no-sneak-core/src/main/java/io/xlogistx/nosneak/data/ProbeGroupContent.java`
+`xlogistx-scan`
 - `extends PropertyImpl`, mirror `ProbeType` exactly.
 - `Param.PROBES` → NVConfig `"probes"` (String, csv of probe names).
 - `NVC_PROBE_GROUP_CONTENT = new NVConfigEntityPortable("probe_group", null, "ProbeGroupContent", …)`.

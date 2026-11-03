@@ -8,8 +8,9 @@ import io.xlogistx.gui.InlineMessage;
 import io.xlogistx.gui.SegmentedControl;
 import io.xlogistx.gui.UITokens;
 import io.xlogistx.nosneak.app.NSAppUtil;
-import io.xlogistx.nosneak.nmap.NMap;
-import io.xlogistx.nosneak.nmap.NMapConfig;
+import io.xlogistx.scan.nmap.NMap;
+import io.xlogistx.scan.nmap.NMapConfig;
+import io.xlogistx.scan.nmap.WellKnownPorts;
 import net.miginfocom.swing.MigLayout;
 
 import javax.swing.*;
@@ -17,8 +18,6 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import java.awt.*;
 import java.awt.datatransfer.StringSelection;
-import java.util.ArrayList;
-import java.util.List;
 
 /**
  * The scan set-up (board 2 of the redesign canvas, 2026-10-24): targets, ports, a name, the
@@ -463,7 +462,7 @@ public class ScanFormPanel extends JPanel {
             ports.setText("");
         } else {
             int[] udp = cfg.udpScan && cfg.udpPorts != null
-                    && java.util.Arrays.equals(cfg.udpPorts, io.xlogistx.nosneak.nmap.WellKnownPorts.TOP_20_UDP)
+                    && java.util.Arrays.equals(cfg.udpPorts, WellKnownPorts.TOP_20_UDP)
                     ? null : cfg.udpPorts;
             ports.setText(NMap.portSpec(cfg.ports, udp));
         }

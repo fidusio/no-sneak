@@ -35,11 +35,11 @@
 
     <modules>
 
-        <module>no-sneak-core</module>
+<!--        <module>xlogistx-scan</module>-->
         <module>no-sneak-app</module>
         <module>ai-assistant</module>
         <module>ai-model</module>
-        <module>no-sneak-net</module>
+<!--        <module>xlogistx-net</module>-->
 
     </modules>
 
@@ -68,7 +68,7 @@
             </dependency>
             <dependency>
                 <groupId>io.xlogistx</groupId>
-                <artifactId>no-sneak-net</artifactId>
+                <artifactId>xlogistx-net</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
@@ -129,11 +129,22 @@
                 <artifactId>xlogistx-shiro</artifactId>
                 <version>${xlogistx.version}</version>
             </dependency>
+
             <dependency>
                 <groupId>io.xlogistx</groupId>
                 <artifactId>xlogistx-no-sneak</artifactId>
                 <version>${xlogistx.version}</version>
             </dependency>
+
+
+
+            <dependency>
+                <groupId>io.xlogistx</groupId>
+                <artifactId>xlogistx-scan</artifactId>
+                <version>${xlogistx.version}</version>
+            </dependency>
+
+
 
             <dependency>
                 <groupId>org.zoxweb</groupId>

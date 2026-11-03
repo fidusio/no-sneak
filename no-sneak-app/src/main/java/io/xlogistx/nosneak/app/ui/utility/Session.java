@@ -1,13 +1,13 @@
 package io.xlogistx.nosneak.app.ui.utility;
 
 import io.xlogistx.nosneak.app.NoSneakStore;
-import io.xlogistx.nosneak.data.ProbeType;
-import io.xlogistx.nosneak.data.ProbeGroup;
-import io.xlogistx.nosneak.data.ReportContent;
+import io.xlogistx.scan.data.ProbeType;
+import io.xlogistx.scan.data.ProbeGroup;
+import io.xlogistx.scan.data.ReportContent;
 import io.xlogistx.nosneak.app.ui.scan.ProbeSelection;
-import io.xlogistx.nosneak.model.ProbeDefinition;
-import io.xlogistx.nosneak.model.ProbeDefinitionLoader;
-import io.xlogistx.nosneak.net.util.NSNetUtil;
+import io.xlogistx.scan.model.ProbeDefinition;
+import io.xlogistx.scan.model.ProbeDefinitionLoader;
+import io.xlogistx.net.util.NSNetUtil;
 import io.xlogistx.shiro.SubjectSwap;
 import io.xlogistx.shiro.authc.DomainUsernamePasswordToken;
 import io.xlogistx.shiro.ds.DSAuthorizingRealm;

@@ -1,7 +1,7 @@
 package io.xlogistx.nosneak.app.ui.scan;
 
-import io.xlogistx.nosneak.data.ProbeType;
-import io.xlogistx.nosneak.data.ProbeGroup;
+import io.xlogistx.scan.data.ProbeType;
+import io.xlogistx.scan.data.ProbeGroup;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;

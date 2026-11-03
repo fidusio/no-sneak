@@ -2,8 +2,8 @@ package io.xlogistx.nosneak.app.ui.utility;
 
 import io.xlogistx.nosneak.app.NoSneakStore;
 import io.xlogistx.nosneak.app.ui.scan.ProbeSelection;
-import io.xlogistx.nosneak.data.ProbeType;
-import io.xlogistx.nosneak.model.ProbeDefinitionLoader;
+import io.xlogistx.scan.data.ProbeType;
+import io.xlogistx.scan.model.ProbeDefinitionLoader;
 import io.xlogistx.shiro.ds.ShiroDSDomainSecurityManager;
 import org.zoxweb.shared.security.AccessSecurityException;
 import org.junit.jupiter.api.AfterAll;

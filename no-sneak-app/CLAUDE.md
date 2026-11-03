@@ -3,7 +3,7 @@
 Swing desktop front-end for the NoSneak assessment tooling. Contains the application entry point
 and the **`ui`** package that wires together the screens, navigation, and the session/access
 layer. It began as a UX prototype but now runs a **real** session/access layer and a **working
-network scanner screen** over `no-sneak-core`; the PQC file-sharing screen is still a placeholder.
+network scanner screen** over `xlogistx-scan`; the PQC file-sharing screen is still a placeholder.
 
 > **2026-10-25/26 — after the redesign (uncommitted).** Four additions on the maintainer's
 > instructions, each documented in its section below and in `PENDING-ISSUES.md` → *Status check
@@ -142,10 +142,10 @@ network scanner screen** over `no-sneak-core`; the PQC file-sharing screen is st
 > property bag. All blocking `Session` calls run **off the EDT** via `BackgroundTask.runCatching`
 > (failures surface as a dialog from the thrown `AccessSecurityException`).
 >
-> **The `SCAN` screen is real now.** `ScanPanel` fronts the `no-sneak-core` engine: the command
+> **The `SCAN` screen is real now.** `ScanPanel` fronts the `xlogistx-scan` engine: the command
 > box takes the full `NMap` CLI surface through `NMap.parseCommand`, a probe selector ticks
 > bundled and subject-authored probes into the run, results persist as `ReportContent` rows, and
-> probes persist as `ProbeType` rows (both DAOs live in `no-sneak-core`'s
+> probes persist as `ProbeType` rows (both DAOs live in `xlogistx-scan`'s
 > `io.xlogistx.nosneak.data`). It is also wired to the assistant **both ways** — a scan result
 > can be sent into a chat, and a chat response can be saved back as a probe. See `ScanPanel` below.
 >
@@ -565,7 +565,7 @@ All tables are empty `DefaultTableModel` stubs; search and the actions column ar
 > view over all subjects/permissions/roles/grants.
 
 ### `ScanPanel`
-The scanner pages — the front end for the `no-sneak-core` scanning engine. Eight cards: the three the
+The scanner pages — the front end for the `xlogistx-scan` scanning engine. Eight cards: the three the
 sidebar routes to (`SECTION_SCAN` = Scan, `SECTION_HISTORY` = History, `SECTION_PROBES` = Probe
 library, through `show(section)`) and five reached from within (a stored report, the probe editor,
 the probe definition, and since 2026-11-01 the probe groups page and the group editor).
@@ -626,7 +626,7 @@ button still navigates here) nor a stored report open on its card — then
   the ports are not set and probes were selected we scan the probe default port per probe; if
   ports were defined all the ports are scanned with probes").** The rule is the engine's
   (`NMapScanner.resolvePorts`: typed ports win, else the named probes' declared ports, else
-  1-1024 — `no-sneak-core/CLAUDE.md`, *The scan pipeline*); the form only says so:
+  1-1024 — `../xlogistx-scan`, *The scan pipeline*); the form only says so:
   `refreshProbeChips` sets the Ports field's **placeholder** to
   `ProbeSelection.portsPlaceholder(tickedDefinitions())` — `22,443,2222,8443 (ticked probes)`,
   `U:53 (ticked probes)` for a UDP probe, back to `ScanFormPanel.PORTS_DEFAULT_HINT` with no
@@ -737,7 +737,7 @@ members are gone; every library row has *Edit* and *Delete*; the popup and the g
 checklist have one PROBES section; the engine is handed exactly the ticked definitions with its
 bundled catalog switched off (`ProbeSelection.applyTo` → `NMapConfig.bundledCatalog(false)`,
 set in code like `extraProbes`, never printed into or parsed from the command, so
-`formatCommand` / `parseCommand` and the CLI are untouched — `no-sneak-core/CLAUDE.md`, *Engine
+`formatCommand` / `parseCommand` and the CLI are untouched — `../xlogistx-scan`, *Engine
 reference*). **A probe's name is unique among the subject's rows** (the engine's catalog, a
 group's members and a report's `probes` all know a probe by its name): `probeToSave` refuses to
 rename a stored row to a name another row holds (`ProbeSelection.nameTaken`; *A probe of yours
@@ -785,7 +785,7 @@ stored row, the filter, the check message, the prompt).
 
 **Probe groups (2026-11-01, plan `PLAN-probe-groups.md` at the repo root).** A subject saves
 named sets of probes and ticks a whole group when setting up a scan. The entity is core's
-`io.xlogistx.nosneak.data.ProbeGroup` (`PropertyImpl` like `ProbeType`; the DAO's name
+`io.xlogistx.scan.data.ProbeGroup` (`PropertyImpl` like `ProbeType`; the DAO's name
 and description, one param `probes` = a set of probe **names** — an `NVStringSet`, `Set<String>`
 in insertion order, since the maintainer's change of 2026-11-01 (it was a csv `String`); the store
 keeps it as a JSON column; `setProbes(Set)` replaces the members, `setProbes(String csv)` and
@@ -1123,7 +1123,7 @@ Account data (backed by `DomainSecurityManager`, keyed off the signed-in subject
 - `saveProfile(Map)` / `loadProfile(String...)` — name/DOB only (flat keys) in the subject's
   property bag, persisted via `updateSubjectID`.
 
-Scan data (`ReportContent` / `ProbeType`, both from `no-sneak-core`'s
+Scan data (`ReportContent` / `ProbeType`, both from `xlogistx-scan`'s
 `io.xlogistx.nosneak.data`, owner-scoped by subjectGUID and stored in the same H2P
 `APIDataStore`). `saveScanResult` / `saveProbe` branch on `getGUID()` — non-empty updates and
 stamps `lastTimeUpdated`, empty stamps the owner and inserts — the same upsert-by-GUID shape

@@ -136,7 +136,7 @@ drops the nested entity on JSON round-trip.
   exercises the sync path, and a type change is a migration, not an edit. (History: before the
   sync existed, `AISkill.skillType` did break the dev store this way.)
   > **This is a property of the H2P store, not of this module**, so it governs every
-  > `PropertyImpl` the app persists — including `no-sneak-core`'s `ProbeType` / `ReportContent`
+  > `PropertyImpl` the app persists — including `xlogistx-scan`'s `ProbeType` / `ReportContent`
   > (`io.xlogistx.nosneak.data`), which `no-sneak-app`'s `Session` writes to the same store.
   > `ProbeType` currently has a single `definition` param (the entity was `ProbeContent` with
   > a `content` param until the maintainer renamed it on 2026-11-02; the table is `probe_type`)

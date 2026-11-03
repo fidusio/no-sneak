@@ -1,9 +1,9 @@
 package io.xlogistx.nosneak.app.ui.scan;
 
 import io.xlogistx.nosneak.app.NSAppUtil;
-import io.xlogistx.nosneak.data.ProbeType;
-import io.xlogistx.nosneak.data.ProbeGroup;
-import io.xlogistx.nosneak.model.ProbeDefinitionLoader;
+import io.xlogistx.scan.data.ProbeType;
+import io.xlogistx.scan.data.ProbeGroup;
+import io.xlogistx.scan.model.ProbeDefinitionLoader;
 import org.zoxweb.shared.util.SUS;
 
 import javax.swing.table.AbstractTableModel;

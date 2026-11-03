@@ -134,13 +134,13 @@ Five modules, one-way dependencies (`no-sneak-app → ai-assistant → ai-model`
 
 | Module | What it is | Orientation |
 |---|---|---|
-| **`no-sneak-core`** | The scanning engine (TLS/PQC + protocol probes + network scanner) | `no-sneak-core/CLAUDE.md` |
-| **`no-sneak-net`** | Host discovery (ICMP/ARP/NDP over FFM) — built; Linux and Windows verified on live hardware | `no-sneak-net/CLAUDE.md` |
+| **`xlogistx-scan`** | The scanning engine (TLS/PQC + protocol probes + network scanner) | `xlogistx-scan` |
+| **`xlogistx-net`** | Host discovery (ICMP/ARP/NDP over FFM) — built; Linux and Windows verified on live hardware | `xlogistx-net` |
 | **`no-sneak-app`** | Swing desktop front-end, session/access layer | `no-sneak-app/CLAUDE.md` |
 | **`ai-assistant`** | Swing window to send network data to third-party AI models and compare | `ai-assistant/CLAUDE.md` |
 | **`ai-model`** | The backend contract (DAOs + service interfaces, no implementations) | `ai-model/CLAUDE.md` |
 
-`no-sneak-net`'s `CLAUDE.md` is two documents in one: an authoritative build spec (base package
+`xlogistx-net`'s `CLAUDE.md` is two documents in one: an authoritative build spec (base package
 `io.xlogistx.nosneak.net`, JDK 25 FFM, house libraries only) in §1–§12, and a running verification
 log in §13. Anything in this repo that wants host discovery goes through **`HostScanner`** (§14.1) —
 a session you open once and run many pings, resolves and sweeps through; `HostScan` is a CLI over
@@ -154,7 +154,7 @@ than the kernel neighbour table §7.3 gated on — that ABI is retired, not meas
 brought up on Apple Silicon on 2026-07-29 and now has runtime evidence like the others — active ARP,
 sweep over wired and Wi-Fi, and passive observe all moved packets (§13.20). The last claim without a wire, **Linux IPv6/NDP**, was verified on live hardware on 2026-09-13 (§13.24), and the whole Linux backend was re-run against its 2026-07-28 baseline the same day after the September rewrite.
 
-## `no-sneak-core` is one code base now
+## `xlogistx-scan` is one code base now
 
 Until 2026-09-12 the module carried two generations side by side: the original packages and a
 from-scratch non-blocking rebuild under `io.xlogistx.nosneak.v2`. **The merge is done.** The
@@ -162,14 +162,14 @@ original packages (`nmap`, `probe`, `scanners`, `services`, `tools`) and their t
 the rebuild lives at `io.xlogistx.nosneak`, and the bundled probes are at `/probes/`. There is no
 `v2` package, no `v2` class name and no frozen code left. The merge analysis and the pre-merge
 action plan were deleted on 2026-10-26 as history; the vulnerability checklist the action plan
-held is now in `no-sneak-core/CLAUDE.md`. Read `no-sneak-core/CLAUDE.md` first; it routes to the
+held is now in `xlogistx-scan`. Read `xlogistx-scan` first; it routes to the
 plan log, the probe definition, and the open-work list.
 
 **2026-09-20 — the scan pipeline was made fast on a LAN.** Adaptive per-host connect deadline
 (`--min-rtt-timeout` floor, `-t` ceiling), probes streamed from the connect callback under `-sV`,
 a `ScanGate` that honours rate caps above 1000/s, NIOSocket's connect monitor released when the
 scanner's own deadline wins, and `--up-only` to list live hosts only. A `/24 × 1024 ports` on the
-maintainer's segment went from 136 s to 6 s; the design is `no-sneak-core/CLAUDE.md` → *The scan
+maintainer's segment went from 136 s to 6 s; the design is `xlogistx-scan` → *The scan
 pipeline*.
 
 ## Build and test
@@ -189,4 +189,4 @@ reusable crypto/utility helpers belong in `opsec/OPSecUtil`, not in this repo.
 If a TLS-intercepting proxy is installed locally, Maven can't reach central and every scanned
 certificate reads `UNTRUSTED_ROOT` — neither is a code defect. Its mail shield also completes TCP
 handshakes on the mail ports locally, so those read `open` on every host. Scan with it off. See
-`no-sneak-core/CLAUDE.md` → *Build, test, verify*.
+`xlogistx-scan` → *Build, test, verify*.

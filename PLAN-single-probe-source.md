@@ -16,7 +16,7 @@ Say so if you would rather have either as a real param — that is an entity cha
 review first.
 
 ## Goal
-Today a probe has two sources: the 18 bundled JSON files on `no-sneak-core`'s classpath (keyed
+Today a probe has two sources: the 18 bundled JSON files on `xlogistx-scan`'s classpath (keyed
 `b:<name>`, read-only) and the subject's `ProbeType` rows (keyed `s:<guid>`). After this plan a
 subject has **one** set of probes, all `ProbeType` rows: at their **first login** the 18
 bundled definitions are copied into their account, once, and from then on every probe is theirs
@@ -134,7 +134,7 @@ order; the default still merges the bundle.
 - `no-sneak-app/CLAUDE.md`: *ScanPanel* → Probe library (one source, Restore, Origin, unique
   names, rename cascade), the Add probe popup, *Probe groups* (names resolve among the subject's
   rows), *Session* (the seed, the marker, when it runs), the layout tree.
-- `no-sneak-core/CLAUDE.md`: `bundledCatalog` under *Engine reference* (catalog merge).
+- `xlogistx-scan`: `bundledCatalog` under *Engine reference* (catalog merge).
 - Root `CLAUDE.md` banner; `app-description.md` (Help: the Probe library paragraph);
   `PENDING-ISSUES.md` (close the 2026-11-01 rename / duplicate-name notes; add the live checks).
 

@@ -21,15 +21,15 @@ somewhere yourself.
 
 | Module | What it is |
 |---|---|
-| **`no-sneak-core`** | The scanning engine: TLS/PQC assessment, JSON-declared protocol probes, and a staged network scanner — all on one non-blocking state-machine core. Start with its `README.md`. |
-| **`no-sneak-net`** | Host discovery below the port scan: ICMP/ICMPv6 liveness, ARP/NDP layer-2 identity, IP↔MAC cache, CIDR sweep. JDK 25 FFM, no packet library. See its `README.md`. |
+| **`xlogistx-scan`** | The scanning engine: TLS/PQC assessment, JSON-declared protocol probes, and a staged network scanner — all on one non-blocking state-machine core. Start with its `README.md`. |
+| **`xlogistx-net`** | Host discovery below the port scan: ICMP/ICMPv6 liveness, ARP/NDP layer-2 identity, IP↔MAC cache, CIDR sweep. JDK 25 FFM, no packet library. See its `README.md`. |
 | **`no-sneak-app`** | Swing desktop front-end — entry point, screens, navigation, and the session/access layer. See `CLAUDE.md`. |
 | **`ai-assistant`** | Swing window that lets the subject send their own network data to third-party AI models and compare answers. Owns no API keys. See `CLAUDE.md`. |
 | **`ai-model`** | The backend contract the assistant binds to: value DAOs and service interfaces, no provider or store implementations. See `CLAUDE.md`. |
 
-Dependency direction is one-way: `no-sneak-app → ai-assistant → ai-model`. `no-sneak-net` stands
+Dependency direction is one-way: `no-sneak-app → ai-assistant → ai-model`. `xlogistx-net` stands
 alone — it answers "is this host there and what is its MAC", which comes *before* anything
-`no-sneak-core` does, and the two are not yet wired together.
+`xlogistx-scan` does, and the two are not yet wired together.
 
 ## Build
 
@@ -39,7 +39,7 @@ mvn clean install -pl no-sneak-core -am  # just the engine
 ```
 
 Tests are skipped by the parent pom (`xlogistx-mvn`); run them with `-DskipTests=false`. See
-`no-sneak-core/README.md` for the caveat about locally installed TLS-intercepting proxies, which
+`xlogistx-scan` for the caveat about locally installed TLS-intercepting proxies, which
 break both Maven's HTTPS and certificate-trust results.
 
 ## Quick start
@@ -54,12 +54,12 @@ java io.xlogistx.nosneak.nmap.NMap example.com -p 22,80,443 -sV
 
 ## Status
 
-`no-sneak-core` was rebuilt from scratch on a single non-blocking core and the rebuild replaced the
+`xlogistx-scan` was rebuilt from scratch on a single non-blocking core and the rebuild replaced the
 original engine on 2026-09-12; the module is now one code base at `io.xlogistx.nosneak` that
 produces service/version identification, TLS/PQC posture, certificate chain-trust, revocation,
-protocol/cipher/group enumeration and grading. See `no-sneak-core/CLAUDE.md`.
+protocol/cipher/group enumeration and grading. See `xlogistx-scan`.
 
-`no-sneak-net` is new and **requires JDK 25** (FFM), unlike the rest of the reactor. Its API, codecs,
+`xlogistx-net` is new and **requires JDK 25** (FFM), unlike the rest of the reactor. Its API, codecs,
 cache, factory wiring, `HostScan` CLI and both the Windows and Linux backends are done and verified
 against live hardware — the Windows path including off-link routing through the gateway, and the
 Linux path on **x86-64 and the aarch64 appliance**. Linux IPv6/NDP is written but has never been
@@ -71,7 +71,7 @@ run recipe, the embedding example, and the per-platform status.
 
 External dependencies: zoxweb (`org.zoxweb.*`) and the `io-xlogistx` modules (`common`, `core`,
 `http`, `shiro`, `opsec`, `datastore`). **Bouncy Castle is the only cryptographic library.**
-`no-sneak-net` additionally requires [Npcap](https://npcap.com/) on Windows only, which is not
+`xlogistx-net` additionally requires [Npcap](https://npcap.com/) on Windows only, which is not
 bundled and not redistributable under its free licence.
 
 ## License

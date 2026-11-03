@@ -1,9 +1,9 @@
 package io.xlogistx.nosneak.app.ui.scan;
 
-import io.xlogistx.nosneak.nmap.NMapConfig;
-import io.xlogistx.nosneak.nmap.PortState;
-import io.xlogistx.nosneak.nmap.ScanReport;
-import io.xlogistx.nosneak.nmap.output.OutputFormat;
+import io.xlogistx.scan.nmap.NMapConfig;
+import io.xlogistx.scan.nmap.PortState;
+import io.xlogistx.scan.nmap.ScanReport;
+import io.xlogistx.scan.nmap.output.OutputFormat;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;

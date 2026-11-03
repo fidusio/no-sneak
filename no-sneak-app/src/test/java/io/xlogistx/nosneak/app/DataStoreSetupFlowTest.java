@@ -2,7 +2,7 @@ package io.xlogistx.nosneak.app;
 
 import io.xlogistx.datastore.h2p.H2PSetup;
 import io.xlogistx.nosneak.app.ui.utility.Session;
-import io.xlogistx.nosneak.data.ReportContent;
+import io.xlogistx.scan.data.ReportContent;
 import io.xlogistx.opsec.SecretStore;
 import io.xlogistx.shiro.ds.ShiroDSDomainSecurityManager;
 import org.apache.shiro.util.ThreadContext;
