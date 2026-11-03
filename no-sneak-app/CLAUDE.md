@@ -174,7 +174,8 @@ created it** — scan reports, probes, chats, captures, keys. The one setting ou
 the store is `ui.utility.AppPrefs` (`java.util.prefs` of the OS user, 2026-10-22): the directory
 of the last successful open or create, the last backup/restore directory and, since 2026-10-31,
 the assistant's reply timeout in seconds (`aiTimeoutSeconds`, clamped to 10–600, default 40).
-Directories and that one number only; the vault password is never written there. Logout must leave nothing of the
+Directories, that number, and since 2026-11-02 the theme name and the control text size
+(`theme`, `uiFontSize`; the Settings page's Appearance block); the vault password is never written there. Logout must leave nothing of the
 previous subject on screen or in a panel field; `ScanPanel.resetPanel()` runs on *every* auth
 change for exactly this reason (the gap `PENDING-ISSUES.md` finding 1 described, closed
 2026-09-11), and a scan whose subject signed out before it finished is discarded, not shown to
@@ -185,14 +186,14 @@ when the subject attaches one to a chat themselves. Nothing here uploads, phones
 
 ```
 io.xlogistx.nosneak.app
-├── NoSneakMain.java               ← entry point; ds.location/ds.store-password (+ subject=/password=) or the unlock screen; AppFrame swaps unlock ↔ shell, loads the MAC vendors after login (2026-10-25)
+├── NoSneakMain.java               ← entry point; ds.location/ds.store-password (+ subject=/password=) or the unlock screen; AppFrame swaps unlock ↔ shell, loads the MAC vendors after login (2026-10-25); installs the stored theme + text size before the unlock screen and rebuilds the pages on a theme switch (installLookAndFeel / applyTheme, 2026-11-02)
 ├── NoSneakStore.java              ← vault + encrypted H2 + shiro.ini: create (H2PSetup) / open (attached manager) / secure / bootstrap / grantAppUser / setRegistrarPassword (2026-10-21)
 ├── NSAppUtil.java                 ← the UI descriptors (2026-11-01): 36 enums, one per panel/feature/table, each wrapping zoxweb GetNameDescriptionDisplayImpl; EVERY component the app builds (every panel, label, button, field, tab, column, dialog title) has a constant here and gui-audio's GUIUtil.applyProp(component, ref) maps it on; the page enum Screen, ScanResultTab, AclView, ProbeLibraryColumn live here too (NSAppUtilTest finds the enums by reflection)
 └── ui/                            ← UI (screens, menu, session/access wiring)
     ├── AppShell.java              ← the signed-in window: HeaderBar + SideNavPanel + CardLayout host (2026-10-24), mounts ai-assistant's AssistantPanel
     ├── UnlockPanel.java           ← the pre-auth screen (2026-10-24): step 1 open/create the store, step 2 sign in / register; replaced LoginPanel + DataStoreSetupPanel. 2026-10-29: every step-1 input has a tooltip and a warning row under the vault password says it is NOT RECOVERABLE (`Form.VAULT_PASSWORD_WARNING`)
     ├── PQCRegistryPanel.java      ← PQC file-sharing registry view
-    ├── SubjectPanel.java          ← Account pages in the PagePanel frame: Profile, Credentials (API keys), Settings (Sync of the MAC vendor list, Assistant reply timeout, Backup, Restore)
+    ├── SubjectPanel.java          ← Account pages in the PagePanel frame: Profile, Credentials (API keys), Settings (Appearance: theme + text size (2026-11-02), Sync of the MAC vendor list, Assistant reply timeout, Backup, Restore)
     ├── SubjectSecManagerPanel.java← Access control (admin) page; tabs are stubs
     ├── ScanPanel.java             ← scanner wiring: ScanFormPanel + ScanResultView, probe chips (the only source of probing, 2026-10-26), history JTable (multi-select, Delete / Delete all), probe editor
     ├── scan/
@@ -207,10 +208,10 @@ io.xlogistx.nosneak.app
     │   ├── SessionAICredentialSource.java ← the subject's API keys + which are assistant-enabled (AICredentialSource)
     │   └── AssistantStorage.java  ← AIRepository impl (chats + skills + provider configs), GUID-keyed over the H2P APIDataStore
     └── utility/
-        ├── AppContext.java        ← per-app service locator (Session + Navigator)
+        ├── AppContext.java        ← per-app service locator (Session + Navigator + the theme switcher the frame registers, 2026-11-02)
         ├── Session.java           ← auth (unbound Shiro subject) + identifiers + credentials + profile + addresses + the subject view of the store + the app-wide MAC vendor record (loadMacVendors / syncMacVendors, system context) + the one-time copy of the bundled probes at a first login (seedBundledProbes, 2026-11-02)
         ├── Navigator.java         ← top-level screen switching over a CardLayout
-        └── AppPrefs.java          ← java.util.prefs of the OS user: last store location + last chooser directory (2026-10-22) + the assistant's reply timeout (2026-10-31)
+        └── AppPrefs.java          ← java.util.prefs of the OS user: last store location + last chooser directory (2026-10-22) + the assistant's reply timeout (2026-10-31) + the theme and the text size (2026-11-02)
 
 (The `CardStack` / `PanelBuilder` / `ListSection` / `BackgroundTask` helpers live in the shared
 `io.xlogistx.gui` toolkit — `xlogistx-gui-audio` — not in this module.)
@@ -225,9 +226,23 @@ Bootstraps the app. `main` first parses `ds.*` launch parameters (`ParamUtil.par
 password)` reads the vault, loads the master key, opens the encrypted H2 store with the Shiro
 controller + key maker, builds the realm from the directory's `shiro.ini` and returns the
 `ShiroDSDomainSecurityManager` attached to it; a failure prints the reason and exits with status 2.
-It then installs FlatLaf **FlatLightLaf** (Roboto as the default font) and calls
-`launchApp(dsm, location, subject, password)` on the EDT — with a null manager when there were no
-parameters. **`subject=<username>` + `password=<password>`** (2026-10-25, asked for during the
+It then installs the stored theme — `installLookAndFeel(AppPrefs.theme())`: FlatLaf's Light or
+Dark (`NSAppUtil.Theme`; Dark is FlatLaf's `FlatMacDarkLaf`, a near-black palette that works on
+every system: the grey `FlatDarkLaf` and Darcula were tried first that evening — in FlatLaf 3.7
+Darcula shares Dark's palette and differs only in focus rings and arrows, so the maintainer saw
+no difference — and dropped for one dark look), then Roboto at `DEFAULT_FONT_SIZE` 13 as the default font, always
+13 so `UIFontSize.getBase()` reads the size the app ships with — applies the stored text size on
+the EDT (`UIFontSize.apply(AppPrefs.uiFontSize())`, before any window exists, and registers
+`AppPrefs::uiFontSize` as the listener that remembers every later change) and calls
+`launchApp(dsm, location, subject, password)` — with a null manager when there were no
+parameters. The custom defaults live in `src/main/resources/themes/`: `FlatLaf.properties`
+(shapes, margins, the accent) for every theme, `FlatLightLaf.properties` for the light core and
+`FlatDarkLaf.properties` for Dark (FlatLaf applies every file of the class chain, and
+`FlatMacDarkLaf extends FlatDarkLaf`, so it needs none of its own); each defines the **`xlogistx.*` token keys** gui-audio's `UITokens`
+reads before its fallbacks — the light file pins today's values, the dark file derives them from
+`@background` / `@foreground` (`tint`, `shade`, `mix`), plus the two ad-hoc keys `xlogistx.chip`
+and `xlogistx.navHover` that only the dark file needs. One trap: `xlogistx.border` must be
+written `{color}…`, because FlatLaf parses a key ending in *border* as a `Border`. **`subject=<username>` + `password=<password>`** (2026-10-25, asked for during the
 run-through; `username=` is an alias for `subject=`) sign that subject in once the window is up,
 through `UnlockPanel.signIn`, the same path as typing on the sign-in step: success lands in the
 shell, a refusal stays on the sign-in step with the reason inline and the username kept. They need
@@ -369,8 +384,8 @@ that scrolls — and the old in-form "Profile" title and description line are go
 has its own two-card layout (Phase 4).
 
 **Settings** (`SECTION_SETTINGS`, sidebar *Account → Settings*, 2026-10-25, asked for by the
-maintainer) is a `PagePanel` with four blocks separated by rules: **Sync**, **Assistant**
-(2026-10-31, below), **Backup** and
+maintainer) is a `PagePanel` with five blocks separated by rules: **Appearance** (2026-11-02, below),
+**Sync**, **Assistant** (2026-10-31, below), **Backup** and
 **Restore** — the last two moved here from their own Backup page on 2026-10-26 on the
 maintainer's instruction (the `BACKUP` screen, its sidebar item and its View-menu entry are
 gone). On 2026-10-27 `buildDBBackup` / `buildDBRestore` took the Sync block's shape (`blockNote`, a
@@ -388,6 +403,37 @@ shows the same text) is re-read off the EDT each time the page is shown (`show(S
 while the table is not filled yet. The note names where the vendor shows up (Hosts tab columns,
 Network adapter block) and points at the status bar.
 Other reference data this installation keeps belongs in further blocks on this page.
+
+The **Appearance** block (2026-11-02, `PLAN-appearance.md`; the maintainer: "we add 2 things in
+settings, app level font size and gui themes") is two rows under a note. **Theme** — a
+`JComboBox<NSAppUtil.Theme>` (Light, Dark, rendered by display name, preselected from
+`AppPrefs.theme()`) with a status line that reads *Switching the theme reloads the pages*. A
+choice is stored and handed to `setOnThemeChange`, which `AppShell` binds to
+`AppContext.switchTheme` → the frame's `applyTheme` (registered by `storeOpened`): install the
+theme, `FlatLaf.updateUI()`, `Session.removeListeners()` (the old shell's panels stop hearing the
+session; the frame's own `authListener` goes back on), a fresh `AppShell` and a fresh
+`UnlockPanel` (bound to the session, marked open) on the same context, then
+`Session.replayAuthenticated()` — the authenticated event fired once more, so the new panels load
+the subject's rows exactly as on a login and the frame shows the shell through
+`loadMacVendorsThenShow` (the first live run showed an empty library and history: the rebuilt
+shell had never seen a login) — and Settings shown again — the move the
+frame makes on login, chosen because every panel keeps the token colours it read when built, so
+a refresh alone leaves about 124 of them stale (the maintainer's route A, live switch over
+a restart; what a page held in memory is lost, which the note says). While
+`ScanPanel.isScanning()` (bound through `setThemeSwitchBlocked`) the combo snaps back, stores
+nothing and the line reads *Finish or stop the scan first*. **Text size** — gui-audio's
+`FontSizeWidget` (application scope, 8 to 32 points) with a *Reset* link →
+`UIFontSize.reset()`; it applies at once through `UIFontSize` (every look-and-feel font scaled,
+open windows refreshed) and is remembered by the listener `NoSneakMain` registers, so any knob
+counts. Both values are per installation (`AppPrefs.theme` / `uiFontSize`), because they are
+about this screen and are needed on the unlock screen. `appearanceBlock(current, onTheme,
+blocked)` is a static factory for `SettingsAppearanceBlockTest` (the combo's order and
+preselection, the hand-over, the busy refusal, the size applied and reset against the
+look-and-feel base); `AppPrefsAppearanceTest` pins `Theme.of` and the clamping,
+`StartupLookAndFeelTest` the start-up order (the 13-point default, a size applied after the
+theme surviving a switch, every `xlogistx.*` key present in dark with near-black dark values).
+Renders: `RenderAll` with `-Dtheme=dark` in the scratchpad;
+Light before/after pixel-identical on every page but Settings.
 
 The **Assistant** block (2026-10-31, the maintainer: "the ai apis call sometimes they timeout
 can we set the timeout as parameter in setting") is one row, **Reply timeout** — a `JSpinner`
@@ -933,7 +979,9 @@ Its notes and session log: `zoxweb-datastore/h2p-datastore/SHIRO-DS.md`.
 ### `AppContext`
 Lightweight per-application service locator. Constructed in `Main.AppFrame` with the
 `ShiroDSDomainSecurityManager`, from which it builds the single `Session`; also holds the `Navigator`
-(injected by `AppShell` once the card host exists). Accessors: `session()`, `nav()`,
+(injected by `AppShell` once the card host exists) and, since 2026-11-02, the **theme switcher**
+the frame registers (`setThemeSwitcher` / `switchTheme`), so the Settings page can ask for the
+pages to be rebuilt without knowing the frame. Accessors: `session()`, `nav()`,
 `setNavigator(...)`. Passed down to screens and the menu factory so they share one session and one
 navigator.
 
@@ -1105,7 +1153,10 @@ use (a subject who never scans never pays for a selector and its reader threads)
 `TaskUtil.default*`, so this class is the app's composition root for those pools in the same way
 `NMap.main` is the CLI's.
 
-State changes fire an `"authenticated"` property event; listeners subscribe via `onAuthChange(...)`
+State changes fire an `"authenticated"` property event; listeners subscribe via `onAuthChange(...)`;
+`replayAuthenticated()` fires it again as true while signed in and `removeListeners()` drops every
+listener of the session (2026-11-02, both for the theme switch's rebuild of the pages;
+`SessionListenersTest`, `ThemeSwitchReloadTest`)
 — how `AppFrame` toggles the menu bar and `AppShell`/`SubjectPanel` react on login/logout.
 API-key mutations (`storeAPIKey` / `changeAPIDetails` / `rotateAPIKey` / `deleteAPIKey`) also fire
 a `"credentials"` event (`onCredentialsChange(...)`), which is how a key created or deleted from

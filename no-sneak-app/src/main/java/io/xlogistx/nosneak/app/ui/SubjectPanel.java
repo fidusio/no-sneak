@@ -38,6 +38,8 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.*;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 
 import static io.xlogistx.gui.PanelBuilder.*;
@@ -207,6 +209,8 @@ public class SubjectPanel extends JPanel {
 
     private JPanel buildSettingsArea() {
         JPanel area = new JPanel(new MigLayout("wrap 1, insets 0", "[grow,fill]"));
+        area.add(buildAppearance());
+        area.add(new JSeparator(), "gaptop 8, gapbottom 8");
         area.add(buildSync());
         area.add(new JSeparator(), "gaptop 8, gapbottom 8");
         area.add(buildAssistant());
@@ -286,6 +290,109 @@ public class SubjectPanel extends JPanel {
 
     private static String day(long epochMs) {
         return LocalDate.ofInstant(Instant.ofEpochMilli(epochMs), ZoneId.systemDefault()).toString();
+    }
+
+    // ==================== Appearance (Settings block) ====================
+
+    /** The theme combo's, its status line's, the text-size control's and the Reset button's component names, for a test. */
+    static final String THEME = NSAppUtil.SettingsPage.THEME.getName();
+    static final String THEME_STATUS = NSAppUtil.SettingsPage.THEME_STATUS.getName();
+    static final String TEXT_SIZE = NSAppUtil.SettingsPage.TEXT_SIZE.getName();
+    static final String TEXT_SIZE_RESET = NSAppUtil.SettingsPage.TEXT_SIZE_RESET.getName();
+
+    private Consumer<NSAppUtil.Theme> onThemeChange = _ -> {};
+    private BooleanSupplier themeSwitchBlocked = () -> false;
+
+    /** Hears a theme chosen on the Appearance block, after it is stored; {@code AppShell} hands it to the frame, which rebuilds the pages. */
+    public void setOnThemeChange(Consumer<NSAppUtil.Theme> listener) {
+        onThemeChange = listener != null ? listener : _ -> {};
+    }
+
+    /** Says when a theme switch must wait (a scan in progress): the combo snaps back and the row says so. */
+    public void setThemeSwitchBlocked(BooleanSupplier blocked) {
+        themeSwitchBlocked = blocked != null ? blocked : () -> false;
+    }
+
+    /**
+     * The Appearance block (2026-11-02, {@code PLAN-appearance.md}): the theme, stored per
+     * installation and applied at once by rebuilding the pages, and the control text size,
+     * gui-audio's {@link FontSizeWidget} over {@link UIFontSize} with a Reset. The size is stored
+     * by the listener {@code NoSneakMain} registers on {@code UIFontSize}, so any knob is remembered.
+     */
+    private JPanel buildAppearance() {
+        return appearanceBlock(AppPrefs.theme(), theme -> {
+            AppPrefs.theme(theme);
+            onThemeChange.accept(theme);
+        }, () -> themeSwitchBlocked.getAsBoolean());
+    }
+
+    /**
+     * The block itself, in the Assistant block's shape; a factory so a test can build and paint it
+     * on its own. {@code onTheme} hears a theme other than the one in force unless {@code blocked}
+     * says so, in which case the combo snaps back and the status line reads the busy note.
+     */
+    static JPanel appearanceBlock(NSAppUtil.Theme current, Consumer<NSAppUtil.Theme> onTheme, BooleanSupplier blocked) {
+        JPanel panel = new JPanel(new MigLayout("wrap 1, insets 12, gapy 6", "[grow,fill]"));
+
+        panel.add(title(NSAppUtil.SettingsPage.APPEARANCE_TITLE));
+        panel.add(blockNote(NSAppUtil.SettingsPage.APPEARANCE_NOTE), "growx 0");
+
+        JComboBox<NSAppUtil.Theme> themes = GUIUtil.applyProp(new JComboBox<>(NSAppUtil.Theme.values()), NSAppUtil.SettingsPage.THEME);
+        themes.setRenderer(new DefaultListCellRenderer() {
+            @Override
+            public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean selected, boolean focus) {
+                super.getListCellRendererComponent(list, value, index, selected, focus);
+                if (value instanceof NSAppUtil.Theme t) {
+                    setText(t.getDisplayName());
+                    setToolTipText(t.getDescription());
+                }
+                return this;
+            }
+        });
+        NSAppUtil.Theme[] inForce = {current != null ? current : NSAppUtil.Theme.LIGHT};
+        themes.setSelectedItem(inForce[0]);
+        JLabel status = blockStatus(NSAppUtil.SettingsPage.THEME_STATUS);
+        status.setText(NSAppUtil.SettingsPage.THEME_NOTE.getDisplayName());
+        boolean[] reverting = {false};
+        themes.addActionListener(_ -> {
+            if (reverting[0]) return;
+            NSAppUtil.Theme chosen = (NSAppUtil.Theme) themes.getSelectedItem();
+            if (chosen == null || chosen == inForce[0]) return;
+            if (blocked.getAsBoolean()) {
+                reverting[0] = true;
+                themes.setSelectedItem(inForce[0]);
+                reverting[0] = false;
+                status.setText(NSAppUtil.SettingsPage.THEME_BUSY.getDisplayName());
+                status.setForeground(UITokens.danger());
+                return;
+            }
+            inForce[0] = chosen;
+            status.setText(NSAppUtil.SettingsPage.THEME_NOTE.getDisplayName());
+            status.setForeground(UITokens.muted());
+            onTheme.accept(chosen);
+        });
+        JLabel themeLabel = GUIUtil.applyProp(new JLabel(), NSAppUtil.SettingsPage.THEME_LABEL);
+        themeLabel.setLabelFor(themes);
+        JPanel themeRow = new JPanel(new MigLayout("insets 0, gapx 8", "[][][]"));
+        themeRow.setOpaque(false);
+        themeRow.add(themeLabel);
+        themeRow.add(themes);
+        themeRow.add(status);
+        panel.add(themeRow, "growx 0");
+
+        FontSizeWidget size = GUIUtil.applyProp(new FontSizeWidget(), NSAppUtil.SettingsPage.TEXT_SIZE);
+        JButton reset = UITokens.link(GUIUtil.applyProp(new JButton(), NSAppUtil.SettingsPage.TEXT_SIZE_RESET));
+        reset.addActionListener(_ -> UIFontSize.reset());
+        JLabel sizeLabel = GUIUtil.applyProp(new JLabel(), NSAppUtil.SettingsPage.TEXT_SIZE_LABEL);
+        sizeLabel.setLabelFor(size.getSpinner());
+        JPanel sizeRow = new JPanel(new MigLayout("insets 0, gapx 8", "[][][]"));
+        sizeRow.setOpaque(false);
+        sizeRow.add(sizeLabel);
+        sizeRow.add(size);
+        sizeRow.add(reset);
+        panel.add(sizeRow, "growx 0");
+
+        return panel;
     }
 
     // ==================== Assistant (Settings block) ====================

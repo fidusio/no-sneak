@@ -1,6 +1,10 @@
 package io.xlogistx.nosneak.app;
 
+import com.formdev.flatlaf.themes.FlatMacDarkLaf;
+import com.formdev.flatlaf.FlatLightLaf;
 import org.zoxweb.shared.util.*;
+
+import java.util.function.BooleanSupplier;
 
 /**
  * The application's UI descriptors (maintainer's rule, 2026-11-01): every GUI component or panel
@@ -193,7 +197,7 @@ public class NSAppUtil {
         PROVIDERS("nav.providers", "Providers", "Which of your API keys the assistant may use, and their models"),
         PROFILE("nav.profile", "Profile", "Your name, identifiers and addresses"),
         API_KEYS("nav.apiKeys", "API Keys", "Your password and the third-party keys the assistant borrows"),
-        SETTINGS("nav.settings", "Settings", "The MAC vendor list, the assistant's reply timeout, and the store's backup and restore"),
+        SETTINGS("nav.settings", "Settings", "The look and text size, the MAC vendor list, the assistant's reply timeout, and the store's backup and restore"),
         ACL("nav.acl", "Access Control", "Subjects, permissions, roles and grants (super-admin only)");
 
         private final GetNameDescriptionDisplay gndd;
@@ -1079,9 +1083,24 @@ public class NSAppUtil {
         }
     }
 
-    /** The Settings page (2026-11-01 conversion): the Sync, Assistant, Backup and Restore blocks. */
+    /** The Settings page (2026-11-01 conversion): the Appearance (2026-11-02), Sync, Assistant, Backup and Restore blocks. */
     public enum SettingsPage implements GetNameDescriptionDisplay {
-        PAGE("settings", "Settings", "Reference data this installation keeps up to date, the assistant's reply timeout, and the store's backup."),
+        PAGE("settings", "Settings", "The look and text size, reference data this installation keeps up to date, the assistant's reply timeout, and the store's backup."),
+        APPEARANCE_TITLE("settings.appearance", "Appearance", null),
+        APPEARANCE_NOTE("settings.appearance.note", """
+                Theme — Light or Dark, FlatLaf's own looks. A choice applies at once: the \
+                pages are rebuilt on your session, so an unsent chat draft or an unsaved probe is \
+                lost, and a scan in progress blocks the switch. Text size — the size of the controls' \
+                text (menus, buttons, labels, fields), in points; 13 is the size no-sneak ships with. \
+                Both are kept for this installation and restored before the unlock screen.""", null),
+        THEME_LABEL("settings.appearance.theme.label", "Theme", null),
+        THEME("settings.appearance.theme", "", "The look of every page; applies at once"),
+        THEME_STATUS("settings.appearance.theme.status", "", null),
+        THEME_NOTE("settings.appearance.theme.note", "Switching the theme reloads the pages", null),
+        THEME_BUSY("settings.appearance.theme.busy", "Finish or stop the scan first", null),
+        TEXT_SIZE_LABEL("settings.appearance.textSize.label", "Text size", null),
+        TEXT_SIZE("settings.appearance.textSize", "", "Text size of the controls (menus, buttons, labels), in points; applies at once"),
+        TEXT_SIZE_RESET("settings.appearance.textSize.reset", "Reset", "Back to 13 points, the size no-sneak ships with"),
         SYNC_TITLE("settings.sync", "Sync", null),
         SYNC_NOTE("settings.sync.note", """
                 MAC vendors — the Wireshark manufacturer list (wireshark.org, manuf) names the vendor \
@@ -1475,6 +1494,64 @@ public class NSAppUtil {
 
         ProbeEditor(String name, String displayName, String description) {
             gndd = new GetNameDescriptionDisplayImpl(name, description, displayName);
+        }
+
+        @Override
+        public String getName() {
+            return gndd.getName();
+        }
+
+        @Override
+        public String getDisplayName() {
+            return gndd.getDisplayName();
+        }
+
+        @Override
+        public String getDescription() {
+            return gndd.getDescription();
+        }
+    }
+
+    /**
+     * The look (2026-11-02, the Appearance block of the Settings page): FlatLaf's own cores,
+     * chosen per installation ({@code AppPrefs.theme()}, stored by {@link #getName()}), installed
+     * before the unlock screen ({@code NoSneakMain.installLookAndFeel}) and switched live by
+     * rebuilding the pages ({@code NoSneakMain.AppFrame.applyTheme}). Dark is FlatLaf's macOS Dark
+     * palette ({@code FlatMacDarkLaf extends FlatDarkLaf}, a near-black ground that works on every
+     * system; the grey FlatDark and Darcula were tried first on 2026-11-02 and dropped, the maintainer
+     * wanting one dark look), so {@code themes/FlatDarkLaf.properties} gives the {@code xlogistx.*}
+     * tokens their dark values.
+     */
+    public enum Theme implements GetNameDescriptionDisplay {
+        LIGHT("light", "Light", "The look no-sneak ships with", false, FlatLightLaf::setup),
+        DARK("dark", "Dark", "A near-black ground with light text (FlatLaf's macOS Dark palette, on every system)", true, FlatMacDarkLaf::setup);
+
+        private final GetNameDescriptionDisplay gndd;
+        private final boolean dark;
+        private final BooleanSupplier installer;
+
+        Theme(String name, String displayName, String description, boolean dark, BooleanSupplier installer) {
+            gndd = new GetNameDescriptionDisplayImpl(name, description, displayName);
+            this.dark = dark;
+            this.installer = installer;
+        }
+
+        /** Whether the look is a dark one (light text on dark surfaces). */
+        public boolean isDark() {
+            return dark;
+        }
+
+        /** Installs the look and feel (FlatLaf's {@code setup}); the caller refreshes open windows. */
+        public boolean setup() {
+            return installer.getAsBoolean();
+        }
+
+        /** The theme stored under {@code name}; {@link #LIGHT} for null or an unknown name. */
+        public static Theme of(String name) {
+            for (Theme t : values()) {
+                if (t.getName().equalsIgnoreCase(name)) return t;
+            }
+            return LIGHT;
         }
 
         @Override

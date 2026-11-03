@@ -70,6 +70,9 @@ public class AppShell extends JPanel {
         subjectPanel = new SubjectPanel(ctx);
         subjectPanel.setOnAssistantTimeoutChange(assistantContext::setCallTimeoutSeconds);
         scanPanel = new ScanPanel(ctx, assistantPanel::sendToChat);
+        // a theme chosen on the Settings page (2026-11-02): the frame rebuilds the pages, not while a scan runs
+        subjectPanel.setOnThemeChange(ctx::switchTheme);
+        subjectPanel.setThemeSwitchBlocked(scanPanel::isScanning);
         assistantPanel.addSaveTarget("probe", scanPanel::saveProbeFromEditor);
         // the probe definition as a built-in skill in the composer's + popup (2026-10-30): ticked, it
         // goes with the message, so a probe can be asked for from any chat, not only from the library

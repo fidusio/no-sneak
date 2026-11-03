@@ -550,7 +550,7 @@ split out of `AssistantPanel`, which is now just wiring:
 | `panels/CaptureTableModel` | The Captures table's rows (thumbnail, name, area, size, bytes, taken); pure, `CaptureModelsTest` |
 | `panels/CaptureSupport` | Capture helpers: select/shootAndSave (both hide the window only when `hideWindowOnCapture` is set), png encode + jpeg thumbnail, icon scaling, sublabel/byte/time formatting |
 | `panels/RegionOverlay` | Blocking multi-monitor drag-select overlay; `select()` must run off the EDT |
-| `panels/PanelSupport` | Shared row/format helpers (`timestamp`, `deleteConfirm`, provider combos, `showErrorDialog`) |
+| `panels/PanelSupport` | Shared row/format helpers (`timestamp`, `deleteConfirm`, provider combos, `showErrorDialog`; the error dialog's trace area uses `UITokens.mono`, 2026-11-02, so it follows the app's text size) |
 
 `MarkDownViewerPanel` used to live here and is **gone** — markdown rendering is
 `io.xlogistx.gui.MDViewerPanel` from `xlogistx-gui-audio`, which is also where commonmark now

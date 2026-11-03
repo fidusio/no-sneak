@@ -240,7 +240,7 @@ public class UnlockPanel extends JPanel {
     }
 
     private JComponent buildRight() {
-        Color ground = new Color(0xF4F4F7);
+        Color ground = UITokens.ground();
 
         JPanel card = new JPanel(new MigLayout("insets 32 36 28 36, fillx, wrap 1, gapy 0", "[grow,fill]"));
         card.setBackground(UITokens.surface());

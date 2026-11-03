@@ -4,6 +4,7 @@ import io.xlogistx.nosneak.ai.AIException;
 import io.xlogistx.nosneak.ai.AIProvider;
 import io.xlogistx.nosneak.ai.assistant.AIAPIProvider;
 import io.xlogistx.nosneak.ai.assistant.AssistantContext;
+import io.xlogistx.gui.UITokens;
 import io.xlogistx.nosneak.ai.assistant.ModelFilter;
 import org.zoxweb.server.util.ServerUtil;
 import org.zoxweb.shared.util.SUS;
@@ -34,7 +35,7 @@ public final class PanelSupport {
         JTextArea area = new JTextArea(trace, 18, 80);
         area.setEditable(false);
         area.setLineWrap(false);
-        area.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+        area.setFont(UITokens.mono(-1f));
         area.setCaretPosition(0);
         JScrollPane scroll = new JScrollPane(area);
         scroll.setPreferredSize(new Dimension(720, 320));

@@ -23,6 +23,11 @@ detail lives in the module `CLAUDE.md` files, named below.*
      the `ProbeType` rename (same day) a draft named `My-Redis` is refused by Check and Save with
      *name it "my-redis"*, and a store from before the rename (old `probe_content` table, subject
      already marked as seeded) shows an empty library that *Restore bundled probes* refills;
+     (2026-11-02, appearance) a switch to Dark on the Settings page with a chat
+     open rebuilds the pages and lands on Settings with nothing light left on screen, the
+     sign-out screen after a switch is dark too, a switch during a scan snaps back with *Finish
+     or stop the scan first*, a text size of 18 survives a restart and Reset returns to 13, a
+     Light start after a dark session looks exactly as before;
    - `postgres-tls` against a real PostgreSQL with `ssl = on` (the version needs `trust` auth for
      the probe's user; otherwise `postgresql-tls-auth-required`, still a completed identification);
    - (2026-10-27, hardening) *Copy* of an API-key secret: the clipboard is blank a minute later

@@ -943,6 +943,26 @@ public class Session {
     }
 
     /**
+     * Fires the {@code "authenticated"} event again, as {@code true}, while a subject is signed in
+     * (2026-11-02, the theme switch): the pages are rebuilt on a signed-in session, and every panel
+     * loads the subject's rows on that event, so a rebuilt one would otherwise stay empty (the
+     * maintainer: "when I change the theme the probe library and history disappear"). Nothing
+     * fires when signed out.
+     */
+    public void replayAuthenticated() {
+        if (authenticated) pcs.firePropertyChange("authenticated", false, true);
+    }
+
+    /**
+     * Drops every listener registered on this session (auth, credentials, MAC vendors): the
+     * panels of a shell about to be replaced stop hearing it, so a rebuild does not leave them
+     * reacting from the dead shell. The caller registers its own again afterwards.
+     */
+    public void removeListeners() {
+        for (PropertyChangeListener l : pcs.getPropertyChangeListeners()) pcs.removePropertyChangeListener(l);
+    }
+
+    /**
      * Registers a listener for the {@code "authenticated"} login/logout change event.
      */
     public void onAuthChange(PropertyChangeListener l) {

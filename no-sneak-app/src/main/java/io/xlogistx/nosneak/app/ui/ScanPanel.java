@@ -310,6 +310,11 @@ public class ScanPanel extends JPanel {
      */
     private record ScanOutcome(String json, String stopped) {}
 
+    /** Whether a scan is in flight (2026-11-02): the Settings page refuses a theme switch meanwhile, since the switch rebuilds this panel. */
+    public boolean isScanning() {
+        return running != null;
+    }
+
     /** Stop button: cancel the scan in flight. Idempotent; the worker delivers the partial report. */
     private void onStop() {
         NMapScanner.ScanHandle h = running;
@@ -580,7 +585,7 @@ public class ScanPanel extends JPanel {
     private void showUsage() {
         JTextArea text = new JTextArea(NMap.usageText());
         text.setEditable(false);
-        text.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+        text.setFont(UITokens.mono(-1f));
         JOptionPane.showMessageDialog(this, new JScrollPane(text), NSAppUtil.ScanPage.USAGE_DIALOG.getDisplayName(), JOptionPane.INFORMATION_MESSAGE);
     }
 

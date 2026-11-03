@@ -125,7 +125,9 @@ option, filter segment and tab carries the same kind of tooltip.
 - **API Keys** — your password, and the third-party keys the assistant borrows (import, edit,
   delete). The assistant holds none of its own. *Copy* on a key's secret clears the clipboard
   again a minute later.
-- **Settings** — *Sync* refreshes the MAC vendor list (the Wireshark manufacturer file,
+- **Settings** — *Appearance* picks the theme (Light or Dark; it applies at once and
+  reloads the pages, so finish a scan first) and the text size of the controls (applies at once,
+  Reset returns to the usual 13 points); both are kept for this installation. *Sync* refreshes the MAC vendor list (the Wireshark manufacturer file,
   downloaded once at the first sign-in; the status bar shows its state); *Backup* writes the
   whole store to a zip archive and *Restore* reads one back — a backup carries your scan
   reports, which describe your network's layout, so keep it as safe as the store.

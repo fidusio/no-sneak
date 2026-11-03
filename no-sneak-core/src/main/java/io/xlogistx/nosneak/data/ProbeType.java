@@ -7,7 +7,7 @@ public class ProbeType extends PropertyImpl {
 
     public enum Param
             implements GetNVConfig {
-        DEFINITION(NVConfigManager.createNVConfig("definition", "The gson definition of the probe", "Definition", false, true, String.class));
+        DEFINITION(NVConfigManager.createNVConfig("definition", "The json definition of the probe", "Definition", false, true, String.class));
         private final NVConfig nvc;
 
         Param(NVConfig nvc) {

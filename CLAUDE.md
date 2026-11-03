@@ -81,7 +81,16 @@
 > `content` → `definition`, table `probe_type`, `setName` lower-cases and trims); the app refuses
 > a definition whose name is not already in that form (`ProbeSelection.nameForm`). A store from
 > before the rename keeps its old `probe_content` table unread: its subjects, already marked as
-> seeded, see an empty library until *Restore bundled probes*.
+> seeded, see an empty library until *Restore bundled probes*. **Same day, Appearance**
+> (`PLAN-appearance.md`): an **Appearance** block on the Settings page — the **theme** (FlatLaf
+> Light or Dark, `NSAppUtil.Theme`; Dark is FlatLaf's macOS Dark palette — the grey FlatDark and
+> Darcula were tried first and dropped the same evening, one dark look being wanted) and the **control text size** (gui-audio's
+> `FontSizeWidget` over `UIFontSize`, 8 to 32 points, Reset to 13), both per installation in
+> `AppPrefs`, installed before the unlock screen. A theme choice applies at once by rebuilding the
+> pages on the same session (`AppFrame.applyTheme`; refused while a scan runs), since panels keep
+> the token colours they read when built; the `xlogistx.*` tokens get their dark values from
+> `themes/FlatDarkLaf.properties`, shared by both dark cores. gui-audio followed: `ListSection`'s
+> border and `MermaidRenderer`'s palette read the tokens.
 
 Assessment tooling for what a network endpoint exposes — TLS posture, **post-quantum
 readiness**, and running services — plus a Swing front-end and an AI-assistant layer.

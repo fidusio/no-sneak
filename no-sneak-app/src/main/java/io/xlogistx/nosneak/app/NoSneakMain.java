@@ -7,6 +7,7 @@ import com.openhtmltopdf.util.XRLog;
 import io.xlogistx.datastore.h2p.H2PDataStore;
 import io.xlogistx.gui.BackgroundTask;
 import io.xlogistx.gui.IconUtil;
+import io.xlogistx.gui.UIFontSize;
 import io.xlogistx.gui.UITokens;
 import io.xlogistx.nosneak.app.ui.AppShell;
 import io.xlogistx.nosneak.app.ui.UnlockPanel;
@@ -84,10 +85,31 @@ public class NoSneakMain {
 
         FlatRobotoFont.install();
         FlatLaf.registerCustomDefaultsSource("themes");
-        FlatLightLaf.setup();
-        UIManager.put("defaultFont", new Font(FlatRobotoFont.FAMILY, Font.PLAIN, 13));
+        installLookAndFeel(AppPrefs.theme());
 
-        SwingUtilities.invokeLater(() -> launchApp(domainSecurityManager, openedLocation, launchSubject, launchPassword));
+        SwingUtilities.invokeLater(() -> {
+            // the stored text size, applied before any window exists so the unlock screen opens at it;
+            // every later change (the Settings page's control) is remembered through the listener
+            UIFontSize.apply(AppPrefs.uiFontSize());
+            UIFontSize.addListener(AppPrefs::uiFontSize);
+            launchApp(domainSecurityManager, openedLocation, launchSubject, launchPassword);
+        });
+    }
+
+    /** The size of the default font the app ships with, in points; {@code UIFontSize} scales from it. */
+    public static final int DEFAULT_FONT_SIZE = 13;
+
+    /**
+     * Installs a theme (2026-11-02): FlatLaf's {@code setup} for it, then the Roboto default font
+     * at {@link #DEFAULT_FONT_SIZE} — always that size, so {@code UIFontSize.getBase()} reads 13
+     * and <i>Reset</i> on the Settings page returns to the look the app ships with; the stored
+     * text size is applied after it, and stays in force across a switch (the scaled fonts live
+     * in the user layer of {@code UIManager}, which a new look and feel does not clear). Used at
+     * start and by {@link AppFrame#applyTheme}; the custom defaults source is registered once, in {@code main}.
+     */
+    public static void installLookAndFeel(NSAppUtil.Theme theme) {
+        theme.setup();
+        UIManager.put("defaultFont", new Font(FlatRobotoFont.FAMILY, Font.PLAIN, DEFAULT_FONT_SIZE));
     }
 
     /**
@@ -100,7 +122,7 @@ public class NoSneakMain {
      */
     public static class AppFrame extends JFrame {
 
-        private final UnlockPanel unlock;
+        private UnlockPanel unlock;
         private ShiroDSDomainSecurityManager domainSecurityManager;
         private AppContext ctx;
         private AppShell shell;
@@ -146,16 +168,24 @@ public class NoSneakMain {
             if (ctx != null) return;
             domainSecurityManager = dsm;
             ctx = new AppContext(dsm);
+            ctx.setThemeSwitcher(this::applyTheme);
             shell = new AppShell(ctx);
             menuBar = shell.menuBar();
             unlock.bindSession(ctx.session());
-            ctx.session().onAuthChange(e -> {
-                if ((boolean) e.getNewValue()) loadMacVendorsThenShow();
-                else showSignedIn(false);
-            });
+            ctx.session().onAuthChange(authListener);
         }
 
         private boolean macVendorWarningShown;
+
+        /**
+         * The frame's own ear on the session: login → load the MAC vendors, then show the shell;
+         * logout → the unlock screen. A field so {@link #applyTheme} can register it again after
+         * dropping the old shell's listeners.
+         */
+        private final java.beans.PropertyChangeListener authListener = e -> {
+            if ((boolean) e.getNewValue()) loadMacVendorsThenShow();
+            else showSignedIn(false);
+        };
 
         /**
          * After a login (2026-10-25): fill the MAC vendor table from the store, downloading the
@@ -199,6 +229,36 @@ public class NoSneakMain {
             }
             revalidate();
             repaint();
+        }
+
+        /**
+         * A theme chosen on the Settings page (2026-11-02, {@code PLAN-appearance.md}): install
+         * it, refresh the look and feel, and rebuild the pages on the same context and session —
+         * the move {@link #showSignedIn} makes on login, because every panel keeps the token
+         * colours it read when it was built. The old shell and unlock panel are dropped (the
+         * fresh unlock panel is bound to the session and marked open, so a later sign-out lands
+         * on its sign-in step as before); the store, the session and the MAC vendor table are
+         * untouched. Settings is shown again. The Settings page refuses the switch while a scan
+         * runs, so nothing in flight is lost here. The panels load the subject's rows on the
+         * session's authenticated event, which the new shell never saw: the session drops the
+         * old shell's listeners ({@code removeListeners}; this frame's own goes back on), the new
+         * shell registers, and {@code replayAuthenticated} fires the event once more — the same
+         * path as a login, which also shows the shell through {@link #loadMacVendorsThenShow}.
+         */
+        public void applyTheme(NSAppUtil.Theme theme) {
+            installLookAndFeel(theme);
+            FlatLaf.updateUI();
+            Session session = ctx.session();
+            session.removeListeners();
+            session.onAuthChange(authListener);
+            shell = new AppShell(ctx);
+            menuBar = shell.menuBar();
+            unlock = new UnlockPanel(NoSneakStore::openOrCreate, this::storeOpened);
+            unlock.bindSession(session);
+            java.io.File location = AppPrefs.storeLocation();
+            unlock.markStoreOpened(location != null ? location.getPath() : null);
+            session.replayAuthenticated();
+            ctx.nav().show(NSAppUtil.Screen.SETTINGS);
         }
 
         public UnlockPanel getUnlockPanel() {
