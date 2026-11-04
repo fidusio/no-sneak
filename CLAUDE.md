@@ -104,6 +104,10 @@
 > `no-sneak-app`'s `io.xlogistx.nosneak.app.tools`, which is why the app now declares
 > `org.zoxweb:xlogistx-datastore`. Dated references above to `no-sneak-core`, "core" or
 > `io.xlogistx.nosneak.data` read as `xlogistx-scan` / `io.xlogistx.scan.data`.
+> **Same day, uncommitted:** a **Text size** row on the unlock screen (top-right of the
+> right pane; the maintainer: "at start sometimes it is too small") — the same `FontSizeWidget`
+> + Reset as Settings → Appearance, applied at once and remembered, so a subject fixes the size
+> before signing in (`UnlockPanel.buildTextSizeRow`, `UnlockPage.TEXT_SIZE*`).
 
 Assessment tooling for what a network endpoint exposes — TLS posture, **post-quantum
 readiness**, and running services — plus a Swing front-end and an AI-assistant layer.

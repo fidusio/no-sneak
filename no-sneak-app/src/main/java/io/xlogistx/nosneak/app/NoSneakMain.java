@@ -1,7 +1,6 @@
 package io.xlogistx.nosneak.app;
 
 import com.formdev.flatlaf.FlatLaf;
-import com.formdev.flatlaf.FlatLightLaf;
 import com.formdev.flatlaf.fonts.roboto.FlatRobotoFont;
 import com.openhtmltopdf.util.XRLog;
 import io.xlogistx.datastore.h2p.H2PDataStore;
@@ -30,7 +29,7 @@ import java.io.IOException;
 public class NoSneakMain {
 
 
-    public final static AppVersion VERSION = new AppVersion("NOSNEAK::1.1.5");
+    public final static AppVersion VERSION = new AppVersion("NOSNEAK::1.1.6");
     /** The H2 database name inside the installation directory; see {@link NoSneakStore}. */
     public static final String dbName = NoSneakStore.DB_NAME;
 

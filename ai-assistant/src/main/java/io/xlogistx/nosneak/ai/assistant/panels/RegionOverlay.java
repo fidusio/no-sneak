@@ -1,5 +1,7 @@
 package io.xlogistx.nosneak.ai.assistant.panels;
 
+import org.zoxweb.server.util.ServerUtil;
+
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.KeyEvent;
@@ -74,7 +76,8 @@ final class RegionOverlay {
             // it over the translucent window background: the overlay comes up as a solid sheet
             // instead of a dimmed screen (FlatLaf clears it on macOS only). Null restores the
             // window's own translucent background under every look and feel.
-            window.getRootPane().setBackground(null);
+            if(!ServerUtil.isMacOS())
+                window.getRootPane().setBackground(null);
             window.setBounds(bounds);
             window.setContentPane(glass(window, i));
             window.setVisible(true);
@@ -144,7 +147,7 @@ final class RegionOverlay {
 
     private void focusPointerWindow(GraphicsDevice[] devices) {
         PointerInfo pointer = MouseInfo.getPointerInfo();
-        JWindow target = windows.isEmpty() ? null : windows.get(0);
+        JWindow target = windows.isEmpty() ? null : windows.getFirst();
         if (pointer != null) {
             for (int i = 0; i < devices.length; i++) {
                 if (devices[i] == pointer.getDevice() && i < windows.size()) {

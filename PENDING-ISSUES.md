@@ -28,6 +28,9 @@ detail lives in the module `CLAUDE.md` files, named below.*
      sign-out screen after a switch is dark too, a switch during a scan snaps back with *Finish
      or stop the scan first*, a text size of 18 survives a restart and Reset returns to 13, a
      Light start after a dark session looks exactly as before;
+     (2026-11-03, unlock text size) the unlock screen's *Text size* row in the top-right corner
+     grows the whole screen as it is turned, survives a restart (the unlock screen opens at it)
+     and its Reset returns to 13, exactly like the Settings control;
    - `postgres-tls` against a real PostgreSQL with `ssl = on` (the version needs `trust` auth for
      the probe's user; otherwise `postgresql-tls-auth-required`, still a completed identification);
    - (2026-10-27, hardening) *Copy* of an API-key secret: the clipboard is blank a minute later

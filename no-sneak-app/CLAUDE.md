@@ -194,7 +194,7 @@ io.xlogistx.nosneak.app
 │   └── NSCoreUtil.java            ← DMTool's cached DomainSecurityManager (ShiroDSDomainSecurityManager over XlogistxMongoDataStore — the deprecated Mongo path; the reason for the xlogistx-datastore dependency)
 └── ui/                            ← UI (screens, menu, session/access wiring)
     ├── AppShell.java              ← the signed-in window: HeaderBar + SideNavPanel + CardLayout host (2026-10-24), mounts ai-assistant's AssistantPanel
-    ├── UnlockPanel.java           ← the pre-auth screen (2026-10-24): step 1 open/create the store, step 2 sign in / register; replaced LoginPanel + DataStoreSetupPanel. 2026-10-29: every step-1 input has a tooltip and a warning row under the vault password says it is NOT RECOVERABLE (`Form.VAULT_PASSWORD_WARNING`)
+    ├── UnlockPanel.java           ← the pre-auth screen (2026-10-24): step 1 open/create the store, step 2 sign in / register; replaced LoginPanel + DataStoreSetupPanel. 2026-10-29: every step-1 input has a tooltip and a warning row under the vault password says it is NOT RECOVERABLE (`Form.VAULT_PASSWORD_WARNING`). 2026-11-03: a Text size row (FontSizeWidget + Reset, `UnlockPage.TEXT_SIZE*`) in the right pane's top-right corner, under the scrolling card, so a size that reads too small is fixed before sign-in
     ├── PQCRegistryPanel.java      ← PQC file-sharing registry view
     ├── SubjectPanel.java          ← Account pages in the PagePanel frame: Profile, Credentials (API keys), Settings (Appearance: theme + text size (2026-11-02), Sync of the MAC vendor list, Assistant reply timeout, Backup, Restore)
     ├── SubjectSecManagerPanel.java← Access control (admin) page; tabs are stubs
@@ -429,7 +429,16 @@ nothing and the line reads *Finish or stop the scan first*. **Text size** — gu
 `UIFontSize.reset()`; it applies at once through `UIFontSize` (every look-and-feel font scaled,
 open windows refreshed) and is remembered by the listener `NoSneakMain` registers, so any knob
 counts. Both values are per installation (`AppPrefs.theme` / `uiFontSize`), because they are
-about this screen and are needed on the unlock screen. `appearanceBlock(current, onTheme,
+about this screen and are needed on the unlock screen. **The text size is also on the unlock
+screen** (2026-11-03; the maintainer: "at start sometimes it is too small"): `UnlockPanel.buildTextSizeRow`
+puts the same `FontSizeWidget` (application scope) with a muted *Text size* label and a *Reset*
+link in the right pane's top-right corner, above the scrolling card and outside it, so it is on
+screen whatever the window's height; a turn applies at once to the whole application and is
+remembered through the same `NoSneakMain` listener. Its constants are `UnlockPage.TEXT_SIZE_LABEL` /
+`TEXT_SIZE` / `TEXT_SIZE_RESET` (component names `UnlockPanel.TEXT_SIZE` / `TEXT_SIZE_RESET`);
+`UnlockPanelTextSizeTest` builds a real `UnlockPanel`, turns the spinner, checks the look-and-feel
+fonts follow and Reset returns to the base, and paints the screen with `-Drender.dir`.
+`appearanceBlock(current, onTheme,
 blocked)` is a static factory for `SettingsAppearanceBlockTest` (the combo's order and
 preselection, the hand-over, the busy refusal, the size applied and reset against the
 look-and-feel base); `AppPrefsAppearanceTest` pins `Theme.of` and the clamping,

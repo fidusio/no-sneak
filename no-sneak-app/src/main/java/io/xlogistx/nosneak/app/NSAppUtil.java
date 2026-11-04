@@ -365,7 +365,10 @@ public class NSAppUtil {
         DB_GENERATED_HINT("unlock.db.generatedHint", "Empty = generated and kept only in the vault.", null),
         OPEN("unlock.open", "Open", "Open the vault in the chosen directory"),
         CREATE("unlock.create", "Create", "Create the vault, the database and the operator account in the chosen directory"),
-        VAULT_UNLOCKED("unlock.vaultUnlocked", "vault unlocked", "The store is open for the life of the process");
+        VAULT_UNLOCKED("unlock.vaultUnlocked", "vault unlocked", "The store is open for the life of the process"),
+        TEXT_SIZE_LABEL("unlock.textSize.label", "Font size", null),
+        TEXT_SIZE("unlock.textSize", "", "Text size of the controls (menus, buttons, labels), in points; applies at once and is remembered"),
+        TEXT_SIZE_RESET("unlock.textSize.reset", "Reset", "Back to 13 points, the size no-sneak ships with");
 
         private final GetNameDescriptionDisplay gndd;
 
@@ -1098,7 +1101,7 @@ public class NSAppUtil {
         THEME_STATUS("settings.appearance.theme.status", "", null),
         THEME_NOTE("settings.appearance.theme.note", "Switching the theme reloads the pages", null),
         THEME_BUSY("settings.appearance.theme.busy", "Finish or stop the scan first", null),
-        TEXT_SIZE_LABEL("settings.appearance.textSize.label", "Text size", null),
+        TEXT_SIZE_LABEL("settings.appearance.textSize.label", "Font size", null),
         TEXT_SIZE("settings.appearance.textSize", "", "Text size of the controls (menus, buttons, labels), in points; applies at once"),
         TEXT_SIZE_RESET("settings.appearance.textSize.reset", "Reset", "Back to 13 points, the size no-sneak ships with"),
         SYNC_TITLE("settings.sync", "Sync", null),
