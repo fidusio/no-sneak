@@ -70,6 +70,11 @@ final class RegionOverlay {
             window.setAlwaysOnTop(true);
             window.setFocusableWindowState(true);
             dim(devices[i], window);
+            // FlatLaf gives every root pane an opaque RootPane.background and, on Linux, Swing paints
+            // it over the translucent window background: the overlay comes up as a solid sheet
+            // instead of a dimmed screen (FlatLaf clears it on macOS only). Null restores the
+            // window's own translucent background under every look and feel.
+            window.getRootPane().setBackground(null);
             window.setBounds(bounds);
             window.setContentPane(glass(window, i));
             window.setVisible(true);
