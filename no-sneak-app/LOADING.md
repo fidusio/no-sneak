@@ -8,7 +8,8 @@ three modules.
 Scope is the desktop app as a whole — `no-sneak-app` plus the `ai-assistant` and `ai-model`
 modules it mounts, and now `xlogistx-scan` too: `ScanPanel` drives the core engine, so probe
 definitions, the shared `NIOSocket` and scan reports are part of the loading picture.
-`xlogistx-net` is still reached only *through* the engine, never from the UI.
+`xlogistx-net` is reached through the engine, except `NSNetUtil.MAC_VENDORS`, which `Session`
+loads itself after login (below). Both are io-xlogistx jars since 2026-11-03, not modules here.
 
 > **Line references are as of the working tree on 2026-10-26** (after the `Navigator.Screen`
 > rename: `SCAN` (named `NEW_SCAN` for a day), display names on the enum; `CHAT_HISTORY` was removed later that day when

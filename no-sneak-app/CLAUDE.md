@@ -146,7 +146,7 @@ network scanner screen** over `xlogistx-scan`; the PQC file-sharing screen is st
 > box takes the full `NMap` CLI surface through `NMap.parseCommand`, a probe selector ticks
 > bundled and subject-authored probes into the run, results persist as `ReportContent` rows, and
 > probes persist as `ProbeType` rows (both DAOs live in `xlogistx-scan`'s
-> `io.xlogistx.nosneak.data`). It is also wired to the assistant **both ways** — a scan result
+> `io.xlogistx.scan.data`). It is also wired to the assistant **both ways** — a scan result
 > can be sent into a chat, and a chat response can be saved back as a probe. See `ScanPanel` below.
 >
 > **Still stubbed:** passkey (login/register are empty `void` no-ops), the ACL admin
@@ -189,6 +189,9 @@ io.xlogistx.nosneak.app
 ├── NoSneakMain.java               ← entry point; ds.location/ds.store-password (+ subject=/password=) or the unlock screen; AppFrame swaps unlock ↔ shell, loads the MAC vendors after login (2026-10-25); installs the stored theme + text size before the unlock screen and rebuilds the pages on a theme switch (installLookAndFeel / applyTheme, 2026-11-02)
 ├── NoSneakStore.java              ← vault + encrypted H2 + shiro.ini: create (H2PSetup) / open (attached manager) / secure / bootstrap / grantAppUser / setRegistrarPassword (2026-10-21)
 ├── NSAppUtil.java                 ← the UI descriptors (2026-11-01): 36 enums, one per panel/feature/table, each wrapping zoxweb GetNameDescriptionDisplayImpl; EVERY component the app builds (every panel, label, button, field, tab, column, dialog title) has a constant here and gui-audio's GUIUtil.applyProp(component, ref) maps it on; the page enum Screen, ScanResultTab, AclView, ProbeLibraryColumn live here too (NSAppUtilTest finds the enums by reflection)
+├── tools/                         ← moved here from no-sneak-core on 2026-11-03 (not engine code)
+│   ├── DMTool.java                ← subject admin CLI (add-subject, add-api-key, login, delete-subject, update-password); key=value args
+│   └── NSCoreUtil.java            ← DMTool's cached DomainSecurityManager (ShiroDSDomainSecurityManager over XlogistxMongoDataStore — the deprecated Mongo path; the reason for the xlogistx-datastore dependency)
 └── ui/                            ← UI (screens, menu, session/access wiring)
     ├── AppShell.java              ← the signed-in window: HeaderBar + SideNavPanel + CardLayout host (2026-10-24), mounts ai-assistant's AssistantPanel
     ├── UnlockPanel.java           ← the pre-auth screen (2026-10-24): step 1 open/create the store, step 2 sign in / register; replaced LoginPanel + DataStoreSetupPanel. 2026-10-29: every step-1 input has a tooltip and a warning row under the vault password says it is NOT RECOVERABLE (`Form.VAULT_PASSWORD_WARNING`)
@@ -626,7 +629,7 @@ button still navigates here) nor a stored report open on its card — then
   the ports are not set and probes were selected we scan the probe default port per probe; if
   ports were defined all the ports are scanned with probes").** The rule is the engine's
   (`NMapScanner.resolvePorts`: typed ports win, else the named probes' declared ports, else
-  1-1024 — `../xlogistx-scan`, *The scan pipeline*); the form only says so:
+  1-1024 — `io-xlogistx/xlogistx-scan/CLAUDE.md`, *The scan pipeline*); the form only says so:
   `refreshProbeChips` sets the Ports field's **placeholder** to
   `ProbeSelection.portsPlaceholder(tickedDefinitions())` — `22,443,2222,8443 (ticked probes)`,
   `U:53 (ticked probes)` for a UDP probe, back to `ScanFormPanel.PORTS_DEFAULT_HINT` with no
@@ -737,7 +740,7 @@ members are gone; every library row has *Edit* and *Delete*; the popup and the g
 checklist have one PROBES section; the engine is handed exactly the ticked definitions with its
 bundled catalog switched off (`ProbeSelection.applyTo` → `NMapConfig.bundledCatalog(false)`,
 set in code like `extraProbes`, never printed into or parsed from the command, so
-`formatCommand` / `parseCommand` and the CLI are untouched — `../xlogistx-scan`, *Engine
+`formatCommand` / `parseCommand` and the CLI are untouched — `io-xlogistx/xlogistx-scan/CLAUDE.md`, *Engine
 reference*). **A probe's name is unique among the subject's rows** (the engine's catalog, a
 group's members and a report's `probes` all know a probe by its name): `probeToSave` refuses to
 rename a stored row to a name another row holds (`ProbeSelection.nameTaken`; *A probe of yours
@@ -1124,7 +1127,7 @@ Account data (backed by `DomainSecurityManager`, keyed off the signed-in subject
   property bag, persisted via `updateSubjectID`.
 
 Scan data (`ReportContent` / `ProbeType`, both from `xlogistx-scan`'s
-`io.xlogistx.nosneak.data`, owner-scoped by subjectGUID and stored in the same H2P
+`io.xlogistx.scan.data`, owner-scoped by subjectGUID and stored in the same H2P
 `APIDataStore`). `saveScanResult` / `saveProbe` branch on `getGUID()` — non-empty updates and
 stamps `lastTimeUpdated`, empty stamps the owner and inserts — the same upsert-by-GUID shape
 `AssistantStorage` uses, and for the same reason (see the timestamp note in `ai-model/CLAUDE.md`).
@@ -1312,7 +1315,7 @@ Main.AppFrame
         ├─ PQCRegistryPanel     (MAIN)                                  │ onAuthChange
         ├─ SubjectPanel         (SUBJECT)                               │  → nav to SUBJECT
         ├─ SubjectSecManagerPanel (MANAGER)                            │  + show menu bar
-        ├─ ScanPanel            (SCAN)     → no-sneak-core engine       │  (logout → LOGIN)
+        ├─ ScanPanel            (SCAN)     → xlogistx-scan engine       │  (logout → LOGIN)
         │        │      ▲                                              │
         │        │      └── addSaveTarget("probe", …)  ── response → probe
         │        └───────── sendToChat(content, name) ── report → chat  │

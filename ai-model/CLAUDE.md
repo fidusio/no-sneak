@@ -137,7 +137,7 @@ drops the nested entity on JSON round-trip.
   sync existed, `AISkill.skillType` did break the dev store this way.)
   > **This is a property of the H2P store, not of this module**, so it governs every
   > `PropertyImpl` the app persists — including `xlogistx-scan`'s `ProbeType` / `ReportContent`
-  > (`io.xlogistx.nosneak.data`), which `no-sneak-app`'s `Session` writes to the same store.
+  > (`io.xlogistx.scan.data`), which `no-sneak-app`'s `Session` writes to the same store.
   > `ProbeType` currently has a single `definition` param (the entity was `ProbeContent` with
   > a `content` param until the maintainer renamed it on 2026-11-02; the table is `probe_type`)
   > and wants several more; that is cheap only until a `probe_type` table exists somewhere. See `no-sneak-app/CLAUDE.md` → *Scan

@@ -91,6 +91,19 @@
 > the token colours they read when built; the `xlogistx.*` tokens get their dark values from
 > `themes/FlatDarkLaf.properties`, shared by both dark cores. gui-audio followed: `ListSection`'s
 > border and `MermaidRenderer`'s palette read the tokens.
+> **2026-11-03, the engine left this repo** (commit `80cded0`): `no-sneak-core` and `no-sneak-net`
+> are deleted here and live in **io-xlogistx** as **`xlogistx-scan`** and **`xlogistx-net`**, with
+> new base packages — `io.xlogistx.nosneak.*` → **`io.xlogistx.scan.*`** (`ProbeChecker`, `nmap`,
+> `model`, `data`, …) and `io.xlogistx.nosneak.net.*` → **`io.xlogistx.net.*`**. This reactor is
+> now `no-sneak-app`, `ai-assistant` and `ai-model`; `no-sneak-app` takes both engine modules as
+> `io.xlogistx:*:${xlogistx.version}` jars (`xlogistx-scan` itself depends on `xlogistx-net`), so
+> an engine change is built and installed from io-xlogistx first. The engine's docs moved with it
+> (`xlogistx-scan/CLAUDE.md`, `README.md`, `PROBE-DEFINITION.md`; `xlogistx-net/CLAUDE.md`,
+> `README.md`). The two non-engine classes core carried — **`DMTool`** (the subject admin CLI) and
+> **`NSCoreUtil`** (its cached `DomainSecurityManager` over `XlogistxMongoDataStore`) — moved to
+> `no-sneak-app`'s `io.xlogistx.nosneak.app.tools`, which is why the app now declares
+> `org.zoxweb:xlogistx-datastore`. Dated references above to `no-sneak-core`, "core" or
+> `io.xlogistx.nosneak.data` read as `xlogistx-scan` / `io.xlogistx.scan.data`.
 
 Assessment tooling for what a network endpoint exposes — TLS posture, **post-quantum
 readiness**, and running services — plus a Swing front-end and an AI-assistant layer.
@@ -130,18 +143,21 @@ shows one subject's data to another is a defect, not a feature — see `PENDING-
 A change that would cross one of those lines is out of scope for this repo: say so, and propose the
 detection-only or narrower-design version instead.
 
-Five modules, one-way dependencies (`no-sneak-app → ai-assistant → ai-model`):
+Three modules in this reactor, one-way dependencies (`no-sneak-app → ai-assistant → ai-model`),
+plus the two engine modules `no-sneak-app` consumes as jars from **io-xlogistx**
+(`no-sneak-app → xlogistx-scan → xlogistx-net`; the app also reads `xlogistx-net`'s
+`NSNetUtil.MAC_VENDORS` directly, from `Session`):
 
-| Module | What it is | Orientation |
-|---|---|---|
-| **`xlogistx-scan`** | The scanning engine (TLS/PQC + protocol probes + network scanner) | `xlogistx-scan` |
-| **`xlogistx-net`** | Host discovery (ICMP/ARP/NDP over FFM) — built; Linux and Windows verified on live hardware | `xlogistx-net` |
-| **`no-sneak-app`** | Swing desktop front-end, session/access layer | `no-sneak-app/CLAUDE.md` |
-| **`ai-assistant`** | Swing window to send network data to third-party AI models and compare | `ai-assistant/CLAUDE.md` |
-| **`ai-model`** | The backend contract (DAOs + service interfaces, no implementations) | `ai-model/CLAUDE.md` |
+| Module | Where | What it is | Orientation |
+|---|---|---|---|
+| **`no-sneak-app`** | here | Swing desktop front-end, session/access layer | `no-sneak-app/CLAUDE.md` |
+| **`ai-assistant`** | here | Swing window to send network data to third-party AI models and compare | `ai-assistant/CLAUDE.md` |
+| **`ai-model`** | here | The backend contract (DAOs + service interfaces, no implementations) | `ai-model/CLAUDE.md` |
+| **`xlogistx-scan`** | io-xlogistx | The scanning engine (TLS/PQC + protocol probes + network scanner), package `io.xlogistx.scan` | `io-xlogistx/xlogistx-scan/CLAUDE.md` |
+| **`xlogistx-net`** | io-xlogistx | Host discovery (ICMP/ARP/NDP over FFM), package `io.xlogistx.net` — built; verified on live hardware on Linux, Windows and macOS | `io-xlogistx/xlogistx-net/CLAUDE.md` |
 
-`xlogistx-net`'s `CLAUDE.md` is two documents in one: an authoritative build spec (base package
-`io.xlogistx.nosneak.net`, JDK 25 FFM, house libraries only) in §1–§12, and a running verification
+`io-xlogistx/xlogistx-net/CLAUDE.md` is two documents in one: an authoritative build spec (base package
+`io.xlogistx.net`, JDK 25 FFM, house libraries only) in §1–§12, and a running verification
 log in §13. Anything in this repo that wants host discovery goes through **`HostScanner`** (§14.1) —
 a session you open once and run many pings, resolves and sweeps through; `HostScan` is a CLI over
 it. The code is real — three backends, that CLI, ~370 green tests in 39 classes — so §13 is where
@@ -159,34 +175,39 @@ sweep over wired and Wi-Fi, and passive observe all moved packets (§13.20). The
 Until 2026-09-12 the module carried two generations side by side: the original packages and a
 from-scratch non-blocking rebuild under `io.xlogistx.nosneak.v2`. **The merge is done.** The
 original packages (`nmap`, `probe`, `scanners`, `services`, `tools`) and their tests are deleted,
-the rebuild lives at `io.xlogistx.nosneak`, and the bundled probes are at `/probes/`. There is no
+the rebuild lives at **`io.xlogistx.scan`** (`io.xlogistx.nosneak` until the 2026-11-03 move out of
+this repo), and the 18 bundled probes are at `/probes/` on `xlogistx-scan`'s classpath. There is no
 `v2` package, no `v2` class name and no frozen code left. The merge analysis and the pre-merge
 action plan were deleted on 2026-10-26 as history; the vulnerability checklist the action plan
-held is now in `xlogistx-scan`. Read `xlogistx-scan` first; it routes to the
+held is now in `io-xlogistx/xlogistx-scan/CLAUDE.md`. Read that file first; it routes to the
 plan log, the probe definition, and the open-work list.
 
 **2026-09-20 — the scan pipeline was made fast on a LAN.** Adaptive per-host connect deadline
 (`--min-rtt-timeout` floor, `-t` ceiling), probes streamed from the connect callback under `-sV`,
 a `ScanGate` that honours rate caps above 1000/s, NIOSocket's connect monitor released when the
 scanner's own deadline wins, and `--up-only` to list live hosts only. A `/24 × 1024 ports` on the
-maintainer's segment went from 136 s to 6 s; the design is `xlogistx-scan` → *The scan
+maintainer's segment went from 136 s to 6 s; the design is `io-xlogistx/xlogistx-scan/CLAUDE.md` → *The scan
 pipeline*.
 
 ## Build and test
 
 ```bash
-mvn clean install                        # everything
-mvn clean install -pl no-sneak-core -am  # just the engine
+mvn clean install                         # this reactor: no-sneak-app, ai-assistant, ai-model
+
+# the engine is built in io-xlogistx — run this there and install it first when it changed
+# (-am also builds xlogistx-net and the house modules it needs)
+mvn clean install -pl xlogistx-scan -am
 
 # tests are skipped by the parent pom (xlogistx-mvn); override to run them
-mvn -pl no-sneak-core test -DskipTests=false -Dtest='io.xlogistx.nosneak.**'
+mvn -pl no-sneak-app test -DskipTests=false
 ```
 
-External dependencies are zoxweb (`org.zoxweb.*`) and the `io-xlogistx` modules (`common`, `core`,
-`http`, `shiro`, `opsec`, `datastore`). **Bouncy Castle is the only cryptographic library**, and
+External dependencies are zoxweb (`org.zoxweb.*`, including zoxweb-datastore's `xlogistx-datastore`
+and `h2p-datastore`) and the `io-xlogistx` modules (`common`, `core`, `http`, `shiro`, `opsec`,
+`gui-audio`, `scan`, `net`). **Bouncy Castle is the only cryptographic library**, and
 reusable crypto/utility helpers belong in `opsec/OPSecUtil`, not in this repo.
 
 If a TLS-intercepting proxy is installed locally, Maven can't reach central and every scanned
 certificate reads `UNTRUSTED_ROOT` — neither is a code defect. Its mail shield also completes TCP
 handshakes on the mail ports locally, so those read `open` on every host. Scan with it off. See
-`xlogistx-scan` → *Build, test, verify*.
+`io-xlogistx/xlogistx-scan/CLAUDE.md` → *Build, test, verify*.
