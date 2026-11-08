@@ -32,7 +32,9 @@ option, filter segment and tab carries the same kind of tooltip.
 
 ### Scan
 
-- **Scan** — targets, ports, a name, the options (*Service detection*, *Host discovery only*,
+- **Scan** — targets (*Local networks* beside the label lists this machine's own IPv4 networks
+  as CIDR blocks; pick one and it is added to the targets, *Refresh* at the bottom reads the
+  networks again after one came up), ports, a name, the options (*Service detection*, *Host discovery only*,
   *Skip ping*, *Live hosts only*, *Open ports only*), a timing segment T0 to T5 (each says what
   it sets when you rest the pointer on it), the probe chips and the **command** they all build.
   The command is the truth: edit it and the form follows; change the form and the command is
@@ -121,10 +123,12 @@ option, filter segment and tab carries the same kind of tooltip.
 
 ### Account
 
-- **Profile** — name and date of birth, the identifiers you sign in with, and your addresses.
-- **API Keys** — your password, and the third-party keys the assistant borrows (import, edit,
-  delete). The assistant holds none of its own. *Copy* on a key's secret clears the clipboard
-  again a minute later.
+- **Profile** — name and date of birth, the password you sign in with (its pencil opens the
+  change-password form; the vault password is a different one and is changed outside the app),
+  the identifiers you sign in with, and your addresses.
+- **API Keys** — the third-party keys the assistant borrows (import, edit, delete). The
+  assistant holds none of its own. *Copy* on a key's secret clears the clipboard again a minute
+  later.
 - **Settings** — *Appearance* picks the theme (Light or Dark; it applies at once and
   reloads the pages, so finish a scan first) and the text size of the controls (applies at once,
   Reset returns to the usual 13 points); both are kept for this installation. *Sync* refreshes the MAC vendor list (the Wireshark manufacturer file,

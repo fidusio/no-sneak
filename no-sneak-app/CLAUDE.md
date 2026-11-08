@@ -196,7 +196,7 @@ io.xlogistx.nosneak.app
     ├── AppShell.java              ← the signed-in window: HeaderBar + SideNavPanel + CardLayout host (2026-10-24), mounts ai-assistant's AssistantPanel
     ├── UnlockPanel.java           ← the pre-auth screen (2026-10-24): step 1 open/create the store, step 2 sign in / register; replaced LoginPanel + DataStoreSetupPanel. 2026-10-29: every step-1 input has a tooltip and a warning row under the vault password says it is NOT RECOVERABLE (`Form.VAULT_PASSWORD_WARNING`). 2026-11-03: a Text size row (FontSizeWidget + Reset, `UnlockPage.TEXT_SIZE*`) in the right pane's top-right corner, under the scrolling card, so a size that reads too small is fixed before sign-in
     ├── PQCRegistryPanel.java      ← PQC file-sharing registry view
-    ├── SubjectPanel.java          ← Account pages in the PagePanel frame: Profile, Credentials (API keys), Settings (Appearance: theme + text size (2026-11-02), Sync of the MAC vendor list, Assistant reply timeout, Backup, Restore)
+    ├── SubjectPanel.java          ← Account pages in the PagePanel frame: Profile (name, password since 2026-11-04, identifiers, addresses), Credentials (API keys), Settings (Appearance: theme + text size (2026-11-02), Sync of the MAC vendor list, Assistant reply timeout, Backup, Restore)
     ├── SubjectSecManagerPanel.java← Access control (admin) page; tabs are stubs
     ├── ScanPanel.java             ← scanner wiring: ScanFormPanel + ScanResultView, probe chips (the only source of probing, 2026-10-26), history JTable (multi-select, Delete / Delete all), probe editor
     ├── scan/
@@ -245,7 +245,21 @@ parameters. The custom defaults live in `src/main/resources/themes/`: `FlatLaf.p
 reads before its fallbacks — the light file pins today's values, the dark file derives them from
 `@background` / `@foreground` (`tint`, `shade`, `mix`), plus the two ad-hoc keys `xlogistx.chip`
 and `xlogistx.navHover` that only the dark file needs. One trap: `xlogistx.border` must be
-written `{color}…`, because FlatLaf parses a key ending in *border* as a `Border`. **`subject=<username>` + `password=<password>`** (2026-10-25, asked for during the
+written `{color}…`, because FlatLaf parses a key ending in *border* as a `Border`. **No focus
+ring (`Component.focusWidth=0`, 2026-11-06; it was 1):** the maintainer saw "+ New Sc.." and
+other buttons ending in dots ("you cannot put dots, you have to be explicit to the user"). FlatLaf
+hands the focus width to MigLayout as every button's *visual padding* and MigLayout clamps that
+padding at the container's edge, so a button that ends a row flush with its container (the page
+heads' New scan, the command row's Stop, the Copy beside the command label) was laid out one
+point narrower than it asked for and FlatLaf clipped its text with an ellipsis — in both themes,
+since the base file applies to every theme (FlatLaf's macOS Dark palette would set 2 of its own;
+the base file, read after FlatLaf's, wins). Keyboard focus still shows by the border colour.
+`ButtonTextNotClippedTest` installs each theme **with the app's theme files registered**
+(`FlatLaf.registerCustomDefaultsSource("themes")`, as `main` does) and checks the width of every
+button that ends one of the Scan page's rows; a harness that skips the registration measures
+stock FlatLaf and sees nothing — which is how a first render of the Scan form was misread as
+"a harness artifact" that day. Any render or measurement of the app's look must register the
+source and install the Roboto font first. **`subject=<username>` + `password=<password>`** (2026-10-25, asked for during the
 run-through; `username=` is an alias for `subject=`) sign that subject in once the window is up,
 through `UnlockPanel.signIn`, the same path as typing on the sign-in step: success lands in the
 shell, a refusal stays on the sign-in step with the reason inline and the username kept. They need
@@ -428,11 +442,23 @@ nothing and the line reads *Finish or stop the scan first*. **Text size** — gu
 `FontSizeWidget` (application scope, 8 to 32 points) with a *Reset* link →
 `UIFontSize.reset()`; it applies at once through `UIFontSize` (every look-and-feel font scaled,
 open windows refreshed) and is remembered by the listener `NoSneakMain` registers, so any knob
-counts. Both values are per installation (`AppPrefs.theme` / `uiFontSize`), because they are
+counts. The *Reset* link read *Re…* from the day it was built until 2026-11-06 (the maintainer:
+"fix the Font size in setting"): FlatLaf marks every button with a one-point MigLayout
+`visualPadding` for the focus ring of a regular button, MigLayout laid the link out two points
+narrower than it asked, and the toolbar-type link had no slack to give — the fix is in
+gui-audio's `UITokens.link`, which pins the padding to zero (`io-xlogistx/gui-audio/CLAUDE.md` →
+*UITokens*). `SettingsAppearanceBlockTest` renders under Metal, which
+sets no padding, so the clip never showed there; it showed under FlatLaf with the app's theme.
+**Later that day the row became the widget itself** (the maintainer, asked whether the two rows
+were built the same way: "do it in gui-audio with the withReset and left side optional label"):
+`new FontSizeWidget().withLabel().withReset()`, the caption and the link being parts of the
+widget, named here through `getLabel()` / `getResetButton()` with the same `TEXT_SIZE_LABEL` /
+`TEXT_SIZE_RESET` constants, so the harness names and the tests are unchanged; the eight-line
+label + widget + link triad that Settings and the unlock screen each carried is gone. Both values are per installation (`AppPrefs.theme` / `uiFontSize`), because they are
 about this screen and are needed on the unlock screen. **The text size is also on the unlock
 screen** (2026-11-03; the maintainer: "at start sometimes it is too small"): `UnlockPanel.buildTextSizeRow`
-puts the same `FontSizeWidget` (application scope) with a muted *Text size* label and a *Reset*
-link in the right pane's top-right corner, above the scrolling card and outside it, so it is on
+puts the same `FontSizeWidget` (application scope; since 2026-11-06 `withLabel().withReset()`, the
+caption muted through `getLabel()`) in the right pane's top-right corner, above the scrolling card and outside it, so it is on
 screen whatever the window's height; a turn applies at once to the whole application and is
 remembered through the same `NoSneakMain` listener. Its constants are `UnlockPage.TEXT_SIZE_LABEL` /
 `TEXT_SIZE` / `TEXT_SIZE_RESET` (component names `UnlockPanel.TEXT_SIZE` / `TEXT_SIZE_RESET`);
@@ -472,12 +498,23 @@ The **Profile** screen is itself a nested `CardStack` (`profileCards`, built by
 gui-audio's `ListSection` description became a `WrapLabel` wrapped at the section's width (it was
 a wrapping `JTextArea`: one line high until laid out once, and stretched by BoxLayout after).
 
-- **Profile** (card key `profile`) — three blocks separated by rules, in the Settings page's
+- **Profile** (card key `profile`) — four blocks separated by rules, in the Settings page's
   shape (`blockNote` / `blockStatus`):
   - **Name** — a `FormPanel` (First name, Last name, Date of birth with the *yyyy-mm-dd* hint),
     the page's one primary button **Save changes** (`Session.saveProfile(...)`, name/DOB only;
     `populateProfile()` reads them back via `Session.loadProfile`) and a muted status line
     (*Saving…* / *Saved.*) in place of the old dialog.
+  - **Password** (moved here from the API Keys page on 2026-11-04; the maintainer: "in the api
+    key panel there the password panel it should be under profile") — a `ListSection` with no
+    add button over the subject's one `CIPassword` (`passwordLabel`: *Password — set · last
+    changed N days ago*) and the description that the vault password is a different one
+    (`ProfilePage.PASSWORD`). The row's **Edit** (pencil) flips `profileCards` to the
+    **changePassword** card (`buildChangePassword`, `PanelBuilder.detail` with a back arrow to
+    the profile card): a `FormPanel` (current / new / confirm, all required, with a note that
+    the vault password is changed outside the app; `NSAppUtil.PasswordEditor`) and the primary
+    **Change password** → `Session.changePassword` via `BackgroundTask`, then back to the
+    profile card and the row refreshed. The section still refreshes on the `credentials` event
+    with the key list.
   - **Identifiers** — a `ListSection` bound to `Session.getAllPrincipalIDForLoggedInUser()`, with
     a description (the names you sign in with; deleting the current one moves the account to
     another). **+ Add identifier** prompts for a value → `Session.addIdentifier`; per-row
@@ -493,24 +530,29 @@ a wrapping `JTextArea`: one line high until laid out once, and stretched by BoxL
     `NVGenericMap` via `Session.addAddress`, Edit mutates the selected map in place and persists
     via `Session.changeAddressDetails`. Save requires at least a **Label or Street** (blocks
     with a "Missing information" dialog otherwise).
-- **Credentials** (card key `Credentials`; the sidebar's **API Keys** page). Since 2026-10-27 it
-  is a `PagePanel` like every other page: title, description ("Your password, and the third-party
-  API keys the assistant borrows; it holds none of its own.") and the page's one primary action
-  **Add API key** in the head (it was a button inside the list), over the two cards of board 5 of
-  the redesign: the list card on the left, the editor on the right. The right-hand
-  `credentialCards` stack keeps its card names — `"list"` is the placeholder shown while nothing
-  is being edited — so every `credentialCards.show("list")` after a save, a delete or a logout
-  still lands on the right thing. Three views: a **list**, a **change-password** form, and an
-  **edit-API-key** form (`editAPI`). The list card stacks **two** `ListSection`s, each with a
-  description (the password you sign in with, the vault password being a different one; keys of
-  third-party AI providers kept sealed under your account, picked by the assistant's Providers
-  page, sent only to their own provider) and an empty-state row ("No API keys yet"):
-  - **Password section** (no add button) — the Password row's **Edit** (pencil) flips to the
-    change-password form: a `FormPanel` (current / new / confirm, all required, with a note that
-    the vault password is changed outside the app) and the primary **Change password** →
-    `Session.changePassword` via `BackgroundTask`.
-  - **API keys section** — one row per key (`"API key — " + SubjectAPIKey.getName()`); the row's
-    **Edit** opens the `editAPI` card. **Add API key** (page head) opens the add dialog. The
+- **Credentials** (card key `Credentials`; the sidebar's **API Keys** page). **A table page since
+  2026-11-04** (the maintainer, after the Password row left it: "the api key panel it is still like
+  the old look, make it standard like the rest of the application"), in the shape of the Probe
+  groups and Scan history pages: the `PagePanel` frame (title, the description "Keys of
+  third-party AI providers the assistant borrows, kept sealed under your account.", the one
+  primary action **Add API key** in the head), a bar with a **search box** (label, description,
+  provider, base URL; `KeyRow.matches`) and the **count** (*2 keys*, *1 of 2 keys*, *No API keys
+  yet*), then a split card: on the left the keys **table** (`SubjectPanel.ApiKeyTableModel`, rows
+  of `KeyRow`, columns from `NSAppUtil.ApiKeyColumn` — Label · Provider · Base URL (mono) · Scope
+  · Description —, styled by gui-audio's `Tables`, sorted by label), on the right the detail stack
+  `credentialCards`: **howto** with nothing selected (what a key is for, *Add API key* and *Link
+  it on the Providers page* as link buttons), **key** for the selected row (its label with **Edit**
+  and **Delete** toolbar buttons, a `KeyValuePanel` of Description / Provider / Base URL / Scope /
+  Auth / Kind / Secret — the secret is never shown here, the row says *Hidden here; Edit shows or
+  copies it*) and **editAPI**, the editor below, which Edit and a double-click open; its back
+  arrow returns to the selected key's detail. `reloadApiKeys()` reads the keys off the EDT
+  (`BackgroundTask.run`; the session's metadata readers walk each key's property bag), rebuilds
+  the table and keeps the selection by GUID; it runs on every auth change, on the `credentials`
+  event (a key created or deleted from the assistant's Providers page) and after every add, save,
+  rotate or delete here. The old two-column list of `ListSection`s, its *Select a key to edit it*
+  placeholder and the `"list"` card are gone (`ApiKeysPage.PLACEHOLDER` / `KEYS_SECTION` deleted;
+  `SEARCH`, `COUNT`, `TABLE`, `HOWTO_*`, `KEY_TITLE`, `EDIT`, `FACT_*`, `KIND_*` added).
+  - **Add API key** (page head, and the how-to's link) opens the add dialog. The
     **Generate local** path is hidden, so the dialog opens on the **Add a third-party API key**
     form — `SubjectPanel.AddKeyForm`, a `FormPanel` 480 px wide with section headers `Key` /
     `Scope` / `Provider endpoint` (the render harness paints it through `newAddKeyForm()`):
@@ -602,7 +644,20 @@ button still navigates here) nor a stored report open on its card — then
 **`ui.scan.ScanFormPanel`** over a **`ui.scan.ScanResultView`**.
 
 - **The form generates the command, and the command refills the form.** Targets (whitespace
-  separated), Ports (a `-p` spec; empty = the ticked probes' declared ports, else the engine's
+  separated; **Local networks**, a link at the right end of the Targets label since 2026-11-06,
+  the maintainer: "add cidr block as helper in scan panel from `NetUtil.allV4CIDRBlocks()`" —
+  a click reads this machine's IPv4 CIDR blocks off the EDT (zoxweb-core's
+  `NetUtil.allV4CIDRBlocks`: the up, non-loopback interfaces' `network/prefix` entries, each
+  once) and drops a menu of them under the link, mono, one item per block; a pick appends the
+  block to the targets unless it is already one of them and the command follows as for typing
+  (`ScanFormPanel.networksMenu` / `addTarget`, package-private for the test); no IPv4 interface
+  is one disabled line, *No IPv4 network on this machine*; last, under a separator, **Refresh**
+  (the maintainer, same evening: "add refresh button to local network, in case a network gets
+  activated") reads the interfaces again and reopens the menu, so a VPN or a Wi-Fi that came up
+  while the menu was open shows at once; and a failure to read the interfaces
+  is said inline under the command (`NSAppUtil.ScanForm.NETWORKS*`;
+  `ScanFormPanelTest.aLocalNetworkPickAppendsItToTheTargets`). The method is new in zoxweb-core
+  the same day, so the app needs a zoxweb-core 2.4.0 jar installed from that source), Ports (a `-p` spec; empty = the ticked probes' declared ports, else the engine's
   default list — 2026-10-31, below), Name, the option boxes
   (Service detection `-sV`, Host discovery only `-sn`, Skip ping `-Pn`, Live hosts only
   `--up-only`, Open ports only `--open`), a `SegmentedControl` built from `NMapConfig.Timing.values()`

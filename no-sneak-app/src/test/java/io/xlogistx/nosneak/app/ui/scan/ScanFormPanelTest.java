@@ -1,11 +1,15 @@
 package io.xlogistx.nosneak.app.ui.scan;
 
+import io.xlogistx.nosneak.app.NSAppUtil;
 import io.xlogistx.scan.nmap.NMap;
 import io.xlogistx.scan.nmap.NMapConfig;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import javax.swing.JMenuItem;
+import javax.swing.JPopupMenu;
 import javax.swing.SwingUtilities;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -154,6 +158,48 @@ public class ScanFormPanelTest {
             assertTrue(form.discoveryOnlyBox().isSelected());
             assertEquals("", form.portsField().getText());
             assertTrue(form.portsField().isEnabled());
+            return null;
+        });
+    }
+
+    /**
+     * Local networks (2026-11-06): the menu lists the blocks it is given, a pick appends the
+     * block to the targets once (a second pick of the same block changes nothing) and the
+     * command follows; with no block the menu is one disabled line. Last in either case, under a
+     * separator, a Refresh item that reads the interfaces again.
+     */
+    @Test
+    void aLocalNetworkPickAppendsItToTheTargets() throws Exception {
+        onEDT(() -> {
+            ScanFormPanel form = new ScanFormPanel();
+            JPopupMenu menu = form.networksMenu(new String[]{"192.168.1.0/24", "10.8.0.0/16"});
+            assertEquals(4, menu.getComponentCount(), "two blocks, a separator, Refresh");
+            assertEquals(NSAppUtil.ScanForm.NETWORKS_REFRESH.getDisplayName(), ScanFormPanel.refreshItem(menu).getText());
+            assertTrue(ScanFormPanel.refreshItem(menu).isEnabled());
+            JMenuItem first = (JMenuItem) menu.getComponent(0);
+            assertEquals("192.168.1.0/24", first.getText());
+            assertTrue(first.isEnabled());
+
+            first.doClick();
+            assertEquals(List.of("192.168.1.0/24"), form.toConfig().targets);
+            assertEquals("192.168.1.0/24", form.getCommand(), "the command follows the pick");
+
+            first.doClick();
+            ((JMenuItem) menu.getComponent(1)).doClick();
+            assertEquals(List.of("192.168.1.0/24", "10.8.0.0/16"), form.toConfig().targets, "no duplicate, the second block appended");
+
+            form.setCommand("example.com -p 443");
+            form.addTarget("10.8.0.0/16");
+            assertEquals(List.of("example.com", "10.8.0.0/16"), form.toConfig().targets, "appended after typed targets");
+            assertArrayEquals(new int[]{443}, form.toConfig().ports, "the rest of the command is kept");
+
+            JPopupMenu none = form.networksMenu(null);
+            assertEquals(3, none.getComponentCount(), "the empty line, a separator, Refresh");
+            assertEquals(NSAppUtil.ScanForm.NETWORKS_REFRESH.getDisplayName(), ScanFormPanel.refreshItem(none).getText());
+            JMenuItem line = (JMenuItem) none.getComponent(0);
+            assertFalse(line.isEnabled());
+            assertEquals(NSAppUtil.ScanForm.NETWORKS_EMPTY.getDisplayName(), line.getText());
+            assertFalse(form.networksMenu(new String[0]).getComponent(0).isEnabled(), "an empty array reads as none too");
             return null;
         });
     }

@@ -31,6 +31,23 @@ detail lives in the module `CLAUDE.md` files, named below.*
      (2026-11-03, unlock text size) the unlock screen's *Text size* row in the top-right corner
      grows the whole screen as it is turned, survives a restart (the unlock screen opens at it)
      and its Reset returns to 13, exactly like the Settings control;
+     (2026-11-04, password under Profile) the Profile page shows the Password row under Name,
+     its pencil opens the change-password form with a back arrow to the profile, a changed
+     password signs in and the row reads *changed today*; (2026-11-04, API Keys table page) the
+     page lists the keys in a table with the count, the search narrows it, selecting a row shows
+     its facts with Edit and Delete on the right, Edit and a double-click open the editor whose
+     back arrow returns to the facts, a key added from the assistant's Providers page appears in
+     the table without a re-login, and Delete empties the pane back to the how-to;
+     (2026-11-06, Reset link) the *Reset* beside Font size on the Settings page and on the unlock
+     screen reads *Reset* in full at 13 and at 20, and so do the other links in MigLayout rows
+     (*Change*, *Create another account in this store*, the probe library's actions);
+     (2026-11-06, Local networks) the link beside Targets on the Scan page opens a menu of this
+     machine's IPv4 blocks (the Wi-Fi and wired segments, a VPN's, each once; no loopback), a
+     pick lands in Targets and the command, a second pick of the same block adds nothing, and
+     *Refresh* at the bottom of the menu shows a VPN or Wi-Fi connected while the menu was open;
+     (2026-11-06, no dots) every button reads in full on every page in Light and in Dark, at 13
+     and at a larger text size — *New scan*, *Stop*, *Copy*, *New probe*, *New group*, *Add API
+     key*, the Sign out button — and a focused button or field is still told apart by its border;
    - `postgres-tls` against a real PostgreSQL with `ssl = on` (the version needs `trust` auth for
      the probe's user; otherwise `postgresql-tls-auth-required`, still a completed identification);
    - (2026-10-27, hardening) *Copy* of an API-key secret: the clipboard is blank a minute later
@@ -913,6 +930,125 @@ says so under *Scan*. No new test: `ScanPanel` needs a store-backed `AppContext`
 the button is three calls on methods `resetPanel()` already exercises; the page was compiled
 and rendered. Live check owed: run a scan, press New scan, see the form, chips and result
 empty, run again.
+
+**2026-11-04, the Password row moved to the Profile page (uncommitted):** the maintainer: "in
+the api key panel there the password panel it should be under profile". `SubjectPanel.buildProfile`
+builds the Password `ListSection` (the one `CIPassword`, `passwordLabel`, no add button, the
+description now `NSAppUtil.ProfilePage.PASSWORD`) as a block between Name and Identifiers, and
+`buildChangePassword` is the third card of `profileCards` (`changePassword`): the row's Edit
+shows it, its back arrow and a successful change return to the `profile` card. The API Keys
+page keeps the key list and the `editAPI` card only; its description and the `Screen.API_KEYS`
+tooltip no longer mention the password, the Profile ones do (`ApiKeysPage.PASSWORD_SECTION`
+deleted, `ProfilePage.PASSWORD` added). The password section still refreshes on the
+`credentials` event beside the key list. No new test: the row label (`PasswordLabelTest`) and
+the change itself (`ChangePasswordRoundTripTest`) are pinned already and nothing but the
+placement changed; the app suite is 165 / 166 (the one failure, `DMToolTest`'s source-file
+read at the old `no-sneak-core` path, predates this change), and the three states were rendered
+(Profile, its change-password card, API Keys). Help says so under *Account*.
+
+**2026-11-04, the API Keys page as a table page (uncommitted):** the maintainer, on seeing the
+page after the move: "the api key panel it is still like the old look, make it standard like the
+rest of the application". It was the one list page left — two bordered columns with a
+`ListSection` of rows on the left and a *Select a key to edit it* placeholder on the right — while
+Probe library, Probe groups and Scan history are table pages. `SubjectPanel.buildCredentials` now
+builds that shape: the page frame with **Add API key**, a bar with a search box and the count, a
+split card with the keys table (`ApiKeyTableModel` over `KeyRow`, columns `NSAppUtil.ApiKeyColumn`:
+Label · Provider · Base URL · Scope · Description) and the detail stack — a how-to with nothing
+selected, the selected key's facts with Edit / Delete (the secret stays hidden there), the editor
+behind Edit or a double-click, its back arrow returning to the facts. `reloadApiKeys` reads the
+keys off the EDT and keeps the selection by GUID; every add, save, rotate, delete, the
+`credentials` event and the auth change go through it. The enum lost `PLACEHOLDER` and
+`KEYS_SECTION` and gained the bar, how-to, detail and column constants (`NSAppUtilTest` covers
+the new `ApiKeyColumn` by reflection). No new test beyond that: the page needs a store-backed
+`AppContext`, and the add / edit / delete paths are the session's, pinned by
+`APIKeyRoundTripTest`; the five states were rendered on a real store (empty, two keys, a selected
+key, its editor, a search), app suite 165 / 166 as above. Live check owed: listed in the open
+list above.
+
+**2026-11-06, the Reset link beside Font size (uncommitted, gui-audio):** the maintainer: "fix
+the Font size in setting". Rendered under FlatLaf with the app's theme, the Settings page's Font
+size row read `Font size  Aa [13]  Re…` — the *Reset* link clipped at every text size, and the
+unlock screen's row with it. Cause: FlatLaf's `FlatButtonUI` installs a one-point MigLayout
+`visualPadding` on every button (the focus ring it paints outside a regular button; the app's
+themes set `Component.focusWidth` 1), and MigLayout lays a component out that much narrower than
+its preferred size on each side. A regular button has 16-point margins and never shows it; the
+link is a toolbar-type button with 5-point insets around text measured exactly, so the two
+points came out of the text. Fixed where the link is made, gui-audio's `UITokens.link`: the
+property is pinned to a plain zero `Insets`, which FlatLaf's `MigLayoutVisualPadding` leaves
+alone (it only replaces null or its own insets), so a UI update after a text size change keeps
+it. `UITokensLinkTest` (gui-audio) pins the behaviour under FlatLaf; the app's Settings and
+unlock tests render under Metal, which sets no padding, which is why they never caught it. The
+Appearance block was re-rendered under FlatLaf at 13, 20, 8 and 32 with *Reset* in full; gui-audio
+reinstalled (`mvn -o install -pl gui-audio`), app suite and gui-audio's `io.xlogistx.gui` tests
+green (counts in the memory note). Live check owed: listed in the open list above.
+**Later the same day, one widget instead of two rows:** asked whether the Settings row and the
+unlock row were built the same way, the answer was "the same eight lines twice" (widget, Reset
+link wired to `UIFontSize.reset()`, label pointed at the spinner, a MigLayout row); the
+maintainer: "do it in gui-audio with the withReset and left side optional label, that widget is
+also used in the pdf panels". gui-audio's `FontSizeWidget` gained `withLabel()` / `withLabel(text)`
+(caption on the left, `setLabelFor` the spinner) and `withReset()` / `withReset(text, tooltip)`
+(an inline link on the right calling the new `reset()`, which respects the widget's scope: the
+application back to the base, or a scoped tree back to the application size — the PDF viewer's
+scoped toolbar widget is untouched, it asks for neither), with `getLabel()` / `getResetButton()`
+for naming. Both app rows are now `new FontSizeWidget().withLabel().withReset()` with the
+constants applied to the parts, the harness names unchanged, so `SettingsAppearanceBlockTest`
+and `UnlockPanelTextSizeTest` pass as they were; `UIFontSizeTest` gained the widget-row case.
+Rendered under FlatLaf at 13 and 20 (caption, Aa, spinner, Reset on one baseline); app 165 / 166
+(DMToolTest as before), gui-audio `io.xlogistx.gui` 110 / 110.
+
+**2026-11-06, evening — Local networks on the Scan form (uncommitted):** the maintainer: "add
+cidr block as helper in scan panel from `NetUtil.allV4CIDRBlocks()`". zoxweb-core gained
+`NetUtil.allV4CIDRBlocks()` the same day (uncommitted there: the IPv4 `network/prefix` blocks of
+every up, non-loopback interface, each once, in interface order, `null` when there is none;
+`toV4CIDRBlocks(NetworkInterface)` for one interface) — the jar installed that morning did not
+have it, so zoxweb-core was reinstalled from source (`mvn -o install -DskipTests -Dgpg.skip
+-Dmaven.javadoc.skip`; the plain install stops at the GPG signing step). In the app: a **Local
+networks** link (`UITokens.link`, zero margin so the Targets label line stays as high as the
+Ports and Name ones) at the right end of the Targets label; a click runs the read on a
+`BackgroundTask` (enumerating the interfaces can take a moment on Windows) and shows
+`ScanFormPanel.networksMenu(blocks)` under the link — one mono item per block, a pick going
+through `addTarget` (appended unless already a target; the Targets document listener reprints
+the command) —, one disabled *No IPv4 network on this machine* line when there is none, and an
+`IOException` from the read as an inline error under the command; last, under a separator, a
+**Refresh** item (`NETWORKS_REFRESH`, the maintainer right after: "add refresh button to local
+network, in case a network gets activated") that runs the read again and reopens the menu. Four
+`NSAppUtil.ScanForm` constants (`NETWORKS`, `NETWORKS_EMPTY`, `NETWORKS_FAILED`, `NETWORKS_REFRESH`); `field(...)` grew a four-argument
+form that puts a helper on the label's line. `ScanFormPanelTest.aLocalNetworkPickAppendsItToTheTargets`
+feeds the menu two blocks: the items, a pick in the targets and the command, no duplicate on a
+second pick, the second block appended, appended after typed targets with the rest of the
+command kept, the empty line for `null` and for an empty array. Rendered under FlatLaf light and
+dark with the menu open and with the empty line (the dark render's white command field and
+clipped *Copy* / *Stop* were first read as a harness artifact; the field was — the harness had
+not registered the app's theme files — the clipping was real, see the next block; and the Ports
+and Name columns sit a few points lower than Targets in both renders because the row centres
+them against the Targets column's hint line, as before). App suite 166 / 167 (DMToolTest's `no-sneak-core` path, as
+before). Live check owed: listed in the open list above.
+
+**2026-11-06, late — button text clipped with dots (uncommitted):** the maintainer: "you are
+truncating the text of several buttons, you cannot do that, example '+ New Sc..', you cannot put
+dots, you have to be explicit to the user, a lot of button text is truncated, fix it". Measured
+with the app's theme files registered (a harness that skips
+`FlatLaf.registerCustomDefaultsSource("themes")` measures stock FlatLaf — margins 2,14, the
+default blue accent, focus width 0 in light — and shows none of it): FlatLaf installs
+`Component.focusWidth` on every button as MigLayout's *visual padding*; MigLayout takes it off
+the preferred size, hands it back when it places the component, and clamps it at the container's
+edge (`Grid.transferBounds`), so a button that ends a row flush with its container is laid out
+that much narrower than it asked for — the page heads' *New scan*, the command row's *Stop*,
+the *Copy* at the end of the command label's row (111 asked, 110 laid out; the text room one
+point short of the text) — and FlatLaf's clipped label ends in an ellipsis. The app's
+`themes/FlatLaf.properties` set the width to 1 for every theme (the 2026-10-24 "breathing
+room" block), so the clip was in both themes, at every text size, since the redesign; the
+2026-11-06 *Re…* was the same defect on a link. Fix: `Component.focusWidth=0` in that file,
+with the reason beside it (the macOS Dark palette's own 2 is overridden by it too, the base
+file being read after FlatLaf's); keyboard focus still shows by the border colour. Not touched:
+gui-audio's `UITokens.link` pin, still right for a link under any theme. Measured after:
+every button of the Scan page's head and form is laid out at its preferred width under Light
+and Dark at 13 and 16 points; rendered in Dark with *New scan*, *Copy* and *Stop* in full.
+`ButtonTextNotClippedTest` (2, one per theme) registers the theme files, installs the theme,
+lays out the head, the command label row and the command row as the Scan page does, and checks
+each row-ending button's width and text room; with the copied resource flipped back to 1 it
+names the three buttons. App suite 168 / 169 (DMToolTest's `no-sneak-core` path, as before). Live
+check owed: listed in the open list above.
 
 **Open after Phase 5 (updated 2026-10-27):** the rest of the maintainer's run-through on a
 display (unlock, the scan form and history are done; still to try: a stored report from history,

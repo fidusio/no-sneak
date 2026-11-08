@@ -108,6 +108,34 @@
 > right pane; the maintainer: "at start sometimes it is too small") — the same `FontSizeWidget`
 > + Reset as Settings → Appearance, applied at once and remembered, so a subject fixes the size
 > before signing in (`UnlockPanel.buildTextSizeRow`, `UnlockPage.TEXT_SIZE*`).
+> **2026-11-04, uncommitted:** the **Password row and the change-password form moved from the
+> API Keys page to the Profile page** (the maintainer: "in the api key panel there the password
+> panel it should be under profile"): a Password block between Name and Identifiers, its Edit
+> opening the form as a card of the profile stack; API Keys holds only the keys
+> (`ProfilePage.PASSWORD`, `PasswordEditor`; `ApiKeysPage.PASSWORD_SECTION` deleted). **Same
+> day**, the **API Keys page became a table page** like Probe groups and Scan history ("it is
+> still like the old look, make it standard like the rest of the application"): search and
+> count over a keys table (Label · Provider · Base URL · Scope · Description,
+> `NSAppUtil.ApiKeyColumn`), a how-to or the selected key's facts with Edit / Delete on the
+> right, the editor behind Edit (`no-sneak-app/CLAUDE.md` → *SubjectPanel* → *Credentials*).
+> **2026-11-06, uncommitted (gui-audio):** the **Reset link beside Font size** on the Settings page
+> and the unlock screen read *Re…* ("fix the Font size in setting"): FlatLaf's one-point MigLayout
+> `visualPadding` on every button cut the toolbar-type link's text; `UITokens.link` now pins it to
+> zero (`UITokensLinkTest`; `PENDING-ISSUES.md` → the 2026-11-06 block). **Later that day** the
+> two rows (Settings, unlock) became one gui-audio part: `FontSizeWidget.withLabel().withReset()`
+> carries the caption and the Reset link itself (`getLabel()` / `getResetButton()` take the app's
+> constants); the PDF viewer's bare toolbar widget is unchanged. **Same evening, uncommitted:** a
+> **Local networks** link beside the Scan form's Targets label ("add cidr block as helper in scan
+> panel from `NetUtil.allV4CIDRBlocks()`"): a menu of this machine's IPv4 CIDR blocks, read off
+> the EDT from zoxweb-core's new `NetUtil.allV4CIDRBlocks()` (install zoxweb-core from source
+> first: the method is uncommitted there), a pick appending one to the targets, a **Refresh**
+> item last for a network that came up since
+> (`ScanFormPanel.networksMenu`, `no-sneak-app/CLAUDE.md` → *ScanPanel* → the form bullet).
+> **Late that evening, uncommitted:** "+ New Sc.." — button text ending in dots on every page
+> ("you cannot put dots, you have to be explicit to the user"): `Component.focusWidth` went from
+> 1 to 0 in `themes/FlatLaf.properties`, because FlatLaf hands it to MigLayout as the button's
+> visual padding and MigLayout clamps it at a row's edge, one point off every row-ending button
+> (`ButtonTextNotClippedTest`; `PENDING-ISSUES.md` → the 2026-11-06 late block).
 
 Assessment tooling for what a network endpoint exposes — TLS posture, **post-quantum
 readiness**, and running services — plus a Swing front-end and an AI-assistant layer.

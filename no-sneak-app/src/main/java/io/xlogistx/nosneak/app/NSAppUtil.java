@@ -195,8 +195,8 @@ public class NSAppUtil {
         CAPTURE("nav.capture", "Capture", "Screen areas shot at once, kept for the chat"),
         SKILLS("nav.skills", "Skills", "Instructions the assistant carries into a chat"),
         PROVIDERS("nav.providers", "Providers", "Which of your API keys the assistant may use, and their models"),
-        PROFILE("nav.profile", "Profile", "Your name, identifiers and addresses"),
-        API_KEYS("nav.apiKeys", "API Keys", "Your password and the third-party keys the assistant borrows"),
+        PROFILE("nav.profile", "Profile", "Your name, password, identifiers and addresses"),
+        API_KEYS("nav.apiKeys", "API Keys", "The third-party keys the assistant borrows"),
         SETTINGS("nav.settings", "Settings", "The look and text size, the MAC vendor list, the assistant's reply timeout, and the store's backup and restore"),
         ACL("nav.acl", "Access Control", "Subjects, permissions, roles and grants (super-admin only)");
 
@@ -488,6 +488,10 @@ public class NSAppUtil {
         TARGETS("scanForm.targets", "Targets", null),
         TARGETS_FIELD("scanForm.targets.field", "10.0.0.0/24  host.example.com  10.0.0.5-9", null),
         TARGETS_HINT("scanForm.targets.hint", "Hosts, ranges or CIDR blocks you own or are authorised to assess.", null),
+        NETWORKS("scanForm.networks", "Local networks", "Add one of this machine's IPv4 networks to the targets"),
+        NETWORKS_EMPTY("scanForm.networks.empty", "No IPv4 network on this machine", null),
+        NETWORKS_FAILED("scanForm.networks.failed", "Could not read the network interfaces: ", null),
+        NETWORKS_REFRESH("scanForm.networks.refresh", "Refresh", "Read the interfaces again, for a network that came up since"),
         PORTS("scanForm.ports", "Ports", null),
         PORTS_FIELD("scanForm.ports.field", "1-1024 (default when empty)", "Type a -p spec to scan other ports."),
         PORTS_EMPTY("scanForm.ports.empty", "Empty", null),
@@ -880,9 +884,39 @@ public class NSAppUtil {
         }
     }
 
-    /** The Profile page (2026-11-01 conversion): the Name block, the Identifiers and Addresses lists and their dialogs. */
+    /** The columns of the API keys table, in order (2026-11-04); the table model reads its headers here. */
+    public enum ApiKeyColumn implements GetNameDescriptionDisplay {
+        LABEL("apiKeys.col.label", "Label", "The key's label"),
+        PROVIDER("apiKeys.col.provider", "Provider", "The provider the key belongs to"),
+        BASE_URL("apiKeys.col.baseUrl", "Base URL", "The endpoint the key is sent to"),
+        SCOPE("apiKeys.col.scope", "Scope", "The vendor's domain and app id, when the key carries them"),
+        DESCRIPTION("apiKeys.col.description", "Description", "What the key is for");
+
+        private final GetNameDescriptionDisplay gndd;
+
+        ApiKeyColumn(String name, String displayName, String description) {
+            gndd = new GetNameDescriptionDisplayImpl(name, description, displayName);
+        }
+
+        @Override
+        public String getName() {
+            return gndd.getName();
+        }
+
+        @Override
+        public String getDisplayName() {
+            return gndd.getDisplayName();
+        }
+
+        @Override
+        public String getDescription() {
+            return gndd.getDescription();
+        }
+    }
+
+    /** The Profile page (2026-11-01 conversion): the Name block, the Password row (since 2026-11-04), the Identifiers and Addresses lists and their dialogs. */
     public enum ProfilePage implements GetNameDescriptionDisplay {
-        PAGE("profile", "Profile", "Your account: name, date of birth, identifiers and addresses."),
+        PAGE("profile", "Profile", "Your account: name, date of birth, password, identifiers and addresses."),
         NAME_TITLE("profile.name", "Name", null),
         NAME_NOTE("profile.name.note", "How the account is shown; kept in this store under your account and nowhere else.", null),
         FIRST_NAME("profile.firstName", "First name", null),
@@ -895,6 +929,7 @@ public class NSAppUtil {
         STATUS("profile.status", "", null),
         SAVING("profile.status.saving", "Saving…", null),
         SAVED("profile.status.saved", "Saved.", null),
+        PASSWORD("profile.password", "Password", "The password you sign in with. The vault password is a different one and is not kept here."),
         IDENTIFIERS("profile.identifiers", "Identifiers", "The names you can sign in with: usernames and email addresses. Deleting the one "
                 + "you signed in with moves your account to another of them."),
         IDENTIFIERS_ADD("profile.identifiers.add", "+ Add identifier", null),
@@ -972,7 +1007,7 @@ public class NSAppUtil {
         }
     }
 
-    /** The change-password card of the API Keys page (2026-11-01 conversion). */
+    /** The change-password card of the Profile page (2026-11-01 conversion; on the API Keys page until 2026-11-04). */
     public enum PasswordEditor implements GetNameDescriptionDisplay {
         EDITOR("password", "Change password", null),
         NOTE("password.note", "The password you sign in with. The vault password is changed outside the app.", null),
@@ -1007,15 +1042,34 @@ public class NSAppUtil {
         }
     }
 
-    /** The API Keys page (2026-11-01 conversion): the credential list, the add dialog and the key editor. */
+    /**
+     * The API Keys page (2026-11-01 conversion; a table page in the Probe groups' shape since 2026-11-04):
+     * the head, the bar, the keys table, the how-to and detail panes, the add dialog and the key editor.
+     */
     public enum ApiKeysPage implements GetNameDescriptionDisplay {
-        PAGE("apiKeys", "API Keys", "Your password, and the third-party API keys the assistant borrows; it holds none of its own."),
-        PLACEHOLDER("apiKeys.placeholder", "Select a key to edit it, or add one.", null),
-        ADD("apiKeys.add", "Add API key", null),
-        PASSWORD_SECTION("apiKeys.password", "Password", "The password you sign in with. The vault password is a different one and is not kept here."),
-        KEYS_SECTION("apiKeys.keys", "API keys", "Keys of third-party AI providers, kept sealed in this store under your account. "
-                + "The assistant's Providers page picks among them; a key is never sent anywhere but to its own provider."),
+        PAGE("apiKeys", "API Keys", "Keys of third-party AI providers the assistant borrows, kept sealed under your account."),
+        ADD("apiKeys.add", "Add API key", "Enter a key of a third-party AI provider"),
+        SEARCH("apiKeys.search", "Search label, provider, URL", "Filters the keys by label, description, provider or base URL"),
+        COUNT("apiKeys.count", "", "How many keys are listed"),
+        TABLE("apiKeys.table", "API keys", "Your API keys; select one to read it, double-click to edit it"),
         KEYS_EMPTY("apiKeys.keys.empty", "No API keys yet", null),
+        HOWTO_TITLE("apiKeys.howto", "What a key is for", null),
+        HOWTO_TEXT("apiKeys.howto.text", "An API key lets the assistant talk to a provider on your behalf. It is sealed in this "
+                + "store under your account, shown in clear only to you, and sent nowhere but to its own provider. "
+                + "One key can back several providers. Select a key to read it; two steps to use one:", null),
+        HOWTO_ADD("apiKeys.howto.add", "Add API key", "Paste the key, give it a label, pick its provider and base URL."),
+        HOWTO_PROVIDERS("apiKeys.howto.providers", "Link it on the Providers page", "The assistant uses a key only once a provider is set up with it."),
+        KEY_TITLE("apiKeys.key.title", "", "The selected key"),
+        EDIT("apiKeys.key.edit", "Edit", "Change the key's label, description, scope, provider or base URL"),
+        FACT_DESCRIPTION("apiKeys.key.description", "Description", null),
+        FACT_PROVIDER("apiKeys.key.provider", "Provider", null),
+        FACT_BASE_URL("apiKeys.key.baseUrl", "Base URL", null),
+        FACT_SCOPE("apiKeys.key.scope", "Scope", "The vendor's domain and app id, when the key carries them"),
+        FACT_AUTH("apiKeys.key.auth", "Auth", "The auth scheme and header name the key is sent with"),
+        FACT_KIND("apiKeys.key.kind", "Kind", null),
+        KIND_EXTERNAL("apiKeys.key.kind.external", "third-party, sent only to its provider", null),
+        KIND_INTERNAL("apiKeys.key.kind.internal", "issued here, scoped to no-sneak", null),
+        FACT_SECRET("apiKeys.key.secret", "Secret", "Hidden here; Edit shows or copies it"),
         ADD_DIALOG("apiKeys.add.dialog", "Add API key", null),
         ADD_CREATE("apiKeys.add.create", "Create key", null),
         ADD_CANCEL("apiKeys.add.cancel", "Cancel", null),

@@ -276,24 +276,20 @@ public class UnlockPanel extends JPanel {
     /**
      * The text size row (2026-11-03; the maintainer: "at start sometimes it is too small"): the
      * same control as the Settings page's Appearance block — gui-audio's {@link FontSizeWidget}
-     * over {@link UIFontSize} with a Reset — right-aligned in the right pane's top corner, so
+     * over {@link UIFontSize} with its own caption and Reset link ({@code withLabel().withReset()},
+     * 2026-11-06) — right-aligned in the right pane's top corner, so
      * a subject whose stored size reads too small on this screen can fix it before signing in.
      * The size applies at once to the whole application and is remembered through the listener
      * {@code NoSneakMain} registers on {@code UIFontSize}, like a change made in Settings.
      */
     private JComponent buildTextSizeRow(Color ground) {
-        FontSizeWidget size = GUIUtil.applyProp(new FontSizeWidget(), UnlockPage.TEXT_SIZE);
-        JButton reset = UITokens.link(GUIUtil.applyProp(new JButton(), UnlockPage.TEXT_SIZE_RESET));
-        reset.addActionListener(_ -> UIFontSize.reset());
-        JLabel label = GUIUtil.applyProp(new JLabel(), UnlockPage.TEXT_SIZE_LABEL);
-        label.setForeground(UITokens.muted());
-        label.setLabelFor(size.getSpinner());
-        JPanel row = new JPanel(new MigLayout("insets 12 24 0 24, gapx 8", "[grow][][][]"));
+        FontSizeWidget size = GUIUtil.applyProp(new FontSizeWidget().withLabel().withReset(), UnlockPage.TEXT_SIZE);
+        GUIUtil.applyProp(size.getLabel(), UnlockPage.TEXT_SIZE_LABEL).setForeground(UITokens.muted());
+        GUIUtil.applyProp(size.getResetButton(), UnlockPage.TEXT_SIZE_RESET);
+        JPanel row = new JPanel(new MigLayout("insets 12 24 0 24", "[grow][]"));
         row.setBackground(ground);
         row.add(new JLabel(), "growx");
-        row.add(label);
         row.add(size);
-        row.add(reset);
         return row;
     }
 

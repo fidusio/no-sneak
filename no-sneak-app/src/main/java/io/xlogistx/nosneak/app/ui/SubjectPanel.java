@@ -22,6 +22,8 @@ import org.zoxweb.shared.util.NVGenericMap;
 import org.zoxweb.shared.util.NVPair;
 
 import javax.swing.*;
+import javax.swing.table.AbstractTableModel;
+import javax.swing.table.TableRowSorter;
 import javax.swing.text.DefaultFormatter;
 import java.awt.*;
 import java.io.BufferedInputStream;
@@ -38,6 +40,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.*;
+import java.util.List;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
@@ -106,8 +109,16 @@ public class SubjectPanel extends JPanel {
     private ListSection<PrincipalIdentifier> identifiers;
     private ListSection<NVGenericMap> addressSection;
     private ListSection<CIPassword> passwordSection;
-    private ListSection<SubjectAPIKey> apiKeySection;
     private final CardStack profileCards = new CardStack();
+
+    // ---- API keys page (a table page since 2026-11-04): the table, its bar and the detail pane ----
+    private final ApiKeyTableModel apiKeyModel = new ApiKeyTableModel();
+    private final JTable apiKeyTable = new JTable(apiKeyModel);
+    private final TableRowSorter<ApiKeyTableModel> apiKeySorter = new TableRowSorter<>(apiKeyModel);
+    private final JTextField apiKeySearch = new JTextField();
+    private final JLabel apiKeyCount = new JLabel();
+    private final JLabel apiKeyTitle = new JLabel();
+    private final KeyValuePanel apiKeyFacts = new KeyValuePanel(100);
     private final CardStack credentialCards = new CardStack();
 
     public SubjectPanel(AppContext ctx) {
@@ -135,11 +146,12 @@ public class SubjectPanel extends JPanel {
             identifiers.refresh();
             addressSection.refresh();
             passwordSection.refresh();
-            apiKeySection.refresh();
+            reloadApiKeys();
             populateProfile();
             if (!(boolean) e.getNewValue()) {
                 cardStack.show(SECTION_PROFILE);
-                credentialCards.show("list");
+                apiKeySearch.setText("");
+                credentialCards.show("howto");
                 currentPwd.setText("");
                 newPwd.setText("");
                 confirmPwd.setText("");
@@ -174,7 +186,7 @@ public class SubjectPanel extends JPanel {
         ctx.session().onMacVendorsChange(_ -> SwingUtilities.invokeLater(this::refreshSyncStatus));
         ctx.session().onCredentialsChange(_ -> SwingUtilities.invokeLater(() -> {
             passwordSection.refresh();
-            apiKeySection.refresh();
+            reloadApiKeys();
         }));
 
         add(cardStack.view(), BorderLayout.CENTER);
@@ -316,8 +328,10 @@ public class SubjectPanel extends JPanel {
     /**
      * The Appearance block (2026-11-02, {@code PLAN-appearance.md}): the theme, stored per
      * installation and applied at once by rebuilding the pages, and the control text size,
-     * gui-audio's {@link FontSizeWidget} over {@link UIFontSize} with a Reset. The size is stored
-     * by the listener {@code NoSneakMain} registers on {@code UIFontSize}, so any knob is remembered.
+     * gui-audio's {@link FontSizeWidget} over {@link UIFontSize} with its own caption and Reset
+     * link ({@code withLabel().withReset()}, 2026-11-06 — the unlock screen builds the same row).
+     * The size is stored by the listener {@code NoSneakMain} registers on {@code UIFontSize}, so
+     * any knob is remembered.
      */
     private JPanel buildAppearance() {
         return appearanceBlock(AppPrefs.theme(), theme -> {
@@ -380,17 +394,10 @@ public class SubjectPanel extends JPanel {
         themeRow.add(status);
         panel.add(themeRow, "growx 0");
 
-        FontSizeWidget size = GUIUtil.applyProp(new FontSizeWidget(), NSAppUtil.SettingsPage.TEXT_SIZE);
-        JButton reset = UITokens.link(GUIUtil.applyProp(new JButton(), NSAppUtil.SettingsPage.TEXT_SIZE_RESET));
-        reset.addActionListener(_ -> UIFontSize.reset());
-        JLabel sizeLabel = GUIUtil.applyProp(new JLabel(), NSAppUtil.SettingsPage.TEXT_SIZE_LABEL);
-        sizeLabel.setLabelFor(size.getSpinner());
-        JPanel sizeRow = new JPanel(new MigLayout("insets 0, gapx 8", "[][][]"));
-        sizeRow.setOpaque(false);
-        sizeRow.add(sizeLabel);
-        sizeRow.add(size);
-        sizeRow.add(reset);
-        panel.add(sizeRow, "growx 0");
+        FontSizeWidget size = GUIUtil.applyProp(new FontSizeWidget().withLabel().withReset(), NSAppUtil.SettingsPage.TEXT_SIZE);
+        GUIUtil.applyProp(size.getLabel(), NSAppUtil.SettingsPage.TEXT_SIZE_LABEL);
+        GUIUtil.applyProp(size.getResetButton(), NSAppUtil.SettingsPage.TEXT_SIZE_RESET);
+        panel.add(size, "growx 0");
 
         return panel;
     }
@@ -611,6 +618,7 @@ public class SubjectPanel extends JPanel {
     private JPanel buildProfileArea() {
         profileCards.add(buildProfile(), "profile");
         profileCards.add(buildEditAddress(), "editAddress");
+        profileCards.add(buildChangePassword(), "changePassword");
         profileCards.show("profile");
 
         JPanel anchor = new JPanel(new MigLayout("insets 0", "[480!]"));
@@ -625,13 +633,21 @@ public class SubjectPanel extends JPanel {
     private final JLabel profileStatus = blockStatus(NSAppUtil.ProfilePage.STATUS);
 
     /**
-     * The profile card (re-laid out 2026-10-27 in the Settings page's shape): three blocks
+     * The profile card (re-laid out 2026-10-27 in the Settings page's shape): four blocks
      * separated by rules — <b>Name</b> (a {@link FormPanel} with the page's one primary action,
-     * Save changes, and a status line instead of a dialog), <b>Identifiers</b> and
-     * <b>Addresses</b> (the two {@link ListSection}s, each with a description of what the list
-     * is for).
+     * Save changes, and a status line instead of a dialog), <b>Password</b> (moved here from the
+     * API Keys page on 2026-11-04: the one row's Edit flips to the change-password card),
+     * <b>Identifiers</b> and <b>Addresses</b> (the three {@link ListSection}s, each with a
+     * description of what the list is for).
      */
     private JPanel buildProfile() {
+        passwordSection = ListSection.of(() -> ctx.session().getAllCredentialForUserByType(CredentialInfo.Type.PASSWORD).stream().filter(CIPassword.class::isInstance).map(CIPassword.class::cast).toList())
+                .title(NSAppUtil.ProfilePage.PASSWORD.getDisplayName())
+                .description(NSAppUtil.ProfilePage.PASSWORD.getDescription())
+                .label(SubjectPanel::passwordLabel)
+                .onEdit(_ -> () -> profileCards.show("changePassword"))
+                .build();
+
         identifiers = ListSection.of(() -> ctx.session().getAllPrincipalIDForLoggedInUser())
                 .title(NSAppUtil.ProfilePage.IDENTIFIERS.getDisplayName())
                 .description(NSAppUtil.ProfilePage.IDENTIFIERS.getDescription())
@@ -669,6 +685,8 @@ public class SubjectPanel extends JPanel {
         card.setOpaque(false);
         card.add(name);
         card.add(new JSeparator(), "gaptop 8, gapbottom 8");
+        card.add(passwordSection, "gapx 12 12");
+        card.add(new JSeparator(), "gaptop 16, gapbottom 8");
         card.add(identifiers, "gapx 12 12");
         card.add(new JSeparator(), "gaptop 16, gapbottom 8");
         card.add(addressSection, "gapx 12 12, gapbottom 12");
@@ -853,83 +871,326 @@ public class SubjectPanel extends JPanel {
                 });
     }
 
-    // ============================ Credentials (list) ============================
+    // ============================ API keys (table page) ============================
 
     /**
-     * The API keys page (board 5 of the redesign canvas, 2026-10-24): the credential list on the
-     * left, the editor on the right. The right-hand stack keeps the old card names — {@code "list"}
-     * is now the placeholder shown while nothing is being edited — so every
-     * {@code credentialCards.show("list")} after a save, a delete or a logout still lands on the
-     * right thing without touching those call sites.
+     * The API keys page, in the shape of the Probe groups and Scan history pages since 2026-11-04
+     * (the maintainer: "the api key panel it is still like the old look, make it standard like the
+     * rest of the application"): the page frame with the one primary action, <b>Add API key</b>;
+     * a bar with a search box and the count; a split card — the keys table on the left
+     * ({@link ApiKeyTableModel}, columns from {@link NSAppUtil.ApiKeyColumn}), the detail stack
+     * {@code credentialCards} on the right: <b>howto</b> with nothing selected, <b>key</b> for the
+     * selected row (its label with Edit / Delete, its facts), <b>editAPI</b> the editor.
      */
     private JPanel buildCredentials() {
-        JLabel placeholder = GUIUtil.applyProp(new JLabel("", SwingConstants.CENTER), NSAppUtil.ApiKeysPage.PLACEHOLDER);
-        placeholder.setForeground(UITokens.muted());
-        JPanel empty = new JPanel(new BorderLayout());
-        empty.setOpaque(false);
-        empty.add(placeholder, BorderLayout.CENTER);
-
-        credentialCards.add(empty, "list");
-        credentialCards.add(buildChangePassword(), "changePassword");
-        credentialCards.add(buildEditAPIKey(), "editAPI");
-        credentialCards.show("list");
-
-        // 2026-10-27: the page frame of every other page (title, description, the one primary
-        // action in the head — Add API key, which was a button inside the list), the two cards below
-        JPanel left = buildCredentialList();
-        left.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(UITokens.border()),
-                BorderFactory.createEmptyBorder(8, 8, 8, 8)));
-        left.setBackground(UITokens.surface());
-        JPanel right = new JPanel(new BorderLayout());
-        right.setBackground(UITokens.surface());
-        right.setBorder(BorderFactory.createLineBorder(UITokens.border()));
-        right.add(credentialCards.view(), BorderLayout.CENTER);
-
-        JPanel split = new JPanel(new MigLayout("insets 0, gapx 20, fill", "[grow 45,fill][grow 55,fill]", "[grow,fill]"));
-        split.setOpaque(false);
-        split.add(left, "wmin 0, hmin 0, aligny top, growy");
-        split.add(right, "wmin 0, hmin 0, aligny top, growy");
-
         PagePanel page = new PagePanel(NSAppUtil.Screen.API_KEYS.getDisplayName(), NSAppUtil.ApiKeysPage.PAGE.getDescription());
         page.setName(NSAppUtil.ApiKeysPage.PAGE.getName());
-        JButton addKey = UITokens.primary(GUIUtil.applyProp(new JButton(new IconUtil.PlusIcon(16)), NSAppUtil.ApiKeysPage.ADD));
+        JButton addKey = UITokens.primary(GUIUtil.applyProp(new JButton(IconUtil.svgIcon("io/xlogistx/gui/icons/plus.svg", 14, Color.WHITE)), NSAppUtil.ApiKeysPage.ADD));
         addKey.addActionListener(_ -> onAddAPIKey());
         page.action(addKey);
+
+        JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", "[260!][]push"));
+        bar.setOpaque(false);
+        GUIUtil.applyProp(apiKeySearch, NSAppUtil.ApiKeysPage.SEARCH);
+        apiKeySearch.putClientProperty("JTextField.leadingIcon", new IconUtil.SearchIcon(14));
+        bar.add(apiKeySearch, "growx");
+        GUIUtil.applyProp(apiKeyCount, NSAppUtil.ApiKeysPage.COUNT);
+        apiKeyCount.setForeground(UITokens.muted());
+        apiKeyCount.setFont(UITokens.font(Font.PLAIN, -1f));
+        bar.add(apiKeyCount);
+        page.add(bar, "growx");
+
+        Tables.style(GUIUtil.applyProp(apiKeyTable, NSAppUtil.ApiKeysPage.TABLE));
+        Tables.width(apiKeyTable, ApiKeyTableModel.COL_LABEL, 160);
+        Tables.width(apiKeyTable, ApiKeyTableModel.COL_PROVIDER, 130);
+        Tables.width(apiKeyTable, ApiKeyTableModel.COL_BASE_URL, 220);
+        Tables.width(apiKeyTable, ApiKeyTableModel.COL_SCOPE, 140);
+        Tables.width(apiKeyTable, ApiKeyTableModel.COL_DESCRIPTION, 200);
+        apiKeyTable.getColumnModel().getColumn(ApiKeyTableModel.COL_BASE_URL).setCellRenderer(new MonoRenderer());
+        apiKeyTable.setRowSorter(apiKeySorter);
+        apiKeyTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        apiKeyTable.getSelectionModel().addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting()) showKeyDetail(selectedKeyRow());
+        });
+        apiKeyTable.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent e) {
+                if (e.getClickCount() != 2) return;
+                KeyRow row = selectedKeyRow();
+                if (row != null) onEditAPIKey(row.key());
+            }
+        });
+        apiKeySearch.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            public void insertUpdate(javax.swing.event.DocumentEvent e) {
+                filterApiKeys();
+            }
+
+            public void removeUpdate(javax.swing.event.DocumentEvent e) {
+                filterApiKeys();
+            }
+
+            public void changedUpdate(javax.swing.event.DocumentEvent e) {
+                filterApiKeys();
+            }
+        });
+
+        JScrollPane tableScroll = new JScrollPane(apiKeyTable);
+        tableScroll.setBorder(BorderFactory.createEmptyBorder());
+        tableScroll.getViewport().setBackground(UITokens.surface());
+        tableScroll.setMinimumSize(new Dimension(0, 0));
+
+        credentialCards.add(buildKeyHowTo(), "howto");
+        credentialCards.add(buildKeyCard(), "key");
+        credentialCards.add(scroll(buildEditAPIKey()), "editAPI");
+        JComponent detail = credentialCards.view();
+        detail.setBackground(UITokens.surfaceAlt());
+        detail.setOpaque(true);
+        detail.setBorder(BorderFactory.createMatteBorder(0, 1, 0, 0, UITokens.border()));
+        detail.setMinimumSize(new Dimension(0, 0));
+        credentialCards.show("howto");
+
+        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, tableScroll, detail);
+        split.setResizeWeight(0.55);
+        split.setBorder(BorderFactory.createLineBorder(UITokens.border()));
+        split.setDividerSize(6);
+        split.setMinimumSize(new Dimension(0, 0));
         page.add(split, "grow, push");
         return page;
     }
 
-    private JPanel buildCredentialList() {
-
-        passwordSection = ListSection.of(() -> ctx.session().getAllCredentialForUserByType(CredentialInfo.Type.PASSWORD).stream().filter(CIPassword.class::isInstance).map(CIPassword.class::cast).toList())
-                .title(NSAppUtil.ApiKeysPage.PASSWORD_SECTION.getDisplayName())
-                .description(NSAppUtil.ApiKeysPage.PASSWORD_SECTION.getDescription())
-                .label(SubjectPanel::passwordLabel)
-                .onEdit(_ -> () -> credentialCards.show("changePassword"))
-                .build();
-
-        apiKeySection = ListSection.of(() -> ctx.session().getAllCredentialForUserByType(CredentialInfo.Type.API_KEY).stream().filter(SubjectAPIKey.class::isInstance).map(SubjectAPIKey.class::cast).toList())
-                .title(NSAppUtil.ApiKeysPage.KEYS_SECTION.getDisplayName())
-                .description(NSAppUtil.ApiKeysPage.KEYS_SECTION.getDescription())
-                .label(p -> {
-                    String label = p.getName();
-                    return (label == null || label.isBlank()) ? "API key" : "API key — " + label;
-                })
-                .onEdit(p -> () -> onEditAPIKey(p))
-                .onRemove(p -> () -> onDeleteAPIKey(p))
-                .emptyText(NSAppUtil.ApiKeysPage.KEYS_EMPTY.getDisplayName())
-                .build();
-
-        JPanel content = new JPanel(new MigLayout("wrap 1, insets 4, gapy 12", "[grow,fill]"));
-        content.setOpaque(false);
-        content.add(passwordSection);
-        content.add(apiKeySection);
-
-        JPanel p = new JPanel(new BorderLayout());
+    /** The detail pane with nothing selected: what a key is for, and the two steps to use one. */
+    private JPanel buildKeyHowTo() {
+        JPanel p = new JPanel(new MigLayout("insets 20, wrap 1, gapy 6", "[grow,fill]"));
         p.setOpaque(false);
-        p.add(content, BorderLayout.NORTH);   // hug the top; leftover space stays at the bottom
+        JLabel t = GUIUtil.applyProp(new JLabel(), NSAppUtil.ApiKeysPage.HOWTO_TITLE);
+        t.setFont(UITokens.font(Font.BOLD, 2f));
+        p.add(t, "gapbottom 4");
+        WrapLabel what = GUIUtil.applyProp(new WrapLabel(""), NSAppUtil.ApiKeysPage.HOWTO_TEXT);
+        what.setWrapWidth(300);
+        what.setForeground(UITokens.muted());
+        p.add(what, "gapbottom 8");
+
+        JButton add = UITokens.link(GUIUtil.applyProp(new JButton(), NSAppUtil.ApiKeysPage.HOWTO_ADD));
+        add.addActionListener(_ -> onAddAPIKey());
+        p.add(add, "growx 0");
+        p.add(howToNote(NSAppUtil.ApiKeysPage.HOWTO_ADD.getDescription()));
+
+        JButton providers = UITokens.link(GUIUtil.applyProp(new JButton(), NSAppUtil.ApiKeysPage.HOWTO_PROVIDERS));
+        providers.addActionListener(_ -> ctx.nav().show(NSAppUtil.Screen.PROVIDERS));
+        p.add(providers, "growx 0, gaptop 8");
+        p.add(howToNote(NSAppUtil.ApiKeysPage.HOWTO_PROVIDERS.getDescription()));
         return p;
+    }
+
+    private static WrapLabel howToNote(String text) {
+        WrapLabel l = new WrapLabel(text);
+        l.setWrapWidth(290);
+        l.setForeground(UITokens.muted());
+        l.setBorder(BorderFactory.createEmptyBorder(0, 12, 0, 0));
+        return l;
+    }
+
+    /** The detail pane for a selected key: the label with Edit / Delete, then its facts (never the secret). */
+    private JPanel buildKeyCard() {
+        JPanel p = new JPanel(new MigLayout("insets 16, wrap 1, gapy 8, fill", "[grow,fill]", "[][]push"));
+        p.setOpaque(false);
+        GUIUtil.applyProp(apiKeyTitle, NSAppUtil.ApiKeysPage.KEY_TITLE);
+        apiKeyTitle.setFont(UITokens.font(Font.BOLD, 2f));
+        JPanel header = new JPanel(new MigLayout("insets 0, gapx 8", "[grow][][]"));
+        header.setOpaque(false);
+        header.add(apiKeyTitle, "growx, wmin 0");
+        JButton edit = GUIUtil.applyProp(new JButton(new IconUtil.EditIcon(16)), NSAppUtil.ApiKeysPage.EDIT);
+        edit.addActionListener(_ -> {
+            KeyRow row = selectedKeyRow();
+            if (row != null) onEditAPIKey(row.key());
+        });
+        JButton delete = GUIUtil.applyProp(new JButton(new IconUtil.DeleteIcon(16)), NSAppUtil.ApiKeysPage.DELETE);
+        delete.setForeground(UITokens.danger());
+        delete.addActionListener(_ -> {
+            KeyRow row = selectedKeyRow();
+            if (row != null) onDeleteAPIKey(row.key());
+        });
+        for (JButton b : new JButton[]{edit, delete}) {
+            b.putClientProperty("JButton.buttonType", "toolBarButton");
+            header.add(b);
+        }
+        p.add(header);
+        p.add(apiKeyFacts);
+        return p;
+    }
+
+    /** Fills the detail pane for {@code row}; null shows the how-to card. The editor, when open, stays open. */
+    private void showKeyDetail(KeyRow row) {
+        if (row == null) {
+            credentialCards.show("howto");
+            return;
+        }
+        apiKeyTitle.setText(row.label());
+        apiKeyFacts.clear();
+        WrapLabel description = apiKeyFacts.put(NSAppUtil.ApiKeysPage.FACT_DESCRIPTION.getDisplayName(), row.description().isEmpty() ? "—" : row.description());
+        if (description != null) description.setWrapWidth(260);
+        apiKeyFacts.put(NSAppUtil.ApiKeysPage.FACT_PROVIDER.getDisplayName(), row.provider().isEmpty() ? "—" : row.provider());
+        apiKeyFacts.putMono(NSAppUtil.ApiKeysPage.FACT_BASE_URL.getDisplayName(), row.baseUrl().isEmpty() ? "—" : row.baseUrl());
+        apiKeyFacts.putMono(NSAppUtil.ApiKeysPage.FACT_SCOPE.getDisplayName(), row.scope().isEmpty() ? "—" : row.scope());
+        if (!row.auth().isEmpty()) apiKeyFacts.putMono(NSAppUtil.ApiKeysPage.FACT_AUTH.getDisplayName(), row.auth());
+        apiKeyFacts.put(NSAppUtil.ApiKeysPage.FACT_KIND.getDisplayName(), row.kind());
+        apiKeyFacts.put(NSAppUtil.ApiKeysPage.FACT_SECRET.getDisplayName(), NSAppUtil.ApiKeysPage.FACT_SECRET.getDescription());
+        apiKeyFacts.revalidate();
+        apiKeyFacts.repaint();
+        credentialCards.show("key");
+    }
+
+    private KeyRow selectedKeyRow() {
+        int row = apiKeyTable.getSelectedRow();
+        return row < 0 ? null : apiKeyModel.at(apiKeyTable.convertRowIndexToModel(row));
+    }
+
+    /**
+     * Re-reads the subject's keys off the EDT (the session's metadata readers walk each key's
+     * property bag) and rebuilds the table; the selection survives by GUID. Signed out, the
+     * session returns nothing and the table empties.
+     */
+    private void reloadApiKeys() {
+        KeyRow before = selectedKeyRow();
+        BackgroundTask.run(this, null,
+                () -> {
+                    List<KeyRow> rows = new ArrayList<>();
+                    for (CredentialInfo c : ctx.session().getAllCredentialForUserByType(CredentialInfo.Type.API_KEY)) {
+                        if (c instanceof SubjectAPIKey k) rows.add(keyRow(k));
+                    }
+                    rows.sort(Comparator.comparing(KeyRow::label, String.CASE_INSENSITIVE_ORDER));
+                    return rows;
+                },
+                rows -> {
+                    apiKeyModel.setRows(rows);
+                    filterApiKeys();
+                    if (before != null && selectKeyByGUID(before.key().getGUID())) return;
+                    apiKeyTable.clearSelection();
+                    showKeyDetail(null);
+                });
+    }
+
+    /** One table row: the key and the strings the page shows for it, read once here. */
+    private KeyRow keyRow(SubjectAPIKey k) {
+        Session session = ctx.session();
+        boolean external = session.isExternalKey(k);
+        String label = k.getName();
+        if (label == null || label.isBlank()) label = "API key";
+        String scope;
+        if (external) {
+            String d = session.vendorDomainOf(k), a = session.vendorAppOf(k);
+            scope = d == null || a == null ? "" : d + " · " + a;
+        } else {
+            scope = k.getAppID() == null ? "" : k.getAppID().getDomainID() + " · " + k.getAppID().getAppID();
+        }
+        String auth = Objects.toString(session.authTypeOf(k), "").trim();
+        String header = Objects.toString(session.headerNameOf(k), "").trim();
+        if (!header.isEmpty()) auth = auth.isEmpty() ? header : auth + " · " + header;
+        return new KeyRow(k, label,
+                Objects.toString(k.getDescription(), "").trim(),
+                Objects.toString(session.providerOf(k), "").trim(),
+                Objects.toString(session.baseUrlOf(k), "").trim(),
+                scope, auth,
+                (external ? NSAppUtil.ApiKeysPage.KIND_EXTERNAL : NSAppUtil.ApiKeysPage.KIND_INTERNAL).getDisplayName());
+    }
+
+    private boolean selectKeyByGUID(String guid) {
+        if (guid == null) return false;
+        for (int i = 0; i < apiKeyTable.getRowCount(); i++) {
+            if (guid.equals(apiKeyModel.at(apiKeyTable.convertRowIndexToModel(i)).key().getGUID())) {
+                apiKeyTable.setRowSelectionInterval(i, i);
+                apiKeyTable.scrollRectToVisible(apiKeyTable.getCellRect(i, 0, true));
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void filterApiKeys() {
+        String q = apiKeySearch.getText().trim().toLowerCase(Locale.ROOT);
+        apiKeySorter.setRowFilter(new RowFilter<>() {
+            @Override
+            public boolean include(Entry<? extends ApiKeyTableModel, ? extends Integer> entry) {
+                return entry.getModel().at(entry.getIdentifier()).matches(q);
+            }
+        });
+        int shown = apiKeyTable.getRowCount(), all = apiKeyModel.getRowCount();
+        apiKeyCount.setText(all == 0 ? NSAppUtil.ApiKeysPage.KEYS_EMPTY.getDisplayName()
+                : shown == all ? all + (all == 1 ? " key" : " keys") : shown + " of " + all + " keys");
+    }
+
+    /** A key as the table shows it; {@code matches} is the search box's rule. */
+    record KeyRow(SubjectAPIKey key, String label, String description, String provider, String baseUrl,
+                  String scope, String auth, String kind) {
+        boolean matches(String q) {
+            if (q.isEmpty()) return true;
+            for (String s : new String[]{label, description, provider, baseUrl, scope}) {
+                if (s.toLowerCase(Locale.ROOT).contains(q)) return true;
+            }
+            return false;
+        }
+    }
+
+    /** The keys table: columns from {@link NSAppUtil.ApiKeyColumn}, rows of {@link KeyRow}. */
+    static final class ApiKeyTableModel extends AbstractTableModel {
+        static final int COL_LABEL = NSAppUtil.ApiKeyColumn.LABEL.ordinal(),
+                COL_PROVIDER = NSAppUtil.ApiKeyColumn.PROVIDER.ordinal(),
+                COL_BASE_URL = NSAppUtil.ApiKeyColumn.BASE_URL.ordinal(),
+                COL_SCOPE = NSAppUtil.ApiKeyColumn.SCOPE.ordinal(),
+                COL_DESCRIPTION = NSAppUtil.ApiKeyColumn.DESCRIPTION.ordinal();
+        private final List<KeyRow> rows = new ArrayList<>();
+
+        void setRows(List<KeyRow> fresh) {
+            rows.clear();
+            rows.addAll(fresh);
+            fireTableDataChanged();
+        }
+
+        KeyRow at(int modelRow) {
+            return rows.get(modelRow);
+        }
+
+        @Override
+        public int getRowCount() {
+            return rows.size();
+        }
+
+        @Override
+        public int getColumnCount() {
+            return NSAppUtil.ApiKeyColumn.values().length;
+        }
+
+        @Override
+        public String getColumnName(int column) {
+            return NSAppUtil.ApiKeyColumn.values()[column].getDisplayName();
+        }
+
+        @Override
+        public boolean isCellEditable(int rowIndex, int columnIndex) {
+            return false;
+        }
+
+        @Override
+        public Object getValueAt(int rowIndex, int columnIndex) {
+            KeyRow r = rows.get(rowIndex);
+            return switch (NSAppUtil.ApiKeyColumn.values()[columnIndex]) {
+                case LABEL -> r.label();
+                case PROVIDER -> r.provider().isEmpty() ? "—" : r.provider();
+                case BASE_URL -> r.baseUrl();
+                case SCOPE -> r.scope().isEmpty() ? "—" : r.scope();
+                case DESCRIPTION -> r.description();
+            };
+        }
+    }
+
+    private static final class MonoRenderer extends javax.swing.table.DefaultTableCellRenderer {
+        @Override
+        public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
+            super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+            setFont(UITokens.mono(-1.5f));
+            if (!isSelected) setForeground(UITokens.muted());
+            return this;
+        }
     }
 
     static String passwordLabel(CIPassword p) {
@@ -1033,8 +1294,7 @@ public class SubjectPanel extends JPanel {
         BackgroundTask.runCatching(this, null,
                 () -> ctx.session().storeAPIKey(label, description, domainId, appId, key, provider, baseURI, authScheme, headerName, !generating),
                 () -> {
-                    passwordSection.refresh();
-                    apiKeySection.refresh();
+                    reloadApiKeys();
                     JOptionPane.showMessageDialog(this, "API key added.");
                 });
     }
@@ -1083,7 +1343,7 @@ public class SubjectPanel extends JPanel {
 
     // ============================ Change password ============================
 
-    /** The change-password card (the stacked form since 2026-10-27; Back returns to the placeholder). */
+    /** The change-password card of the Profile page (the stacked form since 2026-10-27; Back returns to the profile card). */
     private JPanel buildChangePassword() {
         JButton submit = UITokens.primary(GUIUtil.applyProp(new JButton(new IconUtil.SaveIcon(16)), NSAppUtil.PasswordEditor.SUBMIT));
         submit.addActionListener(_ -> onChangePassword(submit));
@@ -1095,7 +1355,7 @@ public class SubjectPanel extends JPanel {
                 NSAppUtil.PasswordEditor.CONFIRM.getDescription());
 
         JPanel detail = PanelBuilder.detail(NSAppUtil.PasswordEditor.EDITOR.getDisplayName(),
-                () -> credentialCards.show("list"),
+                () -> profileCards.show("profile"),
                 panel -> {
                     panel.add(blockNote(NSAppUtil.PasswordEditor.NOTE), "growx, wmin 0");
                     panel.add(form, "growx, wmin 0");
@@ -1121,9 +1381,8 @@ public class SubjectPanel extends JPanel {
                     currentPwd.setText("");
                     newPwd.setText("");
                     confirmPwd.setText("");
-                    credentialCards.show("list");
+                    profileCards.show("profile");
                     passwordSection.refresh();
-                    apiKeySection.refresh();
                 });
     }
 
@@ -1184,7 +1443,7 @@ public class SubjectPanel extends JPanel {
         actions.add(deleteKey);
 
         JPanel detail = PanelBuilder.detail(NSAppUtil.ApiKeysPage.EDITOR.getDisplayName(),
-                () -> credentialCards.show("list"),
+                () -> showKeyDetail(selectedKeyRow()),
                 panel -> {
                     panel.add(form, "growx, wmin 0");
                     panel.add(actions, "gaptop 12");
@@ -1285,9 +1544,7 @@ public class SubjectPanel extends JPanel {
                     keyURI.setText("");
                     authScheme.setText("");
                     headerName.setText("");
-                    credentialCards.show("list");
-                    passwordSection.refresh();
-                    apiKeySection.refresh();
+                    reloadApiKeys();
                 });
     }
 
@@ -1303,7 +1560,7 @@ public class SubjectPanel extends JPanel {
                 () -> {
                     // rotate mutates selectedKey in place; re-populate so the new secret shows.
                     onEditAPIKey(selectedKey);
-                    apiKeySection.refresh();
+                    reloadApiKeys();
                     JOptionPane.showMessageDialog(this, "Key rotated. Copy the new secret now.");
                 });
     }
@@ -1321,9 +1578,9 @@ public class SubjectPanel extends JPanel {
                     if (selectedKey == key) {
                         selectedKey = null;
                         editKeySecret.setText("");
-                        credentialCards.show("list");
                     }
-                    apiKeySection.refresh();
+                    apiKeyTable.clearSelection();
+                    reloadApiKeys();
                     JOptionPane.showMessageDialog(this, "API key Deleted.");
                 });
     }

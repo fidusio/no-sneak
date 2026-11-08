@@ -1,5 +1,6 @@
 package io.xlogistx.nosneak.app.ui.scan;
 
+import io.xlogistx.gui.BackgroundTask;
 import io.xlogistx.gui.ChipPanel;
 import io.xlogistx.gui.FormPanel;
 import io.xlogistx.gui.GUIUtil;
@@ -12,12 +13,16 @@ import io.xlogistx.scan.nmap.NMap;
 import io.xlogistx.scan.nmap.NMapConfig;
 import io.xlogistx.scan.nmap.WellKnownPorts;
 import net.miginfocom.swing.MigLayout;
+import org.zoxweb.server.net.NetUtil;
 
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import java.awt.*;
 import java.awt.datatransfer.StringSelection;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * The scan set-up (board 2 of the redesign canvas, 2026-10-24): targets, ports, a name, the
@@ -33,7 +38,9 @@ import java.awt.datatransfer.StringSelection;
  * ticked probes to the configuration at run time, as it always did. What an <b>empty Ports
  * field</b> means depends on the chips (2026-10-31: the ticked probes' declared ports, else
  * 1-1024), so the owner tells the form through {@link #setPortsPlaceholder} and the placeholder
- * says it; the <b>Match</b> segment ({@code --probe-match}) is the form's own.
+ * says it; the <b>Match</b> segment ({@code --probe-match}) is the form's own. <b>Local
+ * networks</b> beside the Targets label (2026-11-06) lists this machine's IPv4 CIDR blocks
+ * ({@code NetUtil.allV4CIDRBlocks}) and a pick appends one to the targets.
  */
 public class ScanFormPanel extends JPanel {
 
@@ -42,6 +49,8 @@ public class ScanFormPanel extends JPanel {
 
     // every component is named, worded and described by NSAppUtil.ScanForm (the maintainer's rule, 2026-11-01)
     private final JTextField targets = GUIUtil.applyProp(new JTextField(), NSAppUtil.ScanForm.TARGETS_FIELD);
+    /** Local networks (2026-11-06): a link beside the Targets label that opens {@link #networksMenu}. */
+    private final JButton networks = UITokens.link(GUIUtil.applyProp(new JButton(), NSAppUtil.ScanForm.NETWORKS));
     private final JTextField ports = GUIUtil.applyProp(new JTextField(), NSAppUtil.ScanForm.PORTS_FIELD);
     private final JTextField name = GUIUtil.applyProp(new JTextField(), NSAppUtil.ScanForm.NAME_FIELD);
     private final JCheckBox serviceDetection = GUIUtil.applyProp(new JCheckBox(), NSAppUtil.ScanForm.SERVICE_DETECTION);
@@ -78,7 +87,9 @@ public class ScanFormPanel extends JPanel {
         // row 1: targets · ports · name
         JPanel row1 = new JPanel(new MigLayout("insets 0, gapx 14, fillx", "[grow 5,fill][grow 3,fill][grow 4,fill]"));
         row1.setOpaque(false);
-        row1.add(field(NSAppUtil.ScanForm.TARGETS, targets, NSAppUtil.ScanForm.TARGETS_HINT), "wmin 0");
+        row1.add(field(NSAppUtil.ScanForm.TARGETS, targets, NSAppUtil.ScanForm.TARGETS_HINT, networks), "wmin 0");
+        networks.setMargin(new Insets(0, 0, 0, 0)); // keep the Targets label line as high as the Ports and Name ones
+        networks.addActionListener(_ -> showNetworks());
         row1.add(field(NSAppUtil.ScanForm.PORTS, ports, null), "wmin 0");
         row1.add(field(NSAppUtil.ScanForm.NAME, name, null), "wmin 0");
         add(row1, "growx");
@@ -390,6 +401,79 @@ public class ScanFormPanel extends JPanel {
         }
     }
 
+    // ---- local networks ----
+
+    /** What reading the interfaces off the EDT gave: the blocks, or the reason there are none to show. */
+    private record Networks(String[] blocks, String error) {
+    }
+
+    /**
+     * Reads this machine's IPv4 CIDR blocks off the EDT (enumerating the interfaces can take a
+     * moment on Windows) and drops {@link #networksMenu} under the link; a failure to read them
+     * is said under the command, inline, like any other refusal.
+     */
+    private void showNetworks() {
+        BackgroundTask.run(this, networks, () -> {
+            try {
+                return new Networks(NetUtil.allV4CIDRBlocks(), null);
+            } catch (IOException e) {
+                return new Networks(null, e.getMessage());
+            }
+        }, found -> {
+            if (found.error() != null) {
+                message.error(NSAppUtil.ScanForm.NETWORKS_FAILED.getDisplayName() + found.error());
+                return;
+            }
+            if (networks.isShowing()) networksMenu(found.blocks()).show(networks, 0, networks.getHeight());
+        });
+    }
+
+    /**
+     * The Local networks menu: one item per IPv4 CIDR block of this machine's up, non-loopback
+     * interfaces, in the order {@code NetUtil.allV4CIDRBlocks} reports them, a pick appending it
+     * to Targets through {@link #addTarget}; one disabled line when no interface has an IPv4
+     * address. Last, under a separator, <b>Refresh</b> (the maintainer, 2026-11-06: "add refresh
+     * button to local network, in case a network gets activated"): it reads the interfaces again
+     * and reopens the menu, so a VPN or a Wi-Fi that came up while the menu was open shows
+     * without closing it. Package-private for {@code ScanFormPanelTest}, which feeds it blocks
+     * of its own.
+     */
+    JPopupMenu networksMenu(String[] blocks) {
+        JPopupMenu menu = new JPopupMenu();
+        if (blocks == null || blocks.length == 0) {
+            JMenuItem none = GUIUtil.applyProp(new JMenuItem(), NSAppUtil.ScanForm.NETWORKS_EMPTY);
+            none.setEnabled(false);
+            menu.add(none);
+        } else {
+            for (String block : blocks) {
+                JMenuItem item = new JMenuItem(block);
+                item.setFont(UITokens.mono(0));
+                item.addActionListener(_ -> addTarget(block));
+                menu.add(item);
+            }
+        }
+        menu.addSeparator();
+        JMenuItem refresh = GUIUtil.applyProp(new JMenuItem("", new IconUtil.RefreshIcon(14)), NSAppUtil.ScanForm.NETWORKS_REFRESH);
+        refresh.addActionListener(_ -> showNetworks());
+        menu.add(refresh);
+        return menu;
+    }
+
+    /** The Refresh item of a {@link #networksMenu}: its last component (tests). */
+    static JMenuItem refreshItem(JPopupMenu menu) {
+        return (JMenuItem) menu.getComponent(menu.getComponentCount() - 1);
+    }
+
+    /** Appends a target to the Targets field unless it is already one of them; the command follows as for typing. */
+    void addTarget(String target) {
+        String text = targets.getText().trim();
+        List<String> have = new ArrayList<>();
+        for (String t : text.split("\\s+")) if (!t.isEmpty()) have.add(t);
+        if (have.contains(target)) return;
+        have.add(target);
+        targets.setText(String.join(" ", have));
+    }
+
     // ---- sync ----
 
     /**
@@ -522,9 +606,21 @@ public class ScanFormPanel extends JPanel {
      * column grows, the width grows), which squeezed the Ports and Name columns to nothing.
      */
     private static JPanel field(NSAppUtil.ScanForm label, JComponent c, NSAppUtil.ScanForm hint) {
+        return field(label, c, hint, null);
+    }
+
+    /** The same, with a helper (a link) at the right end of the label's line. */
+    private static JPanel field(NSAppUtil.ScanForm label, JComponent c, NSAppUtil.ScanForm hint, JComponent helper) {
         JPanel p = new JPanel(new MigLayout("insets 0, wrap 1, gapy 6, fillx", "[grow,fill]"));
         p.setOpaque(false);
-        p.add(label(label));
+        if (helper == null) p.add(label(label));
+        else {
+            JPanel head = new JPanel(new MigLayout("insets 0, gapx 8", "[]push[]"));
+            head.setOpaque(false);
+            head.add(label(label));
+            head.add(helper);
+            p.add(head, "growx");
+        }
         p.add(c, "growx, wmin 0");
         if (hint != null) {
             io.xlogistx.gui.WrapLabel h = GUIUtil.applyProp(FormPanel.hint(hint.getDisplayName()), hint);
