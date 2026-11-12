@@ -203,7 +203,7 @@ public class SkillsPanel extends JPanel {
         editor.setTitle(AIAssistantUtil.SkillEditor.TITLE.getDisplayName());
         editor.withName(AIAssistantUtil.SkillEditor.NAME.getDisplayName(), "");
         editor.withDescription(AIAssistantUtil.SkillEditor.DESCRIPTION.getDisplayName(), "");
-        UITokens.primary(editor.getSaveButton()).setIcon(new IconUtil.SaveIcon(16, Color.WHITE)); // the page's primary, like Create / Save on the chat forms
+        UITokens.primary(editor.getSaveButton()).setIcon(IconUtil.svgIcon("io/xlogistx/gui/icons/save.svg", 16, Color.WHITE)); // the page's primary, like Create / Save on the chat forms
         editor.setValidator(this::validateSkill);
         editor.setOnCommit(this::onSaveSkill);
         editor.setOnCancel(() -> {

@@ -75,7 +75,7 @@ public class ProvidersPanel extends JPanel {
     private final JComboBox<String> providerFormModel = GUIUtil.applyProp(new JComboBox<>(), AIAssistantUtil.ProviderForm.MODEL_FIELD);
     private final JLabel providerFormModelLabel = GUIUtil.applyProp(new JLabel(), AIAssistantUtil.ProviderForm.MODEL);
     private final JLabel providerFormKey = GUIUtil.applyProp(new JLabel(), AIAssistantUtil.ProviderForm.KEY_VALUE);
-    private final JButton providerFormSave = UITokens.primary(GUIUtil.applyProp(new JButton(new IconUtil.SaveIcon(16, Color.WHITE)), AIAssistantUtil.ProviderForm.SAVE));
+    private final JButton providerFormSave = UITokens.primary(GUIUtil.applyProp(new JButton(IconUtil.svgIcon("io/xlogistx/gui/icons/save.svg", 16, Color.WHITE)), AIAssistantUtil.ProviderForm.SAVE));
     private AIProviderConfig editingConfig;
     private APIKey<String> editingKey;
 

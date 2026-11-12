@@ -194,7 +194,7 @@ io.xlogistx.nosneak.app
 │   └── NSCoreUtil.java            ← DMTool's cached DomainSecurityManager (ShiroDSDomainSecurityManager over XlogistxMongoDataStore — the deprecated Mongo path; the reason for the xlogistx-datastore dependency)
 └── ui/                            ← UI (screens, menu, session/access wiring)
     ├── AppShell.java              ← the signed-in window: HeaderBar + SideNavPanel + CardLayout host (2026-10-24), mounts ai-assistant's AssistantPanel
-    ├── UnlockPanel.java           ← the pre-auth screen (2026-10-24): step 1 open/create the store, step 2 sign in / register; replaced LoginPanel + DataStoreSetupPanel. 2026-10-29: every step-1 input has a tooltip and a warning row under the vault password says it is NOT RECOVERABLE (`Form.VAULT_PASSWORD_WARNING`). 2026-11-03: a Text size row (FontSizeWidget + Reset, `UnlockPage.TEXT_SIZE*`) in the right pane's top-right corner, under the scrolling card, so a size that reads too small is fixed before sign-in
+    ├── UnlockPanel.java           ← the pre-auth screen (2026-10-24): step 1 open/create the store, step 2 sign in / register; replaced LoginPanel + DataStoreSetupPanel. 2026-10-29: every step-1 input has a tooltip and a warning row under the vault password says it is NOT RECOVERABLE (`Form.VAULT_PASSWORD_WARNING`). 2026-11-03: a Text size row (FontSizeWidget + Reset, `UnlockPage.TEXT_SIZE*`) in the right pane's top-right corner, under the scrolling card, so a size that reads too small is fixed before sign-in. 2026-11-12: a store that does not open is reported as a wrapped reason under the store form (`storeFailure`, `storeFailureReason`, `breakLongWords`; every `Throwable` caught, a host failure too), so the screen keeps its shape (`UnlockPanelStoreFailureTest`)
     ├── PQCRegistryPanel.java      ← PQC file-sharing registry view
     ├── SubjectPanel.java          ← Account pages in the PagePanel frame: Profile (name, password since 2026-11-04, identifiers, addresses), Credentials (API keys), Settings (Appearance: theme + text size (2026-11-02), Sync of the MAC vendor list, Assistant reply timeout, Backup, Restore)
     ├── SubjectSecManagerPanel.java← Access control (admin) page; tabs are stubs
@@ -309,7 +309,9 @@ unlock screen, then put the new vault password back in the configuration.
 
 ### `AppShell`
 The signed-in application (rebuilt 2026-10-24, Phase 2 of the redesign): a `BorderLayout` of
-gui-audio's **`HeaderBar`** (north: shield + "NoSneak", a mono chip with the open store's
+gui-audio's **`HeaderBar`** (north; **since 2026-11-12 the order is brand, subject, Sign out,
+then the chip, all from the left**, Sign out never narrower than its text — the sentence below
+lists the pieces in their earlier order: shield + "NoSneak", a mono chip with the open store's
 directory from `AppPrefs.storeLocation()` and "vault open" — its tooltip is
 `MenuBarFactory.STORE_NOTE`, the About card's Store row, plus a pointer to *Settings > Backup*
 (2026-10-27) —, then the subject — initial avatar,
@@ -345,7 +347,7 @@ itself (the library's All / Bundled / Mine segment, `NSAppUtil.ProbeLibraryFilte
 | Scan | Scan → `SCAN` → `ScanPanel.show(SECTION_SCAN)`; Scan History → `SCAN_HISTORY` → `SECTION_HISTORY`; Probe Library → `PROBES` → `SECTION_PROBES` |
 | Assistant | Chat / Capture / Skills / Providers → `CHAT` / `CAPTURE` / `SKILLS` / `PROVIDERS` → `AssistantPanel.showPage(Page.CHAT …)`; Chat is the list of chats and the open conversation in one page (merged 2026-10-26) |
 | Account | Profile / API Keys / Settings → `PROFILE` / `API_KEYS` / `SETTINGS` → `SubjectPanel.show(SECTION_PROFILE / SECTION_CREDENTIALS / SECTION_SETTINGS)` |
-| Admin | Access Control → `ACL` → `SubjectSecManagerPanel` (visible only for the super-admin: `nav.setSectionVisible("admin", …)` on every login) |
+| Admin | Access Control → `ACL` → `SubjectSecManagerPanel` (visible only for the super-admin: `nav.setSectionVisible("admin", …)` on every login; since 2026-11-12 the sidebar is the only way in: its View-menu item is commented out in `MenuBarFactory`, the code kept) |
 
 Footer of the sidebar: **Help** (`MenuBarFactory.showDescription`) and the version line, a muted
 link that opens About (`showAbout`; since 2026-10-27 the line is name + version only, the Java /
@@ -882,7 +884,20 @@ tables as a fresh run. `showResult(name, json)` feeds the scanner page a report 
 (renders, tests).
 
 **Probe library (2026-10-26, on the maintainer's instruction).** `buildProbePanel` is the same
-shape as the history page: a head (title, *Write with the assistant*, the primary *New probe*), a
+shape as the history page: a head (title, *Write with the assistant*, the primary *New probe*;
+since 2026-11-12 the two buttons sit **on the left, on the title's line**, the subtitle on the
+line under them, and each has `wmin pref` so a narrow window never cuts its text — the
+maintainer: "move write with assistant and New Probe to the left and make sure the New probe
+button does not shrink"; the Probe groups and Scan history pages have the same head since
+that day; `ProbeLibraryHeadTest` checks the three, and the Scan history **action bar**,
+which since then is one `WrapLayout` panel: beside the search at the right while it fits,
+on the line under it and wrapping when it does not — a resize listener on the bar swaps
+the MigLayout constraint; the pages on gui-audio's `PagePanel` — Chat, Capture, Skills,
+Providers, API Keys and their forms — got the same head from `PagePanel` itself,
+`PageHeadActionsTest`; the Scan page's own head follows the same shape since then, *New
+scan* on the title's line; same day the Scan form's five option flags became wrapping
+pieces, `ScanFormPanel.flag` in a `WrapLayout`, its Help icon is tinted with
+`UITokens.text()`, and the group editor's checklist row shrinks before Save / Cancel), a
 bar (search, the count, *Restore bundled probes*, *Probe groups manager*, *Probe definition*), and a split
 card — left a table on `ui/scan/ProbeLibraryModel` (rows = the subject's probes, every one of
 them theirs since 2026-11-02, below; columns Name · Service · Ports · Transport · Priority · Origin,

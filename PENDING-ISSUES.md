@@ -1194,6 +1194,145 @@ worry about it, remove the logs printout". The `SCAN RUN` / `SCAN TIMING` / `SCA
 lines, `ScanPanel.runLine` / `timingLines` and the logger are deleted; nothing is open here.
 `LiveDiscoveredRerunTest` (opt-in, `LIVE_SCAN_TARGET`, `LIVE_SCAN_PROBES`) stays for a live check.
 
+**2026-11-12 — Probe library head (uncommitted):** "in the probe library move write with
+assistant and New Probe to the left and make sure the New probe button does not shrink".
+*Write with the assistant* and *New probe* follow the title on its own line, the subtitle (a
+sentence as wide as the page, which is why the buttons could not simply follow the title
+block) is on the line under them; both buttons have `wmin pref`. `ProbeLibraryHeadTest` (new,
+1/0) checks the order and that neither button is narrower than its preferred width at 1000,
+640 and 420 points, in both themes; rendered and read. Not clicked in the running app.
+**Then** "do the same for the probe groups page and scan history page": the same head on
+`buildProbeGroupsPanel` (title · *Probe library* link · *New group*, subtitle under) and
+`buildResultPanel` (title · *New scan*, subtitle under); the test checks the three pages
+(1/0), rendered and read. Seen in the render: at a 1000-point page the history bar's last
+button ran past the right edge. **Fixed the same day** ("fix the scan history bar so the
+last button fits"): the eight row actions are one panel on gui-audio's `WrapLayout`; a
+resize listener on the bar keeps it beside the search, right-aligned, while one line holds
+everything (search at its 120 minimum), and otherwise moves it to the line under the
+search, left-aligned, where it wraps. The bar has `wmin 0`, so it no longer widens the
+page. `ProbeLibraryHeadTest` checks every action whole, inside the margins and above the
+table at 1400, 1000, 640 and 420 points in both themes (1/0); rendered and read; not
+clicked in the running app.
+**Then** "do the same for the chat, capture, skills and providers": those pages are built
+on gui-audio's `PagePanel`, so the change is there (io-xlogistx, uncommitted, installed
+with `mvn -o -pl gui-audio install -DskipTests`): `action(...)` adds to the title's line
+after the title with `wmin pref`, the description is the line under. It reaches **every**
+`PagePanel` page, not only the four named: the conversation page, the New chat / skill /
+provider forms, the capture preview, the key picker, API Keys. New `PageHeadActionsTest`
+builds a real `AppShell` (not headless: the skill editor needs the toolkit's shortcut key)
+and checks Chat, Capture, Skills, Providers and API Keys at 1280 and 760 points in both
+themes (1/0, about four minutes); rendered and read. The forms and the conversation page
+were not rendered. ai-assistant's own suite was not rerun.
+**Then** "the scan is done double check it" (read as: check the Scan page against the
+others): it was not the same. *New scan* followed the title *block*, so it sat to the
+right of the subtitle and a 420-point page pushed it off the edge. `buildScanPanel`'s head
+is now title · *New scan* (`wmin pref`), subtitle under; `ProbeLibraryHeadTest` checks the
+Scan page too (1/0), rendered and read. Seen in those renders, not touched: the Scan
+form's cards run past the right edge of a 1000-point page (the options row is wider), and
+in the dark theme the Help (i) button beside Command paints as a blank grey square.
+**Both fixed the same day, with the group editor** ("fix the help button in dark theme and
+the scan form width, also in the new group and edit group the save and cancel button
+sometimes it shrinks"):
+- *Help icon:* `ScanFormPanel.help` used `IconUtil.InfoIcon(16)`, the svg's own dark
+  stroke; it is `IconUtil.svgIcon(info.svg, 16, UITokens.text())` now. The same cause made
+  the group editor's Back and Cancel icons blank on Dark; fixed the same way. **Not
+  swept:** every other `new IconUtil.XxxIcon(size)` without a colour (Back on the probe
+  editor and the stored-result page, Save, Delete, …) may have the same fault on Dark.
+- *Form width:* the five flags sat on one fixed MigLayout line wider than the page. They
+  are five pieces (`ScanFormPanel.flag`: box + spelling, the gap as the piece's right
+  inset) in a gui-audio `WrapLayout`, so they wrap; both cards end inside a 1000- and a
+  900-point page. Narrower than about 900 the Targets head line is the next thing that
+  does not fit; not touched.
+- *Group editor:* every row of the page shrank together when the checklist was taller
+  than the page, the buttons' row included. The checklist's row has `shrinkprio 200` and
+  `hmin 60`, Save / Cancel and their row `hmin pref` (and `wmin pref`).
+- MigLayout ignored the negative `gapright` / `gapleft` used for the history bar's
+  `WrapLayout` panel earlier that day; it is `pad` now, and the end button is on the
+  table's edge.
+`ProbeLibraryHeadTest` checks all of it (cards and flags inside the page at 1000 and 900,
+Save / Cancel at page heights 760, 420 and 300, both themes; 1/0), rendered and read.
+**Unexplained, seen in the renders only:** the editor's Save paints dark green instead of
+the accent on the second and third open of the editor in one test run; nothing in the
+app sets that colour. Not checked in the running app.
+
+**2026-11-12 — a store that does not open bent the unlock screen (uncommitted):** "when you
+open the vault step catch datastore open issues as when it fail the login window gets
+crooked". Three causes found by reading, the first is the one that bends the window:
+1. `storeMessage` is a one-line `InlineMessage` (a `JLabel`), and the failure's own message
+   was put in it. A data store failure is long (H2 through the pool: "Database may be
+   already in use: <path>. Possible solutions: …"), so the label, the form and the card
+   grew as wide as the sentence.
+2. The worker caught `Exception` only; an `Error` (a missing driver class, a static
+   initialiser) left the worker with nothing shown.
+3. `onStoreOpened` (the frame's `storeOpened`: `AppContext`, `AppShell`) ran uncaught on
+   the EDT, and the frame kept its context when the shell failed, so the next Open was
+   ignored (`if (ctx != null) return`).
+**Now:** the one-line message says *The store could not be opened.* (or *created*, or *The
+store opened, but the application could not start on it.*) and a `WrapLabel` row under the
+form (`UnlockPage.STORE_FAILURE`, hidden while empty, wrapped at the form's width from a
+resize listener) carries the reason: `UnlockPanel.storeFailureReason` walks the cause chain
+and answers with a plain sentence for a file in use (90020), refused credentials (28000),
+a wrong encryption password (90049) and a damaged file (90030), otherwise the failure's
+first line, at most 400 characters; `breakLongWords` gives a path a line break after a
+separator, since a word with no space is cut at the form's edge. The worker catches
+`Throwable` and the stack trace goes to the console. `NoSneakMain.AppFrame.storeOpened`
+keeps nothing until the shell is built and closes the store when it is not.
+`UnlockPanelStoreFailureTest` (2/0): the reasons, and a real panel on a real installation
+with an opener that throws a pool-wrapped SQL failure, a long message with a path, a
+`NoClassDefFoundError`, and a host that fails, in both themes — the form's position, width
+and the screen's preferred width are the same before and after, Open is enabled, step 1
+is still the open one. Rendered and read. **Not reproduced on the real failure:** the
+maintainer's actual failing store was not at hand, so which message bent the window is
+inferred from the code, and the H2 wording matched by `storeFailureReason` was written
+from H2's error codes, not captured from a failing run. Seen in the dark render, not
+touched: the folder icon of the Location field's *Choose…* button paints nothing
+(gui-audio `DirectoryField`, the same untinted-icon fault as Help).
+
+**2026-11-12 — icons on the dark theme, all of them (uncommitted, gui-audio):** "fix the
+choose button icon and all other icons in dark theme". Cause: all 70 bundled svgs are one
+`#5A5A5A` stroke, and every icon built without a colour painted that grey on a dark
+button. Fixed in one place instead of per call site: `IconUtil.SVGIcon.paintIcon` uses
+`UITokens.text()` for an untinted icon while `FlatLaf.isLafDark()`, the colour being part
+of its raster cache key. gui-audio reinstalled (`mvn -o -pl gui-audio install
+-DskipTests`). Checked: five light renders are byte-identical before and after; the dark
+renders of the unlock screen (Choose…), Scan history bar and Probe library bar show their
+icons; `UnlockPanelStoreFailureTest` 2/0, `ProbeLibraryHeadTest` 1/0. Not looked at one by
+one: the assistant's pages, the PDF viewer's toolbar and the host detail pane in dark;
+they use the same class. Icons that are not `SVGIcon`s (anything painted by hand) are not
+covered; none was seen.
+**The green Save, explained (not changed):** `new IconUtil.SaveIcon(16, Color.WHITE)` is a
+tinted `SVGIconWidget`, and those set the **host's background** when they paint, dark
+green for Save. That is why Save turns green after its first paint on the probe group
+editor, the probe editor (`ScanPanel`), the provider form and the skill editor
+(ai-assistant), although `UITokens.primary` styles them in the accent colour. Left for
+the maintainer to decide: `IconUtil.svgIcon("io/xlogistx/gui/icons/save.svg", 16,
+Color.WHITE)` in those four places keeps them accent-coloured.
+**Decided and done the same day** ("make the save buttons purple like the other primary
+buttons"): that replacement is in `ScanPanel` (group editor, probe editor),
+`ProvidersPanel.providerFormSave` and `SkillsPanel` (the editor's Save). Build clean,
+`ProbeLibraryHeadTest` 1/0; the group editor rendered on its second and third open, where
+it used to be green, is accent-coloured in both themes. The probe editor, the provider
+form and the skill editor were changed the same way but not rendered; ai-assistant's own
+suite was not rerun.
+
+**2026-11-12 — Access Control off the View menu (uncommitted):** "under view there is access
+control remove it from menu but keep the code". `MenuBarFactory`: the `Screen.ACL` item and
+the separator before it are commented out with the two lines that put them back. Nothing
+else changed: `SubjectSecManagerPanel`, `Screen.ACL`, the navigator route and the
+sidebar's Admin section (shown to a super-admin) are as they were, so the page is still
+reachable from the sidebar. Build clean; no test covers the menu; not looked at in the
+running app.
+
+**2026-11-12 — the header: subject and Sign out on the left (uncommitted, gui-audio):** "on
+the main window on the top move user and sign out to the left and make sign out does not
+shrink". `HeaderBar` was brand · chip · push · subject · actions; it is brand · subject ·
+actions · chip, nothing pushed right. Brand, subject and each action have `wmin pref`; the
+chip has `wmin 0`, so a long store path is what a narrow window cuts. The order (subject
+before the chip) is the assistant's reading of "to the left". gui-audio reinstalled.
+`PageHeadActionsTest` also checks Sign out on every page it opens (not shrunk, inside the
+window, ending left of 640) at 1280 and 760 points in both themes: 1/0; rendered and
+read. Not clicked in the running app.
+
 **2026-11-10, evening — "none of the hoverover are showing" (uncommitted, cause not confirmed):**
 a real `AppFrame` on a throwaway store, hovered with `java.awt.Robot`, showed every tooltip of
 the Scan form while the window was active, so no code path drops them. The one condition that

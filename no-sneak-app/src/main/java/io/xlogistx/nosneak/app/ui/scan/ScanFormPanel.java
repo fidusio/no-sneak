@@ -94,9 +94,20 @@ public class ScanFormPanel extends JPanel {
     private final JButton stop = GUIUtil.applyProp(new JButton(new IconUtil.StopIcon(16)), NSAppUtil.ScanForm.STOP);
     /** The Command label's line: label, Help, Run scan, Stop, Copy, the hint. */
     private final JPanel commandLine = new JPanel(new MigLayout("insets 0, gapx 8"));
-    private final JButton help = GUIUtil.applyProp(new JButton(new IconUtil.InfoIcon(16)), NSAppUtil.ScanForm.HELP);
+    // tinted with the theme's text colour (2026-11-12): the svg's own stroke is dark and painted nothing on the dark theme
+    private final JButton help = GUIUtil.applyProp(new JButton(IconUtil.svgIcon("io/xlogistx/gui/icons/info.svg", 16, UITokens.text())), NSAppUtil.ScanForm.HELP);
     private final JPanel probeSlot = GUIUtil.applyProp(new JPanel(new BorderLayout()), NSAppUtil.ScanForm.PROBE_SLOT);
     private boolean syncing;
+
+    /** A flag's box and its command-line spelling as one piece, so a wrap never parts them. */
+    private static JPanel flag(JCheckBox box, NSAppUtil.ScanForm spelling) {
+        // the right inset is the gap to the next flag: FlowLayout's own gap would also indent the first one
+        JPanel p = new JPanel(new MigLayout("insets 0 0 0 28, gapx 18"));
+        p.setOpaque(false);
+        p.add(box);
+        p.add(mono(spelling));
+        return p;
+    }
 
     public ScanFormPanel() {
         super(new MigLayout("insets 0, fillx, wrap 1, gapy 12, hidemode 3", "[grow,fill]"));
@@ -149,26 +160,32 @@ public class ScanFormPanel extends JPanel {
         clearTargets.addActionListener(_ -> clearTargets());
 
         // row 2: options
-        JPanel options = new JPanel(new MigLayout("insets 0, gapx 18, gapy 6", "[]"));
+        // the five flags wrap (2026-11-12, "fix the scan form width"): on one fixed line they were
+        // wider than a 1000-point page and pushed both cards past its right edge
+        JPanel options = new JPanel(new MigLayout("insets 0, gapx 8, gapy 6, wrap 2", "[][grow,fill]"));
         options.setOpaque(false);
-        options.add(label(NSAppUtil.ScanForm.OPTIONS), "gapright 8");
-        options.add(serviceDetection);
-        options.add(mono(NSAppUtil.ScanForm.SERVICE_DETECTION_FLAG), "gapright 10");
-        options.add(discoveryOnly);
-        options.add(mono(NSAppUtil.ScanForm.DISCOVERY_ONLY_FLAG), "gapright 10");
-        options.add(skipPing);
-        options.add(mono(NSAppUtil.ScanForm.SKIP_PING_FLAG), "gapright 10");
-        options.add(upOnly);
-        options.add(mono(NSAppUtil.ScanForm.UP_ONLY_FLAG), "gapright 10");
-        options.add(openOnly);
-        options.add(mono(NSAppUtil.ScanForm.OPEN_ONLY_FLAG));
-        // on its own line under the flags: it is a helper over the targets, not a flag, and
-        // a sixth box does not fit the row at the window's usual width
-        options.add(discoveredOnly, "newline, skip 1, spanx");
+        JPanel flags = new JPanel(new io.xlogistx.gui.WrapLayout(FlowLayout.LEFT, 0, 2));
+        flags.setOpaque(false);
+        flags.add(flag(serviceDetection, NSAppUtil.ScanForm.SERVICE_DETECTION_FLAG));
+        flags.add(flag(discoveryOnly, NSAppUtil.ScanForm.DISCOVERY_ONLY_FLAG));
+        flags.add(flag(skipPing, NSAppUtil.ScanForm.SKIP_PING_FLAG));
+        flags.add(flag(upOnly, NSAppUtil.ScanForm.UP_ONLY_FLAG));
+        flags.add(flag(openOnly, NSAppUtil.ScanForm.OPEN_ONLY_FLAG));
+        // a wrapping panel knows its height only once it has its width: lay the form out again then
+        flags.addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent e) {
+                flags.revalidate();
+            }
+        });
+        options.add(label(NSAppUtil.ScanForm.OPTIONS), "aligny top, gaptop 4, gapright 8");
+        options.add(flags, "growx, wmin 0");
+        // on its own line under the flags: it is a helper over the targets, not a flag
+        options.add(discoveredOnly, "skip 1");
         // Match sits under the options (the maintainer, 2026-11-11: "Match section put under
         // options"), no longer beside the Probes label
-        options.add(label(NSAppUtil.ScanForm.MATCH), "newline, gapright 8");
-        options.add(probeMatch, "spanx");
+        options.add(label(NSAppUtil.ScanForm.MATCH), "gapright 8");
+        options.add(probeMatch, "growx 0");
         discoveredOnly.setOpaque(false);
         discoveredOnly.addActionListener(_ -> discoveredToggled());
         setDiscoveredHosts(null);
@@ -179,7 +196,7 @@ public class ScanFormPanel extends JPanel {
         serviceDetection.addActionListener(_ -> {
             if (serviceDetectionToggled != null) serviceDetectionToggled.accept(serviceDetection.isSelected());
         });
-        setupCard.add(options, "growx");
+        setupCard.add(options, "growx, wmin 0");
 
         // row 3: timing · knobs · probes
         JPanel row3 = new JPanel(new MigLayout("insets 0, gapx 18, fillx", "[]"));

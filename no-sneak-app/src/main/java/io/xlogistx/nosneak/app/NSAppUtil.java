@@ -366,6 +366,7 @@ public class NSAppUtil {
         OPEN("unlock.open", "Open", "Open the vault in the chosen directory"),
         CREATE("unlock.create", "Create", "Create the vault, the database and the operator account in the chosen directory"),
         VAULT_UNLOCKED("unlock.vaultUnlocked", "vault unlocked", "The store is open for the life of the process"),
+        STORE_FAILURE("unlock.storeFailure", "", "Why the store could not be opened"),
         TEXT_SIZE_LABEL("unlock.textSize.label", "Font size", null),
         TEXT_SIZE("unlock.textSize", "", "Text size of the controls (menus, buttons, labels), in points; applies at once and is remembered"),
         TEXT_SIZE_RESET("unlock.textSize.reset", "Reset", "Back to 13 points, the size no-sneak ships with");

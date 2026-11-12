@@ -257,20 +257,20 @@ public class ScanPanel extends JPanel {
         out.setBackground(UITokens.color("xlogistx.ground", null, 0xF4F4F7));
 
         // the page is named like its sidebar item (2026-11-01: it said "New scan", which is now the button)
-        JPanel head = new JPanel(new MigLayout("insets 0, gapx 12", "[][]push"));
+        // New scan on the title's line, the subtitle under it, like every other page (2026-11-12:
+        // it followed the title block, so it sat after the subtitle and a narrow window pushed it
+        // off the page); "wmin pref": never narrower than its text
+        JPanel head = new JPanel(new MigLayout("insets 0, gapx 12, gapy 2, wrap 2", "[][]push"));
         head.setOpaque(false);
-        JPanel titles = new JPanel(new MigLayout("insets 0, wrap 1, gapy 2"));
-        titles.setOpaque(false);
         JLabel title = new JLabel(NSAppUtil.Screen.SCAN.getDisplayName());
         title.setFont(UITokens.font(Font.BOLD, 8f));
-        titles.add(title);
-        JLabel sub = GUIUtil.applyProp(new JLabel(), NSAppUtil.ScanPage.SUBTITLE);
-        sub.setForeground(UITokens.muted());
-        titles.add(sub);
-        head.add(titles, "wmin 0");
+        head.add(title);
         newScanButton.addActionListener(_ -> newScan());
         // New scan sits on the left, beside the title (the maintainer, 2026-11-11: "new scan to the left")
-        head.add(newScanButton, "gapleft 16");
+        head.add(newScanButton, "gapleft 16, wmin pref");
+        JLabel sub = GUIUtil.applyProp(new JLabel(), NSAppUtil.ScanPage.SUBTITLE);
+        sub.setForeground(UITokens.muted());
+        head.add(sub, "span, wmin 0");
         out.add(head, "growx");
 
         probeChips.setEmptyText(NSAppUtil.ScanPage.PROBES_EMPTY.getDisplayName());
@@ -683,23 +683,23 @@ public class ScanPanel extends JPanel {
         out.setName(NSAppUtil.ProbeLibraryPage.PAGE.getName());
         out.setBackground(UITokens.color("xlogistx.ground", null, 0xF4F4F7));
 
-        JPanel head = new JPanel(new MigLayout("insets 0, gapx 12", "[grow][][]"));
+        // the two buttons on the left, on the title's line, like New scan on the Scan page (the
+        // maintainer, 2026-11-12); the subtitle is a sentence as wide as the page, so it has the
+        // line under them. "wmin pref": a narrow window cuts the subtitle, never a button's text
+        JPanel head = new JPanel(new MigLayout("insets 0, gapx 12, gapy 2, wrap 3", "[][][]push"));
         head.setOpaque(false);
-        JPanel titles = new JPanel(new MigLayout("insets 0, wrap 1, gapy 2"));
-        titles.setOpaque(false);
         JLabel title = GUIUtil.applyProp(new JLabel(), NSAppUtil.ProbeLibraryPage.TITLE);
         title.setFont(UITokens.font(Font.BOLD, 8f));
-        titles.add(title);
-        JLabel sub = GUIUtil.applyProp(new JLabel(), NSAppUtil.ProbeLibraryPage.SUBTITLE);
-        sub.setForeground(UITokens.muted());
-        titles.add(sub);
-        head.add(titles, "wmin 0");
+        head.add(title);
         JButton withAssistant = GUIUtil.applyProp(new JButton(IconUtil.svgIcon("io/xlogistx/gui/icons/chat.svg", 16, UITokens.text())), NSAppUtil.ProbeLibraryPage.WRITE_WITH_ASSISTANT);
         withAssistant.addActionListener(_ -> onWriteProbeWithAssistant());
-        head.add(withAssistant);
+        head.add(withAssistant, "gapleft 16, wmin pref");
         JButton newProbe = UITokens.primary(GUIUtil.applyProp(new JButton(IconUtil.svgIcon("io/xlogistx/gui/icons/plus.svg", 14, Color.WHITE)), NSAppUtil.ProbeLibraryPage.NEW_PROBE));
         newProbe.addActionListener(_ -> newProbe());
-        head.add(newProbe);
+        head.add(newProbe, "wmin pref");
+        JLabel sub = GUIUtil.applyProp(new JLabel(), NSAppUtil.ProbeLibraryPage.SUBTITLE);
+        sub.setForeground(UITokens.muted());
+        head.add(sub, "span, wmin 0");
         out.add(head, "growx");
 
         JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", "[260!][]push[][][]"));
@@ -1028,23 +1028,23 @@ public class ScanPanel extends JPanel {
         out.setName(NSAppUtil.ProbeGroupsPage.PAGE.getName());
         out.setBackground(UITokens.color("xlogistx.ground", null, 0xF4F4F7));
 
-        JPanel head = new JPanel(new MigLayout("insets 0, gapx 12", "[grow][][]"));
+        // the buttons on the left, on the title's line, the subtitle under them, like the Probe
+        // library (the maintainer, 2026-11-12: "do the same for the probe groups page and scan
+        // history page"); "wmin pref": a narrow window never cuts a button's text
+        JPanel head = new JPanel(new MigLayout("insets 0, gapx 12, gapy 2, wrap 3", "[][][]push"));
         head.setOpaque(false);
-        JPanel titles = new JPanel(new MigLayout("insets 0, wrap 1, gapy 2"));
-        titles.setOpaque(false);
         JLabel title = GUIUtil.applyProp(new JLabel(), NSAppUtil.ProbeGroupsPage.TITLE);
         title.setFont(UITokens.font(Font.BOLD, 8f));
-        titles.add(title);
-        JLabel sub = GUIUtil.applyProp(new JLabel(), NSAppUtil.ProbeGroupsPage.SUBTITLE);
-        sub.setForeground(UITokens.muted());
-        titles.add(sub);
-        head.add(titles, "wmin 0");
+        head.add(title);
         JButton back = UITokens.link(GUIUtil.applyProp(new JButton(new IconUtil.BackIcon(16)), NSAppUtil.ProbeGroupsPage.BACK));
         back.addActionListener(_ -> cardStack.show("Probe"));
-        head.add(back);
+        head.add(back, "gapleft 16, wmin pref");
         JButton newGroup = UITokens.primary(GUIUtil.applyProp(new JButton(IconUtil.svgIcon("io/xlogistx/gui/icons/plus.svg", 14, Color.WHITE)), NSAppUtil.ProbeGroupsPage.NEW_GROUP));
         newGroup.addActionListener(_ -> openGroupEditor(null));
-        head.add(newGroup);
+        head.add(newGroup, "wmin pref");
+        JLabel sub = GUIUtil.applyProp(new JLabel(), NSAppUtil.ProbeGroupsPage.SUBTITLE);
+        sub.setForeground(UITokens.muted());
+        head.add(sub, "span, wmin 0");
         out.add(head, "growx");
 
         JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", "[260!][]push"));
@@ -1271,9 +1271,13 @@ public class ScanPanel extends JPanel {
      * name instead of adding a second, and returns to the groups page with the row selected.
      */
     private JPanel buildEditProbeGroup() {
-        JPanel content = new JPanel(new MigLayout("wrap 1, insets 10, gapy 6, fill", "[grow,fill]", "[][][][][][grow,fill][]"));
+        // the checklist's row shrinks first and the buttons' row never (2026-11-12, "the save and
+        // cancel button sometimes it shrinks"): with more probes than the page is tall, every row
+        // gave way together and the two buttons were squeezed
+        JPanel content = new JPanel(new MigLayout("wrap 1, insets 10, gapy 6, fill", "[grow,fill]", "[][][][][][grow,fill,shrinkprio 200][]"));
         content.setName(NSAppUtil.ProbeGroupEditor.EDITOR.getName());
-        JButton back = GUIUtil.applyProp(GUIUtil.iconButton(new IconUtil.BackIcon(32), true), NSAppUtil.ProbeGroupEditor.BACK);
+        // icons tinted with the theme's text colour (2026-11-12): the svgs' own stroke painted nothing on the dark theme
+        JButton back = GUIUtil.applyProp(GUIUtil.iconButton(IconUtil.svgIcon("io/xlogistx/gui/icons/back.svg", 32, UITokens.text()), true), NSAppUtil.ProbeGroupEditor.BACK);
         back.addActionListener(_ -> cardStack.show("Probe_groups"));
         content.add(back, "growx 0");
         groupEditTitle.setFont(PanelBuilder.title("").getFont());
@@ -1319,17 +1323,17 @@ public class ScanPanel extends JPanel {
         JScrollPane scroll = new JScrollPane(groupEditList);
         scroll.setBorder(BorderFactory.createLineBorder(UITokens.border()));
         scroll.getViewport().setBackground(UITokens.surface());
-        content.add(scroll, "grow, push");
+        content.add(scroll, "grow, push, hmin 60");
 
         JPanel actions = new JPanel(new MigLayout("insets 0, gapx 8", "[][]push"));
         actions.setOpaque(false);
-        JButton save = UITokens.primary(GUIUtil.applyProp(new JButton(new IconUtil.SaveIcon(16, Color.WHITE)), NSAppUtil.ProbeGroupEditor.SAVE));
+        JButton save = UITokens.primary(GUIUtil.applyProp(new JButton(IconUtil.svgIcon("io/xlogistx/gui/icons/save.svg", 16, Color.WHITE)), NSAppUtil.ProbeGroupEditor.SAVE));
         save.addActionListener(_ -> saveGroupFromEditor(save));
-        actions.add(save);
-        JButton cancel = GUIUtil.applyProp(new JButton(new IconUtil.CancelIcon(16)), NSAppUtil.ProbeGroupEditor.CANCEL);
+        actions.add(save, "wmin pref, hmin pref");
+        JButton cancel = GUIUtil.applyProp(new JButton(IconUtil.svgIcon("io/xlogistx/gui/icons/cancel.svg", 16, UITokens.text())), NSAppUtil.ProbeGroupEditor.CANCEL);
         cancel.addActionListener(_ -> cardStack.show("Probe_groups"));
-        actions.add(cancel);
-        content.add(actions, "growx");
+        actions.add(cancel, "wmin pref, hmin pref");
+        content.add(actions, "growx, hmin pref");
         return content;
     }
 
@@ -1442,24 +1446,30 @@ public class ScanPanel extends JPanel {
         out.setName(NSAppUtil.ScanHistoryPage.PAGE.getName());
         out.setBackground(UITokens.color("xlogistx.ground", null, 0xF4F4F7));
 
-        JPanel head = new JPanel(new MigLayout("insets 0, gapx 12", "[grow][]"));
+        // New scan on the left, on the title's line, the subtitle under it (2026-11-12, like the
+        // Probe library)
+        JPanel head = new JPanel(new MigLayout("insets 0, gapx 12, gapy 2, wrap 2", "[][]push"));
         head.setOpaque(false);
-        JPanel titles = new JPanel(new MigLayout("insets 0, wrap 1, gapy 2"));
-        titles.setOpaque(false);
         JLabel title = GUIUtil.applyProp(new JLabel(), NSAppUtil.ScanHistoryPage.TITLE);
         title.setFont(UITokens.font(Font.BOLD, 8f));
-        titles.add(title);
-        JLabel sub = GUIUtil.applyProp(new JLabel(), NSAppUtil.ScanHistoryPage.SUBTITLE);
-        sub.setForeground(UITokens.muted());
-        titles.add(sub);
-        head.add(titles, "wmin 0");
+        head.add(title);
         JButton newScan = UITokens.primary(GUIUtil.applyProp(new JButton(IconUtil.svgIcon("io/xlogistx/gui/icons/plus.svg", 14, Color.WHITE)), NSAppUtil.ScanHistoryPage.NEW_SCAN));
         newScan.addActionListener(_ -> ctx.nav().show(NSAppUtil.Screen.SCAN));
-        head.add(newScan);
+        head.add(newScan, "gapleft 16, wmin pref");
+        JLabel sub = GUIUtil.applyProp(new JLabel(), NSAppUtil.ScanHistoryPage.SUBTITLE);
+        sub.setForeground(UITokens.muted());
+        head.add(sub, "span, wmin 0");
         out.add(head, "growx");
 
-        JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", "[120:260:260,fill][]push[][][][][][][][]"));
+        // the row actions are one wrapping panel (2026-11-12, "fix the scan history bar so the last
+        // button fits"): eight controls in fixed cells were wider than a 1000-point page and pushed
+        // Delete all past its edge. While they fit they stay on the search's line, at the right;
+        // when they do not, they take the line under it from the left and wrap there
+        MigLayout barLayout = new MigLayout("insets 0, gapx 8, gapy 2", "[120:260:260,fill][][grow,fill]");
+        JPanel bar = new JPanel(barLayout);
         bar.setOpaque(false);
+        JPanel actions = new JPanel(new WrapLayout(FlowLayout.RIGHT, 8, 0));
+        actions.setOpaque(false);
         JTextField search = GUIUtil.applyProp(new JTextField(), NSAppUtil.ScanHistoryPage.SEARCH);
         search.putClientProperty("JTextField.leadingIcon", new IconUtil.SearchIcon(14));
         bar.add(search, "growx, wmin 120, shrinkprio 200"); // the search gives way first, so the row actions keep their text in a narrow window (2026-11-10: the box below made the bar wider)
@@ -1476,20 +1486,38 @@ public class ScanPanel extends JPanel {
         for (JButton b : new JButton[]{view, again, copyCommand, copyResult, send, delete}) {
             b.putClientProperty("JButton.buttonType", "toolBarButton");
             b.setEnabled(false);
-            bar.add(b);
+            actions.add(b);
             if (b == again) {
                 // Discovered hosts only (2026-11-10): Scan again then targets the hosts this scan found up
                 historyDiscoveredOnly.setOpaque(false);
                 historyDiscoveredOnly.setEnabled(false);
-                bar.add(historyDiscoveredOnly);
+                actions.add(historyDiscoveredOnly);
             }
         }
         // Delete all (2026-10-25): enabled whenever the history has rows, not by the selection
         historyDeleteAll.setForeground(UITokens.danger());
         historyDeleteAll.putClientProperty("JButton.buttonType", "toolBarButton");
         historyDeleteAll.setEnabled(false);
-        bar.add(historyDeleteAll);
-        out.add(bar, "growx");
+        actions.add(historyDeleteAll);
+        // FlowLayout keeps its gap at both ends: the pad moves the panel's edge by it, so the end button is on the table's edge
+        String beside = "growx, pushx, wmin 0, pad 0 0 0 8", under = "newline, spanx, growx, wmin 0, pad 0 -8 0 0";
+        bar.add(actions, beside);
+        bar.addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent e) {
+                int oneLine = 0;
+                for (Component c : actions.getComponents()) oneLine += c.getPreferredSize().width + 8;
+                boolean fits = bar.getWidth() >= 120 + 8 + historyCount.getPreferredSize().width + 8 + oneLine;
+                String want = fits ? beside : under;
+                if (!want.equals(barLayout.getComponentConstraints(actions))) {
+                    barLayout.setComponentConstraints(actions, want);
+                    ((WrapLayout) actions.getLayout()).setAlignment(fits ? FlowLayout.RIGHT : FlowLayout.LEFT);
+                }
+                // a wrapping panel knows its height only once it has its width: lay the page out again
+                actions.revalidate();
+            }
+        });
+        out.add(bar, "growx, wmin 0");
 
         Tables.style(GUIUtil.applyProp(historyTable, NSAppUtil.ScanHistoryPage.TABLE));
         Tables.width(historyTable, 0, 220);
@@ -1910,7 +1938,7 @@ public class ScanPanel extends JPanel {
 
             JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", "[][][]push[]"));
             bar.setOpaque(false);
-            JButton save = UITokens.primary(GUIUtil.applyProp(new JButton(new IconUtil.SaveIcon(16, Color.WHITE)), NSAppUtil.ProbeEditor.SAVE));
+            JButton save = UITokens.primary(GUIUtil.applyProp(new JButton(IconUtil.svgIcon("io/xlogistx/gui/icons/save.svg", 16, Color.WHITE)), NSAppUtil.ProbeEditor.SAVE));
             JButton check = GUIUtil.applyProp(new JButton(IconUtil.svgIcon("io/xlogistx/gui/icons/check.svg", 16, UITokens.text())), NSAppUtil.ProbeEditor.CHECK);
             check.addActionListener(_ -> checkDraft());
             save.addActionListener(_ -> {

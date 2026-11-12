@@ -160,6 +160,13 @@ public class UnlockPanel extends JPanel {
     private final DirectoryField location = GUIUtil.applyProp(new DirectoryField(), UnlockPage.LOCATION_FIELD);
     private final JPasswordField vaultPassword = GUIUtil.applyProp(new JPasswordField(20), UnlockPage.VAULT_PASSWORD_FIELD);
     private final InlineMessage storeMessage = new InlineMessage();
+    /**
+     * Why the store could not be opened, wrapped at the form's width and hidden while empty
+     * (2026-11-12, the maintainer: "catch datastore open issues as when it fail the login window
+     * gets crooked"). A data store failure is a sentence or several, with a path in it; in the
+     * one-line message above it made the form as wide as the sentence.
+     */
+    private final WrapLabel storeFailure = GUIUtil.applyProp(new WrapLabel(""), UnlockPage.STORE_FAILURE);
     private final FormPanel storeForm = GUIUtil.applyProp(new FormPanel(), UnlockPage.STORE_FORM);
     private final JTextField operatorID = GUIUtil.applyProp(PanelBuilder.textField("", 20), UnlockPage.OPERATOR_FIELD);
     private final JPasswordField operatorPassword = GUIUtil.applyProp(new JPasswordField(20), UnlockPage.OPERATOR_PASSWORD_FIELD);
@@ -349,6 +356,18 @@ public class UnlockPanel extends JPanel {
             storeForm.field(UnlockPage.DB_ENCRYPTION.getDisplayName(), PanelBuilder.passwordField(dbEncryptionPassword), UnlockPage.DB_GENERATED_HINT.getDisplayName());
         });
 
+        storeFailure.setFont(UITokens.font(Font.PLAIN, -1f));
+        storeFailure.setForeground(UITokens.danger());
+        storeFailure.setVisible(false);
+        storeForm.row(storeFailure, "growx, wmin 0, gaptop 6");
+        // the reason wraps at the width the form has, so it makes the form taller, never wider
+        storeForm.addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent e) {
+                storeFailure.setWrapWidth(storeForm.getWidth());
+            }
+        });
+
         JPanel actions = new JPanel(new MigLayout("insets 0", "[grow][]"));
         actions.setOpaque(false);
         actions.add(new JLabel(), "growx");
@@ -423,27 +442,41 @@ public class UnlockPanel extends JPanel {
                 new String(dbPassword.getPassword()), new String(dbEncryptionPassword.getPassword()))
                 : null;
         storeMessage.info(create ? "Creating the vault, the database and the operator account…" : "Opening the store…");
+        showStoreFailure(null);
 
         BackgroundTask.run(this, openButton, () -> {
             try {
                 ShiroDSDomainSecurityManager dsm = opener.open(path, vault, firstRun);
                 AppPrefs.storeLocation(path);
                 return (Object) dsm;
-            } catch (Exception e) {
+            } catch (Throwable e) {
+                // everything, an Error included (a missing class, a driver's static initialiser):
+                // whatever stops the store from opening is reported under the form, never thrown
+                // out of the worker with the window left as it was
                 return e;
             } finally {
                 Arrays.fill(vault, '\0');
                 Arrays.fill(opPwd, '\0');
             }
         }, result -> {
-            if (result instanceof Exception e) {
-                storeMessage.error(reason(e));
+            if (result instanceof Throwable e) {
+                e.printStackTrace(); // the whole chain for the log; the screen shows the reason
+                storeMessage.error(create ? "The store could not be created." : "The store could not be opened.");
+                showStoreFailure(storeFailureReason(e));
                 vaultPassword.requestFocusInWindow();
                 return;
             }
-            clearStoreSecrets();
             ShiroDSDomainSecurityManager dsm = (ShiroDSDomainSecurityManager) result;
-            onStoreOpened.accept(dsm);
+            try {
+                // the host builds the application on the store here; a failure is the host's to
+                // undo (it closes the store), the screen stays on step 1 and says why
+                onStoreOpened.accept(dsm);
+            } catch (RuntimeException | Error e) {
+                storeMessage.error("The store opened, but the application could not start on it.");
+                showStoreFailure(storeFailureReason(e));
+                return;
+            }
+            clearStoreSecrets();
             markStoreOpened(path);
         });
     }
@@ -451,6 +484,103 @@ public class UnlockPanel extends JPanel {
     private static String reason(Exception e) {
         String m = e.getMessage();
         return m != null && !m.isBlank() ? m : e.getClass().getSimpleName();
+    }
+
+    /** Shows (or with null hides) the wrapped reason under the store form. */
+    private void showStoreFailure(String reason) {
+        storeFailureReason = reason != null ? reason : "";
+        storeFailure.setText(breakLongWords(storeFailureReason));
+        storeFailure.setVisible(reason != null);
+        storeFailure.setWrapWidth(storeForm.getWidth());
+        revalidate();
+        repaint();
+    }
+
+    /** The reason under the store form, or empty; for tests. */
+    public String getStoreFailure() {
+        return storeFailure.isVisible() ? storeFailureReason : "";
+    }
+
+    /** The reason as it was given; the label holds it with its long paths broken. */
+    private String storeFailureReason = "";
+
+    /** The longest run of characters the label is given without a place to wrap. */
+    static final int WORD_MAX = 40;
+
+    /**
+     * A file path has no space in it, and a word the label cannot wrap is cut at the form's
+     * edge. A word longer than {@link #WORD_MAX} gets a line break after a {@code \} or a
+     * {@code /} once that many characters have run (or right there when it has none), so the
+     * whole path is readable over two or three lines.
+     */
+    static String breakLongWords(String text) {
+        StringBuilder out = new StringBuilder(text.length() + 8);
+        int run = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            out.append(c);
+            if (Character.isWhitespace(c)) {
+                run = 0;
+                continue;
+            }
+            run++;
+            boolean separator = c == '\\' || c == '/';
+            if (i + 1 < text.length() && !Character.isWhitespace(text.charAt(i + 1))
+                    && ((run >= WORD_MAX && separator) || run >= WORD_MAX * 2)) {
+                out.append('\n');
+                run = 0;
+            }
+        }
+        return out.toString();
+    }
+
+    /** The one-line message under the location field, or empty; for tests. */
+    public String getStoreMessage() {
+        return storeMessage.hasMessage() ? storeMessage.getText() : "";
+    }
+
+    /** The longest reason shown; a driver's message can carry a whole statement. */
+    static final int FAILURE_MAX = 400;
+
+    /**
+     * What to tell the operator when the store does not open: a plain sentence for the failures
+     * a data store commonly has (the file held by another program, the credentials refused, a
+     * damaged file), otherwise the deepest cause's own message, on its first line and at most
+     * {@link #FAILURE_MAX} characters, cut at a word. The whole chain is searched, since the
+     * connection pool wraps the driver's exception.
+     */
+    static String storeFailureReason(Throwable failure) {
+        StringBuilder all = new StringBuilder();
+        Throwable deepest = failure;
+        java.util.Set<Throwable> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        for (Throwable t = failure; t != null && seen.add(t); t = t.getCause()) {
+            deepest = t;
+            if (t.getMessage() != null) all.append(t.getMessage()).append('\n');
+        }
+        String text = all.toString().toLowerCase(java.util.Locale.ROOT);
+        if (text.contains("already in use") || text.contains("locked by another process") || text.contains("90020")) {
+            return "The database file is in use by another program, most likely another NoSneak window on this store. Close it, then open the store again.";
+        }
+        if (text.contains("wrong user name or password") || text.contains("28000")) {
+            return "The database refused the user name and password kept in the vault. The vault and the database in this directory do not belong together.";
+        }
+        if (text.contains("encryption error") || text.contains("90049")) {
+            return "The database could not be decrypted with the encryption password kept in the vault. The vault and the database in this directory do not belong together.";
+        }
+        if (text.contains("file corrupted") || text.contains("90030")) {
+            return "The database file is damaged and could not be read. Restore it from a backup.";
+        }
+        String m = failure.getMessage();
+        if (m == null || m.isBlank()) m = deepest.getMessage();
+        if (m == null || m.isBlank()) return "The reason was not given (" + deepest.getClass().getName() + ").";
+        m = m.strip();
+        int line = m.indexOf('\n');
+        if (line > 0) m = m.substring(0, line).strip();
+        if (m.length() > FAILURE_MAX) {
+            int cut = m.lastIndexOf(' ', FAILURE_MAX);
+            m = m.substring(0, cut > 0 ? cut : FAILURE_MAX) + " (the rest is in the log)";
+        }
+        return m;
     }
 
     private void clearStoreSecrets() {

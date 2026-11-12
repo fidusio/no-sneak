@@ -165,10 +165,27 @@ public class NoSneakMain {
          */
         public void storeOpened(ShiroDSDomainSecurityManager dsm) {
             if (ctx != null) return;
+            // nothing is kept until the application is built (2026-11-12): a failure here used to
+            // leave the context set with no shell, so a second Open was ignored and the unlock
+            // screen was stuck. Now the store is closed again and the caller told why
+            AppContext context;
+            AppShell built;
+            try {
+                context = new AppContext(dsm);
+                context.setThemeSwitcher(this::applyTheme);
+                built = new AppShell(context);
+            } catch (RuntimeException | Error e) {
+                e.printStackTrace();
+                try {
+                    dsm.getDataStore().close();
+                } catch (RuntimeException closing) {
+                    e.addSuppressed(closing);
+                }
+                throw e;
+            }
             domainSecurityManager = dsm;
-            ctx = new AppContext(dsm);
-            ctx.setThemeSwitcher(this::applyTheme);
-            shell = new AppShell(ctx);
+            ctx = context;
+            shell = built;
             menuBar = shell.menuBar();
             unlock.bindSession(ctx.session());
             ctx.session().onAuthChange(authListener);

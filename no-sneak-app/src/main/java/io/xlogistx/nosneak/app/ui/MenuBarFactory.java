@@ -85,8 +85,11 @@ public class MenuBarFactory {
         view.add(page(NSAppUtil.Screen.PROFILE));
         view.add(page(NSAppUtil.Screen.API_KEYS));
         view.add(page(NSAppUtil.Screen.SETTINGS));
-        view.addSeparator();
-        view.add(page(NSAppUtil.Screen.ACL));
+        // Access Control is no longer offered under View (the maintainer, 2026-11-12: "remove it
+        // from menu but keep the code"): the page, its Screen and its route are all still there,
+        // and the sidebar's Admin section still opens it for a super-admin. To put it back:
+        // view.addSeparator();
+        // view.add(page(NSAppUtil.Screen.ACL));
 
         JMenuItem aboutItem = GUIUtil.applyProp(new JMenuItem(), NSAppUtil.MenuBar.ABOUT);
         aboutItem.addActionListener(_ -> showAbout());

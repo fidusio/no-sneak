@@ -599,6 +599,20 @@ array or an intended "capture nothing" turns into "capture everything".
 >   maybe they should be merged" — merged, the maintainer's call): one sidebar item, the list of
 >   chats is the page and the open conversation replaces it (§2, §4).
 
+> **2026-11-12 — page heads.** Every page here is a gui-audio `PagePanel`, and since that day
+> `PagePanel.action(...)` puts a page's actions **on the title's line, right after the title**
+> (they were at the head's right end), with the description on the line under them and
+> `wmin pref` on each action (the maintainer: "do the same for the chat, capture, skills and
+> providers", after the scanner's pages). Nothing changed in this module's sources; wherever
+> this document says a head action sits at the right, read it as after the title. Pinned by
+> `no-sneak-app`'s `PageHeadActionsTest`.
+> **Same day, Save buttons:** the provider form's and the skill editor's Save used
+> `new IconUtil.SaveIcon(16, Color.WHITE)`, a tinted widget that sets its host's background
+> dark green when it paints, so the primary button turned green after its first paint. Both
+> use `IconUtil.svgIcon("io/xlogistx/gui/icons/save.svg", 16, Color.WHITE)` now and stay in
+> the accent colour (the maintainer: "make the save buttons purple like the other primary
+> buttons").
+
 ## 1. Window shape
 
 The host application (`no-sneak-app`'s `AppShell`) owns the window: its one sidebar lists the

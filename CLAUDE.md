@@ -188,6 +188,45 @@
 > A temporary run log (`SCAN RUN` / `SCAN DONE`) found the slow scans: `https-scan` takes
 > 48 s on one of the maintainer's hosts (a Pi Zero W), known and left alone; the log was
 > removed the same day ("remove the logs printout").
+> **2026-11-12, uncommitted:** on the Probe library page *Write with the assistant* and *New
+> probe* sit on the left, on the title's line, and never shrink below their text; the same
+> on the **Probe groups** page (the *Probe library* link, *New group*) and the **Scan
+> history** page (*New scan*) (`ProbeLibraryHeadTest` covers the three). The **Scan history
+> action bar** no longer runs past the page ("fix the scan history bar so the last button
+> fits"): while the actions fit they stay on the search's line, at the right; when they do
+> not, they take the line under it and wrap (gui-audio's `WrapLayout`). **Then the Chat,
+> Capture, Skills and Providers pages** ("do the same for the chat, capture, skills and
+> providers"): the change is in gui-audio's **`PagePanel`**, the frame those pages share, so
+> every page built on it has its actions after the title now, API Keys and the pages'
+> forms included (`PageHeadActionsTest`). Install gui-audio from io-xlogistx first. The
+> **Scan page** was brought in line last ("the scan is done, double check it"): its *New
+> scan* followed the title block, so it sat after the subtitle; it is on the title's line now.
+> **Same day** ("fix the help button in dark theme and the scan form width, also in the new
+> group and edit group the save and cancel button sometimes it shrinks"): the Scan form's
+> Help icon is tinted with the theme's text colour (it painted nothing on Dark); the five
+> option flags **wrap** instead of widening the form past a 1000-point page; in the probe
+> group editor the checklist gives way first and Save / Cancel keep their size, and its
+> Back and Cancel icons follow the theme too.
+> **Same day, the unlock screen** ("when you open the vault step catch datastore open issues
+> as when it fail the login window gets crooked"): a store that does not open is reported
+> as a **wrapped reason under the store form** (`UnlockPanel.storeFailure`), a plain
+> sentence for the common data store failures; before, the driver's long message went into
+> a one-line label and stretched the form. Every `Throwable` of the opener is caught, and a
+> failure while the application is built on the opened store closes the store and leaves
+> step 1 usable (`UnlockPanelStoreFailureTest`). **Icons on the dark theme** ("fix the choose
+> button icon and all other icons in dark theme"): fixed once, in gui-audio's
+> `IconUtil.SVGIcon` — an icon built without a colour is painted in the theme's text colour
+> under a dark look and feel (every bundled svg is one mid-grey stroke); the light theme is
+> pixel-identical. Install gui-audio first. **The four Save buttons are accent-coloured**
+> ("make the save buttons purple like the other primary buttons"): the probe group editor,
+> the probe editor, the provider form and the skill editor used a Save icon that painted
+> its button dark green. **Access Control left the View menu** ("under view there is access
+> control remove it from menu but keep the code"): the item and its separator are commented
+> out in `MenuBarFactory`; the page, its `Screen`, its route and the sidebar's Admin item
+> for a super-admin are unchanged. **The window's header** ("on the main window on the top
+> move user and sign out to the left and make sign out does not shrink"): gui-audio's
+> `HeaderBar` is brand · subject · actions · status chip, all from the left; Sign out keeps
+> its width and the chip (the store path) is what gives way. Install gui-audio first.
 
 Assessment tooling for what a network endpoint exposes — TLS posture, **post-quantum
 readiness**, and running services — plus a Swing front-end and an AI-assistant layer.
