@@ -236,6 +236,28 @@ class ScanPanelTest {
         assertEquals(Set.of("ssh"), ProbeGroupModel.namesFromTicks(ticks, stored));
     }
 
+    /**
+     * A scan run again on its discovered hosts (2026-11-10): the hosts replace the targets, host
+     * discovery is on whatever the command said, -sn is dropped, and the rest survives.
+     */
+    @Test
+    void aRerunOnDiscoveredHostsKeepsDiscoveryOnAndTheRestOfTheCommand() {
+        List<String> hosts = List.of("192.168.1.1", "192.168.1.20");
+        NMapConfig sweep = NMap.parseCommand(ProbeSelection.rerunCommand("192.168.1.0/24 -sn", hosts));
+        assertEquals(hosts, sweep.targets);
+        assertTrue(sweep.discovery);
+        assertNull(sweep.ports, "no -sn: the ports are scanned");
+
+        NMapConfig skipped = NMap.parseCommand(ProbeSelection.rerunCommand("192.168.1.0/24 -Pn -p 22,443 -T5 --open", hosts));
+        assertEquals(hosts, skipped.targets);
+        assertTrue(skipped.discovery, "-Pn is dropped: a host is checked before it is scanned");
+        assertEquals(2, skipped.ports.length);
+        assertTrue(skipped.openOnly);
+        assertEquals(NMapConfig.Timing.T5.maxInFlight, skipped.maxInFlight);
+
+        assertThrows(IllegalArgumentException.class, () -> ProbeSelection.rerunCommand("192.168.1.0/24", List.of()));
+    }
+
     @Test
     void aTickIsTheStoredRowsIdentity() {
         ProbeType mine = stored("g1", "ssh");
@@ -253,5 +275,19 @@ class ScanPanelTest {
         assertEquals("bundled", ProbeSelection.originOf(copy));
         assertTrue(ProbeSelection.isBundledCopy(copy));
         assertEquals("", ProbeSelection.originOf(null));
+    }
+
+    /** An unnamed scan of many targets is not titled with the whole list (2026-11-10). */
+    @Test
+    void anUnnamedScanOfManyTargetsGetsAShortName() {
+        assertEquals("10.0.0.0/24", ScanPanel.defaultName(List.of("10.0.0.0/24")));
+        assertEquals("10.0.0.1 10.0.0.4 10.0.0.5", ScanPanel.defaultName(List.of("10.0.0.1", "10.0.0.4", "10.0.0.5")));
+        assertEquals("10.0.0.1 and 3 more", ScanPanel.defaultName(List.of("10.0.0.1", "10.0.0.4", "10.0.0.5", "10.0.0.6")));
+        // never past 30 characters: three blocks that do not fit, one host name that does not fit
+        assertEquals("192.168.100.0/24 and 2 more", ScanPanel.defaultName(List.of("192.168.100.0/24", "192.168.101.0/24", "192.168.102.0/24")));
+        String longHost = "a-very-long-host-name.internal.example.org";
+        assertEquals(longHost.substring(0, 30), ScanPanel.defaultName(List.of(longHost)));
+        assertEquals(30, ScanPanel.defaultName(List.of(longHost, "10.0.0.1")).length());
+        assertEquals("", ScanPanel.defaultName(List.of()));
     }
 }

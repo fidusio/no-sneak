@@ -679,6 +679,114 @@ button still navigates here) nor a stored report open on its card — then
   those ports are not scanned. Nothing is ever greyed: a first fix disabled the field under `-sn`
   and the maintainer read it as "I can no longer specify the port range". A parsed command is not
   typing: `-sn` in the command ticks the box and empties the field without unticking anything.
+  **Discovered hosts only** (2026-11-10; the maintainer: "a check box for rerunning the scan on
+  the discovered host, I don't want to execute host discovery again", then, on the first plan's
+  `-Pn`: "you always check if the host is alive before you probe, that is mandatory, or we
+  create targeted discovery of the list of hosts, whoever is alive we probe") is a box on its
+  own line under the option flags. It is a form helper, not an engine flag, so it prints
+  nothing of its own into the command: a tick replaces Targets with the hosts the result on the
+  page found up (`ReportView.Report.discoveredTargets`, handed over by
+  `ScanResultView.onReportChange` → `ScanFormPanel.setDiscoveredHosts`) and unticks Skip ping
+  and Host discovery only, so the engine checks exactly those hosts again (its per-host
+  discovery; a listed address is not swept) and scans and probes only the ones that answer — a
+  host that went offline is reported down and gets no connection. An untick puts back the
+  targets and the two boxes as they were, unless the targets were edited meanwhile, which then
+  stand. The box is greyed with *No discovered host yet: run a scan first* until a result with
+  a host up is on the page, and a new result unticks it (the targets then describe the scan
+  that just ran). `ScanFormPanelTest.discoveredHostsOnlySwapsTheTargetsAndKeepsDiscoveryOn`.
+  **Two cards (2026-11-10, the maintainer: "group target, Local networks, port and Name in a
+  panel by itself and add clear target").** The form is no longer one bordered card: it is a
+  transparent column of two (`ScanFormPanel.card`, `ScanForm.TARGET_CARD` / `SETUP_CARD`) —
+  Targets, Ports and Name in the first, everything else in the second. Beside *Local networks*
+  a **Clear** link (`ScanForm.TARGETS_CLEAR`, `clearTargets()`) empties the targets, unticks
+  Discovered hosts only, re-prints the command without targets and shows no error (Run still
+  refuses an empty Targets); `ScanFormPanelTest.clearEmptiesTheTargetsAndKeepsTheRest`.
+  **An unnamed scan's name** (`ScanPanel.defaultName`, same day): its targets when there
+  are three or fewer, *first and N more* beyond that — the name is the result's title and
+  the history row, and a rerun on the discovered hosts must not print every address there.
+  A name is **at most 30 characters** (`ScanFormPanel.NAME_MAX`): the Name field is capped
+  with gui-audio's `GUIUtil.limitLength`, and `defaultName` cuts what it makes up.
+  **Run reads everything at the press** (2026-11-10; the maintainer: "whenever I hit scan
+  button read all the parameters and run the scan accordingly"): `ScanPanel.prepareRun`
+  returns a `RunRequest` (the config, the command and probe names the report records, the
+  name) from `ScanFormPanel.toRunConfig` — the command and every field as they stand, a
+  command that does not parse refused rather than dropped — and the ticks; `applyTo` clears
+  any `--probes` the command carried, so the chips alone decide; the worker then resolves
+  the ticks against `Session.getAllProbes()` again before it scans. *Scan again* clears the
+  Scan page's result. `ScanRunReadsTheFormTest` drives it on a real store.
+  **Help, Run scan and Stop are on the Command label's line** (2026-11-11; the maintainer:
+  "next to command move info, run scan and stop"): Command · Help · Run scan · Stop · the
+  hint, Copy at the right end; the command area has the row under it to itself. This
+  supersedes "sit at the top of its row" / "right beside the command" below.
+  **Match is under the options** (same day; "Match section put under options"): the Match
+  label and its First / All segment are a line of the options block, under Discovered hosts
+  only; the Probes head carries only its label (supersedes "beside the Probes label" below).
+  **Copy follows Stop** on the Command line (it was at the line's right end), and the page
+  head's **New scan** is on the left, right after the title block (`[][]push`; "move copy
+  next to stop, and NewScan to the left"). The history page's New scan is unchanged.
+  **Neither text area has a fixed width** (same day; "the 2 text area remove length
+  limitation and make their resize natural"): the 80-column Command and the `sgx targets`
+  size group are gone, both areas are `growx, wmin 0` and follow the card (supersedes the
+  "fixed 80 characters wide" / size-group text below). Name and Ports stay 20 columns.
+  **Discovered hosts only is enforced at Run** (same day; "when I check the box and click
+  scan it should always be validated"): `toRunConfig` calls `applyDiscovered()` while the box
+  is ticked — targets = the discovered hosts, Skip ping and Host discovery only off, the
+  command re-printed — so targets or a command edited after the tick are overruled; and
+  `setDiscoveredHosts` keeps the tick over a new result that has hosts, the targets
+  following the new list (it unticks only when no host is left; this supersedes "a new
+  result unticks it" below). `ScanFormPanelTest.discoveredHostsOnlySwapsTheTargetsAndKeepsDiscoveryOn`.
+  **Discovered hosts + ticked probes = those probes on their ports** (same day; the
+  maintainer: "you only scan the selected ones and the associated ports, unless the ports
+  are set specifically"). The engine rule was already that (`NMapScanner.resolvePorts`), but
+  the history bar's discovered rerun replaced the ticks with the stored scan's probes, and a
+  host discovery stores none: the chips vanished and the run was the default 1-1024 on every
+  host, unprobed. `loadRerun(scan, command, keepTicksWhenNoneSaved)` now keeps the page's
+  ticks when the rerun is on discovered hosts and the stored scan has no probes; a plain
+  *Scan again* still loads the scan as it was defined.
+  `ScanRunReadsTheFormTest.discoveredHostsWithProbesScanOnlyTheProbesAndTheirPorts` pins the
+  rule through both boxes, and that typed ports win. **`LiveDiscoveredRerunTest`** (opt-in:
+  runs only with the environment variable `LIVE_SCAN_TARGET`, e.g. `127.0.0.1`) drives the
+  real pages, the real Run button and the real engine on a throw-away store: a host
+  discovery, probes ticked, the history bar's discovered rerun, Run; it prints each run's
+  command, probes, duration and open ports. Run on 127.0.0.1 on 2026-11-11: 18 probes ticked,
+  18 reached the engine, no 1-1024 warning. The run logging added that day to find a slow scan (`SCAN RUN` / `SCAN TIMING` / `SCAN
+  DONE` console lines) was **removed the same day** on the maintainer's instruction once the
+  cause was known: `https-scan` takes 48 s on one host of his, a Pi Zero W.
+  from (IntelliJ's Run window).
+  **Targets is a text area** (same day; the maintainer, on the one-line field holding a
+  discovered list: "the text field is ugly and confusing … change target text field to text
+  area, if you need to create the widget create it under xlogistx-gui-audio … call it
+  TextAreaWidget"): gui-audio's `TextAreaWidget(3)` — three wrapping rows in the mono face that
+  scroll, so the card keeps its height with 60 addresses — over the card's full width, with
+  Ports and Name on a row beneath it. Enter still runs the scan, Shift+Enter breaks the line,
+  and a line break separates targets like a space (the split was always on whitespace). A
+  muted count sits before the links (`ScanForm.TARGETS_COUNT`: *1 target*, *60 targets*,
+  nothing when empty; a range or a block counts as one). `targetsField()` hands the tests the
+  widget. The app needs the gui-audio jar installed from io-xlogistx with the widget in it.
+  **The card's head is one line** (last that day; the maintainer: "next to Targets put the
+  following: Targets, Name (optional) [name text field], Ports [ports text field], Local
+  Network, Clear"): the Targets label and its count, the Name label and field, the Ports label
+  and field, then the *Local networks* and *Clear* links; the targets area fills the width
+  under it and the hint sits below. The Ports-and-Name row beneath the area is gone. The Name
+  and Ports fields are a **fixed 20 characters wide** (15 at first; "make text field of fixed size 15
+  character", then "make the name and ports fields 20 characters"; `setColumns(20)`, no grow); longer text scrolls inside the field.
+  **The Command field is a `TextAreaWidget` too** (same day; "make command textarea as
+  well"): two wrapping rows that scroll, so a long target list no longer runs off one line;
+  Enter still runs the scan, Shift+Enter breaks the line (`NMap.parseCommand` splits on any
+  whitespace), and Help / Run scan / Stop sit at the top of its row. Both areas carry a
+  tooltip (`TARGETS_FIELD` / `COMMAND_FIELD` descriptions: what goes in, Enter runs,
+  Shift+Enter breaks the line); neither field had one before. Both areas are a **fixed 80
+  characters wide** ("fix the length of the scroll area to 80 char": `getTextArea().setColumns(80)`,
+  `wmax pref`, no grow), so they no longer stretch with the card and Help / Run scan / Stop sit
+  right beside the command. **Then the Targets area alone** became exactly as wide as the head
+  line above it ("make the target text area equal to the length of the Targets line above
+  it"): head and area share a MigLayout size group (`sgx targets`), the head's width winning;
+  the Command area stays at 80 characters.
+- **The Add probe popup is multi-select** (2026-11-10; "when I select a probe make it multi
+  select"): a click on a check item (a probe, *All*, a group) leaves the popup open
+  (`CheckBoxMenuItem.doNotCloseOnMouseClick`, `ScanPanel.stayOpen`) and every other item
+  re-reads its tick (`probeTicked`); it closes on a click outside, Escape or *Save ticked as
+  group*. Not yet clicked through in the running app.
 - **Probes are chips, not checkboxes.** *Add probe* opens a popup with a check item per probe
   (one section with an *All* since 2026-11-02, the tooltip service · ports); ticked probes
   show as chips (`ChipPanel`) and a chip's × unticks it. The
@@ -754,7 +862,18 @@ the run-through; also a header button on the stored report's view, `ScanResultVi
 puts the report's saved `command`, `probes` (names mapped back to ticks by
 `ProbeSelection.keysForNames` among the subject's rows, deleted ones dropped) and name
 into the New scan form and navigates there; nothing runs until Run is pressed, so the command can
-be adjusted first. A report without a `command` property falls back to its description cut before
+be adjusted first. **Discovered hosts only** (2026-11-10), a box beside Scan again on the bar,
+enabled with one row selected: ticked, Scan again re-reads the stored report off the EDT (a row
+carries no content), takes the hosts it found up and loads
+`ProbeSelection.rerunCommand(command, hosts)` — those hosts as the targets, host discovery on
+(a `-Pn` dropped), a discovery-only `-sn` dropped so the ports are scanned, everything else
+kept — with the saved probes and name; a report with no host up says so and loads nothing. The
+stored report's own Scan again button loads the scan as it was defined. The bar's search box
+now gives way first in a narrow window (120 to 260 px), since the box made the bar wider.
+`ScanRerunDiscoveredTest` drives both boxes on a real store and, with `-Drender.dir` or the
+environment variable `RENDER_DIR` (`RENDER_WIDTH` for the width), paints both pages in each
+theme; `ScanPanelTest.aRerunOnDiscoveredHostsKeepsDiscoveryOnAndTheRestOfTheCommand` and
+`ReportViewTest.theDiscoveredTargetsAreTheUpHostsAddresses` pin the two pure rules. be adjusted first. A report without a `command` property falls back to its description cut before
 the `· probes:` suffix. Rows are still projections re-fetched by GUID before their
 content is read; the two counts come from the `hostsUp` / `openPorts` properties a run now records
 on the `ReportContent` (parsed from the report at save time), so older rows show a dash. *View*

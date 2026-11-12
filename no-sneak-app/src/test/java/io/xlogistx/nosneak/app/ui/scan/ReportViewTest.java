@@ -153,6 +153,20 @@ public class ReportViewTest {
         assertEquals("No TLS", r.hosts().get(0).posture().label());
     }
 
+    /** The targets of a rerun on the discovered hosts (2026-11-10): the up hosts' addresses, each once. */
+    @Test
+    void theDiscoveredTargetsAreTheUpHostsAddresses() {
+        String json = """
+                {"hosts":[
+                  {"host":"10.0.0.1","ip":"10.0.0.1","up":true},
+                  {"host":"10.0.0.2","ip":"10.0.0.2","up":false},
+                  {"host":"gw.example","ip":"10.0.0.1","up":true},
+                  {"host":"nas.example","up":true}
+                ]}""";
+        assertEquals(List.of("10.0.0.1", "nas.example"), ReportView.parse(json).discoveredTargets());
+        assertEquals(List.of(), ReportView.parse("{}").discoveredTargets());
+    }
+
     @Test
     void refusesWhatIsNotAReport() {
         assertThrows(IllegalArgumentException.class, () -> ReportView.parse("not json"));

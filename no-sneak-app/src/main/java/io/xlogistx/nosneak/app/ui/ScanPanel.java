@@ -144,6 +144,8 @@ public class ScanPanel extends JPanel {
     /** The scan in progress, or null. Set on the worker, read on the EDT by the Stop button. */
     private volatile NMapScanner.ScanHandle running;
     private ReportContent selectedScan;
+    /** The history bar's box beside Scan again (2026-11-10): rerun on the hosts the selected scan found up. */
+    private final JCheckBox historyDiscoveredOnly = GUIUtil.applyProp(new JCheckBox(), NSAppUtil.ScanHistoryPage.DISCOVERED_ONLY);
     private ProbeType selectedProbe;
 
     // The probe editor (2026-10-26): the name is read from the JSON, Check validates inline
@@ -173,7 +175,9 @@ public class ScanPanel extends JPanel {
         this.stopButton = form.getStopButton();
         this.resultView = new ScanResultView(ScanPanel::copyToClipboard, this::setSendToChat);
         this.storedView = new ScanResultView(ScanPanel::copyToClipboard, this::setSendToChat);
-        this.storedView.onRerun(() -> rerunScan(selectedScan));
+        this.storedView.onRerun(() -> rerunScan(selectedScan, false));
+        // the form's Discovered hosts only box follows the hosts of the result on the page (2026-11-10)
+        this.resultView.onReportChange(r -> form.setDiscoveredHosts(r != null ? r.discoveredTargets() : null));
 
         setLayout(new BorderLayout());
         cardStack.add(buildScanPanel(), "Scan");
@@ -253,7 +257,7 @@ public class ScanPanel extends JPanel {
         out.setBackground(UITokens.color("xlogistx.ground", null, 0xF4F4F7));
 
         // the page is named like its sidebar item (2026-11-01: it said "New scan", which is now the button)
-        JPanel head = new JPanel(new MigLayout("insets 0, gapx 12", "[grow][]"));
+        JPanel head = new JPanel(new MigLayout("insets 0, gapx 12", "[][]push"));
         head.setOpaque(false);
         JPanel titles = new JPanel(new MigLayout("insets 0, wrap 1, gapy 2"));
         titles.setOpaque(false);
@@ -265,7 +269,8 @@ public class ScanPanel extends JPanel {
         titles.add(sub);
         head.add(titles, "wmin 0");
         newScanButton.addActionListener(_ -> newScan());
-        head.add(newScanButton);
+        // New scan sits on the left, beside the title (the maintainer, 2026-11-11: "new scan to the left")
+        head.add(newScanButton, "gapleft 16");
         out.add(head, "growx");
 
         probeChips.setEmptyText(NSAppUtil.ScanPage.PROBES_EMPTY.getDisplayName());
@@ -310,6 +315,18 @@ public class ScanPanel extends JPanel {
      */
     private record ScanOutcome(String json, String stopped) {}
 
+    /** Ticks exactly the named probes (comma separated), for the live test. */
+    void tickProbes(String csv) {
+        tickedProbes.clear();
+        tickedProbes.addAll(ProbeSelection.keysForNames(csv, probes));
+        refreshProbeChips();
+    }
+
+    /** How many probes of the subject are loaded (tests wait on it). */
+    int probeCount() {
+        return probes.size();
+    }
+
     /** Whether a scan is in flight (2026-11-02): the Settings page refuses a theme switch meanwhile, since the switch rebuilds this panel. */
     public boolean isScanning() {
         return running != null;
@@ -324,28 +341,53 @@ public class ScanPanel extends JPanel {
         stopButton.setEnabled(false);
     }
 
+    /** What one press of Run scans: the configuration handed to the engine, and what the report records of it. */
+    record RunRequest(NMapConfig cfg, String command, String probeNames, String name) {}
+
+    /**
+     * Reads everything the scan depends on, at the moment Run is pressed: the form's fields laid
+     * over its command, and the ticked probes as they are stored now.
+     *
+     * @throws IllegalArgumentException when a field, the command or a ticked probe is not valid
+     */
+    RunRequest prepareRun() {
+        NMapConfig cfg = form.toRunConfig();
+        ProbeSelection.Selection selected = ProbeSelection.select(probes, tickedProbes);
+        ProbeSelection.applyTo(cfg, selected);
+        // what the report records as the command: the form's own print of what it is running,
+        // probes aside (they are applied to the config, never written into the line)
+        String typed = form.getCommand().isEmpty() ? NMap.formatCommand(cfg) : form.getCommand();
+        return new RunRequest(cfg, typed, ProbeSelection.describe(selected), reportName(cfg));
+    }
+
     private void onRun(JButton run) {
-        NMapConfig cfg;
-        ProbeSelection.Selection selected;
+        RunRequest request;
         try {
-            cfg = form.toConfig();
-            selected = ProbeSelection.select(probes, tickedProbes);
-            ProbeSelection.applyTo(cfg, selected);
+            request = prepareRun();
         } catch (IllegalArgumentException ex) {
             form.showError(ex.getMessage());
             return;
         }
         form.clearMessage();
-        // what the report records as the command: the form's own print of what it is running,
-        // probes aside (they are applied to the config, never written into the line)
-        String typed = form.getCommand().isEmpty() ? NMap.formatCommand(cfg) : form.getCommand();
-        String probeNames = ProbeSelection.describe(selected);
-        String scanName = reportName(cfg);
+        NMapConfig cfg = request.cfg();
+        String typed = request.command();
+        String probeNames = request.probeNames();
+        String scanName = request.name();
         String subjectAtStart = ctx.session().getSubjectGUID();
 
         stopButton.setEnabled(true);
         newScanButton.setEnabled(false);
-        BackgroundTask.run(this, run, () -> runScan(cfg), outcome -> {
+        // the ticks as they stand now; the worker resolves them against the store again, so a
+        // probe saved a moment ago is scanned as saved, not as this page last loaded it
+        Set<String> ticks = new HashSet<>(tickedProbes);
+        BackgroundTask.run(this, run, () -> {
+            try {
+                ProbeSelection.applyTo(cfg, ProbeSelection.select(ctx.session().getAllProbes(), ticks));
+            } catch (IllegalArgumentException invalid) {
+                return new ScanOutcome(null, invalid.getMessage());
+            }
+            return runScan(cfg);
+        }, outcome -> {
             stopButton.setEnabled(false);
             newScanButton.setEnabled(true);
             if (outcome.stopped() != null) {
@@ -396,7 +438,21 @@ public class ScanPanel extends JPanel {
      */
     private String reportName(NMapConfig cfg) {
         String typed = form.getScanName();
-        return typed.isEmpty() ? String.join(" ", cfg.targets) : typed;
+        return typed.isEmpty() ? defaultName(cfg.targets) : typed;
+    }
+
+    /**
+     * The name of an unnamed scan, never longer than {@link ScanFormPanel#NAME_MAX}: its targets
+     * when they fit, the first and a count otherwise, cut when even that is too long.
+     */
+    static String defaultName(List<String> targets) {
+        if (targets.isEmpty()) return "";
+        String all = String.join(" ", targets);
+        if (targets.size() <= 3 && all.length() <= ScanFormPanel.NAME_MAX) return all;
+        String more = targets.size() > 1 ? " and " + (targets.size() - 1) + " more" : "";
+        String first = targets.get(0);
+        int room = ScanFormPanel.NAME_MAX - more.length();
+        return (first.length() > room ? first.substring(0, room) : first) + more;
     }
 
     /** One selectable probe: the label shown, the tick key behind it and its service · ports tooltip. */
@@ -446,14 +502,21 @@ public class ScanPanel extends JPanel {
      * when every member that still exists is ticked; a tick adds exactly the members' keys, an
      * untick removes exactly them; a footer saves the current ticks as a group), then a check
      * item per probe with an All (one section since 2026-11-02: every probe is the subject's).
+     * <b>Multi-select</b> (2026-11-10, the maintainer: "when I select a probe make it multi
+     * select"): a click on a check item leaves the menu open, so several probes are ticked in one
+     * visit; every other item follows the tick (All, the groups, Save ticked as group). The menu
+     * closes on a click outside it, on Escape or on <i>Save ticked as group</i>.
      */
     private void showProbeMenu() {
         JPopupMenu menu = new JPopupMenu();
-        addGroupSection(menu);
+        GUIUtil.applyProp(menu, NSAppUtil.ProbeMenu.MENU);
+        List<Runnable> sync = new ArrayList<>(); // each item's tick, re-read from tickedProbes
+        addGroupSection(menu, sync);
         menu.addSeparator();
-        addProbeGroup(menu, NSAppUtil.ProbeMenu.SECTION_PROBES, probeRows(), NSAppUtil.ProbeMenu.EMPTY_PROBES);
+        addProbeGroup(menu, NSAppUtil.ProbeMenu.SECTION_PROBES, probeRows(), NSAppUtil.ProbeMenu.EMPTY_PROBES, sync);
         menu.addSeparator();
         JMenuItem saveAs = GUIUtil.applyProp(new JMenuItem("", IconUtil.svgIcon("io/xlogistx/gui/icons/folder.svg", 14, UITokens.text())), NSAppUtil.ProbeGroupMenu.SAVE_AS);
+        sync.add(() -> saveAs.setEnabled(!tickedProbes.isEmpty()));
         saveAs.setEnabled(!tickedProbes.isEmpty());
         saveAs.addActionListener(_ -> saveTickedAsGroup());
         menu.add(saveAs);
@@ -461,7 +524,19 @@ public class ScanPanel extends JPanel {
         menu.show(anchor, 0, anchor.getHeight());
     }
 
-    private void addGroupSection(JPopupMenu menu) {
+    /** A check item that stays open when clicked (the JDK's own switch, honoured by FlatLaf's menu item UI). */
+    private static JCheckBoxMenuItem stayOpen(JCheckBoxMenuItem item) {
+        item.putClientProperty("CheckBoxMenuItem.doNotCloseOnMouseClick", Boolean.TRUE);
+        return item;
+    }
+
+    /** After a tick in the open menu: the chips, then every item's state. */
+    private void probeTicked(List<Runnable> sync) {
+        refreshProbeChips();
+        for (Runnable r : sync) r.run();
+    }
+
+    private void addGroupSection(JPopupMenu menu, List<Runnable> sync) {
         JMenuItem header = GUIUtil.applyProp(new JMenuItem(), NSAppUtil.ProbeGroupMenu.HEADER);
         header.setEnabled(false);
         header.setFont(UITokens.font(Font.BOLD, -2f));
@@ -473,9 +548,13 @@ public class ScanPanel extends JPanel {
             return;
         }
         for (ProbeGroupModel.Row row : ProbeGroupModel.rows(probeGroups, List.of(), probes)) {
-            JCheckBoxMenuItem item = new JCheckBoxMenuItem(row.name(), ProbeGroupModel.isTicked(tickedProbes, row.keys()));
+            JCheckBoxMenuItem item = stayOpen(new JCheckBoxMenuItem(row.name(), ProbeGroupModel.isTicked(tickedProbes, row.keys())));
             item.setToolTipText(groupTip(row));
-            item.addActionListener(_ -> tickGroup(row, item.isSelected()));
+            sync.add(() -> item.setSelected(ProbeGroupModel.isTicked(tickedProbes, row.keys())));
+            item.addActionListener(_ -> {
+                tickGroup(row, item.isSelected());
+                probeTicked(sync);
+            });
             menu.add(item);
         }
     }
@@ -536,7 +615,7 @@ public class ScanPanel extends JPanel {
         });
     }
 
-    private void addProbeGroup(JPopupMenu menu, NSAppUtil.ProbeMenu section, List<ProbeRow> rows, NSAppUtil.ProbeMenu empty) {
+    private void addProbeGroup(JPopupMenu menu, NSAppUtil.ProbeMenu section, List<ProbeRow> rows, NSAppUtil.ProbeMenu empty, List<Runnable> sync) {
         JMenuItem header = GUIUtil.applyProp(new JMenuItem(), section);
         header.setText(section.getDisplayName().toUpperCase());
         header.setEnabled(false);
@@ -549,20 +628,23 @@ public class ScanPanel extends JPanel {
             return;
         }
         List<String> keys = rows.stream().map(ProbeRow::key).toList();
-        JCheckBoxMenuItem all = GUIUtil.applyProp(new JCheckBoxMenuItem("", tickedProbes.containsAll(keys)), NSAppUtil.ProbeMenu.ALL);
+        JCheckBoxMenuItem all = stayOpen(GUIUtil.applyProp(new JCheckBoxMenuItem("", tickedProbes.containsAll(keys)), NSAppUtil.ProbeMenu.ALL));
+        sync.add(() -> all.setSelected(tickedProbes.containsAll(keys)));
         all.addActionListener(_ -> {
             if (all.isSelected()) tickedProbes.addAll(keys);
             else tickedProbes.removeAll(keys);
-            refreshProbeChips();
+            probeTicked(sync);
         });
         menu.add(all);
         for (ProbeRow row : rows) {
-            JCheckBoxMenuItem item = new JCheckBoxMenuItem(row.label(), tickedProbes.contains(row.key()));
+            JCheckBoxMenuItem item = stayOpen(new JCheckBoxMenuItem(row.label(), tickedProbes.contains(row.key())));
+            item.setName(NSAppUtil.ProbeMenu.MENU.getName() + "." + row.key());
             if (row.tooltip() != null) item.setToolTipText(row.tooltip());
+            sync.add(() -> item.setSelected(tickedProbes.contains(row.key())));
             item.addActionListener(_ -> {
                 if (item.isSelected()) tickedProbes.add(row.key());
                 else tickedProbes.remove(row.key());
-                refreshProbeChips();
+                probeTicked(sync);
             });
             menu.add(item);
         }
@@ -1376,11 +1458,11 @@ public class ScanPanel extends JPanel {
         head.add(newScan);
         out.add(head, "growx");
 
-        JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", "[260!][]push[][][][][][][]"));
+        JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", "[120:260:260,fill][]push[][][][][][][][]"));
         bar.setOpaque(false);
         JTextField search = GUIUtil.applyProp(new JTextField(), NSAppUtil.ScanHistoryPage.SEARCH);
         search.putClientProperty("JTextField.leadingIcon", new IconUtil.SearchIcon(14));
-        bar.add(search, "growx");
+        bar.add(search, "growx, wmin 120, shrinkprio 200"); // the search gives way first, so the row actions keep their text in a narrow window (2026-11-10: the box below made the bar wider)
         historyCount.setForeground(UITokens.muted());
         historyCount.setFont(UITokens.font(Font.PLAIN, -1f));
         bar.add(historyCount);
@@ -1395,6 +1477,12 @@ public class ScanPanel extends JPanel {
             b.putClientProperty("JButton.buttonType", "toolBarButton");
             b.setEnabled(false);
             bar.add(b);
+            if (b == again) {
+                // Discovered hosts only (2026-11-10): Scan again then targets the hosts this scan found up
+                historyDiscoveredOnly.setOpaque(false);
+                historyDiscoveredOnly.setEnabled(false);
+                bar.add(historyDiscoveredOnly);
+            }
         }
         // Delete all (2026-10-25): enabled whenever the history has rows, not by the selection
         historyDeleteAll.setForeground(UITokens.danger());
@@ -1418,6 +1506,7 @@ public class ScanPanel extends JPanel {
         historyTable.getSelectionModel().addListSelectionListener(e -> {
             int selected = historyTable.getSelectedRowCount();
             for (JButton b : new JButton[]{view, again, copyCommand, copyResult, send}) b.setEnabled(selected == 1);
+            historyDiscoveredOnly.setEnabled(selected == 1);
             delete.setEnabled(selected >= 1);
             delete.setText(selected > 1 ? NSAppUtil.ScanHistoryPage.DELETE.getDisplayName() + " " + selected : NSAppUtil.ScanHistoryPage.DELETE.getDisplayName());
         });
@@ -1447,7 +1536,7 @@ public class ScanPanel extends JPanel {
             }
         });
         view.addActionListener(_ -> onViewScanResult(selectedHistoryRow()));
-        again.addActionListener(_ -> rerunScan(selectedHistoryRow()));
+        again.addActionListener(_ -> rerunScan(selectedHistoryRow(), historyDiscoveredOnly.isSelected()));
         copyCommand.addActionListener(_ -> onCopyScanCommand(selectedHistoryRow()));
         copyResult.addActionListener(_ -> onCopyScanResult(selectedHistoryRow()));
         send.addActionListener(_ -> onSendScanResult(selectedHistoryRow()));
@@ -1567,8 +1656,13 @@ public class ScanPanel extends JPanel {
      * until the subject presses Run, so the command can still be adjusted first. A report saved
      * before the command property existed falls back to its description, cut before the
      * {@code · probes:} suffix the description carries.
+     * <p>
+     * With {@code discoveredOnly} (the history bar's box, 2026-11-10) the targets are the hosts
+     * the stored report found up and host discovery stays on ({@link ProbeSelection#rerunCommand}):
+     * only those hosts are checked, and only the ones that still answer are scanned and probed.
+     * The stored report's own Scan again button loads the scan as it was defined.
      */
-    private void rerunScan(ReportContent scan) {
+    private void rerunScan(ReportContent scan, boolean discoveredOnly) {
         if (scan == null) return;
         String command = commandOf(scan);
         if (command != null) command = command.split("\s+·\s+", 2)[0].trim();
@@ -1577,9 +1671,48 @@ public class ScanPanel extends JPanel {
                     JOptionPane.INFORMATION_MESSAGE);
             return;
         }
+        if (!discoveredOnly) {
+            loadRerun(scan, command, false);
+            return;
+        }
+        // the hosts are in the report's content, which a history row does not carry: re-read it
+        String original = command;
+        BackgroundTask.run(this, null, () -> ctx.session().getScanResult(scan.getGUID()), full -> {
+            if (full == null) {
+                JOptionPane.showMessageDialog(this, "That scan result is no longer available.",
+                        NSAppUtil.ScanHistoryPage.NOT_FOUND_DIALOG.getDisplayName(), JOptionPane.WARNING_MESSAGE);
+                reloadScanResults();
+                return;
+            }
+            try {
+                List<String> hosts = io.xlogistx.nosneak.app.ui.scan.ReportView.parse(full.getContent()).discoveredTargets();
+                if (hosts.isEmpty()) {
+                    JOptionPane.showMessageDialog(this, NSAppUtil.ScanHistoryPage.DISCOVERED_NONE.getDisplayName(),
+                            NSAppUtil.ScanHistoryPage.AGAIN_DIALOG.getDisplayName(), JOptionPane.INFORMATION_MESSAGE);
+                    return;
+                }
+                loadRerun(scan, ProbeSelection.rerunCommand(original, hosts), true);
+            } catch (IllegalArgumentException e) {
+                JOptionPane.showMessageDialog(this, e.getMessage(), NSAppUtil.ScanHistoryPage.AGAIN_DIALOG.getDisplayName(),
+                        JOptionPane.WARNING_MESSAGE);
+            }
+        });
+    }
+
+    /** Puts a command with the report's probe ticks and name into the Scan form and goes there. */
+    private void loadRerun(ReportContent scan, String command, boolean keepTicksWhenNoneSaved) {
         Object saved = scan.getProperties() != null ? scan.getProperties().getValue("probes") : null;
-        tickedProbes.clear();
-        tickedProbes.addAll(ProbeSelection.keysForNames(saved != null ? saved.toString() : null, probes));
+        Set<String> savedKeys = ProbeSelection.keysForNames(saved != null ? saved.toString() : null, probes);
+        // the result on the Scan page belongs to another scan: it goes, so the page shows only
+        // the scan being loaded (2026-11-10)
+        resultView.clear();
+        // a rerun on the discovered hosts of a scan that probed nothing (a host discovery) keeps
+        // the probes ticked on the Scan page: they, and their ports, are what the rerun scans
+        // (the maintainer, 2026-11-11); otherwise the ticks are the stored scan's
+        if (!(keepTicksWhenNoneSaved && savedKeys.isEmpty())) {
+            tickedProbes.clear();
+            tickedProbes.addAll(savedKeys);
+        }
         form.setCommand(command);
         form.setScanName(scan.getName());
         refreshProbeChips();

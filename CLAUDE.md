@@ -136,6 +136,58 @@
 > 1 to 0 in `themes/FlatLaf.properties`, because FlatLaf hands it to MigLayout as the button's
 > visual padding and MigLayout clamps it at a row's edge, one point off every row-ending button
 > (`ButtonTextNotClippedTest`; `PENDING-ISSUES.md` → the 2026-11-06 late block).
+> **2026-11-10, uncommitted — Discovered hosts only:** a box on the Scan form and one beside
+> *Scan again* on the history bar ("a check box for rerunning the scan on the discovered host …
+> you always check if the host is alive before you probe, that is mandatory"). Ticked, the
+> targets become the hosts the earlier report found up and **host discovery stays on**, so only
+> those hosts are checked and only the ones that still answer are scanned and probed; `-Pn` and
+> `-sn` are dropped from the rerun. App-only, no engine change (`ProbeSelection.rerunCommand`,
+> `ReportView.Report.discoveredTargets`, `ScanFormPanel.setDiscoveredHosts`;
+> `no-sneak-app/CLAUDE.md` → *ScanPanel* → the form bullet and *History*).
+> **Same day, uncommitted:** the Scan form is **two cards** ("group target, Local networks, port
+> and Name in a panel by itself and add clear target"): Targets (with the *Local networks* and
+> the new *Clear* links), Ports and Name in the first, the options, timing, probes and command
+> in the second (`ScanForm.TARGET_CARD` / `SETUP_CARD` / `TARGETS_CLEAR`,
+> `ScanFormPanel.clearTargets`). **Then the Targets field became a text area** ("change target
+> text field to text area … create it under xlogistx-gui-audio … call it TextAreaWidget"):
+> gui-audio's new **`TextAreaWidget`** (three wrapping rows that scroll, Enter runs the scan,
+> Shift+Enter breaks the line) over the card's full width, a count beside the links
+> (*60 targets*). Install gui-audio from io-xlogistx first. **Last that day**, the card's head
+> is one line ("next to Targets put Name (optional) [name], Ports [ports], Local networks,
+> Clear"): Targets · count · Name · Ports · Local networks · Clear, the area under it; Name
+> and Ports are a fixed 20 characters wide (15 at first). The **Command field is a `TextAreaWidget`** as
+> well ("make command textarea as well"): two wrapping rows, Enter runs the scan; it is 80
+> characters wide and the Targets area is as wide as the head line above it (one size group).
+> An **unnamed scan** of more than three targets is named *first and N more*
+> (`ScanPanel.defaultName`): the name is the result's title, and a rerun on 23 discovered
+> hosts printed every address there ("why you are printing … all the ip"). A scan's name is
+> **at most 30 characters** ("limit the scan name to 30 characters"): the Name field stops
+> there (gui-audio's new `GUIUtil.limitLength`; install gui-audio first) and the made-up name
+> is cut to fit (`ScanFormPanel.NAME_MAX`). **Run reads everything again** ("whenever I hit
+> scan button read all the parameters and run the scan accordingly"): `ScanPanel.prepareRun`
+> takes the command and every field as they stand, refuses a command that does not parse,
+> lets the chips alone decide the probes, and the worker resolves the ticks against the
+> store again; *Scan again* clears the result left on the Scan page
+> (`ScanRunReadsTheFormTest`). The stale scan the maintainer reported was **not reproduced**.
+> **2026-11-11, uncommitted:** Help, Run scan and Stop sit beside the **Command label**, on the
+> line above the command area ("next to command move info, run scan and stop"), and the
+> **Match** segment is a line of the options block ("Match section put under options").
+> **Copy** follows Stop on that line and the page's **New scan** button sits on the left,
+> beside the title ("move copy next to stop, and NewScan to the left"). The **Targets and
+> Command areas have no fixed width** any more: both fill their card and follow the window
+> ("the 2 text area remove length limitation and make their resize natural"). **Discovered
+> hosts only is validated at every Run** ("when I check the box and click scan it should
+> always be validated"): ticked, Run puts the discovered hosts in Targets with discovery on,
+> whatever was typed since, and the tick survives a new result (the targets follow it).
+> **The rule for that rerun** (the maintainer: "when the discovered host is checked and
+> probes are selected you only scan the selected ones and the associated ports, unless the
+> ports are set specifically"): only the ticked probes, on their declared ports, unless Ports
+> is typed. One path broke it: the history bar's rerun of a scan that saved no probes (a
+> host discovery) wiped the ticks, so the run was 1-1024 on every host with no probing; the
+> ticks on the Scan page now stay (`ScanPanel.loadRerun`, `ScanRunReadsTheFormTest`).
+> A temporary run log (`SCAN RUN` / `SCAN DONE`) found the slow scans: `https-scan` takes
+> 48 s on one of the maintainer's hosts (a Pi Zero W), known and left alone; the log was
+> removed the same day ("remove the logs printout").
 
 Assessment tooling for what a network endpoint exposes — TLS posture, **post-quantum
 readiness**, and running services — plus a Swing front-end and an AI-assistant layer.

@@ -198,6 +198,7 @@ public class ScanResultView extends JPanel {
             // the raw tab still shows it
         }
         this.report = parsed;
+        if (onReport != null) onReport.accept(parsed);
         title.setText(name != null && !name.isBlank() ? name : NSAppUtil.ScanResult.TITLE_DEFAULT.getDisplayName());
         if (parsed != null) {
             String when = parsed.startTime() != null ? parsed.startTime().replace('T', ' ').replaceAll("(\\.\\d+)?Z$", "") : "";
@@ -237,11 +238,23 @@ public class ScanResultView extends JPanel {
         json = null;
         name = null;
         report = null;
+        if (onReport != null) onReport.accept(null);
         hostsModel.setHosts(List.of());
         servicesModel.setHosts(List.of());
         raw.setText("");
         showHost(null);
         cards.show(this, EMPTY);
+    }
+
+    private Consumer<ReportView.Report> onReport;
+
+    /**
+     * Told the parsed report each time one is shown, and null when the view is cleared or the
+     * text is not a report (2026-11-10: the Scan form's <i>Discovered hosts only</i> box follows
+     * the hosts of the result on the page).
+     */
+    public void onReportChange(Consumer<ReportView.Report> listener) {
+        this.onReport = listener;
     }
 
     public boolean hasReport() {

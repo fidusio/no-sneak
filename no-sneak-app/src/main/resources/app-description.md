@@ -38,12 +38,14 @@ option, filter segment and tab carries the same kind of tooltip.
   *Skip ping*, *Live hosts only*, *Open ports only*), a timing segment T0 to T5 (each says what
   it sets when you rest the pointer on it), the probe chips and the **command** they all build.
   The command is the truth: edit it and the form follows; change the form and the command is
-  reprinted. *Host discovery only* and *Ports* are exclusive — the last one you touched wins,
+  reprinted. Its box is two lines high and wraps, so a long list of targets stays readable;
+  Enter runs the scan, Shift+Enter starts a new line. *Host discovery only* and *Ports* are exclusive — the last one you touched wins,
   and a note under the command says when typed ports are not scanned. **Leave Ports empty and
   the ticked probes decide**: the scan covers the ports they declare (ssh and https ticked:
   22, 2222, 443, 8443), and the field's placeholder names them; with no chip it is 1-1024. Type
   a range (`1-2048`) and every port of it is scanned, with the probes on each open one.
-- **Probes are the chips.** *Add probe* ticks your probes into the run; a chip's
+- **Probes are the chips.** *Add probe* ticks your probes into the run (the popup stays open while
+  you tick several; click outside it when you are done); a chip's
   × removes it. The popup's **Groups** section ticks a saved group of probes in one go (its
   tooltip lists the members; unticking it removes just those), and **Save ticked as group…** at
   the bottom keeps the chips as they stand under a name — the chips stay individual probes, and
@@ -62,10 +64,21 @@ option, filter segment and tab carries the same kind of tooltip.
   form. *Stop* ends a running scan and keeps the partial report, marked as not saved. **New
   scan**, at the top right of the page, clears the form, the chips and the result so the next
   scan starts from nothing; the previous report is already in Scan History if it completed.
+  **Targets** is a box three lines high that wraps and scrolls, so a long list of addresses
+  stays readable; separate targets with spaces or line breaks, press Enter to run
+  (Shift+Enter for a new line), and use *Clear* beside *Local networks* to empty it. The count
+  beside them says how many targets are typed. A scan's **name** is at most 30 characters;
+  leave it empty and the scan is named after its targets (*10.0.0.1 and 22 more* when
+  there are many).
+  **Discovered hosts only**, under the options, narrows the next scan to the hosts the result
+  on the page found up: they become the targets, each is checked again, and only the ones that
+  still answer are scanned and probed. Untick it to get the earlier targets back.
 - **Scan History** — every report you ran, kept under your account, newest first, with a search
   over every column. Select a row to **View**, **Scan again**, copy its command or result,
   **Send to assistant**, or **Delete** it; select several rows to delete them together, or
   **Delete all** to clear the list after one confirmation.
+  Tick **Discovered hosts only** beside *Scan again* to load the scan with only the hosts it
+  found up as targets; each is checked again before it is scanned.
 - **Probe Library** — every probe of yours in one table (name, service, ports, transport,
   priority, origin); the search box matches name, service, description or an exact port. The
   probes that ship with the app were copied into your account the first time you signed in

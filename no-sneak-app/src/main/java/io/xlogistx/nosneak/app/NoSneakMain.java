@@ -29,7 +29,7 @@ import java.io.IOException;
 public class NoSneakMain {
 
 
-    public final static AppVersion VERSION = new AppVersion("NOSNEAK::1.1.6");
+    public final static AppVersion VERSION = new AppVersion("NOSNEAK::1.0.0");
     /** The H2 database name inside the installation directory; see {@link NoSneakStore}. */
     public static final String dbName = NoSneakStore.DB_NAME;
 

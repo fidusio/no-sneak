@@ -48,6 +48,11 @@ detail lives in the module `CLAUDE.md` files, named below.*
      (2026-11-06, no dots) every button reads in full on every page in Light and in Dark, at 13
      and at a larger text size — *New scan*, *Stop*, *Copy*, *New probe*, *New group*, *Add API
      key*, the Sign out button — and a focused button or field is still told apart by its border;
+     (2026-11-10, Discovered hosts only) after a discovery scan of the segment, the box on the
+     Scan form puts the hosts found up in Targets and the rerun with a probe ticked checks only
+     those hosts, names MAC and vendor again, and probes only the ones that answer (power one
+     off first: it reads down, with no port line); the same from Scan History with the box
+     beside *Scan again* ticked;
    - `postgres-tls` against a real PostgreSQL with `ssl = on` (the version needs `trust` auth for
      the probe's user; otherwise `postgresql-tls-auth-required`, still a completed identification);
    - (2026-10-27, hardening) *Copy* of an API-key secret: the clipboard is blank a minute later
@@ -1059,6 +1064,145 @@ scan names vendors, the next login does not download, *Settings → Sync* replac
 with no chips sends no probe traffic and ticking Service detection fills the strip, the Probe
 library's assistant round trip (ask, send, Save as probe) and a copied bundled probe; and, from
 before the redesign, the ACL tables are still empty stubs and the job-queue page is not offered.
+
+**2026-11-10 — Discovered hosts only (uncommitted):** the maintainer: "in the scan and scan
+history I want a check box for rerunning the scan on the discovered host, I don't want to
+execute host discovery again, so if I specify any probe it will execute on the discovered host,
+if a host went offline meanwhile the probes will not be executed". The first plan skipped
+discovery with `-Pn`; refused: "you always check if the host is alive before you probe, that is
+mandatory, or we create targeted discovery of the list of hosts, whoever is alive we probe". So
+the rerun keeps discovery **on** and narrows the **targets** to the hosts the earlier report
+found up: the engine then checks only those addresses (per host, no range sweep) and its port
+and probe stages already skip a host that is down. App-only, no engine change: a box on the
+Scan form (follows the result on the page; tick swaps the targets and unticks Skip ping and
+Host discovery only, untick restores) and one beside *Scan again* on the history bar (re-reads
+the stored report, `ProbeSelection.rerunCommand`). New tests: `ScanRerunDiscoveredTest` (real
+store, both boxes, renders), one each in `ScanFormPanelTest`, `ScanPanelTest`, `ReportViewTest`.
+Rendered in Light and Dark. Live check owed: see *Open now*.
+
+**2026-11-10, later — the Scan form's target card (uncommitted, here and in gui-audio):** "group
+target, Local networks, port and Name in a panel by itself and add clear target", then "change
+target text field to text area … create it under xlogistx-gui-audio … call it TextAreaWidget".
+The form is two cards; the first holds Targets as gui-audio's new `TextAreaWidget` (three
+wrapping rows that scroll; Enter runs, Shift+Enter breaks the line) with a count, *Local
+networks* and *Clear* on its label line, and Ports and Name beneath. First render showed the
+area squeezed to a line when the page was short of height: the widget's minimum height is now
+its preferred height. `ScanFormPanelTest` 10 (Clear, the count, a line break as a separator),
+`ScanRerunDiscoveredTest` renders the area with 60 addresses and empty, in both themes.
+`TextAreaWidgetTest` (gui-audio, 3) is written; run it from the io-xlogistx project.
+Last that day: the card's head is one line (Targets · count · Name · Ports · Local networks ·
+Clear), Name and Ports a fixed 20 characters wide (15 at first), and the **Command field is a
+`TextAreaWidget`** as well ("make command textarea as well"): two wrapping rows, Enter runs the
+scan. `ScanFormPanelTest` 10/10 and `ScanRerunDiscoveredTest` 1/1 after it, rendered in both
+themes. Then: Command 80 characters wide with Help / Run scan / Stop beside it, and the
+Targets area exactly as wide as the head line (MigLayout size group `targets`).
+
+**2026-11-10, night — every address in the result's title (uncommitted):** "why you are
+printing 10.0.0.1 10.0.0.4 … all the ip in the scan result area". An unnamed scan was named
+after its joined targets (`ScanPanel.reportName`), harmless for one CIDR block, a full line
+of addresses once Discovered hosts only made the targets a list. `ScanPanel.defaultName`:
+up to three targets as before, more than three *first and N more*; the command line beside
+the title still carries them all and gives way with an ellipsis. `ScanPanelTest` 15/15.
+Reports already in the history keep the long name they were saved with.
+Then "limit the scan name to 30 characters": `ScanFormPanel.NAME_MAX` = 30, the Name field
+capped by gui-audio's new `GUIUtil.limitLength` (typing stops, a paste or `setText` is cut),
+`defaultName` never longer either. `ScanPanelTest` 15/15, `ScanFormPanelTest` 10/10;
+`GUIUtilLimitLengthTest` (gui-audio, 1) is written, not run here.
+Same message: "why the ports sometimes is not editable". The field is never disabled or
+made read-only in the code. **Not confirmed**, the likely cause: empty, it shows a grey
+placeholder (`1-1024 (default when empty)`, or the ticked probes' ports and
+`(ticked probes)`), which cannot be selected or deleted and has been cut off since the
+field went to 20 characters. Open: the maintainer to say what is on screen when it happens.
+
+**2026-11-10, late night — "the scan is stale" (uncommitted, NOT reproduced):** "when I run a
+saved probe the scan is stale it is not reading all the parameters like port, probes it
+ignore them, whenever I hit scan button read all the parameters and run the scan
+accordingly". `ScanRunReadsTheFormTest` (new, real store) loads a stored scan with *Scan
+again* and checks what Run hands the engine after each change: the stored ports and probes,
+ports typed in the field, the field emptied, the command edited, a probe edited in the
+library. All of it reached the run **before any fix**, so the cause of what the maintainer
+saw is still unknown. Three gaps on the Run path were closed all the same:
+1. a command that did not parse was dropped silently and the fields scanned without what it
+   carried; Run now refuses it with the engine's reason (`ScanFormPanel.toRunConfig`);
+2. a `--probes` typed in the command was added to the chips' probes; the chips now replace
+   it (`ProbeSelection.applyTo` clears first);
+3. the probes came from the list the page loaded; the worker now resolves the ticks against
+   the store again (`ScanPanel.onRun`).
+Also: *Scan again* clears the result left on the Scan page, which belonged to another scan
+and may be what read as stale. `ScanPanel.prepareRun` / `RunRequest` is the seam the test
+uses. Tests: `ScanRunReadsTheFormTest` 1/1, `ScanRerunDiscoveredTest` 1/1, `ScanPanelTest`
+15/15, `ScanFormPanelTest` 10/10. **Open:** the maintainer's exact steps (which page the scan
+was loaded from, what was changed, what the result showed) if it happens again.
+
+**2026-11-11 — command row cleanup (uncommitted):** "next to command move info, run scan and
+stop": Help, Run scan and Stop moved from beside the command area to the Command label's line
+(`ScanFormPanel`, `cmdLabels`). Rendered in both themes; `ScanFormPanelTest` 10/10,
+`ScanRerunDiscoveredTest` 1/1. Not checked in the running app. Then "Match section put under
+options": the Match label and segment moved from the Probes head to a line of the options
+block; rendered, same two test classes green. Then "move copy next to stop, and NewScan to
+the left": Copy follows Stop on the Command line; the Scan page's New scan moved from the
+head's right end to beside the title (my reading of "to the left"; the maintainer to confirm).
+Then "the 2 text area remove length limitation and make their resize natural": the Targets
+and Command areas lost their fixed widths and fill their card. `ScanFormPanelTest` 10/10,
+`ScanRerunDiscoveredTest` 1/1, rendered; not checked in the running app.
+
+**2026-11-11 — Discovered hosts only validated at Run (uncommitted):** the maintainer saw a
+ticked rerun take 8 s one time and 48 s another, then: "when I check the box and click scan
+it should always be validated". Two app gaps closed: the box was a one-time swap (targets or
+a command edited after the tick were scanned as edited, box still ticked) and a new result
+unticked it silently. Now Run enforces it and the tick survives a result. **Open, engine:**
+the 8 s / 48 s swing itself is not explained; the lead is `NMapScanner`'s per-host discovery
+for listed addresses (a host that stopped answering waits out every unit), not measured.
+
+**2026-11-11 — discovered hosts + probes (uncommitted):** the maintainer's rule: "when the
+discovered host is checked and probes are selected you only scan the selected ones and the
+associated ports, unless the ports are set specifically". Found: *Scan again* with the
+history bar's box on a scan that saved no probes (a host discovery) cleared the ticked
+probes, so the rerun covered 1-1024 on every discovered host with no probing: a likely
+source of the 48 s runs and of "it ignores the probes" (2026-11-10). Fixed: the ticks on
+the Scan page stay in that case. `ScanRunReadsTheFormTest` 2/2 (new method, both boxes,
+typed ports win), `ScanRerunDiscoveredTest` 1/1. Not checked in the running app.
+Then "log the command you send when I click scan": `SCAN RUN` / `SCAN DONE` console lines
+per run (`ScanPanel.runLine`), so the next slow run can be read off the log.
+**Open, unexplained:** the maintainer's log shows 23 listed hosts, probes https-scan + ssh,
+4 ports (92 port tests) taking **49 s**, so the ports are not the cause. A `SCAN TIMING`
+block (`ScanPanel.timingLines`) now prints per host and per probe when each finished;
+waiting for the maintainer's next run to read where the time goes (discovery of a listed
+host, a silent port, or a probe that waits out its timeout).
+**Read from the maintainer's SCAN TIMING (same day):** all 23 hosts up within ~20 ms, every
+port decided and every first probe answer in by +806 ms, the scan ending at +48.5 s. What runs
+in between is `https-scan` on the 11 TLS endpoints: its definition goes on after the first
+handshake to revocation, version, cipher (weak and insecure included) and group enumeration
+and the Server header, 8 connections at a time per port, `overallTimeoutSec` 90. So the
+~48 s is that probe's depth, not the Discovered hosts box, the ports or discovery. Inferred
+from the log and the definition, not measured per stage; the report carries no probe end
+time (`observedAtMs` is the first answer, and the log line now says so).
+**Measured (same day, `LiveDiscoveredRerunTest` on the maintainer's 23 hosts, then on one):**
+the log now prints each probe's `took=` (the result's `duration-ms`). `https-scan` takes 0.8 to
+7.3 s on ten of the eleven TLS endpoints and **48.0 s on 10.0.0.40:443** (scanned alone:
+total 49.1 s, `took=47997 ms`). When that host's first handshake fails (seen once: 5 s
+timeout, no enumeration) the whole 23-host scan is 8.5 s; when it succeeds, 48.5 s: the
+maintainer's "sometimes 8 sec, sometimes 48 sec". Hosts run in parallel; the scan waits for
+its slowest probe. **Open, engine (`xlogistx-scan`):** why the enumeration against that one
+server takes 48 s (my guess, not verified: it stays silent on a ClientHello it does not
+support, so each such attempt waits the 5 s timeout, 8 at a time), and whether to bound it.
+Also open: the `SCAN TIMING` first version threw a `ClassCastException` (my
+`String.valueOf` on a generic value) and cost one harness run its result; the line is now
+guarded by a try/catch so a log failure can never lose a scan.
+**Closed by the maintainer (same day):** "I know the issue 10.0.0.40, it is a Pi Zero W, don't
+worry about it, remove the logs printout". The `SCAN RUN` / `SCAN TIMING` / `SCAN DONE`
+lines, `ScanPanel.runLine` / `timingLines` and the logger are deleted; nothing is open here.
+`LiveDiscoveredRerunTest` (opt-in, `LIVE_SCAN_TARGET`, `LIVE_SCAN_PROBES`) stays for a live check.
+
+**2026-11-10, evening — "none of the hoverover are showing" (uncommitted, cause not confirmed):**
+a real `AppFrame` on a throwaway store, hovered with `java.awt.Robot`, showed every tooltip of
+the Scan form while the window was active, so no code path drops them. The one condition that
+did suppress them is FlatLaf's `ToolTipManager.enableToolTipMode=activeApplication` (Swing shows
+no tooltip while no window of the app has the focus); `themes/FlatLaf.properties` now sets
+`allWindows`. The Targets and Command areas also got tooltips (`TARGETS_FIELD` /
+`COMMAND_FIELD` descriptions), which they never had. **Open:** the maintainer to confirm in the
+running app; if tooltips are still missing, note what was done just before (a menu, a dialog,
+a capture) — that is the next lead.
 
 ## Status check (2026-10-21, Windows dev box) — the store follows the datastore's deployment model
 

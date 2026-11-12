@@ -46,6 +46,31 @@ public final class ProbeSelection {
 
     private ProbeSelection() {}
 
+    /**
+     * The command of a scan run again on its <b>discovered hosts only</b> (2026-11-10, the
+     * maintainer: "you always check if the host is alive before you probe, that is mandatory"):
+     * the same command with {@code targets} in place of its own, host discovery <b>on</b> (a
+     * {@code -Pn} is dropped, so each listed host is checked again and one that went offline is
+     * neither scanned nor probed) and a discovery-only {@code -sn} dropped, since the point of
+     * the rerun is the ports. Everything else the command carried survives.
+     *
+     * @throws IllegalArgumentException when the command does not parse or there is no target
+     */
+    public static String rerunCommand(String command, List<String> targets) {
+        if (targets == null || targets.isEmpty()) throw new IllegalArgumentException("no discovered host to scan");
+        NMapConfig cfg = NMap.parseCommand(command);
+        cfg.targets.clear();
+        for (String t : targets) cfg.target(t);
+        cfg.discovery(true);
+        boolean noTcp = cfg.ports != null && cfg.ports.length == 0;
+        boolean noUdp = cfg.udpPorts == null || cfg.udpPorts.length == 0;
+        if (noTcp && noUdp && !cfg.udpScan) { // -sn
+            cfg.ports = null;
+            cfg.udpPorts = null;
+        }
+        return NMap.formatCommand(cfg);
+    }
+
     /** A stored row's identity; falls back to the name only for a row that was never saved. */
     public static String storedKey(ProbeType p) {
         String guid = p.getGUID();
@@ -104,10 +129,12 @@ public final class ProbeSelection {
      */
     public static void applyTo(NMapConfig cfg, Selection sel) {
         cfg.bundledCatalog(false);
+        // the ticks replace whatever was there: a --probes typed in the command, or an earlier
+        // selection when the run re-reads the probes (2026-11-10)
+        cfg.probeNames.clear();
+        cfg.extraProbes.clear();
         if (sel.isEmpty()) {
             cfg.probeScan(false);
-            cfg.probeNames.clear();
-            cfg.extraProbes.clear();
             return;
         }
         cfg.probeScan(true);

@@ -133,6 +133,19 @@ public final class ReportView {
             return out;
         }
 
+        /**
+         * The addresses of the hosts found up, each once, in report order (2026-11-10): the
+         * targets of a scan that is run again on the discovered hosts only.
+         */
+        public List<String> discoveredTargets() {
+            List<String> out = new ArrayList<>();
+            for (Host h : upHosts()) {
+                String a = h.address();
+                if (a != null && !a.isBlank() && !out.contains(a)) out.add(a);
+            }
+            return out;
+        }
+
         public int openPortCount() {
             int n = 0;
             for (Host h : hosts) n += h.openPorts().size();

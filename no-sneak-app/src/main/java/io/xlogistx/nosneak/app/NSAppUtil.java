@@ -485,8 +485,12 @@ public class NSAppUtil {
     /** The scan set-up form ({@code ScanFormPanel}, 2026-11-01): its labels, fields, check boxes, flag hints, buttons. */
     public enum ScanForm implements GetNameDescriptionDisplay {
         PANEL("scanForm", "", null),
+        TARGET_CARD("scanForm.targetCard", "", null),
+        SETUP_CARD("scanForm.setupCard", "", null),
+        TARGETS_CLEAR("scanForm.targets.clear", "Clear", "Empty the targets"),
+        TARGETS_COUNT("scanForm.targets.count", "", "How many targets are typed; a range or a CIDR block counts as one"),
         TARGETS("scanForm.targets", "Targets", null),
-        TARGETS_FIELD("scanForm.targets.field", "10.0.0.0/24  host.example.com  10.0.0.5-9", null),
+        TARGETS_FIELD("scanForm.targets.field", "10.0.0.0/24  host.example.com  10.0.0.5-9", "Hosts, ranges or CIDR blocks, separated by spaces or lines. Enter runs the scan, Shift+Enter starts a new line."),
         TARGETS_HINT("scanForm.targets.hint", "Hosts, ranges or CIDR blocks you own or are authorised to assess.", null),
         NETWORKS("scanForm.networks", "Local networks", "Add one of this machine's IPv4 networks to the targets"),
         NETWORKS_EMPTY("scanForm.networks.empty", "No IPv4 network on this machine", null),
@@ -508,6 +512,8 @@ public class NSAppUtil {
         UP_ONLY_FLAG("scanForm.upOnly.flag", "--up-only", null),
         OPEN_ONLY("scanForm.openOnly", "Open ports only", null),
         OPEN_ONLY_FLAG("scanForm.openOnly.flag", "--open", null),
+        DISCOVERED_ONLY("scanForm.discoveredOnly", "Discovered hosts only", "Scan only the hosts the result below found up: they become the targets and each is checked again before it is scanned"),
+        DISCOVERED_ONLY_NONE("scanForm.discoveredOnly.none", "No discovered host yet: run a scan first", null),
         TIMING("scanForm.timing", "Timing", null),
         TIMING_CONTROL("scanForm.timing.control", "", null),
         MAX_IN_FLIGHT("scanForm.maxInFlight", "Max in flight", null),
@@ -520,7 +526,7 @@ public class NSAppUtil {
         MATCH_CONTROL("scanForm.match.control", "", null),
         COMMAND("scanForm.command", "Command", null),
         COMMAND_HINT("scanForm.command.hint", "generated from the form · edit it and the form follows", null),
-        COMMAND_FIELD("scanForm.command.field", "", null),
+        COMMAND_FIELD("scanForm.command.field", "", "The command the form builds; edit it and the form follows. Enter runs the scan, Shift+Enter starts a new line."),
         COPY("scanForm.copy", "Copy", null),
         HELP("scanForm.help", "", "Command-line reference"),
         RUN("scanForm.run", "Run scan", null),
@@ -1246,7 +1252,7 @@ public class NSAppUtil {
     /** The Scan page (2026-11-01): the head under the sidebar's Scan item, the probe chips and their Add probe action, and the page's dialog titles. */
     public enum ScanPage implements GetNameDescriptionDisplay {
         PAGE("scanPage", "", "The scan set-up, its probes and the run's result"),
-        SUBTITLE("scanPage.subtitle", "Assess what the hosts on a segment expose. Only ordinary handshakes are sent, from this machine's own address.", null),
+        SUBTITLE("scanPage.subtitle", "Scan the targets hosts and see which ports and services are exposed.", null),
         NEW_SCAN("scanPage.newScan", "New scan", "Start over: clear the targets, ports, name, options, probes and the last result"),
         PROBES_EMPTY("scanPage.probes.empty", "none · no probing (tick Service detection for all)", null),
         ADD_PROBE("scanPage.probes.add", "Add probe", null),
@@ -1278,6 +1284,7 @@ public class NSAppUtil {
 
     /** The Add probe popup's probe sections (the GROUPS section is {@link ProbeGroupMenu}): a header, an empty text and an All item per section. */
     public enum ProbeMenu implements GetNameDescriptionDisplay {
+        MENU("probeMenu", "", null),
         SECTION_PROBES("probeMenu.probes", "Probes", null),
         EMPTY_PROBES("probeMenu.probes.empty", "No probes yet", null),
         ALL("probeMenu.all", "All", null);
@@ -1437,6 +1444,8 @@ public class NSAppUtil {
         VIEW("scanHistory.view", "View", null),
         AGAIN("scanHistory.again", "Scan again", "Load this scan's command, probes and name into New scan"),
         AGAIN_DIALOG("scanHistory.again.dialog", "Scan again", null),
+        DISCOVERED_ONLY("scanHistory.discoveredOnly", "Discovered hosts only", "Scan again targets only the hosts this scan found up; each is checked again before it is scanned"),
+        DISCOVERED_NONE("scanHistory.discoveredOnly.none", "This scan found no host up, so there is nothing to scan again.", null),
         COPY_COMMAND("scanHistory.copyCommand", "Copy command", null),
         COPY_RESULT("scanHistory.copyResult", "Copy result", null),
         SEND("scanHistory.send", "Send to assistant", null),

@@ -7,6 +7,7 @@ import io.xlogistx.gui.GUIUtil;
 import io.xlogistx.gui.IconUtil;
 import io.xlogistx.gui.InlineMessage;
 import io.xlogistx.gui.SegmentedControl;
+import io.xlogistx.gui.TextAreaWidget;
 import io.xlogistx.gui.UITokens;
 import io.xlogistx.nosneak.app.NSAppUtil;
 import io.xlogistx.scan.nmap.NMap;
@@ -40,7 +41,10 @@ import java.util.List;
  * 1-1024), so the owner tells the form through {@link #setPortsPlaceholder} and the placeholder
  * says it; the <b>Match</b> segment ({@code --probe-match}) is the form's own. <b>Local
  * networks</b> beside the Targets label (2026-11-06) lists this machine's IPv4 CIDR blocks
- * ({@code NetUtil.allV4CIDRBlocks}) and a pick appends one to the targets.
+ * ({@code NetUtil.allV4CIDRBlocks}) and a pick appends one to the targets. <b>Discovered hosts
+ * only</b> (2026-11-10), last in the Options row, swaps the targets for the hosts the result on
+ * the page found up and keeps host discovery on, so a rerun checks only those hosts and scans
+ * the ones that still answer.
  */
 public class ScanFormPanel extends JPanel {
 
@@ -48,9 +52,17 @@ public class ScanFormPanel extends JPanel {
     public static final String PORTS_DEFAULT_HINT = NSAppUtil.ScanForm.PORTS_FIELD.getDisplayName();
 
     // every component is named, worded and described by NSAppUtil.ScanForm (the maintainer's rule, 2026-11-01)
-    private final JTextField targets = GUIUtil.applyProp(new JTextField(), NSAppUtil.ScanForm.TARGETS_FIELD);
+    /**
+     * Targets: gui-audio's {@link TextAreaWidget} since 2026-11-10 (the maintainer: "the text field
+     * is ugly and confusing" with many addresses) — three wrapping rows that scroll, Enter runs.
+     */
+    private final TextAreaWidget targets = GUIUtil.applyProp(new TextAreaWidget(3), NSAppUtil.ScanForm.TARGETS_FIELD);
+    /** {@code 23 targets}, beside the links; empty with none. */
+    private final JLabel targetCount = GUIUtil.applyProp(new JLabel(), NSAppUtil.ScanForm.TARGETS_COUNT);
     /** Local networks (2026-11-06): a link beside the Targets label that opens {@link #networksMenu}. */
     private final JButton networks = UITokens.link(GUIUtil.applyProp(new JButton(), NSAppUtil.ScanForm.NETWORKS));
+    /** Clear (2026-11-10): a link beside Local networks that empties the targets. */
+    private final JButton clearTargets = UITokens.link(GUIUtil.applyProp(new JButton(), NSAppUtil.ScanForm.TARGETS_CLEAR));
     private final JTextField ports = GUIUtil.applyProp(new JTextField(), NSAppUtil.ScanForm.PORTS_FIELD);
     private final JTextField name = GUIUtil.applyProp(new JTextField(), NSAppUtil.ScanForm.NAME_FIELD);
     private final JCheckBox serviceDetection = GUIUtil.applyProp(new JCheckBox(), NSAppUtil.ScanForm.SERVICE_DETECTION);
@@ -58,41 +70,83 @@ public class ScanFormPanel extends JPanel {
     private final JCheckBox skipPing = GUIUtil.applyProp(new JCheckBox(), NSAppUtil.ScanForm.SKIP_PING);
     private final JCheckBox upOnly = GUIUtil.applyProp(new JCheckBox(), NSAppUtil.ScanForm.UP_ONLY);
     private final JCheckBox openOnly = GUIUtil.applyProp(new JCheckBox(), NSAppUtil.ScanForm.OPEN_ONLY);
+    /**
+     * Discovered hosts only (2026-11-10): a form helper, not an engine flag. Ticked, the targets
+     * become the hosts the result on the page found up ({@link #setDiscoveredHosts}) with host
+     * discovery left on, so each is checked again before it is scanned or probed.
+     */
+    private final JCheckBox discoveredOnly = GUIUtil.applyProp(new JCheckBox(), NSAppUtil.ScanForm.DISCOVERED_ONLY);
+    /** The up hosts of the result on the page; empty when there is none. */
+    private List<String> discovered = List.of();
+    /** What the tick replaced, put back by an untick: the targets, Skip ping, Host discovery only. */
+    private String targetsBeforeDiscovered = "";
+    private boolean skipPingBeforeDiscovered;
+    private boolean discoveryOnlyBeforeDiscovered;
     private final SegmentedControl timing = GUIUtil.applyProp(new SegmentedControl(NMapConfig.Timing.values()), NSAppUtil.ScanForm.TIMING_CONTROL);
     /** First / All — {@code --probe-match} (2026-10-31); the enum carries the labels and tooltips. */
     private final SegmentedControl probeMatch = GUIUtil.applyProp(new SegmentedControl(NMapConfig.ProbeMatch.values()), NSAppUtil.ScanForm.MATCH_CONTROL);
     private final JTextField maxInFlight = GUIUtil.applyProp(new JTextField(6), NSAppUtil.ScanForm.MAX_IN_FLIGHT_FIELD);
     private final JTextField minRtt = GUIUtil.applyProp(new JTextField(6), NSAppUtil.ScanForm.MIN_RTT_FIELD);
-    private final JTextField command = GUIUtil.applyProp(new JTextField(), NSAppUtil.ScanForm.COMMAND_FIELD);
+    /** Two wrapping rows (2026-11-10, the maintainer: "make command textarea as well"): a long target list no longer runs off one line. */
+    private final TextAreaWidget command = GUIUtil.applyProp(new TextAreaWidget(2), NSAppUtil.ScanForm.COMMAND_FIELD);
     private final InlineMessage message = GUIUtil.applyProp(new InlineMessage(), NSAppUtil.ScanForm.MESSAGE);
     private final JButton run = UITokens.primary(GUIUtil.applyProp(new JButton(IconUtil.svgIcon("io/xlogistx/gui/icons/run.svg", 16, Color.WHITE)), NSAppUtil.ScanForm.RUN));
     private final JButton stop = GUIUtil.applyProp(new JButton(new IconUtil.StopIcon(16)), NSAppUtil.ScanForm.STOP);
+    /** The Command label's line: label, Help, Run scan, Stop, Copy, the hint. */
+    private final JPanel commandLine = new JPanel(new MigLayout("insets 0, gapx 8"));
     private final JButton help = GUIUtil.applyProp(new JButton(new IconUtil.InfoIcon(16)), NSAppUtil.ScanForm.HELP);
     private final JPanel probeSlot = GUIUtil.applyProp(new JPanel(new BorderLayout()), NSAppUtil.ScanForm.PROBE_SLOT);
     private boolean syncing;
 
     public ScanFormPanel() {
-        super(new MigLayout("insets 20, fillx, wrap 1, gapy 12, hidemode 3", "[grow,fill]"));
+        super(new MigLayout("insets 0, fillx, wrap 1, gapy 12, hidemode 3", "[grow,fill]"));
         GUIUtil.applyProp(this, NSAppUtil.ScanForm.PANEL);
-        setBackground(UITokens.surface());
-        setBorder(BorderFactory.createLineBorder(UITokens.border()));
+        setOpaque(false);
+        // two cards (2026-11-10, the maintainer: "group target, Local networks, port and Name in
+        // a panel by itself"): what is scanned, then how
+        JPanel targetCard = card(NSAppUtil.ScanForm.TARGET_CARD);
+        JPanel setupCard = card(NSAppUtil.ScanForm.SETUP_CARD);
+        add(targetCard, "growx");
+        add(setupCard, "growx");
 
         targets.setFont(UITokens.mono(0));
         ports.setFont(UITokens.mono(0));
         maxInFlight.setFont(UITokens.mono(0));
         minRtt.setFont(UITokens.mono(0));
         command.setFont(UITokens.mono(-0.5f));
-        command.setBackground(UITokens.color("xlogistx.chip", null, 0xF7F7FA));
+        command.getTextArea().setBackground(UITokens.color("xlogistx.chip", null, 0xF7F7FA));
 
-        // row 1: targets · ports · name
-        JPanel row1 = new JPanel(new MigLayout("insets 0, gapx 14, fillx", "[grow 5,fill][grow 3,fill][grow 4,fill]"));
-        row1.setOpaque(false);
-        row1.add(field(NSAppUtil.ScanForm.TARGETS, targets, NSAppUtil.ScanForm.TARGETS_HINT, networks), "wmin 0");
-        networks.setMargin(new Insets(0, 0, 0, 0)); // keep the Targets label line as high as the Ports and Name ones
+        // the target card (the maintainer's line, 2026-11-10: "next to Targets put Name (optional)
+        // [name], Ports [ports], Local networks, Clear"): one head line, the targets area under it
+        JPanel targetHead = new JPanel(new MigLayout("insets 0, gapx 8", "[][]20[][]20[][]20[][]"));
+        // both fields a fixed 20 characters wide (15 at first) (the maintainer, 2026-11-10); longer text scrolls inside
+        name.setColumns(20);
+        // a scan's name is at most NAME_MAX characters (the maintainer, 2026-11-10)
+        GUIUtil.limitLength(name, NAME_MAX);
+        ports.setColumns(20);
+        targetHead.setOpaque(false);
+        targetCount.setForeground(UITokens.muted());
+        targetCount.setFont(UITokens.font(Font.PLAIN, -1f));
+        targetHead.add(label(NSAppUtil.ScanForm.TARGETS));
+        targetHead.add(targetCount);
+        targetHead.add(label(NSAppUtil.ScanForm.NAME));
+        targetHead.add(name);
+        targetHead.add(label(NSAppUtil.ScanForm.PORTS));
+        targetHead.add(ports);
+        targetHead.add(networks);
+        targetHead.add(clearTargets);
+        targetCard.add(targetHead, "growx 0, alignx left");
+        // the command a fixed 80 characters wide (the maintainer, 2026-11-10); longer text wraps and scrolls.
+        // The targets area is exactly as wide as the head line above it ("make the target text area
+        // equal to the length of the Targets line above it"): one size group, the head's width winning
+        // 2026-11-11 ("the 2 text area remove length limitation and make their resize natural"):
+        // no fixed width any more, both areas fill their card and follow the window
+        targetCard.add(targets, "growx, wmin 0");
+        io.xlogistx.gui.WrapLabel targetsHint = GUIUtil.applyProp(FormPanel.hint(NSAppUtil.ScanForm.TARGETS_HINT.getDisplayName()), NSAppUtil.ScanForm.TARGETS_HINT);
+        targetsHint.setWrapWidth(560);
+        targetCard.add(targetsHint, "wmin 0");
         networks.addActionListener(_ -> showNetworks());
-        row1.add(field(NSAppUtil.ScanForm.PORTS, ports, null), "wmin 0");
-        row1.add(field(NSAppUtil.ScanForm.NAME, name, null), "wmin 0");
-        add(row1, "growx");
+        clearTargets.addActionListener(_ -> clearTargets());
 
         // row 2: options
         JPanel options = new JPanel(new MigLayout("insets 0, gapx 18, gapy 6", "[]"));
@@ -108,6 +162,16 @@ public class ScanFormPanel extends JPanel {
         options.add(mono(NSAppUtil.ScanForm.UP_ONLY_FLAG), "gapright 10");
         options.add(openOnly);
         options.add(mono(NSAppUtil.ScanForm.OPEN_ONLY_FLAG));
+        // on its own line under the flags: it is a helper over the targets, not a flag, and
+        // a sixth box does not fit the row at the window's usual width
+        options.add(discoveredOnly, "newline, skip 1, spanx");
+        // Match sits under the options (the maintainer, 2026-11-11: "Match section put under
+        // options"), no longer beside the Probes label
+        options.add(label(NSAppUtil.ScanForm.MATCH), "newline, gapright 8");
+        options.add(probeMatch, "spanx");
+        discoveredOnly.setOpaque(false);
+        discoveredOnly.addActionListener(_ -> discoveredToggled());
+        setDiscoveredHosts(null);
         for (JCheckBox b : new JCheckBox[]{serviceDetection, discoveryOnly, skipPing, upOnly, openOnly}) {
             b.setOpaque(false);
             b.addActionListener(_ -> fieldsChanged());
@@ -115,7 +179,7 @@ public class ScanFormPanel extends JPanel {
         serviceDetection.addActionListener(_ -> {
             if (serviceDetectionToggled != null) serviceDetectionToggled.accept(serviceDetection.isSelected());
         });
-        add(options, "growx");
+        setupCard.add(options, "growx");
 
         // row 3: timing · knobs · probes
         JPanel row3 = new JPanel(new MigLayout("insets 0, gapx 18, fillx", "[]"));
@@ -129,48 +193,49 @@ public class ScanFormPanel extends JPanel {
         row3.add(field(NSAppUtil.ScanForm.MIN_RTT, minRtt, null), "aligny top, w 150!");
         JPanel probeBox = new JPanel(new MigLayout("insets 0, wrap 1, gapy 6, fillx", "[grow,fill]"));
         probeBox.setOpaque(false);
-        JPanel probeHead = new JPanel(new MigLayout("insets 0, gapx 8", "[]push[][]"));
+        JPanel probeHead = new JPanel(new MigLayout("insets 0, gapx 8", "[]"));
         probeHead.setOpaque(false);
         probeHead.add(label(NSAppUtil.ScanForm.PROBES));
-        probeHead.add(label(NSAppUtil.ScanForm.MATCH));
-        probeHead.add(probeMatch);
         probeBox.add(probeHead, "growx");
         probeSlot.setOpaque(false);
         probeBox.add(probeSlot, "growx, wmin 0");
         row3.add(probeBox, "aligny top, growx, pushx, wmin 200");
-        add(row3, "growx");
+        setupCard.add(row3, "growx");
 
         // row 4: the command
         JPanel cmdHead = new JPanel(new MigLayout("insets 0, gapx 8", "[]push[]"));
         cmdHead.setOpaque(false);
         JLabel cmdLabel = label(NSAppUtil.ScanForm.COMMAND);
         JLabel cmdHint = GUIUtil.applyProp(FormPanel.hint(NSAppUtil.ScanForm.COMMAND_HINT.getDisplayName()), NSAppUtil.ScanForm.COMMAND_HINT);
-        JPanel cmdLabels = new JPanel(new MigLayout("insets 0, gapx 8"));
+        JPanel cmdLabels = commandLine;
         cmdLabels.setOpaque(false);
         cmdLabels.add(cmdLabel);
-        cmdLabels.add(cmdHint);
-        cmdHead.add(cmdLabels);
+        // Help, Run scan and Stop sit beside the Command label (the maintainer, 2026-11-11: "next
+        // to command move info, run scan and stop"); the area has its row to itself
+        cmdLabels.add(help);
+        cmdLabels.add(run);
+        stop.setEnabled(false);
+        cmdLabels.add(stop);
         JButton copy = GUIUtil.applyProp(new JButton(new IconUtil.CopyIcon(14)), NSAppUtil.ScanForm.COPY);
         copy.putClientProperty("JButton.buttonType", "toolBarButton");
         copy.addActionListener(_ -> {
             String text = command.getText();
             if (!text.isBlank()) Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(text), null);
         });
-        cmdHead.add(copy);
-        JPanel cmdRow = new JPanel(new MigLayout("insets 0, gapx 10, fillx", "[grow,fill][][][]"));
+        // Copy sits next to Stop (the maintainer, 2026-11-11: "move copy next to stop"), then the hint
+        cmdLabels.add(copy);
+        cmdLabels.add(cmdHint);
+        cmdHead.add(cmdLabels);
+        JPanel cmdRow = new JPanel(new MigLayout("insets 0, fillx", "[grow,fill]"));
         cmdRow.setOpaque(false);
-        cmdRow.add(command, "growx");
-        cmdRow.add(help);
-        cmdRow.add(run);
-        stop.setEnabled(false);
-        cmdRow.add(stop);
+        cmdRow.add(command, "growx, wmin 0");
         JPanel cmdBox = new JPanel(new MigLayout("insets 14 0 0 0, wrap 1, gapy 6, fillx", "[grow,fill]"));
         cmdBox.setOpaque(false);
         cmdBox.setBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, UITokens.border()));
         cmdBox.add(cmdHead, "growx");
         cmdBox.add(cmdRow, "growx");
         cmdBox.add(message, "growx");
-        add(cmdBox, "growx");
+        setupCard.add(cmdBox, "growx");
 
         // wiring: fields → command, command → fields
         DocumentListener fields = new DocumentListener() {
@@ -187,6 +252,19 @@ public class ScanFormPanel extends JPanel {
             }
         };
         targets.getDocument().addDocumentListener(fields);
+        targets.getDocument().addDocumentListener(new DocumentListener() {
+            public void insertUpdate(DocumentEvent e) {
+                countTargets();
+            }
+
+            public void removeUpdate(DocumentEvent e) {
+                countTargets();
+            }
+
+            public void changedUpdate(DocumentEvent e) {
+                countTargets();
+            }
+        });
         ports.getDocument().addDocumentListener(new DocumentListener() {
             public void insertUpdate(DocumentEvent e) {
                 portsTyped();
@@ -274,6 +352,9 @@ public class ScanFormPanel extends JPanel {
         return help;
     }
 
+    /** The longest name a scan may carry, typed or made up from its targets (the maintainer, 2026-11-10). */
+    public static final int NAME_MAX = 30;
+
     /** The subject's own name for the scan, or empty. */
     public String getScanName() {
         return name.getText().trim();
@@ -324,6 +405,94 @@ public class ScanFormPanel extends JPanel {
         return message;
     }
 
+    /**
+     * The hosts the result on the page found up (2026-11-10), from the owner each time a result
+     * is shown or cleared. The <i>Discovered hosts only</i> box is enabled only while there is
+     * one. A ticked box <b>stays ticked</b> over a new result that has hosts (2026-11-11; the
+     * maintainer: "when I check the box and click scan it should always be validated") and the
+     * targets follow the new list at once; with no host left the box unticks and the targets stand.
+     */
+    public void setDiscoveredHosts(List<String> hosts) {
+        discovered = hosts != null ? List.copyOf(hosts) : List.of();
+        boolean keep = discoveredOnly.isSelected() && !discovered.isEmpty();
+        discoveredOnly.setSelected(keep);
+        if (keep) applyDiscovered();
+        discoveredOnly.setEnabled(!discovered.isEmpty());
+        discoveredOnly.setToolTipText(discovered.isEmpty()
+                ? NSAppUtil.ScanForm.DISCOVERED_ONLY_NONE.getDisplayName()
+                : NSAppUtil.ScanForm.DISCOVERED_ONLY.getDescription() + " (" + discovered.size() + ")");
+    }
+
+    /** The <i>Discovered hosts only</i> box, for tests. */
+    JCheckBox discoveredOnlyBox() {
+        return discoveredOnly;
+    }
+
+    /** The Skip ping box, for tests. */
+    JCheckBox skipPingBox() {
+        return skipPing;
+    }
+
+    /** The Targets field, for tests. */
+    TextAreaWidget targetsField() {
+        return targets;
+    }
+
+    /** The count beside the Targets links, for tests. */
+    JLabel targetCountLabel() {
+        return targetCount;
+    }
+
+    /** {@code 1 target} / {@code 23 targets} beside the links, nothing with none; a range or a block is one. */
+    private void countTargets() {
+        int n = 0;
+        for (String t : targets.getText().trim().split("\\s+")) if (!t.isEmpty()) n++;
+        targetCount.setText(n == 0 ? "" : n == 1 ? "1 target" : n + " targets");
+    }
+
+    /**
+     * A tick puts the discovered hosts in Targets and unticks Skip ping and Host discovery only
+     * (the hosts are checked again, then their ports scanned); an untick puts back what the tick
+     * replaced, unless the targets were edited meanwhile, which then stand.
+     */
+    /**
+     * The ticked box enforced: the targets are the discovered hosts and host discovery is on
+     * (no Skip ping, no Host discovery only), whatever was typed since; the command follows.
+     */
+    private void applyDiscovered() {
+        syncing = true;
+        try {
+            targets.setText(String.join(" ", discovered));
+            skipPing.setSelected(false);
+            discoveryOnly.setSelected(false);
+        } finally {
+            syncing = false;
+        }
+        fieldsChanged();
+    }
+
+    private void discoveredToggled() {
+        String list = String.join(" ", discovered);
+        syncing = true;
+        try {
+            if (discoveredOnly.isSelected()) {
+                targetsBeforeDiscovered = targets.getText();
+                skipPingBeforeDiscovered = skipPing.isSelected();
+                discoveryOnlyBeforeDiscovered = discoveryOnly.isSelected();
+                targets.setText(list);
+                skipPing.setSelected(false);
+                discoveryOnly.setSelected(false);
+            } else if (targets.getText().trim().equals(list)) {
+                targets.setText(targetsBeforeDiscovered);
+                skipPing.setSelected(skipPingBeforeDiscovered);
+                discoveryOnly.setSelected(discoveryOnlyBeforeDiscovered);
+            }
+        } finally {
+            syncing = false;
+        }
+        fieldsChanged();
+    }
+
     /** Ticks Service detection programmatically (the chips mirror into it); the toggle listener is not told. */
     public void setServiceDetection(boolean on) {
         if (serviceDetection.isSelected() == on) return;
@@ -349,6 +518,31 @@ public class ScanFormPanel extends JPanel {
      * @throws IllegalArgumentException with the engine's reason when the command or a field is invalid
      */
     public NMapConfig toConfig() {
+        NMapConfig cfg = configOf();
+        if (cfg.targets.isEmpty()) throw new IllegalArgumentException("at least one target is required");
+        return cfg;
+    }
+
+    /**
+     * The configuration for a press of Run (2026-11-10; the maintainer: "whenever I hit scan
+     * button read all the parameters and run the scan accordingly"): as {@link #toConfig},
+     * read now from the command and every field, except that a command which does not parse is
+     * refused with the engine's reason. A field edit re-prints the command, so a broken one is
+     * the subject's own last edit; scanning the fields without it would drop what it carried.
+     *
+     * @throws IllegalArgumentException when the command or a field is invalid, or no target is given
+     */
+    public NMapConfig toRunConfig() {
+        // Discovered hosts only is validated at every Run (2026-11-11): ticked, the scan is on
+        // the discovered hosts with discovery on, even if the targets or the command were edited since
+        if (discoveredOnly.isSelected() && !discovered.isEmpty()) applyDiscovered();
+        String typed = command.getText().trim();
+        if (!typed.isEmpty()) NMap.parseCommand(typed);
+        return toConfig();
+    }
+
+    /** The command parsed with the fields laid over it, targets or not. */
+    private NMapConfig configOf() {
         NMapConfig cfg;
         String typed = command.getText().trim();
         try {
@@ -357,8 +551,42 @@ public class ScanFormPanel extends JPanel {
             cfg = new NMapConfig();
         }
         overlay(cfg);
-        if (cfg.targets.isEmpty()) throw new IllegalArgumentException("at least one target is required");
         return cfg;
+    }
+
+    /**
+     * Clear: no target left, the rest of the form as it stands. The command is re-printed without
+     * targets and no error is shown — an empty Targets field after Clear is what was asked for;
+     * Run still refuses it.
+     */
+    void clearTargets() {
+        syncing = true;
+        try {
+            discoveredOnly.setSelected(false);
+            targets.setText("");
+            try {
+                command.setText(NMap.formatCommand(configOf()));
+            } catch (IllegalArgumentException e) {
+                command.setText("");
+            }
+            message.clear();
+        } finally {
+            syncing = false;
+        }
+        targets.requestFocusInWindow();
+    }
+
+    /** The Clear link, for tests. */
+    JButton clearTargetsButton() {
+        return clearTargets;
+    }
+
+    /** One of the form's two cards: white, bordered, the form's insets. */
+    private static JPanel card(NSAppUtil.ScanForm ref) {
+        JPanel p = GUIUtil.applyProp(new JPanel(new MigLayout("insets 20, fillx, wrap 1, gapy 12, hidemode 3", "[grow,fill]")), ref);
+        p.setBackground(UITokens.surface());
+        p.setBorder(BorderFactory.createLineBorder(UITokens.border()));
+        return p;
     }
 
     /** Fills the fields from a configuration and prints its command. */
@@ -390,6 +618,7 @@ public class ScanFormPanel extends JPanel {
             skipPing.setSelected(false);
             upOnly.setSelected(false);
             openOnly.setSelected(false);
+            discoveredOnly.setSelected(false);
             timing.select(3);
             probeMatch.select(NMapConfig.ProbeMatch.FIRST);
             maxInFlight.setText(Integer.toString(NMapConfig.DEFAULT_MAX_IN_FLIGHT));
@@ -624,7 +853,7 @@ public class ScanFormPanel extends JPanel {
         p.add(c, "growx, wmin 0");
         if (hint != null) {
             io.xlogistx.gui.WrapLabel h = GUIUtil.applyProp(FormPanel.hint(hint.getDisplayName()), hint);
-            h.setWrapWidth(360);
+            h.setWrapWidth(560);
             p.add(h, "wmin 0");
         }
         return p;

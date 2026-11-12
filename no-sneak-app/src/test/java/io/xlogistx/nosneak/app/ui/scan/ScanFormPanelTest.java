@@ -118,6 +118,10 @@ public class ScanFormPanelTest {
             form.reset();
             assertEquals("", form.getCommand());
             assertEquals("", form.getScanName());
+            // a name is cut at 30 characters, typed or set (2026-11-10)
+            form.setScanName("0123456789012345678901234567890123456789");
+            assertEquals("012345678901234567890123456789", form.getScanName());
+            form.setScanName("");
             assertThrows(IllegalArgumentException.class, form::toConfig);
             return null;
         });
@@ -200,6 +204,83 @@ public class ScanFormPanelTest {
             assertFalse(line.isEnabled());
             assertEquals(NSAppUtil.ScanForm.NETWORKS_EMPTY.getDisplayName(), line.getText());
             assertFalse(form.networksMenu(new String[0]).getComponent(0).isEnabled(), "an empty array reads as none too");
+            return null;
+        });
+    }
+
+    /**
+     * Discovered hosts only (2026-11-10): greyed until the page has a result with a host up; a
+     * tick makes those hosts the targets with host discovery on (never -Pn, never -sn), an untick
+     * puts back what the tick replaced, and a new result unticks the box.
+     */
+    @Test
+    void discoveredHostsOnlySwapsTheTargetsAndKeepsDiscoveryOn() throws Exception {
+        onEDT(() -> {
+            ScanFormPanel form = new ScanFormPanel();
+            assertFalse(form.discoveredOnlyBox().isEnabled(), "nothing discovered yet");
+            assertEquals(NSAppUtil.ScanForm.DISCOVERED_ONLY_NONE.getDisplayName(), form.discoveredOnlyBox().getToolTipText());
+
+            form.setCommand("10.0.0.0/24 -sn -Pn");
+            form.setDiscoveredHosts(List.of("10.0.0.1", "10.0.0.14"));
+            assertTrue(form.discoveredOnlyBox().isEnabled());
+            assertFalse(form.discoveredOnlyBox().isSelected());
+
+            form.discoveredOnlyBox().doClick();
+            NMapConfig cfg = form.toConfig();
+            assertEquals(List.of("10.0.0.1", "10.0.0.14"), cfg.targets);
+            assertTrue(cfg.discovery, "the listed hosts are checked again");
+            assertNull(cfg.ports, "the ports are scanned: -sn is dropped");
+            assertEquals("10.0.0.1 10.0.0.14", form.getCommand());
+
+            form.discoveredOnlyBox().doClick();
+            assertEquals("10.0.0.0/24 -sn -Pn", form.getCommand(), "an untick puts back what the tick replaced");
+
+            form.discoveredOnlyBox().doClick();
+            form.targetsField().setText("10.0.0.99");
+            form.discoveredOnlyBox().doClick();
+            assertEquals(List.of("10.0.0.99"), form.toConfig().targets, "targets edited meanwhile stand");
+            assertEquals("1 target", form.targetCountLabel().getText());
+            form.targetsField().setText("10.0.0.1\n10.0.0.2  10.0.0.0/24");
+            assertEquals(List.of("10.0.0.1", "10.0.0.2", "10.0.0.0/24"), form.toConfig().targets, "a line break separates targets like a space");
+            assertEquals("3 targets", form.targetCountLabel().getText());
+
+            // a ticked box stays ticked over a new result and the targets follow it (2026-11-11)
+            form.discoveredOnlyBox().setSelected(true);
+            form.setDiscoveredHosts(List.of("10.0.0.5"));
+            assertTrue(form.discoveredOnlyBox().isSelected(), "a new result keeps the tick");
+            assertEquals(List.of("10.0.0.5"), form.toRunConfig().targets);
+
+            // Run validates the box: targets or a command edited since are overruled
+            form.setCommand("10.0.0.0/24 -Pn -p 22");
+            assertTrue(form.discoveredOnlyBox().isSelected());
+            NMapConfig run = form.toRunConfig();
+            assertEquals(List.of("10.0.0.5"), run.targets, "the discovered hosts, whatever was typed");
+            assertTrue(run.discovery, "each is checked alive first");
+            assertArrayEquals(new int[]{22}, run.ports, "the rest of the command stands");
+            assertEquals("10.0.0.5 -p 22", form.getCommand());
+
+            form.setDiscoveredHosts(List.of());
+            assertFalse(form.discoveredOnlyBox().isSelected(), "no host left: the box unticks");
+            assertFalse(form.discoveredOnlyBox().isEnabled());
+            return null;
+        });
+    }
+
+    /** Clear (2026-11-10) empties the targets, keeps the rest of the command and shows no error; Run still refuses. */
+    @Test
+    void clearEmptiesTheTargetsAndKeepsTheRest() throws Exception {
+        onEDT(() -> {
+            ScanFormPanel form = new ScanFormPanel();
+            form.setCommand("10.0.0.1 10.0.0.2 -p 22,443 --open");
+            form.clearTargetsButton().doClick();
+            assertEquals("", form.targetsField().getText());
+            assertEquals("-p 22,443 --open", form.getCommand());
+            assertEquals("", form.messageLabel().getText() == null ? "" : form.messageLabel().getText().trim(), "no error for an asked-for clear");
+            assertThrows(IllegalArgumentException.class, form::toConfig);
+            form.targetsField().setText("10.0.0.9");
+            assertEquals("10.0.0.9 -p 22,443 --open", form.getCommand());
+            // the pointer rests on the text, not on the pane around it: the tooltip is on the area
+            assertEquals(NSAppUtil.ScanForm.TARGETS_FIELD.getDescription(), form.targetsField().getTextArea().getToolTipText());
             return null;
         });
     }
