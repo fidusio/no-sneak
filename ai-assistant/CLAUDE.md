@@ -606,6 +606,16 @@ array or an intended "capture nothing" turns into "capture everything".
 > providers", after the scanner's pages). Nothing changed in this module's sources; wherever
 > this document says a head action sits at the right, read it as after the title. Pinned by
 > `no-sneak-app`'s `PageHeadActionsTest`.
+> **2026-11-14, the Chat page left-aligned** (the maintainer: "do the same to chat window left
+> align", after the scanner's bars): on the list's bar (`ChatHistoryPanel`) Open / Edit /
+> Delete follow the count (`[260!][][][][]push`, each `wmin pref`); in the conversation
+> (`ChatPanel.options`) *Send history* and *Auto-copy code* follow the Model box. Both were at
+> the right end. **Then Skills and Providers** ("do the same for skills and providers"):
+> `SkillsPanel`'s and `ProvidersPanel`'s bars are `[260!][][][]push` (Edit, Delete / Remove
+> after the count), the provider key picker's bar `[][]push` (Use after its count).
+> **Then the Capture page** ("do the same for the capture page"): `CapturePanel.column` puts
+> each column's title, note and buttons in one gui-audio `WrapLayout` line, left-aligned, so
+> in a narrow column the buttons wrap to a second line whole (fixed cells cut them with dots).
 > **Same day, Save buttons:** the provider form's and the skill editor's Save used
 > `new IconUtil.SaveIcon(16, Color.WHITE)`, a tinted widget that sets its host's background
 > dark green when it paints, so the primary button turned green after its first paint. Both

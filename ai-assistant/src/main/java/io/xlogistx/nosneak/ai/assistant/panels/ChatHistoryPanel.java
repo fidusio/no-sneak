@@ -96,7 +96,9 @@ public class ChatHistoryPanel extends JPanel {
         newChat.addActionListener(_ -> startNewChat());
         page.action(newChat);
 
-        JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", "[260!][]push[][][]"));
+        // Open / Edit / Delete follow the count, on the left (2026-11-14, "do the same to chat
+        // window left align", after the scanner's bars); they were at the bar's right end
+        JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", "[260!][][][][]push"));
         bar.setOpaque(false);
         JTextField search = GUIUtil.applyProp(new JTextField(), AIAssistantUtil.ChatHistoryPage.SEARCH);
         search.putClientProperty("JTextField.leadingIcon", new IconUtil.SearchIcon(14));
@@ -112,7 +114,7 @@ public class ChatHistoryPanel extends JPanel {
         for (JButton b : new JButton[]{open, edit, delete}) {
             b.putClientProperty("JButton.buttonType", "toolBarButton");
             b.setEnabled(false);
-            bar.add(b);
+            bar.add(b, "wmin pref");
         }
         page.row(bar);
 

@@ -112,6 +112,52 @@ class ProbeLibraryHeadTest {
                     }
                     render(panel, "group-editor-" + theme.name().toLowerCase() + "-" + height + ".png");
                 }
+
+                // a selected probe's detail pane (2026-11-14, "move edit and delete next to the name"):
+                // Edit follows the name directly, Delete follows Edit, both whole
+                JTable library = find(panel, NSAppUtil.ProbeLibraryPage.TABLE.getName());
+                settle(panel, () -> {
+                    panel.show(ScanPanel.SECTION_PROBES);
+                    library.setRowSelectionInterval(0, 0);
+                }, 1000, 760);
+                JComponent name = find(panel, NSAppUtil.ProbeLibraryPage.PROBE_TITLE.getName());
+                JButton edit = find(panel, NSAppUtil.ProbeLibraryPage.EDIT.getName()), delete = find(panel, NSAppUtil.ProbeLibraryPage.DELETE.getName());
+                Rectangle n = onEDT(() -> SwingUtilities.convertRectangle(name, new Rectangle(0, 0, name.getWidth(), name.getHeight()), panel));
+                Rectangle e = onEDT(() -> SwingUtilities.convertRectangle(edit, new Rectangle(0, 0, edit.getWidth(), edit.getHeight()), panel));
+                Rectangle d = onEDT(() -> SwingUtilities.convertRectangle(delete, new Rectangle(0, 0, delete.getWidth(), delete.getHeight()), panel));
+                assertTrue(n.width > 0 && e.x >= n.x + n.width && e.x - (n.x + n.width) <= 16, "Edit follows the name: " + n + " then " + e + ", " + theme);
+                assertTrue(d.x >= e.x + e.width && d.x - (e.x + e.width) <= 16, "Delete follows Edit: " + e + " then " + d + ", " + theme);
+                assertTrue(e.width >= onEDT(() -> edit.getPreferredSize().width) && d.width >= onEDT(() -> delete.getPreferredSize().width), "Edit and Delete are whole, " + theme);
+                render(panel, "library-selected-" + theme.name().toLowerCase() + "-1000.png");
+
+                // the same for a selected group on the Probe groups page
+                if (ctx.session().getAllProbeGroups().isEmpty()) {
+                    io.xlogistx.scan.data.ProbeGroup g = new io.xlogistx.scan.data.ProbeGroup();
+                    g.setName("web-servers");
+                    g.setDescription("The web probes");
+                    g.setProbes("https-scan,http");
+                    ctx.session().saveProbeGroup(g);
+                }
+                onEDT(() -> {
+                    panel.reloadProbeGroups();
+                    return null;
+                });
+                JTable groups = find(panel, NSAppUtil.ProbeGroupsPage.TABLE.getName());
+                for (int i = 0; i < 100 && onEDT(groups::getRowCount) == 0; i++) Thread.sleep(100);
+                assertEquals(1, onEDT(groups::getRowCount), "the group is listed, " + theme);
+                settle(panel, () -> {
+                    panel.showProbeGroups();
+                    groups.setRowSelectionInterval(0, 0);
+                }, 1000, 760);
+                JComponent gName = find(panel, NSAppUtil.ProbeGroupsPage.GROUP_TITLE.getName());
+                JButton gEdit = find(panel, NSAppUtil.ProbeGroupsPage.EDIT.getName()), gDelete = find(panel, NSAppUtil.ProbeGroupsPage.DELETE.getName());
+                Rectangle gn = onEDT(() -> SwingUtilities.convertRectangle(gName, new Rectangle(0, 0, gName.getWidth(), gName.getHeight()), panel));
+                Rectangle ge = onEDT(() -> SwingUtilities.convertRectangle(gEdit, new Rectangle(0, 0, gEdit.getWidth(), gEdit.getHeight()), panel));
+                Rectangle gd = onEDT(() -> SwingUtilities.convertRectangle(gDelete, new Rectangle(0, 0, gDelete.getWidth(), gDelete.getHeight()), panel));
+                assertTrue(gn.width > 0 && ge.x >= gn.x + gn.width && ge.x - (gn.x + gn.width) <= 16, "group Edit follows the name: " + gn + " then " + ge + ", " + theme);
+                assertTrue(gd.x >= ge.x + ge.width && gd.x - (ge.x + ge.width) <= 16, "group Delete follows Edit: " + ge + " then " + gd + ", " + theme);
+                assertTrue(ge.width >= onEDT(() -> gEdit.getPreferredSize().width) && gd.width >= onEDT(() -> gDelete.getPreferredSize().width), "group Edit and Delete are whole, " + theme);
+                render(panel, "groups-selected-" + theme.name().toLowerCase() + "-1000.png");
             } finally {
                 ctx.session().logout();
             }
@@ -171,6 +217,18 @@ class ProbeLibraryHeadTest {
                 end = r.x + r.width;
             }
             if (width == 1000) assertTrue(end < 650, "the buttons are on the left: " + at + ", they end at " + end);
+            if ("library".equals(page) && width >= 1000) {
+                // the bar (2026-11-14, "do the same for the probe library bar"): its buttons follow the count, on the left
+                JComponent last = find(panel, NSAppUtil.ProbeLibraryPage.DEFINITION.getName());
+                assertNotNull(last, "the Probe definition button");
+                Rectangle r = onEDT(() -> SwingUtilities.convertRectangle(last, new Rectangle(0, 0, last.getWidth(), last.getHeight()), panel));
+                JComponent count = find(panel, NSAppUtil.ProbeLibraryPage.COUNT.getName()), first = find(panel, NSAppUtil.ProbeLibraryPage.RESTORE.getName());
+                int countEnd = onEDT(() -> SwingUtilities.convertPoint(count, count.getWidth(), 0, panel).x);
+                int firstX = onEDT(() -> SwingUtilities.convertPoint(first, 0, 0, panel).x);
+                assertTrue(firstX >= countEnd && firstX - countEnd <= 16, "the library bar's buttons follow the count: " + countEnd + " then " + firstX + ", " + at);
+                assertTrue(r.x + r.width <= width - 24, "inside the page: " + r + ", " + at);
+                assertTrue(r.width >= onEDT(() -> last.getPreferredSize().width), "not shrunk: " + at);
+            }
             if ("history".equals(page)) {
                 // the action bar (2026-11-12: "fix the scan history bar so the last button fits"):
                 // every action is whole and inside the page's margins, on as many lines as it takes
@@ -185,6 +243,8 @@ class ProbeLibraryHeadTest {
                     assertTrue(r.x >= 24 && r.x + r.width <= width - 24, "inside the page: " + action.getName() + " " + r + ", " + at);
                     assertTrue(r.width >= onEDT(() -> b.getPreferredSize().width), "not shrunk: " + action.getName() + ", " + at);
                     assertTrue(r.y + r.height <= tableTop, "above the table: " + action.getName() + " " + r + ", table at " + tableTop + ", " + at);
+                    // 2026-11-14, "push all the controls buttons from view to delete all left aligned"
+                    if (action == NSAppUtil.ScanHistoryPage.VIEW) assertTrue(r.x < width / 2, "the actions start on the left: " + r + ", " + at);
                 }
             }
             render(panel, page + "-head-" + theme.name().toLowerCase() + "-" + width + ".png");

@@ -99,7 +99,8 @@ public class SkillsPanel extends JPanel {
         newSkill.addActionListener(_ -> onAddSkill());
         page.action(newSkill);
 
-        JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", "[260!][]push[][]"));
+        // Edit / Delete follow the count, on the left (2026-11-14, "do the same for skills and providers")
+        JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", "[260!][][][]push"));
         bar.setOpaque(false);
         JTextField search = GUIUtil.applyProp(new JTextField(), AIAssistantUtil.SkillsPage.SEARCH);
         search.putClientProperty("JTextField.leadingIcon", new IconUtil.SearchIcon(14));
@@ -114,7 +115,7 @@ public class SkillsPanel extends JPanel {
         for (JButton b : new JButton[]{edit, delete}) {
             b.putClientProperty("JButton.buttonType", "toolBarButton");
             b.setEnabled(false);
-            bar.add(b);
+            bar.add(b, "wmin pref");
         }
         page.row(bar);
 

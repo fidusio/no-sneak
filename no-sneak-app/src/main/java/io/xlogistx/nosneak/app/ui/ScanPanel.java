@@ -702,7 +702,9 @@ public class ScanPanel extends JPanel {
         head.add(sub, "span, wmin 0");
         out.add(head, "growx");
 
-        JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", "[260!][]push[][][]"));
+        // the three buttons follow the count, on the left (2026-11-14, after the Scan history bar:
+        // "do the same for the probe library bar"); they were pushed to the right end
+        JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", "[260!][][][][]push"));
         bar.setOpaque(false);
         GUIUtil.applyProp(librarySearch, NSAppUtil.ProbeLibraryPage.SEARCH);
         librarySearch.putClientProperty("JTextField.leadingIcon", new IconUtil.SearchIcon(14));
@@ -826,11 +828,13 @@ public class ScanPanel extends JPanel {
         JPanel p = new JPanel(new MigLayout("insets 16, wrap 1, gapy 8, fill", "[grow,fill]", "[][][][grow,fill]"));
         p.setOpaque(false);
         probeTitle.setFont(UITokens.font(Font.BOLD, 2f));
-        // Title on the left, the actions (Edit / Delete) on the right of the same row: a human
-        // looks for "what can I do with this" next to the name, not under a long JSON listing (2026-10-30).
-        JPanel header = new JPanel(new MigLayout("insets 0, gapx 8", "[grow][][]"));
+        // Title on the left, the actions (Edit / Delete) on the same row: a human looks for "what
+        // can I do with this" next to the name, not under a long JSON listing (2026-10-30). Since
+        // 2026-11-14 they follow the name directly; they were at the pane's right end. A long
+        // name is what gives way, the buttons keep their width
+        JPanel header = new JPanel(new MigLayout("insets 0, gapx 8", "[][][]push"));
         header.setOpaque(false);
-        header.add(probeTitle, "growx");
+        header.add(probeTitle, "wmin 0");
         editProbe.addActionListener(_ -> {
             ProbeLibraryModel.Row row = selectedLibraryRow();
             if (row != null) onEditProbe(row.content());
@@ -845,7 +849,7 @@ public class ScanPanel extends JPanel {
         });
         for (JButton b : new JButton[]{editProbe, deleteProbe}) {
             b.putClientProperty("JButton.buttonType", "toolBarButton");
-            header.add(b, "hidemode 3");
+            header.add(b, "hidemode 3, wmin pref");
         }
         p.add(header);
         p.add(probeFacts);
@@ -1142,9 +1146,10 @@ public class ScanPanel extends JPanel {
         p.setOpaque(false);
         GUIUtil.applyProp(groupTitle, NSAppUtil.ProbeGroupsPage.GROUP_TITLE);
         groupTitle.setFont(UITokens.font(Font.BOLD, 2f));
-        JPanel header = new JPanel(new MigLayout("insets 0, gapx 8", "[grow][][]"));
+        // Edit and Delete follow the name (2026-11-14); they were at the pane's right end
+        JPanel header = new JPanel(new MigLayout("insets 0, gapx 8", "[][][]push"));
         header.setOpaque(false);
-        header.add(groupTitle, "growx");
+        header.add(groupTitle, "wmin 0");
         JButton edit = GUIUtil.applyProp(new JButton(new IconUtil.EditIcon(16)), NSAppUtil.ProbeGroupsPage.EDIT);
         edit.addActionListener(_ -> {
             ProbeGroupModel.Row row = selectedGroupRow();
@@ -1161,7 +1166,7 @@ public class ScanPanel extends JPanel {
         });
         for (JButton b : new JButton[]{edit, delete}) {
             b.putClientProperty("JButton.buttonType", "toolBarButton");
-            header.add(b);
+            header.add(b, "wmin pref");
         }
         p.add(header);
         p.add(groupFacts);
@@ -1463,12 +1468,14 @@ public class ScanPanel extends JPanel {
 
         // the row actions are one wrapping panel (2026-11-12, "fix the scan history bar so the last
         // button fits"): eight controls in fixed cells were wider than a 1000-point page and pushed
-        // Delete all past its edge. While they fit they stay on the search's line, at the right;
-        // when they do not, they take the line under it from the left and wrap there
+        // Delete all past its edge. While they fit they stay on the search's line; when they do
+        // not, they take the line under it and wrap there. Left-aligned in both places since
+        // 2026-11-14 ("push all the controls buttons from view to delete all left aligned"):
+        // on the search's line they follow the count, they were at the right end before
         MigLayout barLayout = new MigLayout("insets 0, gapx 8, gapy 2", "[120:260:260,fill][][grow,fill]");
         JPanel bar = new JPanel(barLayout);
         bar.setOpaque(false);
-        JPanel actions = new JPanel(new WrapLayout(FlowLayout.RIGHT, 8, 0));
+        JPanel actions = new JPanel(new WrapLayout(FlowLayout.LEFT, 8, 0));
         actions.setOpaque(false);
         JTextField search = GUIUtil.applyProp(new JTextField(), NSAppUtil.ScanHistoryPage.SEARCH);
         search.putClientProperty("JTextField.leadingIcon", new IconUtil.SearchIcon(14));
@@ -1499,8 +1506,8 @@ public class ScanPanel extends JPanel {
         historyDeleteAll.putClientProperty("JButton.buttonType", "toolBarButton");
         historyDeleteAll.setEnabled(false);
         actions.add(historyDeleteAll);
-        // FlowLayout keeps its gap at both ends: the pad moves the panel's edge by it, so the end button is on the table's edge
-        String beside = "growx, pushx, wmin 0, pad 0 0 0 8", under = "newline, spanx, growx, wmin 0, pad 0 -8 0 0";
+        // FlowLayout keeps its gap at both ends: under the search the pad moves the panel's edge by it, so View is on the table's edge
+        String beside = "growx, pushx, wmin 0", under = "newline, spanx, growx, wmin 0, pad 0 -8 0 0";
         bar.add(actions, beside);
         bar.addComponentListener(new java.awt.event.ComponentAdapter() {
             @Override
@@ -1511,7 +1518,6 @@ public class ScanPanel extends JPanel {
                 String want = fits ? beside : under;
                 if (!want.equals(barLayout.getComponentConstraints(actions))) {
                     barLayout.setComponentConstraints(actions, want);
-                    ((WrapLayout) actions.getLayout()).setAlignment(fits ? FlowLayout.RIGHT : FlowLayout.LEFT);
                 }
                 // a wrapping panel knows its height only once it has its width: lay the page out again
                 actions.revalidate();

@@ -227,6 +227,37 @@
 > move user and sign out to the left and make sign out does not shrink"): gui-audio's
 > `HeaderBar` is brand · subject · actions · status chip, all from the left; Sign out keeps
 > its width and the chip (the store path) is what gives way. Install gui-audio first.
+> **2026-11-14, uncommitted:** the Scan history actions, View to Delete all, are
+> **left-aligned** ("push all the controls buttons from view to delete all left aligned"):
+> on the search's line they follow the count instead of sitting at the right end. The
+> **Probe library bar** the same ("do the same for the probe library bar"): *Restore bundled
+> probes*, *Probe groups manager* and *Probe definition* follow the count. In the **detail
+> pane** of a selected probe and of a selected group, Edit and Delete follow the name
+> ("move edit and delete next to the name"); they were at the pane's right end. **The Chat
+> page** ("do the same to chat window left align"): Open, Edit and Delete follow the count on
+> the list's bar, and in an open conversation *Send history* and *Auto-copy code* follow the
+> Model box. **Skills and Providers** the same ("do the same for skills and providers"): Edit
+> and Delete / Remove follow the count, and the key picker's *Use* follows its count. **The
+> Capture page** too ("do the same for the capture page"): in the Areas and the Captures
+> column the buttons follow the count instead of sitting at the column's right end.
+> **The Profile page** ("the profile look and feel is not consistent"): its content is white
+> like every other page's card (it sat on a grey slab; Settings too), the Password,
+> Identifiers and Addresses sections lost their boxes and read like the Name block, *Add
+> identifier* / *Add address* follow the section title, and the Save icons on the purple
+> buttons are white (gui-audio's `ListSection`; install gui-audio first). **The Settings
+> page** ("do the same for the settings page"): the rules between its blocks are as wide as
+> the text column, like Profile's (they ran the card's full width), and the Font size row
+> lines up with the Theme row (it started two points in). **The API Keys page** ("do the
+> same for the api keys page"): in the detail pane of a selected key, Edit and Delete follow
+> the key's label; they were at the pane's right end.
+> **2026-11-18, uncommitted — the unlock screen** ("in the login window left align the
+> buttons"): Open (step 1) and Sign in (step 2) start at the form's left edge, the
+> sign-in / register link following Sign in; they were at the right end (`UnlockPanel`).
+> The **Font size row** at the top of that screen is left-aligned too (it was top-right).
+> The **Sign in / Register button has one fixed size** ("make the sign in and register button
+> fixed size, it's still getting shrunk"): as wide as the wider label needs, under both labels
+> and in a narrow window; the link beside it gives way (`UnlockPanelSignButtonTest`). The
+> **Open / Create button** the same ("do the same for the open button").
 
 Assessment tooling for what a network endpoint exposes — TLS posture, **post-quantum
 readiness**, and running services — plus a Swing front-end and an AI-assistant layer.

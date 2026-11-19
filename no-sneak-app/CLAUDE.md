@@ -194,7 +194,7 @@ io.xlogistx.nosneak.app
 │   └── NSCoreUtil.java            ← DMTool's cached DomainSecurityManager (ShiroDSDomainSecurityManager over XlogistxMongoDataStore — the deprecated Mongo path; the reason for the xlogistx-datastore dependency)
 └── ui/                            ← UI (screens, menu, session/access wiring)
     ├── AppShell.java              ← the signed-in window: HeaderBar + SideNavPanel + CardLayout host (2026-10-24), mounts ai-assistant's AssistantPanel
-    ├── UnlockPanel.java           ← the pre-auth screen (2026-10-24): step 1 open/create the store, step 2 sign in / register; replaced LoginPanel + DataStoreSetupPanel. 2026-10-29: every step-1 input has a tooltip and a warning row under the vault password says it is NOT RECOVERABLE (`Form.VAULT_PASSWORD_WARNING`). 2026-11-03: a Text size row (FontSizeWidget + Reset, `UnlockPage.TEXT_SIZE*`) in the right pane's top-right corner, under the scrolling card, so a size that reads too small is fixed before sign-in. 2026-11-12: a store that does not open is reported as a wrapped reason under the store form (`storeFailure`, `storeFailureReason`, `breakLongWords`; every `Throwable` caught, a host failure too), so the screen keeps its shape (`UnlockPanelStoreFailureTest`)
+    ├── UnlockPanel.java           ← the pre-auth screen (2026-10-24): step 1 open/create the store, step 2 sign in / register; replaced LoginPanel + DataStoreSetupPanel. 2026-10-29: every step-1 input has a tooltip and a warning row under the vault password says it is NOT RECOVERABLE (`Form.VAULT_PASSWORD_WARNING`). 2026-11-03: a Text size row (FontSizeWidget + Reset, `UnlockPage.TEXT_SIZE*`) in the right pane's top-right corner, under the scrolling card, so a size that reads too small is fixed before sign-in. 2026-11-12: a store that does not open is reported as a wrapped reason under the store form (`storeFailure`, `storeFailureReason`, `breakLongWords`; every `Throwable` caught, a host failure too), so the screen keeps its shape (`UnlockPanelStoreFailureTest`). 2026-11-18: both steps' buttons are left-aligned ("in the login window left align the buttons"): Open under the store form's left edge, and Sign in first with the sign-in / register link after it (they were at the right end, the link on the left), and the Text size row sits at the top-left of the right pane (it was in the top-right corner; "on the top where the font and size, make them left aligned"). Same day the Sign in / Register button got one fixed size ("make the sign in and register button fixed size, it's still getting shrunk"): `signButton` reports as its preferred and minimum width what the wider of its two labels needs at the current font, so it does not change when the mode flips and the link beside it (`wmin 0`) is what gives way; then the Open / Create button the same ("do the same for the open button"), both being a `UnlockPanel.FixedSizeButton` built with their labels (`UnlockPanelSignButtonTest`)
     ├── PQCRegistryPanel.java      ← PQC file-sharing registry view
     ├── SubjectPanel.java          ← Account pages in the PagePanel frame: Profile (name, password since 2026-11-04, identifiers, addresses), Credentials (API keys), Settings (Appearance: theme + text size (2026-11-02), Sync of the MAC vendor list, Assistant reply timeout, Backup, Restore)
     ├── SubjectSecManagerPanel.java← Access control (admin) page; tabs are stubs
@@ -501,7 +501,17 @@ gui-audio's `ListSection` description became a `WrapLabel` wrapped at the sectio
 a wrapping `JTextArea`: one line high until laid out once, and stretched by BoxLayout after).
 
 - **Profile** (card key `profile`) — four blocks separated by rules, in the Settings page's
-  shape (`blockNote` / `blockStatus`):
+  shape (`blockNote` / `blockStatus`). **2026-11-14** ("the profile look and feel is not
+  consistent"): `SubjectPanel.scroll` makes every panel inside a page's content paint no
+  background, so Profile and Settings are white like the other pages' cards (the blocks were
+  opaque and showed as a grey slab); gui-audio's `ListSection` paints no background and no
+  box and puts its add button after the title; the four primary Save buttons of this panel
+  (profile, address, password, API key) carry the white `save.svg` icon, the untinted
+  `SaveIcon` being grey on the accent colour in the light theme. Then Settings ("do the
+  same for the settings page"): `buildSettingsArea` adds its rules `width 504!` (480 + the
+  block insets, Profile's rule width) and the Font size widget with `pad 0 -2 0 -2`, so it
+  lines up with the Theme row. `PageHeadActionsTest` paints both pages whole
+  (`page-<screen>-<theme>-tall.png`, a 1900-point window):
   - **Name** — a `FormPanel` (First name, Last name, Date of birth with the *yyyy-mm-dd* hint),
     the page's one primary button **Save changes** (`Session.saveProfile(...)`, name/DOB only;
     `populateProfile()` reads them back via `Session.loadProfile`) and a muted status line
@@ -542,7 +552,9 @@ a wrapping `JTextArea`: one line high until laid out once, and stretched by BoxL
   yet*), then a split card: on the left the keys **table** (`SubjectPanel.ApiKeyTableModel`, rows
   of `KeyRow`, columns from `NSAppUtil.ApiKeyColumn` — Label · Provider · Base URL (mono) · Scope
   · Description —, styled by gui-audio's `Tables`, sorted by label), on the right the detail stack
-  `credentialCards`: **howto** with nothing selected (what a key is for, *Add API key* and *Link
+  `credentialCards` (since 2026-11-14 the selected key's Edit and Delete follow its label,
+  header `[][][]push`, as in the probe and group panes; "do the same for the api keys page";
+  `PageHeadActionsTest` stores a key, selects it and checks it): **howto** with nothing selected (what a key is for, *Add API key* and *Link
   it on the Providers page* as link buttons), **key** for the selected row (its label with **Edit**
   and **Delete** toolbar buttons, a `KeyValuePanel` of Description / Provider / Base URL / Scope /
   Auth / Kind / Secret — the secret is never shown here, the row says *Hidden here; Edit shows or
@@ -890,7 +902,9 @@ line under them, and each has `wmin pref` so a narrow window never cuts its text
 maintainer: "move write with assistant and New Probe to the left and make sure the New probe
 button does not shrink"; the Probe groups and Scan history pages have the same head since
 that day; `ProbeLibraryHeadTest` checks the three, and the Scan history **action bar**,
-which since then is one `WrapLayout` panel: beside the search at the right while it fits,
+which since then is one `WrapLayout` panel: beside the search while it fits (at the right
+until 2026-11-14, left-aligned after the count since: "push all the controls buttons from
+view to delete all left aligned"),
 on the line under it and wrapping when it does not — a resize listener on the bar swaps
 the MigLayout constraint; the pages on gui-audio's `PagePanel` — Chat, Capture, Skills,
 Providers, API Keys and their forms — got the same head from `PagePanel` itself,
@@ -898,7 +912,8 @@ Providers, API Keys and their forms — got the same head from `PagePanel` itsel
 scan* on the title's line; same day the Scan form's five option flags became wrapping
 pieces, `ScanFormPanel.flag` in a `WrapLayout`, its Help icon is tinted with
 `UITokens.text()`, and the group editor's checklist row shrinks before Save / Cancel), a
-bar (search, the count, *Restore bundled probes*, *Probe groups manager*, *Probe definition*), and a split
+bar (search, the count, *Restore bundled probes*, *Probe groups manager*, *Probe definition*; the
+three buttons follow the count on the left since 2026-11-14, they were at the right end), and a split
 card — left a table on `ui/scan/ProbeLibraryModel` (rows = the subject's probes, every one of
 them theirs since 2026-11-02, below; columns Name · Service · Ports · Transport · Priority · Origin,
 Origin a `BadgeLabel` *bundled copy* / *mine* from the row's `origin` property, sorted by
@@ -906,7 +921,8 @@ priority then name as the engine orders its catalog; `ProbeLibraryModel.matches`
 a query against name, service, description and exact port), right a detail
 `CardStack`: **howto** with nothing selected (what a probe is, and the three ways to add one as
 link buttons: edit any probe, write with the assistant, new probe) and **probe** for a
-selected row (the name with *Edit* and a confirmed *Delete* on the same header row; moved from
+selected row (the name with *Edit* and a confirmed *Delete* on the same header row, directly
+after the name since 2026-11-14, the group detail pane the same; moved from
 under the JSON to the top on 2026-10-30 because a reader looks for them beside the name — then a
 `KeyValuePanel` of its facts — Description, service, transport, ports, priority, port-scoped,
 watchdog, states and start, origin — and the JSON read-only in the mono font; double-click

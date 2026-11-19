@@ -110,7 +110,8 @@ public class ProvidersPanel extends JPanel {
         add.addActionListener(_ -> onAddProvider());
         page.action(add);
 
-        JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", "[260!][]push[][]"));
+        // Edit / Remove follow the count, on the left (2026-11-14, "do the same for skills and providers")
+        JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", "[260!][][][]push"));
         bar.setOpaque(false);
         JTextField search = GUIUtil.applyProp(new JTextField(), AIAssistantUtil.ProvidersPage.SEARCH);
         search.putClientProperty("JTextField.leadingIcon", new IconUtil.SearchIcon(14));
@@ -122,8 +123,8 @@ public class ProvidersPanel extends JPanel {
         JButton edit = toolButton(AIAssistantUtil.ProvidersPage.EDIT, new IconUtil.EditIcon(16));
         JButton remove = toolButton(AIAssistantUtil.ProvidersPage.REMOVE, new IconUtil.DeleteIcon(16));
         remove.setForeground(UITokens.danger());
-        bar.add(edit);
-        bar.add(remove);
+        bar.add(edit, "wmin pref");
+        bar.add(remove, "wmin pref");
         page.row(bar);
 
         Tables.style(GUIUtil.applyProp(providersTable, AIAssistantUtil.ProvidersPage.TABLE));
@@ -232,14 +233,14 @@ public class ProvidersPanel extends JPanel {
         actions.add(newKey);
         page.action(actions);
 
-        JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", "[]push[]"));
+        JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", "[][]push")); // the key picker's Use follows its count too
         bar.setOpaque(false);
         GUIUtil.applyProp(keysCount, AIAssistantUtil.ProvidersPage.PICKER_COUNT);
         keysCount.setForeground(UITokens.muted());
         keysCount.setFont(UITokens.font(Font.PLAIN, -1f));
         bar.add(keysCount);
         JButton use = toolButton(AIAssistantUtil.ProvidersPage.PICKER_USE, new IconUtil.NextIcon(16));
-        bar.add(use);
+        bar.add(use, "wmin pref");
         page.row(bar);
 
         Tables.style(GUIUtil.applyProp(keysTable, AIAssistantUtil.ProvidersPage.PICKER_TABLE));

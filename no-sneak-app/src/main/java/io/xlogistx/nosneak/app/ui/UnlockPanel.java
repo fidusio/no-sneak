@@ -174,7 +174,9 @@ public class UnlockPanel extends JPanel {
     private final JTextField dbUser = GUIUtil.applyProp(PanelBuilder.textField(NoSneakStore.DEFAULT_DB_USER, 20), UnlockPage.DB_USER_FIELD);
     private final JPasswordField dbPassword = GUIUtil.applyProp(new JPasswordField(20), UnlockPage.DB_PASSWORD_FIELD);
     private final JPasswordField dbEncryptionPassword = GUIUtil.applyProp(new JPasswordField(20), UnlockPage.DB_ENCRYPTION_FIELD);
-    private final JButton openButton = UITokens.primary(GUIUtil.applyProp(new JButton(), UnlockPage.OPEN));
+    /** One button, two labels (Open / Create), one fixed size like {@link #signButton} (2026-11-18). */
+    private final JButton openButton = UITokens.primary(GUIUtil.applyProp(
+            new FixedSizeButton(UnlockPage.OPEN.getDisplayName(), UnlockPage.CREATE.getDisplayName()), UnlockPage.OPEN));
     /** Component names of the text size row (2026-11-03), for tests: the control and its Reset. */
     public static final String TEXT_SIZE = UnlockPage.TEXT_SIZE.getName();
     public static final String TEXT_SIZE_RESET = UnlockPage.TEXT_SIZE_RESET.getName();
@@ -185,7 +187,42 @@ public class UnlockPanel extends JPanel {
     private final JPasswordField confirmPassword = GUIUtil.applyProp(new JPasswordField(20), SignInForm.CONFIRM_FIELD);
     private final FormPanel signForm = GUIUtil.applyProp(new FormPanel(), SignInForm.FORM);
     private final InlineMessage signMessage = new InlineMessage();
-    private final JButton signButton = UITokens.primary(GUIUtil.applyProp(new JButton(), SignInForm.SIGN_IN));
+    /**
+     * One button, two labels (Sign in / Register). Its size is fixed (2026-11-18; the maintainer:
+     * "make the sign in and register button fixed size, it's still getting shrunk"): always as
+     * wide as the wider label needs at the current font, and never below that, so it neither
+     * jumps when the mode flips nor gives way in a narrow window (the link beside it does).
+     */
+    private final JButton signButton = UITokens.primary(GUIUtil.applyProp(
+            new FixedSizeButton(SignInForm.SIGN_IN.getDisplayName(), SignInForm.REGISTER.getDisplayName()), SignInForm.SIGN_IN));
+
+    /**
+     * A button that shows one of several labels and keeps one size under all of them: its
+     * preferred and minimum width are what the widest label needs at the current font.
+     */
+    private static final class FixedSizeButton extends JButton {
+        private final String[] labels;
+
+        FixedSizeButton(String... labels) {
+            this.labels = labels;
+        }
+
+        @Override
+        public Dimension getPreferredSize() {
+            Dimension size = super.getPreferredSize();
+            if (isPreferredSizeSet() || getFont() == null || labels == null) return size;
+            FontMetrics fm = getFontMetrics(getFont());
+            int widest = 0;
+            for (String label : labels) widest = Math.max(widest, fm.stringWidth(label));
+            size.width += Math.max(0, widest - fm.stringWidth(getText() == null ? "" : getText()));
+            return size;
+        }
+
+        @Override
+        public Dimension getMinimumSize() {
+            return getPreferredSize();
+        }
+    }
     private final JButton modeToggle = UITokens.link(new JButton());
     private boolean registering;
 
@@ -284,7 +321,7 @@ public class UnlockPanel extends JPanel {
      * The text size row (2026-11-03; the maintainer: "at start sometimes it is too small"): the
      * same control as the Settings page's Appearance block — gui-audio's {@link FontSizeWidget}
      * over {@link UIFontSize} with its own caption and Reset link ({@code withLabel().withReset()},
-     * 2026-11-06) — right-aligned in the right pane's top corner, so
+     * 2026-11-06) — at the top of the right pane, left-aligned since 2026-11-18, so
      * a subject whose stored size reads too small on this screen can fix it before signing in.
      * The size applies at once to the whole application and is remembered through the listener
      * {@code NoSneakMain} registers on {@code UIFontSize}, like a change made in Settings.
@@ -293,9 +330,9 @@ public class UnlockPanel extends JPanel {
         FontSizeWidget size = GUIUtil.applyProp(new FontSizeWidget().withLabel().withReset(), UnlockPage.TEXT_SIZE);
         GUIUtil.applyProp(size.getLabel(), UnlockPage.TEXT_SIZE_LABEL).setForeground(UITokens.muted());
         GUIUtil.applyProp(size.getResetButton(), UnlockPage.TEXT_SIZE_RESET);
-        JPanel row = new JPanel(new MigLayout("insets 12 24 0 24", "[grow][]"));
+        // left-aligned since 2026-11-18 ("on the top where the font and size, make them left aligned")
+        JPanel row = new JPanel(new MigLayout("insets 12 24 0 24", "[]push"));
         row.setBackground(ground);
-        row.add(new JLabel(), "growx");
         row.add(size);
         return row;
     }
@@ -368,10 +405,10 @@ public class UnlockPanel extends JPanel {
             }
         });
 
-        JPanel actions = new JPanel(new MigLayout("insets 0", "[grow][]"));
+        // left-aligned (2026-11-18; the maintainer: "in the login window left align the buttons")
+        JPanel actions = new JPanel(new MigLayout("insets 0", "[]push"));
         actions.setOpaque(false);
-        actions.add(new JLabel(), "growx");
-        actions.add(openButton);
+        actions.add(openButton, "wmin pref");
         storeForm.row(actions, "growx, gaptop 12");
 
         openButton.addActionListener(_ -> onOpenStore());
@@ -385,10 +422,11 @@ public class UnlockPanel extends JPanel {
         signForm.group(REGISTER, () -> signForm.field(SignInForm.CONFIRM.getDisplayName(), PanelBuilder.passwordField(confirmPassword)));
         signForm.row(signMessage, "growx, gaptop 4");
 
-        JPanel actions = new JPanel(new MigLayout("insets 0, gapx 12", "[grow][]"));
+        // left-aligned, the primary button first (2026-11-18)
+        JPanel actions = new JPanel(new MigLayout("insets 0, gapx 12", "[][]push"));
         actions.setOpaque(false);
-        actions.add(modeToggle, "alignx left");
-        actions.add(signButton);
+        actions.add(signButton, "wmin pref");
+        actions.add(modeToggle, "wmin 0");
         signForm.row(actions, "growx, gaptop 10");
 
         modeToggle.addActionListener(_ -> {

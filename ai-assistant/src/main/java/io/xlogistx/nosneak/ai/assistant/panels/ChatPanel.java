@@ -481,7 +481,8 @@ public class ChatPanel extends JPanel {
         providerLabel.setForeground(UITokens.muted());
         JLabel modelLabel = GUIUtil.applyProp(new JLabel(), AIAssistantUtil.ChatPage.MODEL);
         modelLabel.setForeground(UITokens.muted());
-        options = new JPanel(new MigLayout("insets 0, gapx 8", "[][][][]push[][]"));
+        // the two boxes follow the Model box, on the left (2026-11-14); they were at the right end
+        options = new JPanel(new MigLayout("insets 0, gapx 8", "[][][][][][]push"));
         options.setOpaque(false);
         options.add(providerLabel);
         options.add(providerSelector, "wmin 160");

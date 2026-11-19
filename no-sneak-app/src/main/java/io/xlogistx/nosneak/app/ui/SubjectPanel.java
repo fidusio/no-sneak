@@ -63,7 +63,7 @@ public class SubjectPanel extends JPanel {
     private final JTextField dob = new JTextField(20);
 
     private static final String[] PROFILE_KEYS = {"firstName", "lastName", "dob"};
-    private final JButton saveProfile = GUIUtil.applyProp(new JButton(new IconUtil.SaveIcon(16)), NSAppUtil.ProfilePage.SAVE);
+    private final JButton saveProfile = GUIUtil.applyProp(new JButton(IconUtil.svgIcon("io/xlogistx/gui/icons/save.svg", 16, Color.WHITE)), NSAppUtil.ProfilePage.SAVE);
 
     // ---- Change-password fields ----
     private final JPasswordField currentPwd = new JPasswordField(35);
@@ -192,8 +192,14 @@ public class SubjectPanel extends JPanel {
         add(cardStack.view(), BorderLayout.CENTER);
     }
 
-    /** A borderless scroll pane on the surface colour, for a card's content. */
+    /**
+     * A borderless scroll pane on the surface colour, for a card's content. Every panel inside
+     * the content paints no background (2026-11-14, "the profile look and feel is not
+     * consistent"): the blocks were built opaque, so they showed as a grey slab on the white
+     * card where every other page is white.
+     */
     private static JScrollPane scroll(JComponent content) {
+        clear(content);
         content.setOpaque(true);
         content.setBackground(UITokens.surface());
         content.setBorder(BorderFactory.createEmptyBorder(12, 16, 16, 16));
@@ -202,6 +208,11 @@ public class SubjectPanel extends JPanel {
         sp.getViewport().setBackground(UITokens.surface());
         sp.getVerticalScrollBar().setUnitIncrement(16);
         return sp;
+    }
+
+    private static void clear(Component c) {
+        if (c instanceof JPanel p) p.setOpaque(false);
+        if (c instanceof Container k) for (Component child : k.getComponents()) clear(child);
     }
 
     /** The sections the application's sidebar routes to (2026-10-24); the toggle column is gone. */
@@ -221,14 +232,18 @@ public class SubjectPanel extends JPanel {
 
     private JPanel buildSettingsArea() {
         JPanel area = new JPanel(new MigLayout("wrap 1, insets 0", "[grow,fill]"));
+        // 2026-11-14 ("do the same for the settings page"): the rules between the blocks are as
+        // wide as a block's text column (480 + the block's insets), like the Profile page's;
+        // they ran the card's full width
+        String rule = "gaptop 8, gapbottom 8, growx 0, width 504!";
         area.add(buildAppearance());
-        area.add(new JSeparator(), "gaptop 8, gapbottom 8");
+        area.add(new JSeparator(), rule);
         area.add(buildSync());
-        area.add(new JSeparator(), "gaptop 8, gapbottom 8");
+        area.add(new JSeparator(), rule);
         area.add(buildAssistant());
-        area.add(new JSeparator(), "gaptop 8, gapbottom 8");
+        area.add(new JSeparator(), rule);
         area.add(buildDBBackup());
-        area.add(new JSeparator(), "gaptop 8, gapbottom 8");
+        area.add(new JSeparator(), rule);
         area.add(buildDBRestore());
 
         JPanel anchor = new JPanel(new BorderLayout());
@@ -397,7 +412,8 @@ public class SubjectPanel extends JPanel {
         FontSizeWidget size = GUIUtil.applyProp(new FontSizeWidget().withLabel().withReset(), NSAppUtil.SettingsPage.TEXT_SIZE);
         GUIUtil.applyProp(size.getLabel(), NSAppUtil.SettingsPage.TEXT_SIZE_LABEL);
         GUIUtil.applyProp(size.getResetButton(), NSAppUtil.SettingsPage.TEXT_SIZE_RESET);
-        panel.add(size, "growx 0");
+        // the widget's own flow starts two points in: pulled back so Font size lines up with Theme
+        panel.add(size, "growx 0, pad 0 -2 0 -2");
 
         return panel;
     }
@@ -797,7 +813,7 @@ public class SubjectPanel extends JPanel {
      * The address detail card (fields + Save), reached by "+ Add address" or a per-row Edit.
      */
     private JPanel buildEditAddress() {
-        JButton save = UITokens.primary(GUIUtil.applyProp(new JButton(new IconUtil.SaveIcon(16)), NSAppUtil.AddressEditor.SAVE));
+        JButton save = UITokens.primary(GUIUtil.applyProp(new JButton(IconUtil.svgIcon("io/xlogistx/gui/icons/save.svg", 16, Color.WHITE)), NSAppUtil.AddressEditor.SAVE));
         save.addActionListener(_ -> onSaveAddress(save));
 
         // the same stacked form as the Name block (2026-10-27); Back returns to the profile card
@@ -996,9 +1012,11 @@ public class SubjectPanel extends JPanel {
         p.setOpaque(false);
         GUIUtil.applyProp(apiKeyTitle, NSAppUtil.ApiKeysPage.KEY_TITLE);
         apiKeyTitle.setFont(UITokens.font(Font.BOLD, 2f));
-        JPanel header = new JPanel(new MigLayout("insets 0, gapx 8", "[grow][][]"));
+        // Edit and Delete follow the label, on the left (2026-11-14, "do the same for the api
+        // keys page"), as in the probe and probe group detail panes; they were at the right end
+        JPanel header = new JPanel(new MigLayout("insets 0, gapx 8", "[][][]push"));
         header.setOpaque(false);
-        header.add(apiKeyTitle, "growx, wmin 0");
+        header.add(apiKeyTitle, "wmin 0");
         JButton edit = GUIUtil.applyProp(new JButton(new IconUtil.EditIcon(16)), NSAppUtil.ApiKeysPage.EDIT);
         edit.addActionListener(_ -> {
             KeyRow row = selectedKeyRow();
@@ -1012,7 +1030,7 @@ public class SubjectPanel extends JPanel {
         });
         for (JButton b : new JButton[]{edit, delete}) {
             b.putClientProperty("JButton.buttonType", "toolBarButton");
-            header.add(b);
+            header.add(b, "wmin pref");
         }
         p.add(header);
         p.add(apiKeyFacts);
@@ -1345,7 +1363,7 @@ public class SubjectPanel extends JPanel {
 
     /** The change-password card of the Profile page (the stacked form since 2026-10-27; Back returns to the profile card). */
     private JPanel buildChangePassword() {
-        JButton submit = UITokens.primary(GUIUtil.applyProp(new JButton(new IconUtil.SaveIcon(16)), NSAppUtil.PasswordEditor.SUBMIT));
+        JButton submit = UITokens.primary(GUIUtil.applyProp(new JButton(IconUtil.svgIcon("io/xlogistx/gui/icons/save.svg", 16, Color.WHITE)), NSAppUtil.PasswordEditor.SUBMIT));
         submit.addActionListener(_ -> onChangePassword(submit));
 
         FormPanel form = new FormPanel();
@@ -1391,7 +1409,7 @@ public class SubjectPanel extends JPanel {
     private JPanel buildEditAPIKey() {
 
         // save api key button
-        JButton submit = GUIUtil.applyProp(new JButton(new IconUtil.SaveIcon(16)), NSAppUtil.ApiKeysPage.SAVE);
+        JButton submit = GUIUtil.applyProp(new JButton(IconUtil.svgIcon("io/xlogistx/gui/icons/save.svg", 16, Color.WHITE)), NSAppUtil.ApiKeysPage.SAVE);
 
         rotateKey.addActionListener(_ -> onRotateAPIKey(rotateKey));
 

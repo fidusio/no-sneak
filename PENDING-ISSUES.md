@@ -1333,6 +1333,66 @@ before the chip) is the assistant's reading of "to the left". gui-audio reinstal
 window, ending left of 640) at 1280 and 760 points in both themes: 1/0; rendered and
 read. Not clicked in the running app.
 
+**2026-11-14 — Scan history actions left-aligned (uncommitted):** "in the scan history push
+all the controls buttons from view to delete all left aligned". `ScanPanel.buildResultPanel`:
+the actions' `WrapLayout` is always `LEFT`; on the search's line they follow the count (they
+were right-aligned there). `ProbeLibraryHeadTest` also checks View starts in the left half.
+Then the Probe library bar ("do the same for the probe library bar"): `buildProbePanel`'s
+bar columns are `[260!][][][][]push`, so the three buttons follow the count; the test checks
+Restore bundled probes starts right after the count at 1400 and 1000, and Probe definition
+is whole and inside the page. The Probe groups bar had nothing to move (search and count
+only). Then "move edit and delete next to the name": in `buildLibraryProbeCard`'s and
+`buildGroupCard`'s header (`[][][]push`, the name `wmin 0`, the buttons `wmin pref`) Edit
+and Delete follow the name. The test selects a probe, then saves a group and selects it,
+and checks both panes; both rendered and read.
+
+**2026-11-14 — the Chat page left-aligned (uncommitted, ai-assistant):** "do the same to chat
+window left align". `ChatHistoryPanel`'s bar: Open / Edit / Delete follow the count.
+`ChatPanel.options`: Send history and Auto-copy code follow the Model box. `PageHeadActionsTest`
+checks Open follows the count at 1280. The conversation's options row is not rendered by any
+test (no chat is open in it). Then "do the same for skills and providers": the Skills and
+Providers bars have Edit and Delete / Remove after the count, the provider key picker's Use
+after its count. `PageHeadActionsTest` checks the Chat, Skills and Providers bars at 1280;
+the key picker is not opened by any test and was not rendered.
+`PageHeadActionsTest` took about four minutes ("why PageHeadActionsTest takes so long to run"):
+its `layoutAll` helper recursed into every child twice per level, doubling the work with each
+level of nesting. It is one invalidate pass and one top-down layout pass now: 6 s, and its 20
+pictures are byte-identical to the slow run's. `ProbeLibraryHeadTest` has the same helper
+(a smaller tree, about 10 s) and was left as it is.
+Then "do the same for the capture page": `CapturePanel.column` puts the Areas and Captures
+buttons right after each column's note, in one `WrapLayout` line that wraps in a narrow
+column (at 760 the buttons were cut with dots). `PageHeadActionsTest` checks, at 1280 and
+760, that the first button of each column follows the note and that every button is whole.
+
+**2026-11-14 — the Profile page's look (uncommitted, gui-audio too):** "the profile look and
+feel is not consistant". The maintainer did not say which part; what the render showed and
+what was changed, the assistant's reading: (1) the content was a grey slab 480 points wide
+on the white card: `SubjectPanel.scroll` now clears the opacity of every panel in a page's
+content (Settings had the same slab); (2) Password, Identifiers and Addresses were boxed
+`ListSection`s beside an unboxed Name block: `ListSection` paints no background and no
+border; (3) its add button follows the title; (4) the Save icon on the four primary buttons
+of `SubjectPanel` is the white `save.svg`. `PageHeadActionsTest` paints Profile and
+Settings at 1280 and 760 in both themes (painted only, nothing asserted); read at 1280.
+Not rendered: the address editor, the change-password card, the API key editor. The row
+actions (pencil, trash) are still at the right end of each row.
+
+**2026-11-14 — the Settings page (uncommitted):** "do the same for the settings page". The
+grey slab was already gone with the Profile change and Settings has no boxed section and
+no add button, so what was left, the assistant's reading of the full-page render: the
+rules between the blocks ran the card's full width where Profile's are as wide as the
+text column (now `width 504!`), and the Font size row started two points to the right of
+the Theme row (now `pad 0 -2 0 -2`). `PageHeadActionsTest` paints both pages whole in a
+1900-point window (`-tall.png`). Not changed: *Export backup* keeps its outline look (it
+is not a primary button).
+
+**2026-11-14 — the API Keys page (uncommitted):** "do the same for the api keys page". In
+the detail pane of a selected key (`SubjectPanel.buildKeyCard`) Edit and Delete follow the
+key's label (`[][][]push`, buttons `wmin pref`), like the probe and probe group panes; they
+were at the right end. The assistant's reading: the page's head, bar and grey detail pane
+already matched the other table pages. `PageHeadActionsTest` stores a key, selects it and
+checks Edit follows the label and Delete follows Edit, both whole, at 1280 and 760 in both
+themes (`page-api_keys-selected-*.png`). Not rendered: the key editor, the Add key dialog.
+
 **2026-11-10, evening — "none of the hoverover are showing" (uncommitted, cause not confirmed):**
 a real `AppFrame` on a throwaway store, hovered with `java.awt.Robot`, showed every tooltip of
 the Scan form while the window was active, so no code path drops them. The one condition that

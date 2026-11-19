@@ -193,19 +193,34 @@ public class CapturePanel extends JPanel {
         return b;
     }
 
-    /** One column of the page: a toolbar (title, muted note, the buttons at the right) over a white card holding the table. */
+    /**
+     * One column of the page: a toolbar (title, muted note, then the buttons) over a white card
+     * holding the table. The buttons follow the note, on the left, since 2026-11-14 ("do the
+     * same for the capture page"); they were at the column's right end. The toolbar is one
+     * wrapping line (gui-audio's {@code WrapLayout}): in a narrow column the buttons go on to a
+     * second line whole, where fixed cells cut their text with dots.
+     */
     private static JPanel column(CapturePage title, JLabel note, JButton[] buttons, JTable table) {
-        StringBuilder cols = new StringBuilder("[][grow]push");
-        for (int i = 0; i < buttons.length; i++) cols.append("[]");
-        JPanel bar = new JPanel(new MigLayout("insets 0, gapx 8", cols.toString()));
+        JPanel bar = new JPanel(new io.xlogistx.gui.WrapLayout(FlowLayout.LEFT, 8, 2));
         bar.setOpaque(false);
         JLabel t = GUIUtil.applyProp(new JLabel(), title);
         t.setFont(UITokens.font(Font.BOLD, 1f));
         bar.add(t);
         note.setForeground(UITokens.muted());
         note.setFont(UITokens.font(Font.PLAIN, -1f));
-        bar.add(note, "wmin 0");
+        bar.add(note);
         for (JButton b : buttons) bar.add(b);
+        // a wrapping panel knows its height only once it has its width: lay the column out again
+        bar.addComponentListener(new java.awt.event.ComponentAdapter() {
+            private int width = -1;
+
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent e) {
+                if (bar.getWidth() == width) return;
+                width = bar.getWidth();
+                bar.revalidate();
+            }
+        });
 
         JScrollPane scroll = new JScrollPane(table);
         scroll.setBorder(BorderFactory.createEmptyBorder());
@@ -217,7 +232,7 @@ public class CapturePanel extends JPanel {
 
         JPanel col = new JPanel(new MigLayout("insets 0, wrap 1, gapy 10, fill", "[grow,fill]", "[][grow,fill]"));
         col.setOpaque(false);
-        col.add(bar, "growx, wmin 0");
+        col.add(bar, "growx, wmin 0, pad 0 -8 0 0"); // FlowLayout keeps its gap at the left end: the pad puts the title on the table's edge
         col.add(card, "grow, push, wmin 0, hmin 0");
         return col;
     }
